@@ -130,14 +130,105 @@ sg scan -r sgconfig.yml                           # run project rules (if config
 - Table-driven tests for anything with more than one interesting case.
 - Prefer determinism. Inject clocks and IDs where tests need them; renderers must be byte-stable.
 
-## Dogfooding
+## Dogfooding: use `ft` for the work itself
 
-Once the CLI is usable, this repository is managed by `ft`: the project, the task graph,
-milestones, decisions, and memory all live in the tool. When changing behavior, also update the
-project's own graph if the change alters its tasks.
+This repository is managed by `ft`. The project id is `factotum`; `.factotum/config.toml` pins it
+and `~/.factotum/config.toml` maps it to its database (see Configuration below). Do the work
+through the tool, not around it.
 
-## Commits
+**Start from the graph, not from guesswork.** Begin each session by asking `ft` what to do next:
 
-Do not commit, amend, push, or open pull requests unless asked explicitly. When asked, inspect
-`git status` and `git diff` first, stage only intended files, and write a concise message in the
-imperative mood describing the change.
+```sh
+ft task next                                        # default_project resolves from .factotum/config.toml
+ft task next --all                                  # rank ready work across every registered project
+ft task next -n 5 --for <actor>                     # what a specific human or agent should pick up
+ft task show <task>                                 # its Next: block names the natural follow-up command
+ft graph render --project factotum --format agent   # the whole DAG as text
+```
+
+**Move a task through its lifecycle as you work** (each status command prints the next hint):
+
+```sh
+ft task start <task>    # todo -> in_progress
+ft task review <task>   # in_progress -> ready_for_review (unblocks dependents)
+ft task done <task>     # accepted and finished
+ft task reopen <task>   # back to todo, e.g. after a failed review
+```
+
+**Record what you learn and file new work the moment you discover it.** Never leave a decision,
+TODO, or follow-up undocumented or the graph stale:
+
+```sh
+ft task note add <task> -b "Decision: ... " --link issue=https://...
+ft task add -p factotum -t "Short imperative title" -r factotum \
+  --body "Context and acceptance criteria." --dep <blocking-task>
+```
+
+- A bug, TODO, missing test, cleanup, or follow-up spotted while working → add a task and link it
+  (a note, or `--dep`).
+- Use `-r <repo>` when the work belongs to one repository of the project.
+- Update the graph in the same session as the code: new tasks/milestones, statuses, notes.
+
+## Configuration
+
+Two scopes, merged `env > project file > user file > defaults`:
+
+- `~/.factotum/config.toml` — machine-scoped, not committed: `default_project` plus a
+  `[projects.<id>]` registry mapping each project to its `db_path`/`store`.
+- `./.factotum/config.toml` — project-scoped, committed: `project = "factotum"` and optional
+  overrides. Machine-local paths must never appear here.
+
+Never edit a database by hand; go through `ft`. `-c/--config` selects the project file,
+`--user-config` the machine file, and `--project`/`-p` an explicit project. Set `--no-hints` (or
+`FACTOTUM_NO_HINTS=1`) to silence suggestions, and use `-o json` for machine-readable output.
+
+## Branches, commits, and pull requests
+
+`main` is protected: **never commit to it directly.** Every new feature or non-related bug fix
+starts on its own branch and lands via a PR against `main`.
+
+Name branches by intent, kebab-case:
+
+```sh
+feat/task-next-all
+fix/usage-error-help
+docs/agents-pr-workflow
+refactor/config-scopes
+test/store-conformance
+chore/mise-pins
+```
+
+Workflow:
+
+1. Branch from up-to-date `main` (`git switch main && git pull && git switch -c feat/...`).
+2. Develop test-first and get `mise run ci` green.
+3. Commit after **every meaningful unit** (not one big batch): imperative subject, and a short
+   body explaining *why* when it is not obvious.
+4. Include the matching `ft` graph changes (statuses, notes, new tasks/milestones) in the same
+   commit.
+5. **Review the branch before opening the PR** (`git log --oneline main..HEAD`).
+   - If it carries commits from unrelated scopes, split them: branch each scope from `main`
+     (`git rebase --onto`/cherry-pick) and open one **right-scoped PR per scope**. Never let one
+     PR mix, say, a feature and its docs.
+   - Otherwise, make sure the title and body cover **every** commit on the branch, not just the
+     last one.
+6. Push the branch and open a right-scoped PR against `main` with `gh pr create`.
+
+Never commit `ft`, `coverage.out`, or `*.db`; `.factotum/config.toml` is intentionally
+committable. Do not amend a merged commit, and never force-push a shared branch.
+
+### PR body
+
+Concise and easy to digest: short phrases, no walls of text. Cover, in order:
+
+- **Intention** — what this PR does and why, in one or two sentences.
+- **Fit** — where it lands in the existing system (packages, ports, command surface).
+- **Risks** — what could break and the blast radius.
+- **Reviewer focus** — the few things a human should scrutinize most.
+- **Tests** — the scenarios added or exercised, and how to run them.
+- **Relaxed tests** — any test weakened or skipped, and why (none is the norm).
+- **Breaking change?** — yes/no; if yes, what callers must change.
+
+Reference the `ft` task in the body so the PR and the graph stay linked.
+
+

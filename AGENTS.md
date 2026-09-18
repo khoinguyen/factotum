@@ -206,7 +206,13 @@ Workflow:
    body explaining *why* when it is not obvious.
 4. Include the matching `ft` graph changes (statuses, notes, new tasks/milestones) in the same
    commit.
-5. Push the branch and open a PR against `main` with `gh pr create`.
+5. **Review the branch before opening the PR** (`git log --oneline main..HEAD`).
+   - If it carries commits from unrelated scopes, split them: branch each scope from `main`
+     (`git rebase --onto`/cherry-pick) and open one **right-scoped PR per scope**. Never let one
+     PR mix, say, a feature and its docs.
+   - Otherwise, make sure the title and body cover **every** commit on the branch, not just the
+     last one.
+6. Push the branch and open a right-scoped PR against `main` with `gh pr create`.
 
 Never commit `ft`, `coverage.out`, or `*.db`; `.factotum/config.toml` is intentionally
 committable. Do not amend a merged commit, and never force-push a shared branch.

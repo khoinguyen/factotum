@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en"{{if eq .Theme "dark"}} data-theme="dark"{{else if eq .Theme "light"}} data-theme="light"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --ground:#f2f5f6; --surface:#fff; --surface-sunk:#e8edef; --line:#d0dade; --line-strong:#a9b9bf;
+  --ink:#101a1e; --ink-soft:#46595f; --ink-faint:#6d8087;
+  --signal:#0d7d80; --signal-soft:#d6ecec; --gate:#a35c00; --gate-soft:#f8ecd0;
+  --done:#2f7d4f; --done-soft:#dceee2; --alert:#a8322a; --alert-soft:#f6dedc; --prod:#6b4fa3; --prod-soft:#ece5f7;
+  --radius:3px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:#0d1417; --surface:#151f23; --surface-sunk:#101a1d; --line:#253439; --line-strong:#3b5057;
+    --ink:#e4ecef; --ink-soft:#a3b5bb; --ink-faint:#7c9098;
+    --signal:#4ec3c4; --signal-soft:#123033; --gate:#e0a340; --gate-soft:#33260f;
+    --done:#6cc48c; --done-soft:#12281b; --alert:#e8817a; --alert-soft:#3a1a17; --prod:#b9a1e8; --prod-soft:#251a3a;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:#0d1417; --surface:#151f23; --surface-sunk:#101a1d; --line:#253439; --line-strong:#3b5057;
+  --ink:#e4ecef; --ink-soft:#a3b5bb; --ink-faint:#7c9098;
+  --signal:#4ec3c4; --signal-soft:#123033; --gate:#e0a340; --gate-soft:#33260f;
+  --done:#6cc48c; --done-soft:#12281b; --alert:#e8817a; --alert-soft:#3a1a17; --prod:#b9a1e8; --prod-soft:#251a3a;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--ground); color:var(--ink); font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif; font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased; }
+.page { max-width:1180px; margin:0 auto; padding:40px 24px 72px; display:flex; flex-direction:column; gap:40px; }
+header { display:flex; flex-direction:column; gap:14px; }
+.eyebrow { font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--signal); margin:0; }
+h1 { font-family:"IBM Plex Sans Condensed","IBM Plex Sans",sans-serif; font-weight:700; font-size:clamp(30px,5vw,44px); line-height:1.08; letter-spacing:-.015em; margin:0; text-wrap:balance; }
+h2 { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:600; font-size:21px; margin:0; padding-bottom:8px; border-bottom:1px solid var(--line); }
+section { display:flex; flex-direction:column; gap:16px; }
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; margin:0; }
+.stat { background:var(--surface); padding:14px 16px; }
+.stat dt { font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 4px; }
+.stat dd { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; font-size:26px; font-variant-numeric:tabular-nums; line-height:1; }
+.stat.is-agent dd { color:var(--signal); } .stat.is-human dd { color:var(--gate); }
+.stat.is-clean dd { color:var(--done); } .stat.is-alert dd { color:var(--alert); }
+.next-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; }
+.next-card { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+.next-card h3 { margin:0; padding:10px 16px; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:14px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; border-bottom:1px solid var(--line); }
+.next-card.agent h3 { color:var(--signal); background:var(--signal-soft); }
+.next-card.human h3 { color:var(--gate); background:var(--gate-soft); }
+.next-card ul { margin:0; padding:6px 0; list-style:none; }
+.next-card li { padding:6px 16px; font-size:14.5px; display:flex; gap:10px; align-items:baseline; }
+.next-card li + li { border-top:1px solid var(--line); }
+.tkt { font-family:"IBM Plex Mono",monospace; font-size:13px; font-variant-numeric:tabular-nums; color:var(--signal); white-space:nowrap; }
+.chip { display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.06em; text-transform:uppercase; padding:1px 7px; border-radius:2px; border:1px solid currentColor; white-space:nowrap; line-height:1.7; }
+.chip.done { color:var(--done); background:var(--done-soft); }
+.chip.cancelled { color:var(--ink-faint); background:var(--surface-sunk); }
+.chip.review { color:var(--prod); background:var(--prod-soft); }
+.chip.ready-agent { color:var(--signal); background:var(--signal-soft); }
+.chip.ready-human { color:var(--gate); background:var(--gate-soft); }
+.chip.blocked { color:var(--ink-faint); background:var(--surface-sunk); }
+.chip.cycle { color:var(--alert); background:var(--alert-soft); }
+.chip.milestone { color:var(--prod); background:var(--prod-soft); }
+.chip.assignee { color:var(--ink-faint); background:transparent; border-style:dashed; }
+.chip.repo { color:var(--ink-faint); background:transparent; border-style:dashed; }
+.chip.wave { color:var(--ink-faint); background:transparent; border-color:var(--line-strong); text-transform:none; }
+.tree-frame { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:12px 8px; overflow-x:auto; }
+.tree { min-width:760px; font-size:14.5px; }
+.node { display:flex; align-items:baseline; gap:8px; padding:3px 8px; border-radius:2px; }
+.node:hover { background:var(--surface-sunk); }
+.node.ready-agent { background:var(--signal-soft); }
+.node.ready-human { background:var(--gate-soft); }
+.node .sum { color:var(--ink-soft); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.node.done .sum { color:var(--ink-faint); text-decoration:line-through; text-decoration-color:var(--line-strong); }
+.kids { margin-left:14px; padding-left:14px; border-left:1px solid var(--line); }
+.refrow { padding:2px 8px; font-size:13px; color:var(--ink-faint); display:flex; align-items:baseline; gap:8px; }
+.waves { display:flex; gap:16px; overflow-x:auto; padding-bottom:8px; }
+.wave-col { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:10px; min-width:260px; }
+.wave-col h3 { margin:0 0 8px; font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint); }
+.flags { display:flex; flex-direction:column; gap:10px; }
+.flag { background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--gate); border-radius:var(--radius); padding:10px 16px; font-size:14.5px; color:var(--ink-soft); }
+.flag.ok { border-left-color:var(--done); } .flag.bad { border-left-color:var(--alert); }
+.updates { display:flex; flex-direction:column; gap:14px; }
+.update { background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--signal); border-radius:var(--radius); padding:10px 16px; }
+.update h3 { margin:0 0 4px; font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:500; letter-spacing:.06em; color:var(--ink-faint); }
+.update p { margin:0; font-size:14.5px; color:var(--ink-soft); }
+footer { border-top:1px solid var(--line); padding-top:18px; font-size:13px; color:var(--ink-faint); display:flex; flex-direction:column; gap:6px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <p class="eyebrow">{{.Project}} · snapshot {{.Snapshot}}</p>
+    <h1>{{.Title}}</h1>
+  </header>
+
+  <dl class="stats">
+    <div class="stat"><dt>In scope</dt><dd>{{.Stats.Scope}}</dd></div>
+    <div class="stat is-clean"><dt>Done</dt><dd>{{.Stats.Done}}</dd></div>
+    <div class="stat is-agent"><dt>Agent next</dt><dd>{{.Stats.ReadyAgent}}</dd></div>
+    <div class="stat is-human"><dt>Human next</dt><dd>{{.Stats.ReadyHuman}}</dd></div>
+    <div class="stat"><dt>Blocked</dt><dd>{{.Stats.Blocked}}</dd></div>
+    <div class="stat{{if eq .Stats.Cycles 0}} is-clean{{else}} is-alert{{end}}"><dt>Cycles</dt><dd>{{.Stats.Cycles}}</dd></div>
+    <div class="stat"><dt>Waves deep</dt><dd>{{.Stats.Waves}}</dd></div>
+  </dl>
+
+  <section>
+    <h2>Next up</h2>
+    <div class="next-grid">
+      <div class="next-card agent">
+        <h3>Agent next · {{len .NextAgent}}</h3>
+        <ul>{{range .NextAgent}}<li><span class="tkt">{{.ID}}</span><span>{{.Title}}</span></li>{{end}}</ul>
+      </div>
+      <div class="next-card human">
+        <h3>Human next · {{len .NextHuman}}</h3>
+        <ul>{{range .NextHuman}}<li><span class="tkt">{{.ID}}</span><span>{{.Title}}</span></li>{{end}}</ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The graph</h2>
+    {{if eq .Layout "waves"}}
+    <div class="waves">{{range .Waves}}<div class="wave-col"><h3>wave {{.Wave}}</h3>{{range .Nodes}}<div class="node {{.Class}}"><span class="tkt">{{.ID}}</span><span class="chip {{.Class}}">{{.ChipLabel}}</span>{{if .Milestone}}<span class="chip milestone">milestone</span>{{end}}{{if .Repo}}<span class="chip repo">{{.Repo}}</span>{{end}}<span class="sum">{{.Title}}</span></div>{{end}}</div>{{end}}</div>
+    {{else}}
+    <div class="tree-frame"><div class="tree">{{range .TreeRoots}}{{template "node" .}}{{end}}</div></div>
+    {{end}}
+  </section>
+
+  <section>
+    <h2>What the graph flags</h2>
+    <div class="flags">{{range .Flags}}<div class="flag{{if .OK}} ok{{else}} bad{{end}}">{{.Text}}</div>{{end}}</div>
+  </section>
+
+  {{if .Updates}}
+  <section>
+    <h2>Updates</h2>
+    <div class="updates">{{range .Updates}}<div class="update"><h3>{{.Time}}</h3><p>{{.Summary}}</p></div>{{end}}</div>
+  </section>
+  {{end}}
+
+  <footer>
+    <div>Computed by <code>factotum</code> from the project event log and task graph.</div>
+    <div>{{.Stats.Scope}} tasks · {{.Stats.Done}} done · {{.Stats.Blocked}} blocked · {{.Stats.Waves}} waves · snapshot {{.Snapshot}}</div>
+  </footer>
+</div>
+</body>
+</html>
+
+{{- define "node" -}}
+<div class="node {{.Class}}{{if .Milestone}} milestone{{end}}"><span class="tkt">{{.ID}}</span><span class="chip {{.Class}}">{{.ChipLabel}}</span>{{if .Milestone}}<span class="chip milestone">milestone</span>{{end}}{{if .Repo}}<span class="chip repo">{{.Repo}}</span>{{end}}{{if .Assignee}}<span class="chip assignee">{{.Assignee}}</span>{{end}}{{if .ShowWave}}<span class="chip wave">w{{.Wave}}</span>{{end}}<span class="sum">{{.Title}}</span></div>
+{{- range .Refs}}<div class="refrow">↳ <span class="tkt">{{.ID}}</span> <span class="chip {{.Class}}">{{.ChipLabel}}</span> <span class="refsum">{{.Title}}</span></div>{{end}}
+{{- if .Children}}<div class="kids">{{range .Children}}{{template "node" .}}{{end}}</div>{{end}}
+{{- end -}}

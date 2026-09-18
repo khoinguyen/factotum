@@ -1,0 +1,47 @@
+package cli
+
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/khoinguyen/factotum/pkg/core"
+)
+
+func newActorCommand(deps *Deps) *cobra.Command {
+	cmd := &cobra.Command{Use: "actor", Short: "Manage humans and agents"}
+
+	var kind string
+	add := &cobra.Command{
+		Use:   "add <name>",
+		Short: "Register a human or agent",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			actor, err := deps.Actors.Add(cmd.Context(), core.ActorKind(kind), args[0])
+			if err != nil {
+				return err
+			}
+			return deps.emit(actor, func() { deps.printf("%s\t%s\t%s\n", actor.ID, actor.Kind, actor.Name) })
+		},
+	}
+	add.Flags().StringVar(&kind, "kind", string(core.ActorHuman), "actor kind: human or agent")
+
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List registered actors",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			actors, err := deps.Actors.List(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return deps.emit(actors, func() {
+				rows := make([][]string, 0, len(actors))
+				for _, actor := range actors {
+					rows = append(rows, []string{string(actor.ID), string(actor.Kind), actor.Name})
+				}
+				deps.printTable([]string{"ID", "KIND", "NAME"}, rows)
+			})
+		},
+	}
+
+	cmd.AddCommand(add, list)
+	return cmd
+}

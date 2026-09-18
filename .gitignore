@@ -1,0 +1,16 @@
+# Built binaries
+/ft
+/factotum
+/dist/
+
+# Test and coverage artifacts
+*.test
+coverage.out
+
+# Local factotum state (config and data)
+/.factotum/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

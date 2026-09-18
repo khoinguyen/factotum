@@ -1,0 +1,47 @@
+[tools]
+go = "1.26.4"
+golangci-lint = "2.13.2"
+
+[tasks.fmt]
+description = "Format Go code"
+run = "gofmt -w . && golangci-lint fmt"
+
+[tasks.fmt-check]
+description = "Verify Go formatting (exit 1 when files need formatting)"
+run = """
+files=$(gofmt -l .)
+if [ -n "$files" ]; then
+  echo "unformatted files:"
+  echo "$files"
+  exit 1
+fi
+"""
+
+[tasks.lint]
+description = "Run linters"
+run = "golangci-lint run"
+
+[tasks.test]
+description = "Run tests with the race detector"
+run = "go test -race ./..."
+
+[tasks.cover]
+description = "Run tests and print total coverage"
+run = "go test -race -covermode=atomic -coverprofile=coverage.out ./... && go tool cover -func=coverage.out"
+
+[tasks.build]
+description = "Build the ft CLI"
+run = "go build -o ft ./cmd/factotum"
+
+[tasks.hooks]
+description = "Install the git pre-commit hook"
+run = """
+mkdir -p .git/hooks
+printf '#!/bin/sh\nset -e\nmise run fmt-check\nmise run lint\nmise run test\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+echo "installed .git/hooks/pre-commit"
+"""
+
+[tasks.ci]
+description = "Full check: format, lint, test, coverage, build"
+depends = ["fmt-check", "lint", "test", "cover", "build"]

@@ -131,6 +131,42 @@ func TestTaskReopenReturnsToTodo(t *testing.T) {
 	}
 }
 
+func TestTaskNextAllRanksAcrossProjects(t *testing.T) {
+	r := newRunner(t)
+	alpha := firstField(t, r.run("project", "create", "Alpha"))
+	beta := firstField(t, r.run("project", "create", "Beta"))
+	first := firstField(t, r.run("task", "add", "-p", alpha, "-t", "one"))
+	second := firstField(t, r.run("task", "add", "-p", beta, "-t", "two"))
+
+	out := r.run("task", "next", "--all")
+	if !strings.Contains(out, first) || !strings.Contains(out, second) {
+		t.Fatalf("task next --all should span projects:\n%s", out)
+	}
+	if out := r.run("task", "next", "-a"); !strings.Contains(out, first) || !strings.Contains(out, second) {
+		t.Fatalf("task next -a should span projects:\n%s", out)
+	}
+}
+
+func TestTaskNextRejectsProjectWithAll(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Alpha"))
+	stdout, stderr := r.runSplit("task", "next", "--all", "-p", projectID)
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("usage errors must not write stdout:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "Usage:") {
+		t.Fatalf("expected help when --all and --project combine:\n%s", stderr)
+	}
+}
+
+func TestTaskNextRequiresProjectOrAll(t *testing.T) {
+	r := newRunner(t)
+	_, stderr := r.runSplit("task", "next")
+	if !strings.Contains(stderr, "Usage:") {
+		t.Fatalf("expected help when neither --project nor --all is given:\n%s", stderr)
+	}
+}
+
 func TestTaskShowSuggestsBlockingDependency(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

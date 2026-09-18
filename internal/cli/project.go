@@ -19,7 +19,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 	create := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a project",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repos := make([]core.Repository, 0, len(repoSpecs))
 			for _, spec := range repoSpecs {
@@ -42,7 +42,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	create.Flags().StringVar(&description, "description", "", "project description")
-	create.Flags().StringArrayVar(&repoSpecs, "repo", nil, "repository: name | name=url | name=<k>,url=,path=,brief= (repeatable)")
+	create.Flags().StringArrayVarP(&repoSpecs, "repo", "r", nil, "repository: name | name=url | name=<k>,url=,path=,brief= (repeatable)")
 
 	list := &cobra.Command{
 		Use:   "list",
@@ -65,7 +65,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 	show := &cobra.Command{
 		Use:   "show <project>",
 		Short: "Show a project",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project, err := deps.Projects.Get(cmd.Context(), core.ProjectID(args[0]))
 			if err != nil {
@@ -86,7 +86,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 	rm := &cobra.Command{
 		Use:   "rm <project>",
 		Short: "Delete a project",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := deps.Projects.Delete(cmd.Context(), core.ProjectID(args[0])); err != nil {
 				return err
@@ -158,7 +158,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 	add := &cobra.Command{
 		Use:   "add <project> <name>",
 		Short: "Add a repository to a project",
-		Args:  cobra.ExactArgs(2),
+		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo := core.Repository{Name: args[1], URL: url, Path: path, Description: brief}
 			project, err := deps.Projects.AddRepo(cmd.Context(), core.ProjectID(args[0]), repo)
@@ -177,7 +177,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list <project>",
 		Short: "List a project's repositories",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project, err := deps.Projects.Get(cmd.Context(), core.ProjectID(args[0]))
 			if err != nil {
@@ -196,7 +196,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 	rm := &cobra.Command{
 		Use:   "rm <project> <name>",
 		Short: "Remove a repository from a project",
-		Args:  cobra.ExactArgs(2),
+		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project, err := deps.Projects.RemoveRepo(cmd.Context(), core.ProjectID(args[0]), args[1])
 			if err != nil {
@@ -216,7 +216,7 @@ func newProjectRepoUpdateCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <project> <name>",
 		Short: "Update a repository's URL, path, or brief",
-		Args:  cobra.ExactArgs(2),
+		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			patch := app.RepositoryUpdate{}
 			if cmd.Flags().Changed("url") {

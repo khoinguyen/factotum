@@ -95,7 +95,7 @@ func NewRoot(deps *Deps) *cobra.Command {
 		},
 	}
 
-	root.PersistentFlags().StringVar(&configPath, "config", "", "config file path (default .factotum/config.toml)")
+	root.PersistentFlags().StringVarP(&configPath, "config", "c", "", "config file path (default .factotum/config.toml)")
 	root.PersistentFlags().StringVar(&storeBackend, "store", "", "storage backend (overrides config)")
 	root.PersistentFlags().StringArrayVar(&storeOpts, "store-opt", nil, "backend option key=value (repeatable)")
 	root.PersistentFlags().StringVar(&actorRef, "actor", "", "actor attributed to mutations (id or name)")

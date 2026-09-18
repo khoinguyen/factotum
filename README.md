@@ -83,14 +83,22 @@ ft event list --project "$PID"
 | Assignment | `task assign --actor <ref>` / `--unassign` |
 | Status | `task start`, `review`, `done`, `reopen`, `block`, `cancel` |
 | Notes | `task note add --body ... [--link kind=url]` |
-| Ranking | `task next --project ... [--for <actor>] [--repo <name>] [--toward <task>] [--rank unblock\|milestone\|toward\|composite]` |
+| Ranking | `task next -p <project> \| -a/--all [--for <actor>] [--repo <name>] [--toward <task>] [--rank unblock\|milestone\|toward\|composite]` |
 | Milestone | `milestone create`, `milestone list`, `milestone done` |
 | Artifacts | `doc add --kind spec\|doc\|memory`, `doc list`, `doc search` |
 | Rendering | `graph render --format agent\|json\|tree\|html\|dot\|mermaid [--layout tree\|waves]` |
 | Audit | `event list` |
 
-Global flags: `--config`, `--store`, `--store-opt key=value`, `--actor`, `-o/--output text|json`,
+Global flags: `-c/--config`, `--store`, `--store-opt key=value`, `--actor`, `-o/--output text|json`,
 `--no-hints`.
+
+Common flags carry shorthands: `-p/--project`, `-t/--title`, `-b/--body`, `-r/--repo`, `-k/--kind`,
+`-s/--status`, `-d/--dep`, `-n/--limit`, and `-a` (`--all` on `task next`, `--actor` on `task
+assign`). `task next` takes either `-p/--project` or `-a/--all` (ready tasks across every project),
+never both.
+
+Invalid invocations (wrong argument count, or a missing required flag) print the command's help to
+stderr and exit with status `2`, instead of a terse one-line error.
 
 ## Next-step suggestions
 

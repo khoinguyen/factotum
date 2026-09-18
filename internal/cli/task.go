@@ -48,6 +48,9 @@ func newTaskAddCommand(deps *Deps) *cobra.Command {
 		Use:   "add",
 		Short: "Add a task or milestone",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireFlags(cmd, "project", "title"); err != nil {
+				return err
+			}
 			if bodyFile != "" {
 				data, err := os.ReadFile(bodyFile)
 				if err != nil {
@@ -84,18 +87,16 @@ func newTaskAddCommand(deps *Deps) *cobra.Command {
 			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Kind, task.Title) }, hints...)
 		},
 	}
-	add.Flags().StringVar(&projectID, "project", "", "project id (required)")
+	add.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
 	add.Flags().StringVar(&id, "id", "", "explicit task id (for imports)")
-	add.Flags().StringVar(&repo, "repo", "", "repository name within the project")
-	add.Flags().StringVar(&kind, "kind", string(core.KindTask), "task kind: task or milestone")
-	add.Flags().StringVar(&title, "title", "", "task title (required)")
-	add.Flags().StringVar(&body, "body", "", "task body (description)")
-	add.Flags().StringVar(&bodyFile, "body-file", "", "read the task body from a file")
+	add.Flags().StringVarP(&repo, "repo", "r", "", "repository name within the project")
+	add.Flags().StringVarP(&kind, "kind", "k", string(core.KindTask), "task kind: task or milestone")
+	add.Flags().StringVarP(&title, "title", "t", "", "task title (required)")
+	add.Flags().StringVarP(&body, "body", "b", "", "task body (description)")
+	add.Flags().StringVarP(&bodyFile, "body-file", "f", "", "read the task body from a file")
 	add.Flags().IntVar(&priority, "priority", 0, "task priority (higher is more important)")
 	add.Flags().StringArrayVar(&labels, "label", nil, "label (repeatable)")
-	add.Flags().StringArrayVar(&depIDs, "dep", nil, "dependency task id (repeatable)")
-	_ = add.MarkFlagRequired("project")
-	_ = add.MarkFlagRequired("title")
+	add.Flags().StringArrayVarP(&depIDs, "dep", "d", nil, "dependency task id (repeatable)")
 	return add
 }
 
@@ -131,10 +132,10 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 			}, taskListHints(tasks, projectID)...)
 		},
 	}
-	list.Flags().StringVar(&projectID, "project", "", "filter by project id")
-	list.Flags().StringVar(&repo, "repo", "", "filter by repository name")
-	list.Flags().StringArrayVar(&statuses, "status", nil, "filter by status (repeatable)")
-	list.Flags().StringArrayVar(&kinds, "kind", nil, "filter by kind")
+	list.Flags().StringVarP(&projectID, "project", "p", "", "filter by project id")
+	list.Flags().StringVarP(&repo, "repo", "r", "", "filter by repository name")
+	list.Flags().StringArrayVarP(&statuses, "status", "s", nil, "filter by status (repeatable)")
+	list.Flags().StringArrayVarP(&kinds, "kind", "k", nil, "filter by kind")
 	return list
 }
 
@@ -142,7 +143,7 @@ func newTaskShowCommand(deps *Deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <task>",
 		Short: "Show a task",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
 			if err != nil {
@@ -206,7 +207,7 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 	add := &cobra.Command{
 		Use:   "add <task> <depends-on>",
 		Short: "Add a dependency (rejects cycles)",
-		Args:  cobra.ExactArgs(2),
+		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := deps.Tasks.AddDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1])); err != nil {
 				return err
@@ -218,7 +219,7 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 	rm := &cobra.Command{
 		Use:   "rm <task> <depends-on>",
 		Short: "Remove a dependency",
-		Args:  cobra.ExactArgs(2),
+		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := deps.Tasks.RemoveDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1])); err != nil {
 				return err
@@ -238,7 +239,7 @@ func newTaskAssignCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "assign <task>",
 		Short: "Assign a task to an actor",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var actorID *core.ActorID
 			switch {
@@ -265,7 +266,7 @@ func newTaskAssignCommand(deps *Deps) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&actorRef, "actor", "", "actor id or name")
+	cmd.Flags().StringVarP(&actorRef, "actor", "a", "", "actor id or name")
 	cmd.Flags().BoolVar(&unassign, "unassign", false, "clear the assignee")
 	return cmd
 }
@@ -274,7 +275,7 @@ func statusCommand(deps *Deps, use string, status core.TaskStatus, short string)
 	return &cobra.Command{
 		Use:   use + " <task>",
 		Short: short,
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			task, err := deps.Tasks.SetStatus(cmd.Context(), core.TaskID(args[0]), status)
 			if err != nil {
@@ -295,8 +296,11 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 	add := &cobra.Command{
 		Use:   "add <task>",
 		Short: "Add a note to a task",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireFlags(cmd, "body"); err != nil {
+				return err
+			}
 			links := make([]core.Link, 0, len(linkSpecs))
 			for _, spec := range linkSpecs {
 				kind, url, ok := strings.Cut(spec, "=")
@@ -315,9 +319,8 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 			return nil
 		},
 	}
-	add.Flags().StringVar(&body, "body", "", "note body (required)")
+	add.Flags().StringVarP(&body, "body", "b", "", "note body (required)")
 	add.Flags().StringArrayVar(&linkSpecs, "link", nil, "link kind=url (repeatable)")
-	_ = add.MarkFlagRequired("body")
 
 	cmd.AddCommand(add)
 	return cmd
@@ -326,12 +329,22 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 func newTaskNextCommand(deps *Deps) *cobra.Command {
 	var projectID, forRef, repo, toward, rankerName string
 	var limit int
+	var all bool
 
 	cmd := &cobra.Command{
 		Use:   "next",
 		Short: "Rank the startable tasks",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			snapshot, err := app.LoadSnapshot(cmd.Context(), deps.Backend, core.ProjectID(projectID))
+			if err := requireOneOf(cmd, "project", "all"); err != nil {
+				return err
+			}
+			var snapshot *app.Snapshot
+			var err error
+			if all {
+				snapshot, err = app.LoadAllSnapshot(cmd.Context(), deps.Backend)
+			} else {
+				snapshot, err = app.LoadSnapshot(cmd.Context(), deps.Backend, core.ProjectID(projectID))
+			}
 			if err != nil {
 				return err
 			}
@@ -368,6 +381,10 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 					top = &task
 				}
 			}
+			hintProject := projectID
+			if all && top != nil {
+				hintProject = string(top.ProjectID)
+			}
 			return deps.emit(scored, func() {
 				rows := make([][]string, 0, len(scored))
 				for _, entry := range scored {
@@ -375,16 +392,16 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 					rows = append(rows, []string{fmt.Sprintf("%.2f", entry.Score), string(entry.TaskID), task.Title})
 				}
 				deps.printTable([]string{"SCORE", "TASK", "TITLE"}, rows)
-			}, taskNextHints(projectID, top)...)
+			}, taskNextHints(hintProject, top)...)
 		},
 	}
-	cmd.Flags().StringVar(&projectID, "project", "", "project id (required)")
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "project id (required unless --all)")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "rank ready tasks across all projects")
 	cmd.Flags().StringVar(&forRef, "for", "", "restrict to an actor (id or name)")
-	cmd.Flags().StringVar(&repo, "repo", "", "restrict to a repository name")
+	cmd.Flags().StringVarP(&repo, "repo", "r", "", "restrict to a repository name")
 	cmd.Flags().StringVar(&toward, "toward", "", "prefer tasks on the path to this task")
 	cmd.Flags().StringVar(&rankerName, "rank", "composite", "ranker: composite, unblock, milestone, or toward")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 0, "maximum number of tasks (0 means all)")
-	_ = cmd.MarkFlagRequired("project")
 	return cmd
 }
 
@@ -392,7 +409,7 @@ func newTaskRmCommand(deps *Deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "rm <task>",
 		Short: "Delete a task",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
 			if err != nil {
@@ -415,7 +432,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <task>",
 		Short: "Update a task's fields",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			patch := app.TaskUpdate{}
 			if cmd.Flags().Changed("kind") {
@@ -453,12 +470,12 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 				hint{Command: fmt.Sprintf("ft task show %s", task.ID), About: "inspect the updated task"})
 		},
 	}
-	cmd.Flags().StringVar(&title, "title", "", "task title")
-	cmd.Flags().StringVar(&kind, "kind", "", "task kind: task or milestone")
-	cmd.Flags().StringVar(&body, "body", "", "task body (description)")
-	cmd.Flags().StringVar(&bodyFile, "body-file", "", "read the task body from a file")
+	cmd.Flags().StringVarP(&title, "title", "t", "", "task title")
+	cmd.Flags().StringVarP(&kind, "kind", "k", "", "task kind: task or milestone")
+	cmd.Flags().StringVarP(&body, "body", "b", "", "task body (description)")
+	cmd.Flags().StringVarP(&bodyFile, "body-file", "f", "", "read the task body from a file")
 	cmd.Flags().IntVar(&priority, "priority", 0, "task priority")
-	cmd.Flags().StringVar(&repo, "repo", "", "repository name within the project")
+	cmd.Flags().StringVarP(&repo, "repo", "r", "", "repository name within the project")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "label (repeatable; replaces existing)")
 	return cmd
 }

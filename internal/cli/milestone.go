@@ -18,6 +18,9 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 		Use:   "create",
 		Short: "Create a milestone",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireFlags(cmd, "project", "title"); err != nil {
+				return err
+			}
 			task, err := deps.Tasks.Add(cmd.Context(), app.TaskInput{
 				ProjectID:   core.ProjectID(projectID),
 				Kind:        core.KindMilestone,
@@ -32,11 +35,9 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 				hint{Command: fmt.Sprintf("ft milestone list --project %s", task.ProjectID), About: "see all milestones"})
 		},
 	}
-	create.Flags().StringVar(&projectID, "project", "", "project id (required)")
-	create.Flags().StringVar(&title, "title", "", "milestone title (required)")
+	create.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
+	create.Flags().StringVarP(&title, "title", "t", "", "milestone title (required)")
 	create.Flags().StringVar(&description, "description", "", "milestone description")
-	_ = create.MarkFlagRequired("project")
-	_ = create.MarkFlagRequired("title")
 
 	var listProject string
 	list := &cobra.Command{
@@ -57,12 +58,12 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 			}, milestoneListHints(listProject, tasks)...)
 		},
 	}
-	list.Flags().StringVar(&listProject, "project", "", "filter by project id")
+	list.Flags().StringVarP(&listProject, "project", "p", "", "filter by project id")
 
 	done := &cobra.Command{
 		Use:   "done <milestone>",
 		Short: "Mark a milestone done (unblocks dependents)",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			task, err := deps.Tasks.SetStatus(cmd.Context(), core.TaskID(args[0]), core.StatusDone)
 			if err != nil {

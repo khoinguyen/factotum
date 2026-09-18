@@ -210,6 +210,39 @@ func TestAssignAndReadyByActor(t *testing.T) {
 	}
 }
 
+func TestLoadAllSnapshotMergesProjects(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	alpha, err := h.projects.Create(ctx, "Alpha", "", nil)
+	if err != nil {
+		t.Fatalf("Create(alpha) error = %v", err)
+	}
+	beta, err := h.projects.Create(ctx, "Beta", "", nil)
+	if err != nil {
+		t.Fatalf("Create(beta) error = %v", err)
+	}
+	first, _ := h.tasks.Add(ctx, TaskInput{ProjectID: alpha.ID, Title: "first"})
+	second, _ := h.tasks.Add(ctx, TaskInput{ProjectID: beta.ID, Title: "second"})
+
+	snapshot, err := LoadAllSnapshot(ctx, h.backend)
+	if err != nil {
+		t.Fatalf("LoadAllSnapshot() error = %v", err)
+	}
+	if snapshot.Project != nil {
+		t.Fatalf("Project = %v, want nil", snapshot.Project)
+	}
+	if len(snapshot.Tasks) != 2 {
+		t.Fatalf("Tasks = %d, want 2", len(snapshot.Tasks))
+	}
+	ready := map[core.TaskID]bool{}
+	for _, id := range snapshot.Ready.Human {
+		ready[id] = true
+	}
+	if !ready[first.ID] || !ready[second.ID] {
+		t.Fatalf("Ready.Human = %v, want both %s and %s", snapshot.Ready.Human, first.ID, second.ID)
+	}
+}
+
 func TestActorIDIsSlugOfName(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

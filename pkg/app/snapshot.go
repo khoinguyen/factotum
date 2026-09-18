@@ -55,3 +55,37 @@ func LoadSnapshot(ctx context.Context, backend store.Backend, projectID core.Pro
 		Ready:   built.ReadyByActor(actorMap),
 	}, nil
 }
+
+// LoadAllSnapshot merges every project's tasks into a single graph for
+// cross-project queries such as ranking. Snapshot.Project is nil; the default
+// resolution policy is used.
+func LoadAllSnapshot(ctx context.Context, backend store.Backend) (*Snapshot, error) {
+	tasks, err := backend.Tasks().List(ctx, store.TaskFilter{})
+	if err != nil {
+		return nil, err
+	}
+	actors, err := backend.Actors().List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actorMap := make(map[core.ActorID]core.Actor, len(actors))
+	for _, actor := range actors {
+		actorMap[actor.ID] = *actor
+	}
+
+	copied := make([]core.Task, 0, len(tasks))
+	for _, task := range tasks {
+		copied = append(copied, *task)
+	}
+	built, err := graph.New(copied, core.DefaultResolutionPolicy())
+	if err != nil {
+		return nil, fmt.Errorf("build graph: %w", err)
+	}
+
+	return &Snapshot{
+		Tasks:  tasks,
+		Actors: actorMap,
+		Graph:  built,
+		Ready:  built.ReadyByActor(actorMap),
+	}, nil
+}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ func (r *runner) runSplit(args ...string) (string, string) {
 	root.SetArgs(append([]string{"--store", "jsonfile", "--store-opt", "path=" + r.path}, args...))
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
-	if err := root.Execute(); err != nil {
+	if err := root.Execute(); err != nil && !errors.Is(err, ErrUsage) {
 		r.t.Fatalf("execute %v: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
 	}
 	r.lastOut, r.lastErr = stdout.String(), stderr.String()

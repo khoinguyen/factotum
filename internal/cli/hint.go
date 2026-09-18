@@ -191,6 +191,12 @@ func taskListHints(tasks []*core.Task, projectID string) []hint {
 
 func taskNextHints(projectID string, top *core.Task) []hint {
 	if top == nil {
+		if projectID == "" {
+			return []hint{
+				{Command: "ft project list", About: "review your projects"},
+				{Command: `ft task add --project <project> --title "..."`, About: "add a task"},
+			}
+		}
 		return []hint{
 			{Command: fmt.Sprintf("ft task add --project %s --title \"...\"", projectID), About: "add the first task"},
 			{Command: fmt.Sprintf("ft task list --project %s", projectID), About: "review the graph"},

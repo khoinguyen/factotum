@@ -19,6 +19,9 @@ func newDocCommand(deps *Deps) *cobra.Command {
 		Use:   "add",
 		Short: "Add an artifact (spec, doc, or memory)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireFlags(cmd, "project", "title"); err != nil {
+				return err
+			}
 			content := body
 			if path != "" {
 				data, err := os.ReadFile(path)
@@ -47,14 +50,12 @@ func newDocCommand(deps *Deps) *cobra.Command {
 				hint{Command: `ft doc search "<query>"`, About: "search titles and bodies"})
 		},
 	}
-	add.Flags().StringVar(&projectID, "project", "", "project id (required)")
-	add.Flags().StringVar(&kind, "kind", string(core.ArtifactDoc), "artifact kind: spec, doc, or memory")
-	add.Flags().StringVar(&title, "title", "", "artifact title (required)")
-	add.Flags().StringVar(&body, "body", "", "inline content")
-	add.Flags().StringVar(&path, "file", "", "read content from a file")
+	add.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
+	add.Flags().StringVarP(&kind, "kind", "k", string(core.ArtifactDoc), "artifact kind: spec, doc, or memory")
+	add.Flags().StringVarP(&title, "title", "t", "", "artifact title (required)")
+	add.Flags().StringVarP(&body, "body", "b", "", "inline content")
+	add.Flags().StringVarP(&path, "file", "f", "", "read content from a file")
 	add.Flags().StringVar(&taskID, "task", "", "attach to a task")
-	_ = add.MarkFlagRequired("project")
-	_ = add.MarkFlagRequired("title")
 
 	var listProject, listKind string
 	list := &cobra.Command{
@@ -79,14 +80,14 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			}, docListHints(listProject)...)
 		},
 	}
-	list.Flags().StringVar(&listProject, "project", "", "filter by project id")
-	list.Flags().StringVar(&listKind, "kind", "", "filter by kind")
+	list.Flags().StringVarP(&listProject, "project", "p", "", "filter by project id")
+	list.Flags().StringVarP(&listKind, "kind", "k", "", "filter by kind")
 
 	var searchProject string
 	search := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search artifact titles and bodies",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			artifacts, err := deps.Artifacts.Search(cmd.Context(), core.ProjectID(searchProject), args[0])
 			if err != nil {
@@ -101,7 +102,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			}, docSearchHints(searchProject)...)
 		},
 	}
-	search.Flags().StringVar(&searchProject, "project", "", "filter by project id")
+	search.Flags().StringVarP(&searchProject, "project", "p", "", "filter by project id")
 
 	cmd.AddCommand(add, list, search)
 	return cmd

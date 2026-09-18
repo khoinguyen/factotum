@@ -39,9 +39,9 @@ func newEventCommand(deps *Deps) *cobra.Command {
 			}, eventListHints(projectID, taskID)...)
 		},
 	}
-	list.Flags().StringVar(&projectID, "project", "", "filter by project id")
-	list.Flags().StringVar(&taskID, "task", "", "filter by task id")
-	list.Flags().StringArrayVar(&kinds, "kind", nil, "filter by event kind (repeatable)")
+	list.Flags().StringVarP(&projectID, "project", "p", "", "filter by project id")
+	list.Flags().StringVarP(&taskID, "task", "t", "", "filter by task id")
+	list.Flags().StringArrayVarP(&kinds, "kind", "k", nil, "filter by event kind (repeatable)")
 	list.Flags().IntVarP(&limit, "limit", "n", 20, "maximum number of events")
 
 	cmd.AddCommand(list)

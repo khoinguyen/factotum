@@ -182,17 +182,47 @@ Never edit a database by hand; go through `ft`. `-c/--config` selects the projec
 `--user-config` the machine file, and `--project`/`-p` an explicit project. Set `--no-hints` (or
 `FACTOTUM_NO_HINTS=1`) to silence suggestions, and use `-o json` for machine-readable output.
 
-## Commits
+## Branches, commits, and pull requests
 
-Commit after **every meaningful unit of work**, not as a batch at the end:
+`main` is protected: **never commit to it directly.** Every new feature or non-related bug fix
+starts on its own branch and lands via a PR against `main`.
 
-1. Develop test-first and get `mise run ci` green.
-2. Inspect `git status` and `git diff`; stage only intended files. Never commit `ft`,
-   `coverage.out`, or `*.db`; `.factotum/config.toml` is intentionally committable.
-3. Write a concise subject in the imperative mood, with a short body explaining *why* when it is
-   not obvious.
+Name branches by intent, kebab-case:
+
+```sh
+feat/task-next-all
+fix/usage-error-help
+docs/agents-pr-workflow
+refactor/config-scopes
+test/store-conformance
+chore/mise-pins
+```
+
+Workflow:
+
+1. Branch from up-to-date `main` (`git switch main && git pull && git switch -c feat/...`).
+2. Develop test-first and get `mise run ci` green.
+3. Commit after **every meaningful unit** (not one big batch): imperative subject, and a short
+   body explaining *why* when it is not obvious.
 4. Include the matching `ft` graph changes (statuses, notes, new tasks/milestones) in the same
    commit.
+5. Push the branch and open a PR against `main` with `gh pr create`.
 
-Do not amend, force-push, push, or open pull requests unless asked.
+Never commit `ft`, `coverage.out`, or `*.db`; `.factotum/config.toml` is intentionally
+committable. Do not amend a merged commit, and never force-push a shared branch.
+
+### PR body
+
+Concise and easy to digest: short phrases, no walls of text. Cover, in order:
+
+- **Intention** — what this PR does and why, in one or two sentences.
+- **Fit** — where it lands in the existing system (packages, ports, command surface).
+- **Risks** — what could break and the blast radius.
+- **Reviewer focus** — the few things a human should scrutinize most.
+- **Tests** — the scenarios added or exercised, and how to run them.
+- **Relaxed tests** — any test weakened or skipped, and why (none is the norm).
+- **Breaking change?** — yes/no; if yes, what callers must change.
+
+Reference the `ft` task in the body so the PR and the graph stay linked.
+
 

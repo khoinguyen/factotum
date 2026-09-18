@@ -16,6 +16,7 @@ const DefaultPath = ".factotum/config.toml"
 type Config struct {
 	Store        Store  `toml:"store"`
 	DefaultActor string `toml:"default_actor"`
+	NoHints      bool   `toml:"no_hints"`
 }
 
 type Store struct {
@@ -57,6 +58,9 @@ func (c *Config) ApplyEnv(getenv func(string) string) {
 	if value := getenv("FACTOTUM_DEFAULT_ACTOR"); value != "" {
 		c.DefaultActor = value
 	}
+	if truthy(getenv("FACTOTUM_NO_HINTS")) {
+		c.NoHints = true
+	}
 	if raw := getenv("FACTOTUM_STORE_OPTS"); raw != "" {
 		if c.Store.Options == nil {
 			c.Store.Options = map[string]string{}
@@ -80,4 +84,14 @@ func (c Config) Validate() error {
 		return fmt.Errorf("store backend is required")
 	}
 	return nil
+}
+
+// truthy reports whether an environment value means "on".
+func truthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

@@ -32,7 +32,8 @@ go build -o ft ./cmd/factotum
 - **Project** — spans many repositories. Each repository carries a name, optional URL, local
   path, and a **brief** describing its purpose (`--repo name=<k>,url=,path=,brief=`), managed
   with `project repo add|list|update|rm`.
-- **Actor** — a human or an agent, registered once and referenced by ID or name.
+- **Actor** — a human or an agent, registered once and referenced by ID or name. The ID is the
+  slug of the name (`Khoi` → `khoi`, `Claude Code` → `claude-code`).
 - **Task** — a unit of work with a body (`--body` or `--body-file`), dependencies, status, an
   optional **repository** (`--repo <name>`, one of the project's repos), assignee, waiting-on,
   notes, and labels.
@@ -80,7 +81,7 @@ ft event list --project "$PID"
 | Task | `task add --repo <name>`, `task list --repo <name>`, `task show`, `task update`, `task rm` |
 | Dependencies | `task dep add`, `task dep rm` (cycles are rejected) |
 | Assignment | `task assign --actor <ref>` / `--unassign` |
-| Status | `task start`, `review`, `done`, `block`, `cancel` |
+| Status | `task start`, `review`, `done`, `reopen`, `block`, `cancel` |
 | Notes | `task note add --body ... [--link kind=url]` |
 | Ranking | `task next --project ... [--for <actor>] [--repo <name>] [--toward <task>] [--rank unblock\|milestone\|toward\|composite]` |
 | Milestone | `milestone create`, `milestone list`, `milestone done` |
@@ -88,7 +89,30 @@ ft event list --project "$PID"
 | Rendering | `graph render --format agent\|json\|tree\|html\|dot\|mermaid [--layout tree\|waves]` |
 | Audit | `event list` |
 
-Global flags: `--config`, `--store`, `--store-opt key=value`, `--actor`, `-o/--output text|json`.
+Global flags: `--config`, `--store`, `--store-opt key=value`, `--actor`, `-o/--output text|json`,
+`--no-hints`.
+
+## Next-step suggestions
+
+After text output, `ft` prints a short `Next:` block of natural follow-up commands to **stderr**, so
+pipes and redirections stay clean:
+
+```sh
+$ ft task show APS-10803
+(todo) APS-10803: Executor loop + reaper (multi-replica, SKIP LOCKED claims)
+repo: backend
+assignee: (agent) agent
+...
+
+Next:
+  ft task start APS-10803                   begin work
+  ft task assign APS-10803 --actor <actor>  claim it (see ft actor list)
+```
+
+Suggestions are context-aware: `task next` points at `task show` for the top task, `task show`
+points at the next status transition (or at a blocking dependency when one is unmet), and mutations
+point at the relevant inspection command. They are suppressed for `-o json`, by `--no-hints`, by
+`FACTOTUM_NO_HINTS=1`, or by `no_hints = true` in the config file.
 
 ## Storage backends
 

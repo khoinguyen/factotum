@@ -26,8 +26,17 @@ func (s *ActorService) Add(ctx context.Context, kind core.ActorKind, name string
 		return nil, err
 	}
 
+	id := core.ActorID(Slug(name))
+	if id == "" {
+		id = core.ActorID(s.ids.NewID("act"))
+	} else if _, err := s.backend.Actors().Get(ctx, id); err == nil {
+		return nil, fmt.Errorf("%w: actor id %q", core.ErrAlreadyExists, id)
+	} else if !errors.Is(err, core.ErrNotFound) {
+		return nil, err
+	}
+
 	actor := &core.Actor{
-		ID:        core.ActorID(s.ids.NewID("act")),
+		ID:        id,
 		Kind:      kind,
 		Name:      name,
 		Active:    true,

@@ -33,7 +33,12 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(project, func() { deps.printf("%s\t%s\n", project.ID, project.Name) })
+			hints := []hint{
+				{Command: fmt.Sprintf("ft project show %s", project.ID), About: "inspect the project"},
+				{Command: fmt.Sprintf("ft project repo add %s <name>", project.ID), About: "register a repository"},
+				{Command: fmt.Sprintf("ft task add --project %s --title \"...\"", project.ID), About: "add the first task"},
+			}
+			return deps.emit(project, func() { deps.printf("%s\t%s\n", project.ID, project.Name) }, hints...)
 		},
 	}
 	create.Flags().StringVar(&description, "description", "", "project description")
@@ -53,7 +58,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 					rows = append(rows, []string{string(project.ID), project.Name, strconv.Itoa(len(project.Repos))})
 				}
 				deps.printTable([]string{"ID", "NAME", "REPOS"}, rows)
-			})
+			}, projectListHints(projects)...)
 		},
 	}
 
@@ -74,7 +79,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 				for _, repo := range project.Repos {
 					deps.printf("repo: %s\t%s\t%s\t%s\n", repo.Name, repo.Description, repo.Path, repo.URL)
 				}
-			})
+			}, projectShowHints(project)...)
 		},
 	}
 
@@ -83,7 +88,11 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 		Short: "Delete a project",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return deps.Projects.Delete(cmd.Context(), core.ProjectID(args[0]))
+			if err := deps.Projects.Delete(cmd.Context(), core.ProjectID(args[0])); err != nil {
+				return err
+			}
+			deps.suggest(hint{Command: "ft project list", About: "review the remaining projects"})
+			return nil
 		},
 	}
 
@@ -156,7 +165,9 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(project, func() { deps.printf("added\t%s\t%s\n", repo.Name, project.ID) })
+			return deps.emit(project, func() { deps.printf("added\t%s\t%s\n", repo.Name, project.ID) },
+				hint{Command: fmt.Sprintf("ft task add --project %s --repo %s --title \"...\"", project.ID, repo.Name), About: "add a task in this repo"},
+				hint{Command: fmt.Sprintf("ft project show %s", project.ID), About: "inspect the project"})
 		},
 	}
 	add.Flags().StringVar(&url, "url", "", "repository URL")
@@ -178,7 +189,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 					rows = append(rows, []string{repo.Name, repo.Description, repo.Path, repo.URL})
 				}
 				deps.printTable([]string{"NAME", "BRIEF", "PATH", "URL"}, rows)
-			})
+			}, projectRepoHints(project)...)
 		},
 	}
 
@@ -187,8 +198,12 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 		Short: "Remove a repository from a project",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := deps.Projects.RemoveRepo(cmd.Context(), core.ProjectID(args[0]), args[1])
-			return err
+			project, err := deps.Projects.RemoveRepo(cmd.Context(), core.ProjectID(args[0]), args[1])
+			if err != nil {
+				return err
+			}
+			deps.suggest(hint{Command: fmt.Sprintf("ft project show %s", project.ID), About: "see the updated project"})
+			return nil
 		},
 	}
 
@@ -217,7 +232,8 @@ func newProjectRepoUpdateCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(project, func() { deps.printf("updated\t%s\t%s\n", args[1], project.ID) })
+			return deps.emit(project, func() { deps.printf("updated\t%s\t%s\n", args[1], project.ID) },
+				hint{Command: fmt.Sprintf("ft project repo list %s", project.ID), About: "see all repositories"})
 		},
 	}
 	cmd.Flags().StringVar(&url, "url", "", "repository URL")

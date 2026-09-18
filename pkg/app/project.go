@@ -95,9 +95,9 @@ func (s *ProjectService) Update(ctx context.Context, id core.ProjectID, patch Pr
 	return project, nil
 }
 
-// Slug converts a project name into an ID: lowercased, with runs of
-// non-alphanumeric characters collapsed to single dashes and trimmed. Returns
-// an empty string when the name has no alphanumeric characters.
+// Slug converts a name into an ID: lowercased, with runs of non-alphanumeric
+// characters collapsed to single dashes and trimmed. Returns an empty string
+// when the name has no alphanumeric characters.
 func Slug(name string) string {
 	var b strings.Builder
 	dash := false

@@ -210,6 +210,47 @@ func TestAssignAndReadyByActor(t *testing.T) {
 	}
 }
 
+func TestActorIDIsSlugOfName(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	actor, err := h.actors.Add(ctx, core.ActorAgent, "Claude Code")
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if actor.ID != "claude-code" {
+		t.Fatalf("actor ID = %q, want claude-code", actor.ID)
+	}
+	resolved, err := h.actors.Resolve(ctx, "claude-code")
+	if err != nil {
+		t.Fatalf("Resolve(claude-code) error = %v", err)
+	}
+	if resolved.ID != actor.ID {
+		t.Fatalf("Resolve().ID = %q, want %q", resolved.ID, actor.ID)
+	}
+}
+
+func TestActorIDFallsBackWhenNameHasNoSlug(t *testing.T) {
+	h := newHarness(t)
+	actor, err := h.actors.Add(context.Background(), core.ActorHuman, "!!!")
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if actor.ID == "" || actor.ID == "!!!" {
+		t.Fatalf("actor ID = %q, want a generated fallback", actor.ID)
+	}
+}
+
+func TestActorSlugCollisionRejected(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.actors.Add(ctx, core.ActorAgent, "Claude Code"); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if _, err := h.actors.Add(ctx, core.ActorAgent, "claude-code"); !errors.Is(err, core.ErrAlreadyExists) {
+		t.Fatalf("Add() collision error = %v, want ErrAlreadyExists", err)
+	}
+}
+
 func TestActorNamesAreUnique(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

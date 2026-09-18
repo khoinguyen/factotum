@@ -79,6 +79,48 @@ Rules:
   not hardcoded into core.
 - Every backend must pass `pkg/store/conformance`; that suite is the definition of a backend.
 
+## Search and navigation tooling
+
+Prefer `rg`, `fd`, and `ast-grep` over `grep`/`find`/`sed`. They respect `.gitignore`, are much
+faster, and understand Go syntax. Use them before reaching for ad-hoc scripts.
+
+### ripgrep (`rg`) — content search
+
+```sh
+rg 'func \(s \*TaskService\)' pkg/app            # methods on a type (note the escaped parens)
+rg -t go 'ResolutionPolicy'                      # Go files only
+rg -l 'StatusReadyForReview'                     # list matching files
+rg -C 3 'wouldCycle' pkg/app/task.go             # 3 lines of context
+rg -U 'func.*\{\n(?:.*\n)*?\}' -t go pkg/app    # multiline pattern (-U)
+rg --files-with-matches --glob '!*_test.go' 'AddDep'
+rg -o 'core\.Status[A-Za-z]+' pkg | sort -u      # extract distinct tokens
+rg --stats 'TODO|FIXME'                          # match count summary
+```
+
+### fd — file discovery
+
+```sh
+fd -e go -x gofmt -l                             # find unformatted Go files
+fd 'template' pkg/render                         # filename matching (regex, smart case)
+fd -e go -t f . internal/cli                     # files only under a path
+fd -e go -x golangci-lint run --fix             # run a command on matches (-x)
+fd -H -I '\.db$' .factotum                       # include hidden/ignored
+fd . -e go --changed-within 1d                    # recently modified
+```
+
+### ast-grep (`ast-grep`/`sg`) — structural Go search and rewrite
+
+```sh
+sg run -p 'fmt.Sprintf($$$)' -l go               # find calls structurally ($$$ = any args)
+sg run -p 'if err != nil { return err }' -l go   # exact shape, ignoring formatting
+sg run -p 'return deps.emit($V, $F)' -l go internal/cli  # capture metavariables
+sg run -p 'deps.printf($$$)' -l go internal/cli --rewrite 'deps.printf($$$)'  # dry-run rewrite
+sg run -p '$X.Tasks.Get($CTX, $ID)' -l go        # who calls Get
+sg scan -r sgconfig.yml                           # run project rules (if configured)
+```
+
+`sg` rewrites in place with `--update-all`; review the diff first.
+
 ## Conventions
 
 - Go standard formatting, enforced by `gofmt`/`goimports`.

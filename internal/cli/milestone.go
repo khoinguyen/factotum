@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/khoinguyen/factotum/pkg/app"
@@ -25,7 +27,9 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() { deps.printf("%s\t%s\n", task.ID, task.Title) })
+			return deps.emit(task, func() { deps.printf("%s\t%s\n", task.ID, task.Title) },
+				hint{Command: fmt.Sprintf("ft task dep add <task> %s", task.ID), About: "gate a task behind this milestone"},
+				hint{Command: fmt.Sprintf("ft milestone list --project %s", task.ProjectID), About: "see all milestones"})
 		},
 	}
 	create.Flags().StringVar(&projectID, "project", "", "project id (required)")
@@ -50,7 +54,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 					rows = append(rows, []string{string(task.ID), string(task.Status), task.Title})
 				}
 				deps.printTable([]string{"ID", "STATUS", "TITLE"}, rows)
-			})
+			}, milestoneListHints(listProject, tasks)...)
 		},
 	}
 	list.Flags().StringVar(&listProject, "project", "", "filter by project id")
@@ -65,6 +69,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			deps.printf("%s\t%s\n", task.ID, task.Status)
+			deps.suggest(deps.taskShowHints(cmd.Context(), task)...)
 			return nil
 		},
 	}

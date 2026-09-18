@@ -16,6 +16,7 @@ type runner struct {
 	t       *testing.T
 	path    string
 	lastOut string
+	lastErr string
 }
 
 func newRunner(t *testing.T) *runner {
@@ -25,19 +26,26 @@ func newRunner(t *testing.T) *runner {
 
 func (r *runner) run(args ...string) string {
 	r.t.Helper()
-	var out bytes.Buffer
-	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &out, &out, nil)
+	out, _ := r.runSplit(args...)
+	return out
+}
+
+// runSplit executes a command and returns stdout and stderr separately.
+func (r *runner) runSplit(args ...string) (string, string) {
+	r.t.Helper()
+	var stdout, stderr bytes.Buffer
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &stdout, &stderr, nil)
 	builtins.RegisterAll(deps.StoreFactories)
 
 	root := NewRoot(deps)
 	root.SetArgs(append([]string{"--store", "jsonfile", "--store-opt", "path=" + r.path}, args...))
-	root.SetOut(&out)
-	root.SetErr(&out)
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
 	if err := root.Execute(); err != nil {
-		r.t.Fatalf("execute %v: %v\n%s", args, err, out.String())
+		r.t.Fatalf("execute %v: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
 	}
-	r.lastOut = out.String()
-	return r.lastOut
+	r.lastOut, r.lastErr = stdout.String(), stderr.String()
+	return r.lastOut, r.lastErr
 }
 
 func firstField(t *testing.T, out string) string {

@@ -42,7 +42,9 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(artifact, func() { deps.printf("%s\t%s\t%s\n", artifact.ID, artifact.Kind, artifact.Title) })
+			return deps.emit(artifact, func() { deps.printf("%s\t%s\t%s\n", artifact.ID, artifact.Kind, artifact.Title) },
+				hint{Command: fmt.Sprintf("ft doc list --project %s", artifact.ProjectID), About: "see all artifacts"},
+				hint{Command: `ft doc search "<query>"`, About: "search titles and bodies"})
 		},
 	}
 	add.Flags().StringVar(&projectID, "project", "", "project id (required)")
@@ -74,7 +76,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 					rows = append(rows, []string{string(artifact.ID), string(artifact.Kind), artifact.Title})
 				}
 				deps.printTable([]string{"ID", "KIND", "TITLE"}, rows)
-			})
+			}, docListHints(listProject)...)
 		},
 	}
 	list.Flags().StringVar(&listProject, "project", "", "filter by project id")
@@ -96,7 +98,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 					rows = append(rows, []string{string(artifact.ID), string(artifact.Kind), artifact.Title})
 				}
 				deps.printTable([]string{"ID", "KIND", "TITLE"}, rows)
-			})
+			}, docSearchHints(searchProject)...)
 		},
 	}
 	search.Flags().StringVar(&searchProject, "project", "", "filter by project id")

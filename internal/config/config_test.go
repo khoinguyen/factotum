@@ -64,6 +64,8 @@ func TestApplyEnvOverrides(t *testing.T) {
 			return "codex"
 		case "FACTOTUM_STORE_OPTS":
 			return "path=/tmp/x.db, cache=shared"
+		case "FACTOTUM_NO_HINTS":
+			return "1"
 		default:
 			return ""
 		}
@@ -76,6 +78,24 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 	if cfg.Store.Options["path"] != "/tmp/x.db" || cfg.Store.Options["cache"] != "shared" {
 		t.Fatalf("Options = %v", cfg.Store.Options)
+	}
+	if !cfg.NoHints {
+		t.Fatal("NoHints = false, want true")
+	}
+}
+
+func TestApplyEnvNoHintsFalsey(t *testing.T) {
+	for _, value := range []string{"", "0", "false", "no"} {
+		cfg := Default()
+		cfg.ApplyEnv(func(key string) string {
+			if key == "FACTOTUM_NO_HINTS" {
+				return value
+			}
+			return ""
+		})
+		if cfg.NoHints {
+			t.Fatalf("FACTOTUM_NO_HINTS=%q set NoHints", value)
+		}
 	}
 }
 

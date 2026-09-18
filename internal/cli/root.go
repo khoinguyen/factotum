@@ -36,6 +36,7 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 func NewRoot(deps *Deps) *cobra.Command {
 	var configPath, storeBackend, actorRef, output string
 	var storeOpts []string
+	var noHints bool
 
 	root := &cobra.Command{
 		Use:           "ft",
@@ -67,6 +68,10 @@ func NewRoot(deps *Deps) *cobra.Command {
 				deps.ActorRef = cfg.DefaultActor
 			}
 			deps.OutputJSON = output == "json"
+			if noHints {
+				cfg.NoHints = true
+			}
+			deps.NoHints = cfg.NoHints
 			if err := cfg.Validate(); err != nil {
 				return err
 			}
@@ -95,6 +100,7 @@ func NewRoot(deps *Deps) *cobra.Command {
 	root.PersistentFlags().StringArrayVar(&storeOpts, "store-opt", nil, "backend option key=value (repeatable)")
 	root.PersistentFlags().StringVar(&actorRef, "actor", "", "actor attributed to mutations (id or name)")
 	root.PersistentFlags().StringVarP(&output, "output", "o", "text", "output format: text or json")
+	root.PersistentFlags().BoolVar(&noHints, "no-hints", false, "suppress next-step command suggestions")
 
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
@@ -132,10 +138,11 @@ func (d *Deps) printJSON(value any) error {
 	return encoder.Encode(value)
 }
 
-func (d *Deps) emit(value any, text func()) error {
+func (d *Deps) emit(value any, text func(), hints ...hint) error {
 	if d.OutputJSON {
 		return d.printJSON(value)
 	}
 	text()
+	d.suggest(hints...)
 	return nil
 }

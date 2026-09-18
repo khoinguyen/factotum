@@ -32,6 +32,7 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 		statusCommand(deps, "start", core.StatusInProgress, "Mark a task in progress"),
 		statusCommand(deps, "review", core.StatusReadyForReview, "Mark a task ready for review"),
 		statusCommand(deps, "done", core.StatusDone, "Mark a task done"),
+		statusCommand(deps, "reopen", core.StatusTodo, "Return a task to todo"),
 		statusCommand(deps, "block", core.StatusBlocked, "Mark a task blocked"),
 		statusCommand(deps, "cancel", core.StatusCancelled, "Cancel a task"),
 	)
@@ -76,7 +77,11 @@ func newTaskAddCommand(deps *Deps) *cobra.Command {
 					return err
 				}
 			}
-			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Kind, task.Title) })
+			hints := []hint{
+				{Command: fmt.Sprintf("ft task show %s", task.ID), About: "inspect the task"},
+				{Command: fmt.Sprintf("ft task next --project %s", task.ProjectID), About: "see what to start"},
+			}
+			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Kind, task.Title) }, hints...)
 		},
 	}
 	add.Flags().StringVar(&projectID, "project", "", "project id (required)")
@@ -123,7 +128,7 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 					rows = append(rows, []string{string(task.ID), task.Repo, string(task.Kind), string(task.Status), task.Title})
 				}
 				deps.printTable([]string{"ID", "REPO", "KIND", "STATUS", "TITLE"}, rows)
-			})
+			}, taskListHints(tasks, projectID)...)
 		},
 	}
 	list.Flags().StringVar(&projectID, "project", "", "filter by project id")
@@ -191,7 +196,7 @@ func newTaskShowCommand(deps *Deps) *cobra.Command {
 						deps.printf("---\n")
 					}
 				}
-			})
+			}, deps.taskShowHints(cmd.Context(), task)...)
 		},
 	}
 }
@@ -203,8 +208,11 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 		Short: "Add a dependency (rejects cycles)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := deps.Tasks.AddDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1]))
-			return err
+			if _, err := deps.Tasks.AddDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1])); err != nil {
+				return err
+			}
+			deps.suggest(hint{Command: fmt.Sprintf("ft task show %s", args[0]), About: "see the updated graph"})
+			return nil
 		},
 	}
 	rm := &cobra.Command{
@@ -212,8 +220,11 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 		Short: "Remove a dependency",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := deps.Tasks.RemoveDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1]))
-			return err
+			if _, err := deps.Tasks.RemoveDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1])); err != nil {
+				return err
+			}
+			deps.suggest(hint{Command: fmt.Sprintf("ft task show %s", args[0]), About: "see the updated graph"})
+			return nil
 		},
 	}
 	cmd.AddCommand(add, rm)
@@ -246,6 +257,11 @@ func newTaskAssignCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			deps.printf("%s\tassigned\t%v\n", task.ID, task.AssigneeID)
+			if task.AssigneeID != nil {
+				deps.suggest(hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"})
+			} else {
+				deps.suggest(hint{Command: fmt.Sprintf("ft task next --project %s", task.ProjectID), About: "pick up another task"})
+			}
 			return nil
 		},
 	}
@@ -265,6 +281,7 @@ func statusCommand(deps *Deps, use string, status core.TaskStatus, short string)
 				return err
 			}
 			deps.printf("%s\t%s\n", task.ID, task.Status)
+			deps.suggest(deps.taskShowHints(cmd.Context(), task)...)
 			return nil
 		},
 	}
@@ -294,6 +311,7 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			deps.printf("%s\tnotes=%d\n", task.ID, len(task.Notes))
+			deps.suggest(hint{Command: fmt.Sprintf("ft task show %s", task.ID), About: "review the note"})
 			return nil
 		},
 	}
@@ -344,6 +362,12 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 			if limit > 0 && len(scored) > limit {
 				scored = scored[:limit]
 			}
+			var top *core.Task
+			if len(scored) > 0 {
+				if task, ok := snapshot.Graph.Task(scored[0].TaskID); ok {
+					top = &task
+				}
+			}
 			return deps.emit(scored, func() {
 				rows := make([][]string, 0, len(scored))
 				for _, entry := range scored {
@@ -351,7 +375,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 					rows = append(rows, []string{fmt.Sprintf("%.2f", entry.Score), string(entry.TaskID), task.Title})
 				}
 				deps.printTable([]string{"SCORE", "TASK", "TITLE"}, rows)
-			})
+			}, taskNextHints(projectID, top)...)
 		},
 	}
 	cmd.Flags().StringVar(&projectID, "project", "", "project id (required)")
@@ -370,7 +394,15 @@ func newTaskRmCommand(deps *Deps) *cobra.Command {
 		Short: "Delete a task",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return deps.Tasks.Delete(cmd.Context(), core.TaskID(args[0]))
+			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
+			if err != nil {
+				return err
+			}
+			if err := deps.Tasks.Delete(cmd.Context(), task.ID); err != nil {
+				return err
+			}
+			deps.suggest(hint{Command: fmt.Sprintf("ft task list --project %s", task.ProjectID), About: "review the remaining tasks"})
+			return nil
 		},
 	}
 }
@@ -417,7 +449,8 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Status, task.Title) })
+			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Status, task.Title) },
+				hint{Command: fmt.Sprintf("ft task show %s", task.ID), About: "inspect the updated task"})
 		},
 	}
 	cmd.Flags().StringVar(&title, "title", "", "task title")

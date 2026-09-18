@@ -19,7 +19,8 @@ func newActorCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(actor, func() { deps.printf("%s\t%s\t%s\n", actor.ID, actor.Kind, actor.Name) })
+			return deps.emit(actor, func() { deps.printf("%s\t%s\t%s\n", actor.ID, actor.Kind, actor.Name) },
+				hint{Command: "ft actor list", About: "see all actors"})
 		},
 	}
 	add.Flags().StringVar(&kind, "kind", string(core.ActorHuman), "actor kind: human or agent")
@@ -38,7 +39,7 @@ func newActorCommand(deps *Deps) *cobra.Command {
 					rows = append(rows, []string{string(actor.ID), string(actor.Kind), actor.Name})
 				}
 				deps.printTable([]string{"ID", "KIND", "NAME"}, rows)
-			})
+			}, actorListHints(actors)...)
 		},
 	}
 

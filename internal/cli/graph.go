@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -63,7 +64,14 @@ func newGraphCommand(deps *Deps) *cobra.Command {
 				defer func() { _ = file.Close() }()
 				writer = file
 			}
-			return renderer.Render(cmd.Context(), writer, view)
+			if err := renderer.Render(cmd.Context(), writer, view); err != nil {
+				return err
+			}
+			deps.suggest(
+				hint{Command: fmt.Sprintf("ft task next --project %s", projectID), About: "see what to start"},
+				hint{Command: fmt.Sprintf("ft graph render --project %s --format html --out dag.html", projectID), About: "share an interactive report"},
+			)
+			return nil
 		},
 	}
 	renderCmd.Flags().StringVar(&projectID, "project", "", "project id (required)")

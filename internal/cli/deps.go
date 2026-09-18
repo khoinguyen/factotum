@@ -25,6 +25,7 @@ type Deps struct {
 	Getenv     func(string) string
 	ActorRef   string
 	OutputJSON bool
+	NoHints    bool
 
 	StoreFactories *registry.Registry[store.Factory]
 	Rankers        *registry.Registry[rank.Ranker]

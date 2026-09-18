@@ -14,15 +14,23 @@ import (
 )
 
 type runner struct {
-	t       *testing.T
-	path    string
-	lastOut string
-	lastErr string
+	t           *testing.T
+	path        string
+	projectPath string
+	userPath    string
+	lastOut     string
+	lastErr     string
 }
 
 func newRunner(t *testing.T) *runner {
 	t.Helper()
-	return &runner{t: t, path: filepath.Join(t.TempDir(), "factotum.json")}
+	dir := t.TempDir()
+	return &runner{
+		t:           t,
+		path:        filepath.Join(dir, "factotum.json"),
+		projectPath: filepath.Join(dir, "project-config.toml"),
+		userPath:    filepath.Join(dir, "user-config.toml"),
+	}
 }
 
 func (r *runner) run(args ...string) string {
@@ -31,7 +39,8 @@ func (r *runner) run(args ...string) string {
 	return out
 }
 
-// runSplit executes a command and returns stdout and stderr separately.
+// runSplit executes a command and returns stdout and stderr separately. Config
+// files are isolated in the test's temp dir unless the caller overrides them.
 func (r *runner) runSplit(args ...string) (string, string) {
 	r.t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -39,7 +48,10 @@ func (r *runner) runSplit(args ...string) (string, string) {
 	builtins.RegisterAll(deps.StoreFactories)
 
 	root := NewRoot(deps)
-	root.SetArgs(append([]string{"--store", "jsonfile", "--store-opt", "path=" + r.path}, args...))
+	root.SetArgs(append([]string{
+		"--store", "jsonfile", "--store-opt", "path=" + r.path,
+		"--config", r.projectPath, "--user-config", r.userPath,
+	}, args...))
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	if err := root.Execute(); err != nil && !errors.Is(err, ErrUsage) {

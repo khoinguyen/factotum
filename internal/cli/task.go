@@ -335,8 +335,14 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 		Use:   "next",
 		Short: "Rank the startable tasks",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := requireOneOf(cmd, "project", "all"); err != nil {
-				return err
+			if all && cmd.Flags().Changed("project") {
+				return usageError(cmd, "only one of --project or --all may be set")
+			}
+			if !all && projectID == "" {
+				projectID = deps.Config.Project
+			}
+			if !all && projectID == "" {
+				return usageError(cmd, "one of --project or --all is required, or set default_project")
 			}
 			var snapshot *app.Snapshot
 			var err error

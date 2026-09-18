@@ -1,0 +1,6 @@
+# Project-scoped Factotum config (committed).
+#
+# Pins this repository to a project registered in ~/.factotum/config.toml.
+# Machine-local paths (database, checkouts) do NOT belong here.
+
+project = "factotum"

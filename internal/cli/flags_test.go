@@ -1,9 +1,26 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestTaskNextUsesProjectFromConfigFile(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	taskID := firstField(t, r.run("task", "add", "-p", projectID, "-t", "one"))
+
+	cfgPath := filepath.Join(t.TempDir(), "project.toml")
+	if err := os.WriteFile(cfgPath, []byte("project = \""+projectID+"\"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	out := r.run("--config", cfgPath, "task", "next", "-n", "1")
+	if !strings.Contains(out, taskID) {
+		t.Fatalf("task next should use the configured project:\n%s", out)
+	}
+}
 
 func TestShorthandFlags(t *testing.T) {
 	r := newRunner(t)

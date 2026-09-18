@@ -34,7 +34,7 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 }
 
 func NewRoot(deps *Deps) *cobra.Command {
-	var configPath, storeBackend, actorRef, output string
+	var configPath, userConfigPath, storeBackend, actorRef, output string
 	var storeOpts []string
 	var noHints bool
 
@@ -44,11 +44,22 @@ func NewRoot(deps *Deps) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := config.Load(configPath)
+			projectPath := configPath
+			if projectPath == "" {
+				projectPath = config.DefaultPath
+			}
+			userPath := userConfigPath
+			if userPath == "" {
+				userPath = config.UserPath(deps.Getenv)
+			}
+			cfg, err := config.Load(config.Input{
+				UserPath:    userPath,
+				ProjectPath: projectPath,
+				Getenv:      deps.Getenv,
+			})
 			if err != nil {
 				return err
 			}
-			cfg.ApplyEnv(deps.Getenv)
 			if storeBackend != "" {
 				cfg.Store.Backend = storeBackend
 			}
@@ -95,7 +106,8 @@ func NewRoot(deps *Deps) *cobra.Command {
 		},
 	}
 
-	root.PersistentFlags().StringVarP(&configPath, "config", "c", "", "config file path (default .factotum/config.toml)")
+	root.PersistentFlags().StringVarP(&configPath, "config", "c", "", "project config file (default .factotum/config.toml)")
+	root.PersistentFlags().StringVar(&userConfigPath, "user-config", "", "machine config file (default $HOME/.factotum/config.toml)")
 	root.PersistentFlags().StringVar(&storeBackend, "store", "", "storage backend (overrides config)")
 	root.PersistentFlags().StringArrayVar(&storeOpts, "store-opt", nil, "backend option key=value (repeatable)")
 	root.PersistentFlags().StringVar(&actorRef, "actor", "", "actor attributed to mutations (id or name)")

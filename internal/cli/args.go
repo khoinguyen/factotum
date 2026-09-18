@@ -38,33 +38,6 @@ func requireFlags(cmd *cobra.Command, names ...string) error {
 	return usageError(cmd, "%s required", strings.Join(missing, ", "))
 }
 
-// requireOneOf ensures exactly one of the named flags is set, printing the
-// command's help otherwise.
-func requireOneOf(cmd *cobra.Command, names ...string) error {
-	set := 0
-	for _, name := range names {
-		if cmd.Flags().Changed(name) {
-			set++
-		}
-	}
-	switch set {
-	case 1:
-		return nil
-	case 0:
-		return usageError(cmd, "one of %s is required", flagNames(names))
-	default:
-		return usageError(cmd, "only one of %s may be set", flagNames(names))
-	}
-}
-
-func flagNames(names []string) string {
-	prefixed := make([]string, 0, len(names))
-	for _, name := range names {
-		prefixed = append(prefixed, "--"+name)
-	}
-	return strings.Join(prefixed, " or ")
-}
-
 func usageError(cmd *cobra.Command, format string, args ...any) error {
 	cmd.SetOut(cmd.ErrOrStderr())
 	_ = cmd.Help()

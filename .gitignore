@@ -7,8 +7,10 @@
 *.test
 coverage.out
 
-# Local factotum state (config and data)
-/.factotum/
+# Local factotum state (databases, reports). The project config is committed;
+# machine-specific paths belong in ~/.factotum/config.toml.
+/.factotum/*
+!/.factotum/config.toml
 
 # Editors / OS
 .DS_Store

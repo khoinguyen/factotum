@@ -18,4 +18,7 @@ func TestRunUsageErrorExitsNonZeroWithHelp(t *testing.T) {
 	if !strings.Contains(stderr.String(), "Usage:") {
 		t.Fatalf("expected help on stderr:\n%s", stderr.String())
 	}
+	if !strings.Contains(stderr.String(), "expected 1 argument(s), got 0") {
+		t.Fatalf("expected the reason alongside the help:\n%s", stderr.String())
+	}
 }

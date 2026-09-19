@@ -15,6 +15,9 @@ func TestWrongArgCountPrintsHelp(t *testing.T) {
 	if !strings.Contains(stderr, "Usage:") || !strings.Contains(stderr, "ft task assign <task>") {
 		t.Fatalf("expected assign help on stderr:\n%s", stderr)
 	}
+	if !strings.Contains(stderr, "expected 1 argument(s), got 0") {
+		t.Fatalf("expected the reason alongside the help:\n%s", stderr)
+	}
 	if strings.TrimSpace(stdout) != "" {
 		t.Fatalf("help must go to stderr, stdout =\n%s", stdout)
 	}
@@ -29,5 +32,8 @@ func TestMissingRequiredFlagPrintsHelp(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "Usage:") || !strings.Contains(stderr, "ft task create") {
 		t.Fatalf("expected create help on stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "title required") {
+		t.Fatalf("expected the missing flag named alongside the help:\n%s", stderr)
 	}
 }

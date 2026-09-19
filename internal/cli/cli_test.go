@@ -98,7 +98,7 @@ func TestTaskNextHeader(t *testing.T) {
 
 	out := r.run("task", "next", "--project", projectID)
 	header := strings.SplitN(out, "\n", 2)[0]
-	if fields := strings.Fields(header); len(fields) != 4 || fields[0] != "SCORE" || fields[1] != "TASK" || fields[2] != "PROJECT" || fields[3] != "TITLE" {
+	if fields := strings.Fields(header); len(fields) != 5 || fields[0] != "SCORE" || fields[1] != "TASK" || fields[2] != "TITLE" || fields[3] != "PROJECT" || fields[4] != "REPO" {
 		t.Fatalf("task next missing header: %q", header)
 	}
 	if jsonOut := r.run("task", "next", "--project", projectID, "-o", "json"); strings.Contains(jsonOut, "SCORE") {

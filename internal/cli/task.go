@@ -95,7 +95,7 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 				{Command: fmt.Sprintf("ft task next --project %s", task.ProjectID), About: "see what to start"},
 			}
 			return deps.emit(task, func() {
-				deps.printFields(f("task_id", task.ID), f("created", true), f("title", task.Title), f("project", task.ProjectID))
+				deps.printFields(deps.taskFields(task, f("created", true))...)
 			}, hints...)
 		},
 	}
@@ -139,9 +139,9 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 			return deps.emit(tasks, func() {
 				rows := make([][]string, 0, len(tasks))
 				for _, task := range tasks {
-					rows = append(rows, []string{string(task.ID), string(task.ProjectID), task.Repo, string(task.Kind), string(task.Status), task.Title})
+					rows = append(rows, []string{string(task.ID), string(task.Kind), task.Title, string(task.Status), string(task.ProjectID), deps.repoValue(task.Repo)})
 				}
-				deps.printTable([]string{"ID", "PROJECT", "REPO", "KIND", "STATUS", "TITLE"}, rows)
+				deps.printTable([]string{"ID", "KIND", "TITLE", "STATUS", "PROJECT", "REPO"}, rows)
 			}, taskListHints(tasks, projectID)...)
 		},
 	}
@@ -170,7 +170,7 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 					deps.printf("kind: milestone\n")
 				}
 				if task.Repo != "" {
-					deps.printf("repo: %s\n", task.Repo)
+					deps.printf("repo: %s\n", deps.repoValue(task.Repo))
 				}
 				if task.AssigneeID != nil {
 					deps.printf("assignee: %s\n", actorLabel(actors, *task.AssigneeID))
@@ -228,7 +228,7 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(task, func() {
-				deps.printFields(f("task_id", task.ID), f("dependency", args[1]), f("added", true), f("project", task.ProjectID))
+				deps.printFields(f("task_id", task.ID), f("dependency", args[1]), f("added", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
 			}, hint{Command: fmt.Sprintf("ft task get %s", args[0]), About: "see the updated graph"})
 		},
 	}
@@ -242,7 +242,7 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(task, func() {
-				deps.printFields(f("task_id", task.ID), f("dependency", args[1]), f("removed", true), f("project", task.ProjectID))
+				deps.printFields(f("task_id", task.ID), f("dependency", args[1]), f("removed", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
 			}, hint{Command: fmt.Sprintf("ft task get %s", args[0]), About: "see the updated graph"})
 		},
 	}
@@ -279,7 +279,7 @@ func newTaskAssignCommand(deps *Deps) *cobra.Command {
 			if task.AssigneeID != nil {
 				assignee = string(*task.AssigneeID)
 			}
-			deps.printFields(f("task_id", task.ID), f("assignee", assignee), f("project", task.ProjectID))
+			deps.printFields(f("task_id", task.ID), f("assignee", assignee), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
 			if task.AssigneeID != nil {
 				deps.suggest(hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"})
 			} else {
@@ -303,7 +303,7 @@ func statusCommand(deps *Deps, use string, status core.TaskStatus, short string)
 			if err != nil {
 				return err
 			}
-			deps.printFields(f("task_id", task.ID), f("status", task.Status), f("project", task.ProjectID))
+			deps.printFields(deps.taskFields(task)...)
 			deps.suggest(deps.taskGetHints(cmd.Context(), task)...)
 			return nil
 		},
@@ -344,7 +344,7 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deps.printFields(f("task_id", task.ID), f("noted", true), f("project", task.ProjectID))
+			deps.printFields(f("task_id", task.ID), f("noted", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
 			deps.suggest(hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "review the note"})
 			return nil
 		},
@@ -425,9 +425,9 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 				rows := make([][]string, 0, len(scored))
 				for _, entry := range scored {
 					task, _ := snapshot.Graph.Task(entry.TaskID)
-					rows = append(rows, []string{fmt.Sprintf("%.2f", entry.Score), string(entry.TaskID), string(task.ProjectID), task.Title})
+					rows = append(rows, []string{fmt.Sprintf("%.2f", entry.Score), string(entry.TaskID), task.Title, string(task.ProjectID), deps.repoValue(task.Repo)})
 				}
-				deps.printTable([]string{"SCORE", "TASK", "PROJECT", "TITLE"}, rows)
+				deps.printTable([]string{"SCORE", "TASK", "TITLE", "PROJECT", "REPO"}, rows)
 			}, taskNextHints(hintProject, top)...)
 		},
 	}
@@ -454,7 +454,7 @@ func newTaskDeleteCommand(deps *Deps) *cobra.Command {
 			if err := deps.Tasks.Delete(cmd.Context(), task.ID); err != nil {
 				return err
 			}
-			deps.printFields(f("task_id", task.ID), f("deleted", true), f("project", task.ProjectID))
+			deps.printFields(f("task_id", task.ID), f("deleted", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
 			deps.suggest(hint{Command: fmt.Sprintf("ft task list --project %s", task.ProjectID), About: "review the remaining tasks"})
 			return nil
 		},
@@ -504,7 +504,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(task, func() {
-				deps.printFields(f("task_id", task.ID), f("updated", true), f("status", task.Status), f("project", task.ProjectID))
+				deps.printFields(deps.taskFields(task, f("updated", true))...)
 			},
 				hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the updated task"})
 		},
@@ -539,7 +539,7 @@ func newTaskSetCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(task, func() {
-				deps.printFields(f("task_id", task.ID), f("updated", true), f("status", task.Status), f("project", task.ProjectID))
+				deps.printFields(deps.taskFields(task, f("updated", true))...)
 			},
 				hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the updated task"})
 		},
@@ -658,7 +658,7 @@ func newTaskApplyCommand(deps *Deps) *cobra.Command {
 			}
 			if set.Empty() {
 				return deps.emit(taskDocFrom(task), func() {
-					deps.printFields(f("task_id", task.ID), f("updated", false), f("project", task.ProjectID))
+					deps.printFields(deps.taskFields(task, f("updated", false))...)
 				})
 			}
 			updated, err := deps.Tasks.Set(cmd.Context(), task.ID, set)
@@ -666,7 +666,7 @@ func newTaskApplyCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(taskDocFrom(updated), func() {
-				deps.printFields(f("task_id", updated.ID), f("updated", true), f("status", updated.Status), f("project", updated.ProjectID))
+				deps.printFields(deps.taskFields(updated, f("updated", true))...)
 			}, hint{Command: fmt.Sprintf("ft task get %s", updated.ID), About: "inspect the applied task"})
 		},
 	}
@@ -697,7 +697,7 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 			}
 			if bytes.Equal(bytes.TrimSpace(original), bytes.TrimSpace(edited)) {
 				return deps.emit(taskDocFrom(task), func() {
-					deps.printFields(f("task_id", task.ID), f("updated", false), f("project", task.ProjectID))
+					deps.printFields(deps.taskFields(task, f("updated", false))...)
 				})
 			}
 			doc, err := parseTaskDoc(edited, format)
@@ -710,7 +710,7 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 			}
 			if set.Empty() {
 				return deps.emit(taskDocFrom(task), func() {
-					deps.printFields(f("task_id", task.ID), f("updated", false), f("project", task.ProjectID))
+					deps.printFields(deps.taskFields(task, f("updated", false))...)
 				})
 			}
 			updated, err := deps.Tasks.Set(cmd.Context(), task.ID, set)
@@ -718,12 +718,24 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(taskDocFrom(updated), func() {
-				deps.printFields(f("task_id", updated.ID), f("updated", true), f("status", updated.Status), f("project", updated.ProjectID))
+				deps.printFields(deps.taskFields(updated, f("updated", true))...)
 			}, hint{Command: fmt.Sprintf("ft task get %s", updated.ID), About: "inspect the edited task"})
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "yaml", "document format: json or yaml")
 	return cmd
+}
+
+// taskFields is the canonical single-result field set for a task: identity, an
+// optional action field (created/updated), then kind/title/status/project, with
+// repo last.
+func (d *Deps) taskFields(task *core.Task, action ...field) []field {
+	fields := []field{f("task_id", task.ID)}
+	fields = append(fields, action...)
+	return append(fields,
+		f("kind", task.Kind), f("title", task.Title), f("status", task.Status),
+		f("project", task.ProjectID), f("repo", d.repoValue(task.Repo)),
+	)
 }
 
 func optionalString(value string) *string {

@@ -294,6 +294,14 @@ func statusCommand(deps *Deps, use string, status core.TaskStatus, short string)
 	}
 }
 
+// statusShortcut exposes a task status transition as a top-level command, so
+// `ft done <task>` == `ft task done <task>` == `ft task set <task> status=done`.
+func statusShortcut(use string, status core.TaskStatus, short string) CommandFactory {
+	return func(deps *Deps) *cobra.Command {
+		return statusCommand(deps, use, status, short)
+	}
+}
+
 func newTaskNoteCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "note", Short: "Manage task notes"}
 	var body string

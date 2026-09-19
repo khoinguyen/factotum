@@ -225,6 +225,9 @@ ft task done <task>     # accepted and finished
 ft task reopen <task>   # back to todo, e.g. after a failed review
 ```
 
+The status verbs also work at the top level: `ft done <task>` == `ft task done <task>` ==
+`ft task set <task> status=done`.
+
 **Record what you learn and file new work the moment you discover it.** Never leave a decision,
 TODO, or follow-up undocumented or the graph stale:
 

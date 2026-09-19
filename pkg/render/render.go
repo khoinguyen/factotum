@@ -17,7 +17,7 @@ type Renderer interface {
 
 func Builtins() *registry.Registry[Renderer] {
 	reg := registry.New[Renderer]()
-	for _, renderer := range []Renderer{Agent{}, JSON{}, Tree{}, HTML{}, DOT{}, Mermaid{}} {
+	for _, renderer := range []Renderer{Agent{}, JSON{}, Tree{}, HTML{}, DOT{}, Mermaid{}, Summary{}} {
 		if err := reg.Register(renderer.Format(), renderer); err != nil {
 			panic(err)
 		}

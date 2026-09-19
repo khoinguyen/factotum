@@ -78,7 +78,7 @@ func renderString(t *testing.T, renderer Renderer, view View) string {
 
 func TestBuiltinsNames(t *testing.T) {
 	names := Builtins().Names()
-	want := []string{"agent", "dot", "html", "json", "mermaid", "tree"}
+	want := []string{"agent", "dot", "html", "json", "mermaid", "summary", "tree"}
 	if len(names) != len(want) {
 		t.Fatalf("Names() = %v, want %v", names, want)
 	}
@@ -192,5 +192,18 @@ func TestHTMLRenderDeterministicAndEscapes(t *testing.T) {
 
 	if out != renderString(t, HTML{}, view) {
 		t.Fatal("html render is not deterministic")
+	}
+}
+
+func TestSummaryRenderIsCompact(t *testing.T) {
+	view := fixture(t, "Acme")
+	out := renderString(t, Summary{}, view)
+	if strings.Contains(out, "snapshot") || strings.Contains(out, "2026-") {
+		t.Fatalf("summary must not include a timestamp:\n%s", out)
+	}
+	for _, want := range []string{"scope=5", "todo=4", "done=1", "ready_agent=1", "ready_human=2", "dep_blocked=1", "next:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary missing %q:\n%s", want, out)
+		}
 	}
 }

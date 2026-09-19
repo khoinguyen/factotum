@@ -31,6 +31,7 @@ type taskDoc struct {
 	Labels      *[]string  `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Assignee    *string    `json:"assignee,omitempty" yaml:"assignee,omitempty"`
 	Deps        *[]string  `json:"deps,omitempty" yaml:"deps,omitempty"`
+	Dependents  *[]string  `json:"dependents,omitempty" yaml:"dependents,omitempty"`
 	WaitingOn   *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
 	CreatedAt   *time.Time `json:"created_at,omitempty" yaml:"created_at,omitempty"`
 	UpdatedAt   *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`

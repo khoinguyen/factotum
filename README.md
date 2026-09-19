@@ -31,7 +31,7 @@ go build -o ft ./cmd/factotum
 
 - **Project** — spans many repositories. Each repository carries a name, optional URL, local
   path, and a **brief** describing its purpose (`--repo name=<k>,url=,path=,brief=`), managed
-  with `project repo add|list|update|rm`.
+  with `project repo create|list|update|delete`.
 - **Actor** — a human or an agent, registered once and referenced by ID or name. The ID is the
   slug of the name (`Khoi` → `khoi`, `Claude Code` → `claude-code`).
 - **Task** — a unit of work with a body (`--body` or `--body-file`), dependencies, status, an
@@ -46,16 +46,16 @@ go build -o ft ./cmd/factotum
 ## Example session
 
 ```sh
-ft actor add --kind agent claude
-ft actor add --kind human Khoi
+ft actor create --kind agent claude
+ft actor create --kind human Khoi
 
 PID=$(ft project create "Acme" \
   --repo "name=backend,url=git@example.com:acme/backend.git,path=repos/backend,brief=Go API service" \
   --repo "name=web,path=repos/web,brief=Next.js frontend" | cut -f1)
-T1=$(ft task add --project "$PID" --title "Write the spec" | cut -f1)
-T2=$(ft task add --project "$PID" --title "Build the API" --dep "$T1" | cut -f1)
+T1=$(ft task create --project "$PID" --title "Write the spec" | cut -f1)
+T2=$(ft task create --project "$PID" --title "Build the API" --dep "$T1" | cut -f1)
 M=$(ft milestone create --project "$PID" --title "v0.1 release" | cut -f1)
-ft task add --project "$PID" --title "Deploy v0.1" --dep "$M"
+ft task create --project "$PID" --title "Deploy v0.1" --dep "$M"
 
 # What can the agent or a human pick up next?
 ft task next --project "$PID" --for claude
@@ -75,17 +75,17 @@ ft event list --project "$PID"
 
 | Area | Commands |
 | --- | --- |
-| Project | `project create`, `project list`, `project get`, `project rm` |
-| Repositories | `project repo add`, `repo list`, `repo update`, `repo rm` |
-| Actor | `actor add --kind human\|agent`, `actor list` |
-| Task | `task add --repo <name>`, `task list --repo <name>`, `task get`, `task update`, `task set field=value...`, `task apply -f`, `task edit`, `task rm` |
-| Dependencies | `task dep add`, `task dep rm` (cycles are rejected) |
+| Project | `project create`, `project list`, `project get`, `project delete` |
+| Repositories | `project repo create`, `repo list`, `repo update`, `repo delete` |
+| Actor | `actor create --kind human\|agent`, `actor list` |
+| Task | `task create --repo <name>`, `task list --repo <name>`, `task get`, `task update`, `task set field=value...`, `task apply -f`, `task edit`, `task delete` |
+| Dependencies | `task dep create`, `task dep delete` (cycles are rejected) |
 | Assignment | `task assign --actor <ref>` / `--unassign` |
 | Status | `task start\|review\|done\|reopen\|block\|cancel`, or the top-level shortcuts `ft start\|review\|done\|reopen\|block\|cancel` |
-| Notes | `task note add --body ... [--link kind=url]` |
+| Notes | `task note create --body ... [--link kind=url]` |
 | Ranking | `task next -p <project> \| -a/--all [--for <actor>] [--repo <name>] [--toward <task>] [--rank unblock\|milestone\|toward\|composite]` |
 | Milestone | `milestone create`, `milestone list`, `milestone done` |
-| Artifacts | `doc add --kind spec\|doc\|memory`, `doc list`, `doc search` |
+| Artifacts | `doc create --kind spec\|doc\|memory`, `doc list`, `doc search` |
 | Rendering | `graph render --format agent\|json\|tree\|html\|dot\|mermaid [--layout tree\|waves]` |
 | Audit | `event list` |
 

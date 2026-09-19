@@ -23,7 +23,7 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "task", Short: "Manage the task graph"}
 
 	cmd.AddCommand(
-		newTaskAddCommand(deps),
+		newTaskCreateCommand(deps),
 		newTaskListCommand(deps),
 		newTaskGetCommand(deps),
 		newTaskUpdateCommand(deps),
@@ -34,7 +34,7 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 		newTaskAssignCommand(deps),
 		newTaskNoteCommand(deps),
 		newTaskNextCommand(deps),
-		newTaskRmCommand(deps),
+		newTaskDeleteCommand(deps),
 		statusCommand(deps, "start", core.StatusInProgress, "Mark a task in progress"),
 		statusCommand(deps, "review", core.StatusReadyForReview, "Mark a task ready for review"),
 		statusCommand(deps, "done", core.StatusDone, "Mark a task done"),
@@ -45,14 +45,14 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 	return cmd
 }
 
-func newTaskAddCommand(deps *Deps) *cobra.Command {
+func newTaskCreateCommand(deps *Deps) *cobra.Command {
 	var projectID, repo, kind, title, body, bodyFile, id string
 	var priority int
 	var labels, depIDs []string
 
 	add := &cobra.Command{
-		Use:   "add",
-		Short: "Add a task or milestone",
+		Use:   "create",
+		Short: "Create a task or milestone",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireFlags(cmd, "project", "title"); err != nil {
 				return err
@@ -211,8 +211,8 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 func newTaskDepCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "dep", Short: "Manage task dependencies"}
 	add := &cobra.Command{
-		Use:   "add <task> <depends-on>",
-		Short: "Add a dependency (rejects cycles)",
+		Use:   "create <task> <depends-on>",
+		Short: "Create a dependency (rejects cycles)",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := deps.Tasks.AddDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1])); err != nil {
@@ -223,8 +223,8 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	rm := &cobra.Command{
-		Use:   "rm <task> <depends-on>",
-		Short: "Remove a dependency",
+		Use:   "delete <task> <depends-on>",
+		Short: "Delete a dependency",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := deps.Tasks.RemoveDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1])); err != nil {
@@ -308,8 +308,8 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 	var linkSpecs []string
 
 	add := &cobra.Command{
-		Use:   "add <task>",
-		Short: "Add a note to a task",
+		Use:   "create <task>",
+		Short: "Create a note on a task",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := requireFlags(cmd, "body"); err != nil {
@@ -425,9 +425,9 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 	return cmd
 }
 
-func newTaskRmCommand(deps *Deps) *cobra.Command {
+func newTaskDeleteCommand(deps *Deps) *cobra.Command {
 	return &cobra.Command{
-		Use:   "rm <task>",
+		Use:   "delete <task>",
 		Short: "Delete a task",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

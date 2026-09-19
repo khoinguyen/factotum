@@ -232,8 +232,8 @@ The status verbs also work at the top level: `ft done <task>` == `ft task done <
 TODO, or follow-up undocumented or the graph stale:
 
 ```sh
-ft task note add <task> -b "Decision: ... " --link issue=https://...
-ft task add -p factotum -t "Short imperative title" -r factotum \
+ft task note create <task> -b "Decision: ... " --link issue=https://...
+ft task create -p factotum -t "Short imperative title" -r factotum \
   --body "Context and acceptance criteria." --dep <blocking-task>
 ```
 

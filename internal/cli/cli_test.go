@@ -89,7 +89,7 @@ func TestProjectCreateSlugID(t *testing.T) {
 func TestTaskNextHeader(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	r.run("task", "add", "--project", projectID, "--title", "one")
+	r.run("task", "create", "--project", projectID, "--title", "one")
 
 	out := r.run("task", "next", "--project", projectID)
 	header := strings.SplitN(out, "\n", 2)[0]
@@ -173,11 +173,11 @@ func TestTaskAndProjectHelpUseGetNotShow(t *testing.T) {
 func TestTaskGetResolvesActorsAndNotes(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	r.run("actor", "add", "--kind", "agent", "claude")
-	taskID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "work"))
+	r.run("actor", "create", "--kind", "agent", "claude")
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "work"))
 	r.run("task", "assign", taskID, "--actor", "claude")
-	r.run("task", "note", "add", taskID, "--body", "first note")
-	r.run("task", "note", "add", taskID, "--body", "second note")
+	r.run("task", "note", "create", taskID, "--body", "first note")
+	r.run("task", "note", "create", taskID, "--body", "second note")
 
 	shown := r.run("task", "get", taskID)
 	if !strings.HasPrefix(shown, "(todo) ") {
@@ -201,7 +201,7 @@ func TestTaskBodyFile(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	taskID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "big", "--body-file", bodyFile))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "big", "--body-file", bodyFile))
 	shown := r.run("task", "get", taskID)
 	if !strings.Contains(shown, "=== Description ===") || !strings.Contains(shown, "lots of detail") {
 		t.Fatalf("body-file not applied:\n%s", shown)
@@ -219,7 +219,7 @@ func TestTaskBodyFile(t *testing.T) {
 func TestTaskUpdateKind(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	taskID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "feature flag rollout"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "feature flag rollout"))
 
 	r.run("task", "update", taskID, "--kind", "milestone")
 	if shown := r.run("task", "get", taskID); !strings.Contains(shown, "milestone") {
@@ -230,11 +230,11 @@ func TestTaskUpdateKind(t *testing.T) {
 func TestTaskRepoFlow(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	r.run("project", "repo", "add", projectID, "data", "--brief", "data repo")
-	r.run("project", "repo", "add", projectID, "devops", "--brief", "infra")
+	r.run("project", "repo", "create", projectID, "data", "--brief", "data repo")
+	r.run("project", "repo", "create", projectID, "devops", "--brief", "infra")
 
-	dataID := firstField(t, r.run("task", "add", "--project", projectID, "--repo", "data", "--title", "model customers"))
-	r.run("task", "add", "--project", projectID, "--repo", "devops", "--title", "provision db")
+	dataID := firstField(t, r.run("task", "create", "--project", projectID, "--repo", "data", "--title", "model customers"))
+	r.run("task", "create", "--project", projectID, "--repo", "devops", "--title", "provision db")
 
 	listed := r.run("task", "list", "--project", projectID, "--repo", "data")
 	if !strings.Contains(listed, dataID) || strings.Contains(listed, "provision db") {
@@ -264,7 +264,7 @@ func TestTaskAddRejectsUnknownRepo(t *testing.T) {
 	builtins.RegisterAll(deps.StoreFactories)
 	root := NewRoot(deps)
 	root.SetArgs([]string{"--store", "jsonfile", "--store-opt", "path=" + r.path,
-		"task", "add", "--project", projectID, "--repo", "nope", "--title", "x"})
+		"task", "create", "--project", projectID, "--repo", "nope", "--title", "x"})
 	root.SetOut(&out)
 	root.SetErr(&out)
 	if err := root.Execute(); err == nil {
@@ -276,7 +276,7 @@ func TestProjectRepoCommands(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 
-	r.run("project", "repo", "add", projectID, "backend", "--url", "git@example.com:acme/backend.git", "--path", "repos/backend", "--brief", "API service")
+	r.run("project", "repo", "create", projectID, "backend", "--url", "git@example.com:acme/backend.git", "--path", "repos/backend", "--brief", "API service")
 	if out := r.run("project", "repo", "list", projectID); !strings.Contains(out, "API service") {
 		t.Fatalf("repo list missing brief:\n%s", out)
 	}
@@ -286,7 +286,7 @@ func TestProjectRepoCommands(t *testing.T) {
 		t.Fatalf("project get missing updated brief:\n%s", out)
 	}
 
-	r.run("project", "repo", "rm", projectID, "backend")
+	r.run("project", "repo", "delete", projectID, "backend")
 	if out := r.run("project", "repo", "list", projectID); strings.Contains(out, "backend") {
 		t.Fatalf("repo list still shows removed repo:\n%s", out)
 	}
@@ -312,11 +312,11 @@ func TestCLIFlow(t *testing.T) {
 	r := newRunner(t)
 
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	r.run("actor", "add", "--kind", "agent", "claude")
-	r.run("actor", "add", "--kind", "human", "Khoi")
+	r.run("actor", "create", "--kind", "agent", "claude")
+	r.run("actor", "create", "--kind", "human", "Khoi")
 
-	firstID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "first"))
-	secondID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "second", "--dep", firstID))
+	firstID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "first"))
+	secondID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "second", "--dep", firstID))
 
 	before := r.run("graph", "render", "--project", projectID, "--format", "agent")
 	if !strings.Contains(before, firstID) {
@@ -346,14 +346,14 @@ func TestCLIFlow(t *testing.T) {
 func TestAddDepRejectsCycleViaCLI(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	firstID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "first"))
-	secondID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "second", "--dep", firstID))
+	firstID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "first"))
+	secondID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "second", "--dep", firstID))
 
 	var out bytes.Buffer
 	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &out, &out, nil)
 	builtins.RegisterAll(deps.StoreFactories)
 	root := NewRoot(deps)
-	root.SetArgs([]string{"--store", "jsonfile", "--store-opt", "path=" + r.path, "task", "dep", "add", firstID, secondID})
+	root.SetArgs([]string{"--store", "jsonfile", "--store-opt", "path=" + r.path, "task", "dep", "create", firstID, secondID})
 	root.SetOut(&out)
 	root.SetErr(&out)
 	if err := root.Execute(); err == nil {
@@ -364,7 +364,7 @@ func TestAddDepRejectsCycleViaCLI(t *testing.T) {
 func TestGraphRenderHTMLToFile(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	r.run("task", "add", "--project", projectID, "--title", "first")
+	r.run("task", "create", "--project", projectID, "--title", "first")
 
 	outFile := filepath.Join(t.TempDir(), "dag.html")
 	r.run("graph", "render", "--project", projectID, "--format", "html", "--layout", "tree", "--out", outFile)

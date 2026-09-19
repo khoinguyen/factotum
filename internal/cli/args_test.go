@@ -22,12 +22,12 @@ func TestWrongArgCountPrintsHelp(t *testing.T) {
 
 func TestMissingRequiredFlagPrintsHelp(t *testing.T) {
 	r := newRunner(t)
-	_, stderr := r.runSplit("task", "add", "--project", "acme")
+	_, stderr := r.runSplit("task", "create", "--project", "acme")
 
 	if strings.Contains(stderr, "required flag") {
 		t.Fatalf("required-flag error should not be terse:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "Usage:") || !strings.Contains(stderr, "ft task add") {
-		t.Fatalf("expected add help on stderr:\n%s", stderr)
+	if !strings.Contains(stderr, "Usage:") || !strings.Contains(stderr, "ft task create") {
+		t.Fatalf("expected create help on stderr:\n%s", stderr)
 	}
 }

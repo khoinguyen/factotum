@@ -46,7 +46,7 @@ func TestSuggestSuppressed(t *testing.T) {
 func TestHintsAfterTaskNext(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	taskID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "one"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "one"))
 
 	stdout, stderr := r.runSplit("task", "next", "--project", projectID)
 	if strings.Contains(stdout, "Next:") {
@@ -63,7 +63,7 @@ func TestHintsAfterTaskNext(t *testing.T) {
 func TestHintsSuppressedForJSON(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	r.run("task", "add", "--project", projectID, "--title", "one")
+	r.run("task", "create", "--project", projectID, "--title", "one")
 	if _, stderr := r.runSplit("task", "next", "--project", projectID, "-o", "json"); strings.Contains(stderr, "Next:") {
 		t.Fatalf("json output should not carry suggestions:\n%s", stderr)
 	}
@@ -72,7 +72,7 @@ func TestHintsSuppressedForJSON(t *testing.T) {
 func TestHintsSuppressedByFlag(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	r.run("task", "add", "--project", projectID, "--title", "one")
+	r.run("task", "create", "--project", projectID, "--title", "one")
 	if _, stderr := r.runSplit("task", "next", "--project", projectID, "--no-hints"); strings.TrimSpace(stderr) != "" {
 		t.Fatalf("--no-hints should silence suggestions, got:\n%s", stderr)
 	}
@@ -81,7 +81,7 @@ func TestHintsSuppressedByFlag(t *testing.T) {
 func TestHintsAfterTaskAdd(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	_, stderr := r.runSplit("task", "add", "--project", projectID, "--title", "one")
+	_, stderr := r.runSplit("task", "create", "--project", projectID, "--title", "one")
 	if !strings.Contains(stderr, "ft task next --project "+projectID) {
 		t.Fatalf("task add should suggest task next:\n%s", stderr)
 	}
@@ -90,7 +90,7 @@ func TestHintsAfterTaskAdd(t *testing.T) {
 func TestTaskGetGuidesWorkflow(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	taskID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "one"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "one"))
 
 	if _, stderr := r.runSplit("task", "get", taskID); !strings.Contains(stderr, "ft task start "+taskID) {
 		t.Fatalf("todo task should suggest start:\n%s", stderr)
@@ -111,7 +111,7 @@ func TestTaskGetGuidesWorkflow(t *testing.T) {
 
 func TestActorAddUsesSlugID(t *testing.T) {
 	r := newRunner(t)
-	if got := firstField(t, r.run("actor", "add", "--kind", "agent", "Claude Code")); got != "claude-code" {
+	if got := firstField(t, r.run("actor", "create", "--kind", "agent", "Claude Code")); got != "claude-code" {
 		t.Fatalf("actor id = %q, want claude-code", got)
 	}
 }
@@ -119,7 +119,7 @@ func TestActorAddUsesSlugID(t *testing.T) {
 func TestTaskReopenReturnsToTodo(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	taskID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "one"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "one"))
 
 	r.run("task", "start", taskID)
 	out := r.run("task", "reopen", taskID)
@@ -135,8 +135,8 @@ func TestTaskNextAllRanksAcrossProjects(t *testing.T) {
 	r := newRunner(t)
 	alpha := firstField(t, r.run("project", "create", "Alpha"))
 	beta := firstField(t, r.run("project", "create", "Beta"))
-	first := firstField(t, r.run("task", "add", "-p", alpha, "-t", "one"))
-	second := firstField(t, r.run("task", "add", "-p", beta, "-t", "two"))
+	first := firstField(t, r.run("task", "create", "-p", alpha, "-t", "one"))
+	second := firstField(t, r.run("task", "create", "-p", beta, "-t", "two"))
 
 	out := r.run("task", "next", "--all")
 	if !strings.Contains(out, first) || !strings.Contains(out, second) {
@@ -170,8 +170,8 @@ func TestTaskNextRequiresProjectOrAll(t *testing.T) {
 func TestTaskGetSuggestsBlockingDependency(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	depID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "dep"))
-	blockedID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "blocked", "--dep", depID))
+	depID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "dep"))
+	blockedID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "blocked", "--dep", depID))
 
 	_, stderr := r.runSplit("task", "get", blockedID)
 	if !strings.Contains(stderr, "ft task get "+depID) {

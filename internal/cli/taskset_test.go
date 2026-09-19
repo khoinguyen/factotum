@@ -31,7 +31,7 @@ func (r *runner) runErr(args ...string) error {
 func TestTaskSetUpdatesFields(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	taskID := firstField(t, r.run("task", "add", "-p", projectID, "-t", "original"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "original"))
 
 	r.run("task", "set", taskID, "title=renamed", "status=in_progress", "priority=5")
 
@@ -44,7 +44,7 @@ func TestTaskSetUpdatesFields(t *testing.T) {
 func TestTaskSetLongBodyFromFile(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	taskID := firstField(t, r.run("task", "add", "-p", projectID, "-t", "original"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "original"))
 
 	bodyFile := filepath.Join(t.TempDir(), "body.md")
 	if err := os.WriteFile(bodyFile, []byte("# Heading\n\nlots of detail\n"), 0o644); err != nil {
@@ -61,8 +61,8 @@ func TestTaskSetLongBodyFromFile(t *testing.T) {
 func TestTaskSetStatusMatchesTransitionCommand(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	setID := firstField(t, r.run("task", "add", "-p", projectID, "-t", "via set"))
-	doneID := firstField(t, r.run("task", "add", "-p", projectID, "-t", "via done"))
+	setID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "via set"))
+	doneID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "via done"))
 
 	if got := r.run("task", "set", setID, "status=done"); !strings.Contains(got, setID) || !strings.Contains(got, "done") {
 		t.Fatalf("task set status=done output = %q", got)
@@ -80,7 +80,7 @@ func TestTaskSetStatusMatchesTransitionCommand(t *testing.T) {
 func TestTaskSetRejectsInvalidValues(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	taskID := firstField(t, r.run("task", "add", "-p", projectID, "-t", "original"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "original"))
 
 	cases := map[string][]string{
 		"unknown field": {"task", "set", taskID, "nope=1"},

@@ -21,7 +21,7 @@ func TestTopLevelStatusShortcuts(t *testing.T) {
 		t.Run(tc.command, func(t *testing.T) {
 			r := newRunner(t)
 			projectID := firstField(t, r.run("project", "create", "Acme"))
-			taskID := firstField(t, r.run("task", "add", "-p", projectID, "-t", "x"))
+			taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "x"))
 
 			out := r.run(tc.command, taskID)
 			if fields := strings.Fields(out); len(fields) < 2 || fields[0] != taskID || fields[1] != tc.status {
@@ -37,9 +37,9 @@ func TestTopLevelStatusShortcuts(t *testing.T) {
 func TestDoneShortcutMatchesTaskAndSet(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	shortcut := firstField(t, r.run("task", "add", "-p", projectID, "-t", "shortcut"))
-	nested := firstField(t, r.run("task", "add", "-p", projectID, "-t", "nested"))
-	viaSet := firstField(t, r.run("task", "add", "-p", projectID, "-t", "via set"))
+	shortcut := firstField(t, r.run("task", "create", "-p", projectID, "-t", "shortcut"))
+	nested := firstField(t, r.run("task", "create", "-p", projectID, "-t", "nested"))
+	viaSet := firstField(t, r.run("task", "create", "-p", projectID, "-t", "via set"))
 
 	r.run("done", shortcut)
 	r.run("task", "done", nested)

@@ -10,7 +10,7 @@ import (
 func TestTaskNextUsesProjectFromConfigFile(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	taskID := firstField(t, r.run("task", "add", "-p", projectID, "-t", "one"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "one"))
 
 	cfgPath := filepath.Join(t.TempDir(), "project.toml")
 	if err := os.WriteFile(cfgPath, []byte("project = \""+projectID+"\"\n"), 0o644); err != nil {
@@ -26,8 +26,8 @@ func TestShorthandFlags(t *testing.T) {
 	r := newRunner(t)
 
 	projectID := firstField(t, r.run("project", "create", "Acme", "-r", "backend"))
-	actorID := firstField(t, r.run("actor", "add", "-k", "agent", "Bot"))
-	taskID := firstField(t, r.run("task", "add", "-p", projectID, "-t", "one", "-b", "body", "-r", "backend"))
+	actorID := firstField(t, r.run("actor", "create", "-k", "agent", "Bot"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "one", "-b", "body", "-r", "backend"))
 
 	if out := r.run("task", "next", "-p", projectID, "-n", "1"); !strings.Contains(out, taskID) {
 		t.Fatalf("task next -p/-n mismatch:\n%s", out)
@@ -43,13 +43,13 @@ func TestShorthandFlags(t *testing.T) {
 		t.Fatalf("task update -t/-b mismatch:\n%s", out)
 	}
 	r.run("task", "assign", taskID, "-a", actorID)
-	if out := r.run("task", "note", "add", taskID, "-b", "hello"); !strings.Contains(out, "notes=1") {
+	if out := r.run("task", "note", "create", taskID, "-b", "hello"); !strings.Contains(out, "notes=1") {
 		t.Fatalf("task note add -b mismatch:\n%s", out)
 	}
 	if milestoneID := firstField(t, r.run("milestone", "create", "-p", projectID, "-t", "v1")); milestoneID == "" {
 		t.Fatal("milestone create -p/-t returned no id")
 	}
-	if out := r.run("doc", "add", "-p", projectID, "-t", "Spec", "-k", "spec", "-b", "content"); !strings.Contains(out, "Spec") {
+	if out := r.run("doc", "create", "-p", projectID, "-t", "Spec", "-k", "spec", "-b", "content"); !strings.Contains(out, "Spec") {
 		t.Fatalf("doc add -p/-t/-k/-b mismatch:\n%s", out)
 	}
 	if out := r.run("doc", "list", "-p", projectID); !strings.Contains(out, "Spec") {

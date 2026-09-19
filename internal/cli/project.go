@@ -35,8 +35,8 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 			}
 			hints := []hint{
 				{Command: fmt.Sprintf("ft project get %s", project.ID), About: "inspect the project"},
-				{Command: fmt.Sprintf("ft project repo add %s <name>", project.ID), About: "register a repository"},
-				{Command: fmt.Sprintf("ft task add --project %s --title \"...\"", project.ID), About: "add the first task"},
+				{Command: fmt.Sprintf("ft project repo create %s <name>", project.ID), About: "register a repository"},
+				{Command: fmt.Sprintf("ft task create --project %s --title \"...\"", project.ID), About: "add the first task"},
 			}
 			return deps.emit(project, func() { deps.printf("%s\t%s\n", project.ID, project.Name) }, hints...)
 		},
@@ -83,8 +83,8 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	rm := &cobra.Command{
-		Use:   "rm <project>",
+	deleteProject := &cobra.Command{
+		Use:   "delete <project>",
 		Short: "Delete a project",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -96,7 +96,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(create, list, get, newProjectRepoCommand(deps), rm)
+	cmd.AddCommand(create, list, get, newProjectRepoCommand(deps), deleteProject)
 	return cmd
 }
 
@@ -156,8 +156,8 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 
 	var url, path, brief string
 	add := &cobra.Command{
-		Use:   "add <project> <name>",
-		Short: "Add a repository to a project",
+		Use:   "create <project> <name>",
+		Short: "Create a repository in a project",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo := core.Repository{Name: args[1], URL: url, Path: path, Description: brief}
@@ -166,7 +166,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(project, func() { deps.printf("added\t%s\t%s\n", repo.Name, project.ID) },
-				hint{Command: fmt.Sprintf("ft task add --project %s --repo %s --title \"...\"", project.ID, repo.Name), About: "add a task in this repo"},
+				hint{Command: fmt.Sprintf("ft task create --project %s --repo %s --title \"...\"", project.ID, repo.Name), About: "add a task in this repo"},
 				hint{Command: fmt.Sprintf("ft project get %s", project.ID), About: "inspect the project"})
 		},
 	}
@@ -194,7 +194,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 	}
 
 	rm := &cobra.Command{
-		Use:   "rm <project> <name>",
+		Use:   "delete <project> <name>",
 		Short: "Remove a repository from a project",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {

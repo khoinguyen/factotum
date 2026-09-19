@@ -441,7 +441,21 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 			if all && top != nil {
 				hintProject = string(top.ProjectID)
 			}
-			return deps.emit(scored, func() {
+			entries := make([]nextEntry, 0, len(scored))
+			for _, entry := range scored {
+				task, _ := snapshot.Graph.Task(entry.TaskID)
+				entries = append(entries, nextEntry{
+					TaskID:  string(entry.TaskID),
+					Score:   entry.Score,
+					Title:   task.Title,
+					Kind:    string(task.Kind),
+					Status:  string(task.Status),
+					Project: string(task.ProjectID),
+					Repo:    task.Repo,
+					Labels:  append([]string{}, task.Labels...),
+				})
+			}
+			return deps.emit(entries, func() {
 				rows := make([][]string, 0, len(scored))
 				for _, entry := range scored {
 					task, _ := snapshot.Graph.Task(entry.TaskID)

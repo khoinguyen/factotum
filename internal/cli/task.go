@@ -162,7 +162,16 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(taskDocFrom(task), func() {
+			dependents := dependentsOf(cmd.Context(), deps, task)
+			doc := taskDocFrom(task)
+			if len(dependents) > 0 {
+				ids := make([]string, 0, len(dependents))
+				for _, id := range dependents {
+					ids = append(ids, string(id))
+				}
+				doc.Dependents = &ids
+			}
+			return deps.emit(doc, func() {
 				actors := deps.actorResolver(cmd.Context())
 				deps.printf("(%s) %s: %s\n", task.Status, task.ID, task.Title)
 				deps.printf("project: %s\n", task.ProjectID)
@@ -184,6 +193,13 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 						ids = append(ids, string(dep))
 					}
 					deps.printf("deps: %s\n", strings.Join(ids, ", "))
+				}
+				if len(dependents) > 0 {
+					ids := make([]string, 0, len(dependents))
+					for _, dependent := range dependents {
+						ids = append(ids, string(dependent))
+					}
+					deps.printf("unblocks: %s\n", strings.Join(ids, ", "))
 				}
 				if task.Description != "" {
 					deps.printf("\n=== Description ===\n%s\n", wrapText(task.Description, textWidth()))
@@ -724,6 +740,17 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&format, "format", "yaml", "document format: json or yaml")
 	return cmd
+}
+
+// dependentsOf returns the tasks that directly depend on task, best-effort: a
+// graph build failure (e.g. an unrelated cycle) yields none rather than failing
+// the read.
+func dependentsOf(ctx context.Context, deps *Deps, task *core.Task) []core.TaskID {
+	snapshot, err := app.LoadSnapshot(ctx, deps.Backend, task.ProjectID)
+	if err != nil {
+		return nil
+	}
+	return snapshot.Graph.Dependents(task.ID)
 }
 
 // taskFields is the canonical single-result field set for a task: identity, an

@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/khoinguyen/factotum/internal/config"
+	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/registry"
 	"github.com/khoinguyen/factotum/pkg/store"
 	"github.com/khoinguyen/factotum/pkg/version"
@@ -25,6 +26,12 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 		"milestone": newMilestoneCommand,
 		"project":   newProjectCommand,
 		"task":      newTaskCommand,
+		"start":     statusShortcut("start", core.StatusInProgress, "Mark a task in progress"),
+		"review":    statusShortcut("review", core.StatusReadyForReview, "Mark a task ready for review"),
+		"done":      statusShortcut("done", core.StatusDone, "Mark a task done"),
+		"reopen":    statusShortcut("reopen", core.StatusTodo, "Return a task to todo"),
+		"block":     statusShortcut("block", core.StatusBlocked, "Mark a task blocked"),
+		"cancel":    statusShortcut("cancel", core.StatusCancelled, "Cancel a task"),
 	}
 	for name, factory := range factories {
 		if err := reg.Register(name, factory); err != nil {

@@ -81,7 +81,7 @@ ft event list --project "$PID"
 | Task | `task add --repo <name>`, `task list --repo <name>`, `task get`, `task update`, `task set field=value...`, `task apply -f`, `task edit`, `task rm` |
 | Dependencies | `task dep add`, `task dep rm` (cycles are rejected) |
 | Assignment | `task assign --actor <ref>` / `--unassign` |
-| Status | `task start`, `review`, `done`, `reopen`, `block`, `cancel` |
+| Status | `task start\|review\|done\|reopen\|block\|cancel`, or the top-level shortcuts `ft start\|review\|done\|reopen\|block\|cancel` |
 | Notes | `task note add --body ... [--link kind=url]` |
 | Ranking | `task next -p <project> \| -a/--all [--for <actor>] [--repo <name>] [--toward <task>] [--rank unblock\|milestone\|toward\|composite]` |
 | Milestone | `milestone create`, `milestone list`, `milestone done` |

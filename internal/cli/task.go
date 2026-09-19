@@ -94,7 +94,9 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 				{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the task"},
 				{Command: fmt.Sprintf("ft task next --project %s", task.ProjectID), About: "see what to start"},
 			}
-			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Kind, task.Title) }, hints...)
+			return deps.emit(task, func() {
+				deps.printFields(f("task_id", task.ID), f("created", true), f("title", task.Title), f("project", task.ProjectID))
+			}, hints...)
 		},
 	}
 	add.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
@@ -137,9 +139,9 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 			return deps.emit(tasks, func() {
 				rows := make([][]string, 0, len(tasks))
 				for _, task := range tasks {
-					rows = append(rows, []string{string(task.ID), task.Repo, string(task.Kind), string(task.Status), task.Title})
+					rows = append(rows, []string{string(task.ID), string(task.ProjectID), task.Repo, string(task.Kind), string(task.Status), task.Title})
 				}
-				deps.printTable([]string{"ID", "REPO", "KIND", "STATUS", "TITLE"}, rows)
+				deps.printTable([]string{"ID", "PROJECT", "REPO", "KIND", "STATUS", "TITLE"}, rows)
 			}, taskListHints(tasks, projectID)...)
 		},
 	}
@@ -163,6 +165,7 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 			return deps.emit(taskDocFrom(task), func() {
 				actors := deps.actorResolver(cmd.Context())
 				deps.printf("(%s) %s: %s\n", task.Status, task.ID, task.Title)
+				deps.printf("project: %s\n", task.ProjectID)
 				if task.Kind == core.KindMilestone {
 					deps.printf("kind: milestone\n")
 				}
@@ -220,11 +223,13 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 		Short: "Create a dependency (rejects cycles)",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := deps.Tasks.AddDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1])); err != nil {
+			task, err := deps.Tasks.AddDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1]))
+			if err != nil {
 				return err
 			}
-			deps.suggest(hint{Command: fmt.Sprintf("ft task get %s", args[0]), About: "see the updated graph"})
-			return nil
+			return deps.emit(task, func() {
+				deps.printFields(f("task_id", task.ID), f("dependency", args[1]), f("added", true), f("project", task.ProjectID))
+			}, hint{Command: fmt.Sprintf("ft task get %s", args[0]), About: "see the updated graph"})
 		},
 	}
 	rm := &cobra.Command{
@@ -232,11 +237,13 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 		Short: "Delete a dependency",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := deps.Tasks.RemoveDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1])); err != nil {
+			task, err := deps.Tasks.RemoveDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1]))
+			if err != nil {
 				return err
 			}
-			deps.suggest(hint{Command: fmt.Sprintf("ft task get %s", args[0]), About: "see the updated graph"})
-			return nil
+			return deps.emit(task, func() {
+				deps.printFields(f("task_id", task.ID), f("dependency", args[1]), f("removed", true), f("project", task.ProjectID))
+			}, hint{Command: fmt.Sprintf("ft task get %s", args[0]), About: "see the updated graph"})
 		},
 	}
 	cmd.AddCommand(add, rm)
@@ -268,7 +275,11 @@ func newTaskAssignCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deps.printf("%s\tassigned\t%v\n", task.ID, task.AssigneeID)
+			assignee := "none"
+			if task.AssigneeID != nil {
+				assignee = string(*task.AssigneeID)
+			}
+			deps.printFields(f("task_id", task.ID), f("assignee", assignee), f("project", task.ProjectID))
 			if task.AssigneeID != nil {
 				deps.suggest(hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"})
 			} else {
@@ -292,7 +303,7 @@ func statusCommand(deps *Deps, use string, status core.TaskStatus, short string)
 			if err != nil {
 				return err
 			}
-			deps.printf("%s\t%s\n", task.ID, task.Status)
+			deps.printFields(f("task_id", task.ID), f("status", task.Status), f("project", task.ProjectID))
 			deps.suggest(deps.taskGetHints(cmd.Context(), task)...)
 			return nil
 		},
@@ -333,7 +344,7 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deps.printf("%s\tnotes=%d\n", task.ID, len(task.Notes))
+			deps.printFields(f("task_id", task.ID), f("noted", true), f("project", task.ProjectID))
 			deps.suggest(hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "review the note"})
 			return nil
 		},
@@ -414,9 +425,9 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 				rows := make([][]string, 0, len(scored))
 				for _, entry := range scored {
 					task, _ := snapshot.Graph.Task(entry.TaskID)
-					rows = append(rows, []string{fmt.Sprintf("%.2f", entry.Score), string(entry.TaskID), task.Title})
+					rows = append(rows, []string{fmt.Sprintf("%.2f", entry.Score), string(entry.TaskID), string(task.ProjectID), task.Title})
 				}
-				deps.printTable([]string{"SCORE", "TASK", "TITLE"}, rows)
+				deps.printTable([]string{"SCORE", "TASK", "PROJECT", "TITLE"}, rows)
 			}, taskNextHints(hintProject, top)...)
 		},
 	}
@@ -443,6 +454,7 @@ func newTaskDeleteCommand(deps *Deps) *cobra.Command {
 			if err := deps.Tasks.Delete(cmd.Context(), task.ID); err != nil {
 				return err
 			}
+			deps.printFields(f("task_id", task.ID), f("deleted", true), f("project", task.ProjectID))
 			deps.suggest(hint{Command: fmt.Sprintf("ft task list --project %s", task.ProjectID), About: "review the remaining tasks"})
 			return nil
 		},
@@ -491,7 +503,9 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Status, task.Title) },
+			return deps.emit(task, func() {
+				deps.printFields(f("task_id", task.ID), f("updated", true), f("status", task.Status), f("project", task.ProjectID))
+			},
 				hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the updated task"})
 		},
 	}
@@ -524,7 +538,9 @@ func newTaskSetCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Status, task.Title) },
+			return deps.emit(task, func() {
+				deps.printFields(f("task_id", task.ID), f("updated", true), f("status", task.Status), f("project", task.ProjectID))
+			},
 				hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the updated task"})
 		},
 	}
@@ -641,15 +657,17 @@ func newTaskApplyCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			if set.Empty() {
-				deps.printf("%s\tunchanged\n", task.ID)
-				return nil
+				return deps.emit(taskDocFrom(task), func() {
+					deps.printFields(f("task_id", task.ID), f("updated", false), f("project", task.ProjectID))
+				})
 			}
 			updated, err := deps.Tasks.Set(cmd.Context(), task.ID, set)
 			if err != nil {
 				return err
 			}
-			return deps.emit(taskDocFrom(updated), func() { deps.printf("%s\t%s\t%s\n", updated.ID, updated.Status, updated.Title) },
-				hint{Command: fmt.Sprintf("ft task get %s", updated.ID), About: "inspect the applied task"})
+			return deps.emit(taskDocFrom(updated), func() {
+				deps.printFields(f("task_id", updated.ID), f("updated", true), f("status", updated.Status), f("project", updated.ProjectID))
+			}, hint{Command: fmt.Sprintf("ft task get %s", updated.ID), About: "inspect the applied task"})
 		},
 	}
 	cmd.Flags().StringVarP(&filename, "filename", "f", "", "task document file (required)")
@@ -678,8 +696,9 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			if bytes.Equal(bytes.TrimSpace(original), bytes.TrimSpace(edited)) {
-				deps.printf("%s\tunchanged\n", task.ID)
-				return nil
+				return deps.emit(taskDocFrom(task), func() {
+					deps.printFields(f("task_id", task.ID), f("updated", false), f("project", task.ProjectID))
+				})
 			}
 			doc, err := parseTaskDoc(edited, format)
 			if err != nil {
@@ -690,15 +709,17 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			if set.Empty() {
-				deps.printf("%s\tunchanged\n", task.ID)
-				return nil
+				return deps.emit(taskDocFrom(task), func() {
+					deps.printFields(f("task_id", task.ID), f("updated", false), f("project", task.ProjectID))
+				})
 			}
 			updated, err := deps.Tasks.Set(cmd.Context(), task.ID, set)
 			if err != nil {
 				return err
 			}
-			return deps.emit(taskDocFrom(updated), func() { deps.printf("%s\t%s\t%s\n", updated.ID, updated.Status, updated.Title) },
-				hint{Command: fmt.Sprintf("ft task get %s", updated.ID), About: "inspect the edited task"})
+			return deps.emit(taskDocFrom(updated), func() {
+				deps.printFields(f("task_id", updated.ID), f("updated", true), f("status", updated.Status), f("project", updated.ProjectID))
+			}, hint{Command: fmt.Sprintf("ft task get %s", updated.ID), About: "inspect the edited task"})
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "yaml", "document format: json or yaml")

@@ -57,7 +57,7 @@ func TestTaskGetJSONDocumentRoundTripsUnchanged(t *testing.T) {
 	path := writeDoc(t, "task.json", doc)
 
 	out := r.run("task", "apply", "-f", path)
-	if !strings.Contains(out, "unchanged") {
+	if !strings.Contains(out, "updated: false") {
 		t.Fatalf("applying an unchanged document should be a no-op, got:\n%s", out)
 	}
 }
@@ -146,8 +146,8 @@ func TestTaskEditNoChanges(t *testing.T) {
 	taskID := newDocTask(t, r)
 	t.Setenv("EDITOR", writeEditorScript(t, "exit 0\n"))
 
-	if out := r.run("task", "edit", taskID); !strings.Contains(out, "unchanged") {
-		t.Fatalf("edit with no changes = %q, want unchanged", out)
+	if out := r.run("task", "edit", taskID); !strings.Contains(out, "updated: false") {
+		t.Fatalf("edit with no changes = %q, want updated: false", out)
 	}
 }
 

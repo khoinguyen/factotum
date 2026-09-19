@@ -123,8 +123,8 @@ func TestTaskReopenReturnsToTodo(t *testing.T) {
 
 	r.run("task", "start", taskID)
 	out := r.run("task", "reopen", taskID)
-	if fields := strings.Fields(out); len(fields) != 2 || fields[0] != taskID || fields[1] != "todo" {
-		t.Fatalf("task reopen = %q, want %s todo", out, taskID)
+	if !strings.Contains(out, "task_id: "+taskID) || !strings.Contains(out, "status: todo") {
+		t.Fatalf("task reopen = %q, want task_id %s status todo", out, taskID)
 	}
 	if show := r.run("task", "get", taskID); !strings.HasPrefix(show, "(todo)") {
 		t.Fatalf("reopened task should be todo:\n%s", show)

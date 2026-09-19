@@ -34,7 +34,9 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() { deps.printf("%s\t%s\n", task.ID, task.Title) },
+			return deps.emit(task, func() {
+				deps.printFields(f("task_id", task.ID), f("created", true), f("title", task.Title), f("project", task.ProjectID))
+			},
 				hint{Command: fmt.Sprintf("ft task dep create <task> %s", task.ID), About: "gate a task behind this milestone"},
 				hint{Command: fmt.Sprintf("ft milestone list --project %s", task.ProjectID), About: "see all milestones"})
 		},
@@ -57,9 +59,9 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 			return deps.emit(tasks, func() {
 				rows := make([][]string, 0, len(tasks))
 				for _, task := range tasks {
-					rows = append(rows, []string{string(task.ID), string(task.Status), task.Title})
+					rows = append(rows, []string{string(task.ID), string(task.ProjectID), string(task.Status), task.Title})
 				}
-				deps.printTable([]string{"ID", "STATUS", "TITLE"}, rows)
+				deps.printTable([]string{"ID", "PROJECT", "STATUS", "TITLE"}, rows)
 			}, milestoneListHints(listProject, tasks)...)
 		},
 	}
@@ -74,7 +76,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deps.printf("%s\t%s\n", task.ID, task.Status)
+			deps.printFields(f("task_id", task.ID), f("status", task.Status), f("project", task.ProjectID))
 			deps.suggest(deps.taskGetHints(cmd.Context(), task)...)
 			return nil
 		},

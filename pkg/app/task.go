@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/graph"
@@ -113,7 +114,9 @@ func (s *TaskService) Update(ctx context.Context, id core.TaskID, patch TaskUpda
 
 // TaskSet is a partial update to a task. A nil field is left unchanged; a
 // non-nil Labels slice replaces the existing labels (an empty slice clears
-// them).
+// them). When Expect is set, the write is a compare-and-swap against the
+// task's UpdatedAt and fails with ErrConflict if the task changed since it was
+// read.
 type TaskSet struct {
 	Kind        *core.TaskKind
 	Repo        *string
@@ -122,6 +125,7 @@ type TaskSet struct {
 	Priority    *int
 	Status      *core.TaskStatus
 	Labels      []string
+	Expect      *time.Time
 }
 
 func (set TaskSet) hasNonStatus() bool {
@@ -181,7 +185,11 @@ func (s *TaskService) Set(ctx context.Context, id core.TaskID, set TaskSet) (*co
 	if err := task.Validate(); err != nil {
 		return nil, err
 	}
-	if err := s.backend.Tasks().Update(ctx, task); err != nil {
+	if set.Expect != nil {
+		if err := s.backend.Tasks().UpdateExpected(ctx, task, *set.Expect); err != nil {
+			return nil, err
+		}
+	} else if err := s.backend.Tasks().Update(ctx, task); err != nil {
 		return nil, err
 	}
 	if set.Status != nil {

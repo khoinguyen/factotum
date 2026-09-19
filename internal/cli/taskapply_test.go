@@ -112,6 +112,24 @@ func TestTaskApplyRejectsInvalidDocuments(t *testing.T) {
 	}
 }
 
+func TestTaskApplyRejectsStaleDocument(t *testing.T) {
+	r := newRunner(t)
+	taskID := newDocTask(t, r)
+	doc := r.run("task", "get", taskID, "-o", "json")
+
+	// A concurrent change after the document was produced invalidates it.
+	r.run("task", "set", taskID, "title=other")
+	edited := mutateJSON(t, doc, func(fields map[string]any) { fields["title"] = "mine" })
+	path := writeDoc(t, "task.json", edited)
+
+	if err := r.runErr("task", "apply", "-f", path); err == nil {
+		t.Fatal("expected a conflict applying a stale document, got nil")
+	}
+	if got := r.run("task", "get", taskID); !strings.Contains(got, "other") {
+		t.Fatalf("stale apply must not overwrite the concurrent change:\n%s", got)
+	}
+}
+
 func TestTaskEditUsesEditor(t *testing.T) {
 	r := newRunner(t)
 	taskID := newDocTask(t, r)

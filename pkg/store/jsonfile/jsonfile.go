@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
@@ -242,6 +243,20 @@ func (r *taskRepo) Update(_ context.Context, task *core.Task) error {
 	index, ok := r.backend.taskIndex(task.ID)
 	if !ok {
 		return fmt.Errorf("%w: task %s", core.ErrNotFound, task.ID)
+	}
+	r.backend.state.Tasks[index] = clone.Task(*task)
+	return r.backend.persist()
+}
+
+func (r *taskRepo) UpdateExpected(_ context.Context, task *core.Task, expected time.Time) error {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	index, ok := r.backend.taskIndex(task.ID)
+	if !ok {
+		return fmt.Errorf("%w: task %s", core.ErrNotFound, task.ID)
+	}
+	if !r.backend.state.Tasks[index].UpdatedAt.Equal(expected) {
+		return fmt.Errorf("%w: task %s was modified", core.ErrConflict, task.ID)
 	}
 	r.backend.state.Tasks[index] = clone.Task(*task)
 	return r.backend.persist()

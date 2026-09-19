@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
@@ -175,6 +176,20 @@ func (r *taskRepo) Update(_ context.Context, task *core.Task) error {
 	defer r.backend.mu.Unlock()
 	if _, ok := r.backend.tasks[task.ID]; !ok {
 		return fmt.Errorf("%w: task %s", core.ErrNotFound, task.ID)
+	}
+	r.backend.tasks[task.ID] = clone.Task(*task)
+	return nil
+}
+
+func (r *taskRepo) UpdateExpected(_ context.Context, task *core.Task, expected time.Time) error {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	current, ok := r.backend.tasks[task.ID]
+	if !ok {
+		return fmt.Errorf("%w: task %s", core.ErrNotFound, task.ID)
+	}
+	if !current.UpdatedAt.Equal(expected) {
+		return fmt.Errorf("%w: task %s was modified", core.ErrConflict, task.ID)
 	}
 	r.backend.tasks[task.ID] = clone.Task(*task)
 	return nil

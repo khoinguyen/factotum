@@ -41,6 +41,10 @@ type TaskRepo interface {
 	Get(ctx context.Context, id core.TaskID) (*core.Task, error)
 	List(ctx context.Context, filter TaskFilter) ([]*core.Task, error)
 	Update(ctx context.Context, task *core.Task) error
+	// UpdateExpected writes the task only if its stored UpdatedAt still equals
+	// expected, returning ErrConflict otherwise (compare-and-swap). It lets a
+	// caller that read a document reject a stale write atomically.
+	UpdateExpected(ctx context.Context, task *core.Task, expected time.Time) error
 	Delete(ctx context.Context, id core.TaskID) error
 }
 

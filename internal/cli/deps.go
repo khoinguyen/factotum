@@ -16,16 +16,16 @@ import (
 type CommandFactory func(deps *Deps) *cobra.Command
 
 type Deps struct {
-	Config     config.Config
-	Backend    store.Backend
-	Clock      app.Clock
-	IDs        app.IDGen
-	Out        io.Writer
-	Err        io.Writer
-	Getenv     func(string) string
-	ActorRef   string
-	OutputJSON bool
-	NoHints    bool
+	Config       config.Config
+	Backend      store.Backend
+	Clock        app.Clock
+	IDs          app.IDGen
+	Out          io.Writer
+	Err          io.Writer
+	Getenv       func(string) string
+	ActorRef     string
+	OutputFormat string
+	NoHints      bool
 
 	StoreFactories *registry.Registry[store.Factory]
 	Rankers        *registry.Registry[rank.Ranker]

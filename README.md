@@ -78,7 +78,7 @@ ft event list --project "$PID"
 | Project | `project create`, `project list`, `project get`, `project rm` |
 | Repositories | `project repo add`, `repo list`, `repo update`, `repo rm` |
 | Actor | `actor add --kind human\|agent`, `actor list` |
-| Task | `task add --repo <name>`, `task list --repo <name>`, `task get`, `task update`, `task set field=value...`, `task rm` |
+| Task | `task add --repo <name>`, `task list --repo <name>`, `task get`, `task update`, `task set field=value...`, `task apply -f`, `task edit`, `task rm` |
 | Dependencies | `task dep add`, `task dep rm` (cycles are rejected) |
 | Assignment | `task assign --actor <ref>` / `--unassign` |
 | Status | `task start`, `review`, `done`, `reopen`, `block`, `cancel` |
@@ -89,7 +89,7 @@ ft event list --project "$PID"
 | Rendering | `graph render --format agent\|json\|tree\|html\|dot\|mermaid [--layout tree\|waves]` |
 | Audit | `event list` |
 
-Global flags: `-c/--config`, `--store`, `--store-opt key=value`, `--actor`, `-o/--output text|json`,
+Global flags: `-c/--config`, `--store`, `--store-opt key=value`, `--actor`, `-o/--output text|json|yaml`,
 `--no-hints`.
 
 Common flags carry shorthands: `-p/--project`, `-t/--title`, `-b/--body`, `-r/--repo`, `-k/--kind`,
@@ -103,6 +103,12 @@ stderr and exit with status `2`, instead of a terse one-line error.
 `task set <task> field=value...` assigns several fields at once, validating each type: `status`,
 `kind`, `priority` (integer), `repo`, `title`, `labels` (comma-separated), and `body`. Long text can
 come from a file (`body=@notes.md`) or stdin (`body=-`).
+
+`task get -o json|yaml` prints a round-trippable task document. Edit it and feed it back with
+`task apply -f <file>` (format inferred from the extension; override with `--format`), or open it
+in `$EDITOR` with `task edit <task>`. Immutable fields (`id`, `project_id`, `created_at`,
+`updated_at`) and command-managed relations (`assignee`, `deps`, `waiting_on`) may be echoed back
+unchanged but any modification is rejected.
 
 ## Next-step suggestions
 

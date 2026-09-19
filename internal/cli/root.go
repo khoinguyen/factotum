@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/pkg/registry"
@@ -78,7 +79,12 @@ func NewRoot(deps *Deps) *cobra.Command {
 			} else if deps.ActorRef == "" {
 				deps.ActorRef = cfg.DefaultActor
 			}
-			deps.OutputJSON = output == "json"
+			deps.OutputFormat = output
+			switch output {
+			case "", "text", "json", "yaml":
+			default:
+				return fmt.Errorf("unknown output format %q, want text, json, or yaml", output)
+			}
 			if noHints {
 				cfg.NoHints = true
 			}
@@ -111,7 +117,7 @@ func NewRoot(deps *Deps) *cobra.Command {
 	root.PersistentFlags().StringVar(&storeBackend, "store", "", "storage backend (overrides config)")
 	root.PersistentFlags().StringArrayVar(&storeOpts, "store-opt", nil, "backend option key=value (repeatable)")
 	root.PersistentFlags().StringVar(&actorRef, "actor", "", "actor attributed to mutations (id or name)")
-	root.PersistentFlags().StringVarP(&output, "output", "o", "text", "output format: text or json")
+	root.PersistentFlags().StringVarP(&output, "output", "o", "text", "output format: text, json, or yaml")
 	root.PersistentFlags().BoolVar(&noHints, "no-hints", false, "suppress next-step command suggestions")
 
 	root.AddCommand(&cobra.Command{
@@ -150,11 +156,26 @@ func (d *Deps) printJSON(value any) error {
 	return encoder.Encode(value)
 }
 
+func (d *Deps) printYAML(value any) error {
+	encoder := yaml.NewEncoder(d.Out)
+	encoder.SetIndent(2)
+	defer func() { _ = encoder.Close() }()
+	return encoder.Encode(value)
+}
+
+func (d *Deps) structured() bool {
+	return d.OutputFormat == "json" || d.OutputFormat == "yaml"
+}
+
 func (d *Deps) emit(value any, text func(), hints ...hint) error {
-	if d.OutputJSON {
+	switch d.OutputFormat {
+	case "json":
 		return d.printJSON(value)
+	case "yaml":
+		return d.printYAML(value)
+	default:
+		text()
+		d.suggest(hints...)
+		return nil
 	}
-	text()
-	d.suggest(hints...)
-	return nil
 }

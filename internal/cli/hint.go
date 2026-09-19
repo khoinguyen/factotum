@@ -18,7 +18,7 @@ type hint struct {
 // JSON output and when hints are turned off (--no-hints, FACTOTUM_NO_HINTS, or
 // no_hints in the config file).
 func (d *Deps) suggest(hints ...hint) {
-	if d.NoHints || d.OutputJSON || len(hints) == 0 {
+	if d.NoHints || d.structured() || len(hints) == 0 {
 		return
 	}
 	width := 0

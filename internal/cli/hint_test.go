@@ -30,7 +30,7 @@ func TestSuggestOmitsPaddingWithoutAbout(t *testing.T) {
 
 func TestSuggestSuppressed(t *testing.T) {
 	cases := map[string]*Deps{
-		"json": {OutputJSON: true},
+		"json": {OutputFormat: "json"},
 		"flag": {NoHints: true},
 	}
 	for name, deps := range cases {

@@ -129,6 +129,11 @@ func (set TaskSet) hasNonStatus() bool {
 		set.Description != nil || set.Priority != nil || set.Labels != nil
 }
 
+// Empty reports whether the set carries no changes.
+func (set TaskSet) Empty() bool {
+	return !set.hasNonStatus() && set.Status == nil
+}
+
 // Set applies a partial update. Setting the status emits a status-changed
 // event; any other field emits an updated event. It is the single code path
 // behind `task set`, `task update`, and the status transition commands.

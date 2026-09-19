@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/khoinguyen/factotum/pkg/core"
 )
 
 // ErrUsage marks a validation error whose help has already been printed. The
@@ -52,4 +54,13 @@ func usageError(cmd *cobra.Command, format string, args ...any) error {
 	cmd.SetOut(cmd.ErrOrStderr())
 	_ = cmd.Help()
 	return usageFailure{reason: reason}
+}
+
+// requireProject reports a usage error when no project could be resolved from
+// the flag or the configured default.
+func requireProject(cmd *cobra.Command, project core.ProjectID) error {
+	if project == "" {
+		return usageError(cmd, "--project is required, or set a default project")
+	}
+	return nil
 }

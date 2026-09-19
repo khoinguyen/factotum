@@ -22,7 +22,8 @@ func newGraphCommand(deps *Deps) *cobra.Command {
 		Use:   "render",
 		Short: "Render the DAG as agent text, json, tree, html, dot, or mermaid",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := requireFlags(cmd, "project"); err != nil {
+			projectID = string(deps.resolveProject(projectID))
+			if err := requireProject(cmd, core.ProjectID(projectID)); err != nil {
 				return err
 			}
 			snapshot, err := app.LoadSnapshot(cmd.Context(), deps.Backend, core.ProjectID(projectID))

@@ -19,7 +19,11 @@ func newDocCommand(deps *Deps) *cobra.Command {
 		Use:   "create",
 		Short: "Create an artifact (spec, doc, or memory)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := requireFlags(cmd, "project", "title"); err != nil {
+			if err := requireFlags(cmd, "title"); err != nil {
+				return err
+			}
+			project := deps.resolveProject(projectID)
+			if err := requireProject(cmd, project); err != nil {
 				return err
 			}
 			content := body
@@ -31,7 +35,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 				content = string(data)
 			}
 			input := app.ArtifactInput{
-				ProjectID: core.ProjectID(projectID),
+				ProjectID: project,
 				Kind:      core.ArtifactKind(kind),
 				Title:     title,
 				Body:      content,
@@ -62,6 +66,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 		Use:   "list",
 		Short: "List artifacts",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			listProject = string(deps.resolveProject(listProject))
 			filter := store.ArtifactFilter{ProjectID: core.ProjectID(listProject)}
 			if listKind != "" {
 				kind := core.ArtifactKind(listKind)
@@ -89,6 +94,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 		Short: "Search artifact titles and bodies",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			searchProject = string(deps.resolveProject(searchProject))
 			artifacts, err := deps.Artifacts.Search(cmd.Context(), core.ProjectID(searchProject), args[0])
 			if err != nil {
 				return err

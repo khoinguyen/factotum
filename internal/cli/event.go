@@ -18,6 +18,7 @@ func newEventCommand(deps *Deps) *cobra.Command {
 		Use:   "list",
 		Short: "List events, newest first",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			projectID = string(deps.resolveProject(projectID))
 			filter := store.EventFilter{ProjectID: core.ProjectID(projectID), Limit: limit}
 			if taskID != "" {
 				id := core.TaskID(taskID)

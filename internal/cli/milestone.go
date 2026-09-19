@@ -18,11 +18,15 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 		Use:   "create",
 		Short: "Create a milestone",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := requireFlags(cmd, "project", "title"); err != nil {
+			if err := requireFlags(cmd, "title"); err != nil {
+				return err
+			}
+			project := deps.resolveProject(projectID)
+			if err := requireProject(cmd, project); err != nil {
 				return err
 			}
 			task, err := deps.Tasks.Add(cmd.Context(), app.TaskInput{
-				ProjectID:   core.ProjectID(projectID),
+				ProjectID:   project,
 				Kind:        core.KindMilestone,
 				Title:       title,
 				Description: description,
@@ -44,6 +48,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 		Use:   "list",
 		Short: "List milestones",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			listProject = string(deps.resolveProject(listProject))
 			kind := core.KindMilestone
 			tasks, err := deps.Tasks.List(cmd.Context(), store.TaskFilter{ProjectID: core.ProjectID(listProject), Kind: &kind})
 			if err != nil {

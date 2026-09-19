@@ -147,6 +147,15 @@ func (d *Deps) printf(format string, args ...any) {
 	_, _ = fmt.Fprintf(d.Out, format, args...)
 }
 
+// resolveProject returns flag when set, else the configured default project,
+// or "" when neither is available.
+func (d *Deps) resolveProject(flag string) core.ProjectID {
+	if flag != "" {
+		return core.ProjectID(flag)
+	}
+	return core.ProjectID(d.Config.Project)
+}
+
 // printTable writes a space-aligned table (header + rows) using tab stops.
 func (d *Deps) printTable(header []string, rows [][]string) {
 	writer := tabwriter.NewWriter(d.Out, 0, 4, 2, ' ', 0)

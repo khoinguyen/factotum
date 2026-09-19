@@ -97,6 +97,10 @@ Common flags carry shorthands: `-p/--project`, `-t/--title`, `-b/--body`, `-r/--
 assign`). `task next` takes either `-p/--project` or `-a/--all` (ready tasks across every project),
 never both.
 
+Every command that takes `-p/--project` falls back to the configured project (`project` in the
+project file, or `default_project` in the machine file) when the flag is omitted; mutating commands
+error if no default is configured.
+
 Invalid invocations (wrong argument count, or a missing required flag) print the command's help to
 stderr and exit with status `2`, instead of a terse one-line error.
 

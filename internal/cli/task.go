@@ -54,7 +54,11 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 		Use:   "create",
 		Short: "Create a task or milestone",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := requireFlags(cmd, "project", "title"); err != nil {
+			if err := requireFlags(cmd, "title"); err != nil {
+				return err
+			}
+			project := deps.resolveProject(projectID)
+			if err := requireProject(cmd, project); err != nil {
 				return err
 			}
 			if bodyFile != "" {
@@ -65,7 +69,7 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 				body = string(data)
 			}
 			input := app.TaskInput{
-				ProjectID:   core.ProjectID(projectID),
+				ProjectID:   project,
 				Repo:        repo,
 				Kind:        core.TaskKind(kind),
 				Title:       title,
@@ -114,6 +118,7 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 		Use:   "list",
 		Short: "List tasks",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			projectID = string(deps.resolveProject(projectID))
 			filter := store.TaskFilter{ProjectID: core.ProjectID(projectID)}
 			if repo != "" {
 				filter.Repo = &repo

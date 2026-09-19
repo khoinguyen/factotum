@@ -26,11 +26,17 @@ type View struct {
 	Now     time.Time
 }
 
+// Stats are unambiguous graph counts: Resolved counts tasks that satisfy the
+// resolution policy (ready_for_review/done/cancelled); Done counts status=done;
+// DepBlocked counts tasks waiting on unresolved dependencies; Blocked counts
+// status=blocked.
 type Stats struct {
 	Scope      int
+	Resolved   int
 	Done       int
 	ReadyAgent int
 	ReadyHuman int
+	DepBlocked int
 	Blocked    int
 	Cycles     int
 	Waves      int
@@ -112,13 +118,19 @@ func (v View) info() *info {
 	}
 	for _, id := range derived.ids {
 		task := derived.tasks[id]
-		switch {
-		case task.Resolves(v.Project.Policy):
+		if task.Resolves(v.Project.Policy) {
+			derived.stats.Resolved++
+		}
+		if task.Status == core.StatusDone {
 			derived.stats.Done++
-		case derived.readyAgent[id] || derived.readyHuman[id]:
-		case derived.cycles[id]:
-		default:
+		}
+		if task.Status == core.StatusBlocked {
 			derived.stats.Blocked++
+		}
+		switch {
+		case task.Resolves(v.Project.Policy), derived.readyAgent[id] || derived.readyHuman[id], derived.cycles[id]:
+		default:
+			derived.stats.DepBlocked++
 		}
 	}
 	return derived

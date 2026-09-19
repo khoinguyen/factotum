@@ -286,6 +286,13 @@ Workflow:
    - Otherwise, make sure the title and body cover **every** commit on the branch, not just the
      last one.
 6. Push the branch and open a right-scoped PR against `main` with `gh pr create`.
+7. **If the PRs form a stack** (each PR based on the branch below it, not on `main`), always link
+   them into a GitHub stack with `gh stack link <pr>...` **bottom to top** (e.g.
+   `gh stack link 12 13 14`). GitHub then tracks them as a stack, cascades rebases when a lower
+   layer lands, and lands the whole stack in one operation. Use `gh stack sync` to rebase/push
+   after a base changes, and `gh stack merge <n> --rebase` (this repo is rebase-merge only) to land.
+   A stack is a chain, so independent PRs that all target `main` are not a stack — do not force
+   them into one.
 
 Never commit `ft`, `coverage.out`, or `*.db`; `.factotum/config.toml` is intentionally
 committable. Do not amend a merged commit, and never force-push a shared branch.

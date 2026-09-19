@@ -34,6 +34,24 @@ type TaskFilter struct {
 	Repo      *string
 	Statuses  []core.TaskStatus
 	Kind      *core.TaskKind
+	Labels    []string
+}
+
+// MatchLabels reports whether task carries every label in labels (AND).
+func MatchLabels(task core.Task, labels []string) bool {
+	for _, want := range labels {
+		found := false
+		for _, have := range task.Labels {
+			if have == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 type TaskRepo interface {

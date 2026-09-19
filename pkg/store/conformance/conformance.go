@@ -233,6 +233,46 @@ func testTask(t *testing.T, be store.Backend) {
 		t.Fatalf("Get() after conditional update error = %v", err)
 	}
 
+	// Label filter: every provided label must be present (AND).
+	labeled, err := repo.Get(ctx, "t-1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	labeled.Labels = []string{"groomed", "urgent"}
+	if err := repo.Update(ctx, labeled); err != nil {
+		t.Fatalf("Update(labels t-1) error = %v", err)
+	}
+	second, err := repo.Get(ctx, "t-2")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	second.Labels = []string{"groomed"}
+	if err := repo.Update(ctx, second); err != nil {
+		t.Fatalf("Update(labels t-2) error = %v", err)
+	}
+
+	byLabel, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Labels: []string{"groomed"}})
+	if err != nil {
+		t.Fatalf("List(label) error = %v", err)
+	}
+	if len(byLabel) != 2 {
+		t.Fatalf("List(label groomed) len = %d, want 2", len(byLabel))
+	}
+	byAllLabels, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Labels: []string{"groomed", "urgent"}})
+	if err != nil {
+		t.Fatalf("List(labels) error = %v", err)
+	}
+	if len(byAllLabels) != 1 || byAllLabels[0].ID != "t-1" {
+		t.Fatalf("List(labels groomed+urgent) = %v, want [t-1]", byAllLabels)
+	}
+	byMissing, err := repo.List(ctx, store.TaskFilter{Labels: []string{"missing"}})
+	if err != nil {
+		t.Fatalf("List(missing label) error = %v", err)
+	}
+	if len(byMissing) != 0 {
+		t.Fatalf("List(missing label) len = %d, want 0", len(byMissing))
+	}
+
 	if err := repo.Delete(ctx, "t-3"); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}

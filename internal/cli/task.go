@@ -115,14 +115,14 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 
 func newTaskListCommand(deps *Deps) *cobra.Command {
 	var projectID, repo string
-	var statuses, kinds []string
+	var statuses, kinds, labels []string
 
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List tasks",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			projectID = string(deps.resolveProject(projectID))
-			filter := store.TaskFilter{ProjectID: core.ProjectID(projectID)}
+			filter := store.TaskFilter{ProjectID: core.ProjectID(projectID), Labels: labels}
 			if repo != "" {
 				filter.Repo = &repo
 			}
@@ -150,6 +150,7 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 	list.Flags().StringVarP(&repo, "repo", "r", "", "filter by repository name")
 	list.Flags().StringArrayVarP(&statuses, "status", "s", nil, "filter by status (repeatable)")
 	list.Flags().StringArrayVarP(&kinds, "kind", "k", nil, "filter by kind")
+	list.Flags().StringArrayVarP(&labels, "label", "l", nil, "filter by label (repeatable; all must match)")
 	return list
 }
 
@@ -375,6 +376,7 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 
 func newTaskNextCommand(deps *Deps) *cobra.Command {
 	var projectID, forRef, repo, toward, rankerName string
+	var labels []string
 	var limit int
 	var all bool
 
@@ -410,6 +412,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 				}
 				candidates = filterByActor(snapshot, candidates, actor)
 			}
+			candidates = filterByLabels(snapshot, candidates, labels)
 
 			ranker, err := deps.Rankers.MustLookup(rankerName)
 			if err != nil {
@@ -452,6 +455,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "rank ready tasks across all projects")
 	cmd.Flags().StringVar(&forRef, "for", "", "restrict to an actor (id or name)")
 	cmd.Flags().StringVarP(&repo, "repo", "r", "", "restrict to a repository name")
+	cmd.Flags().StringArrayVarP(&labels, "label", "l", nil, "restrict to tasks with all given labels")
 	cmd.Flags().StringVar(&toward, "toward", "", "prefer tasks on the path to this task")
 	cmd.Flags().StringVar(&rankerName, "rank", "composite", "ranker: composite, unblock, milestone, or toward")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 0, "maximum number of tasks (0 means all)")
@@ -841,6 +845,23 @@ func unionIDs(a, b []core.TaskID) []core.TaskID {
 				continue
 			}
 			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func filterByLabels(snapshot *app.Snapshot, candidates []core.TaskID, labels []string) []core.TaskID {
+	if len(labels) == 0 {
+		return candidates
+	}
+	out := make([]core.TaskID, 0, len(candidates))
+	for _, id := range candidates {
+		task, ok := snapshot.Graph.Task(id)
+		if !ok {
+			continue
+		}
+		if store.MatchLabels(task, labels) {
 			out = append(out, id)
 		}
 	}

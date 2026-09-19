@@ -200,6 +200,21 @@ sg scan -r sgconfig.yml                           # run project rules (if config
 - Table-driven tests for anything with more than one interesting case.
 - Prefer determinism. Inject clocks and IDs where tests need them; renderers must be byte-stable.
 
+### CLI output and project resolution
+
+- Any command with `-p/--project` falls back to the configured project (`project` in the project
+  file, `default_project` in the machine file) when the flag is omitted. Mutating commands error
+  when no default is configured; list/filter commands fall back to all.
+- Text output has one shape:
+  - single-result commands print yaml-like `key: value` lines, with `project` last, e.g.
+    `task_id: t-xxx`, `created: true`, `title: ...`, `project: factotum`. Use `updated: true`/
+    `deleted: true`/`noted: true` for actions; transitions carry `status: ...`.
+  - list commands print a table with a `PROJECT` column.
+  - `get` prints a human block that includes `project`.
+- Future fields follow these shapes: new single-result fields are `key: value` before `project`,
+  new list columns are added to the table. `-o json|yaml` stay the machine-readable interfaces.
+- Resolve the project with `Deps.resolveProject` and reject a missing one with `requireProject`.
+
 ## Dogfooding: use `ft` for the work itself
 
 This repository is managed by `ft`. The project id is `factotum`; `.factotum/config.toml` pins it

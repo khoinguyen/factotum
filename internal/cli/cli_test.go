@@ -67,7 +67,12 @@ func firstField(t *testing.T, out string) string {
 	if line == "" {
 		t.Fatal("expected output, got empty")
 	}
-	return strings.SplitN(line, "\t", 2)[0]
+	first := strings.SplitN(line, "\n", 2)[0]
+	_, value, ok := strings.Cut(first, ": ")
+	if !ok {
+		t.Fatalf("first line is not key: value: %q", first)
+	}
+	return value
 }
 
 func readFile(t *testing.T, path string) string {
@@ -93,7 +98,7 @@ func TestTaskNextHeader(t *testing.T) {
 
 	out := r.run("task", "next", "--project", projectID)
 	header := strings.SplitN(out, "\n", 2)[0]
-	if fields := strings.Fields(header); len(fields) != 3 || fields[0] != "SCORE" || fields[1] != "TASK" || fields[2] != "TITLE" {
+	if fields := strings.Fields(header); len(fields) != 4 || fields[0] != "SCORE" || fields[1] != "TASK" || fields[2] != "PROJECT" || fields[3] != "TITLE" {
 		t.Fatalf("task next missing header: %q", header)
 	}
 	if jsonOut := r.run("task", "next", "--project", projectID, "-o", "json"); strings.Contains(jsonOut, "SCORE") {

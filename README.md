@@ -51,10 +51,10 @@ ft actor create --kind human Khoi
 
 PID=$(ft project create "Acme" \
   --repo "name=backend,url=git@example.com:acme/backend.git,path=repos/backend,brief=Go API service" \
-  --repo "name=web,path=repos/web,brief=Next.js frontend" | cut -f1)
-T1=$(ft task create --project "$PID" --title "Write the spec" | cut -f1)
-T2=$(ft task create --project "$PID" --title "Build the API" --dep "$T1" | cut -f1)
-M=$(ft milestone create --project "$PID" --title "v0.1 release" | cut -f1)
+  --repo "name=web,path=repos/web,brief=Next.js frontend" | sed -n 's/^project: //p')
+T1=$(ft task create --project "$PID" --title "Write the spec" | sed -n 's/^task_id: //p')
+T2=$(ft task create --project "$PID" --title "Build the API" --dep "$T1" | sed -n 's/^task_id: //p')
+M=$(ft milestone create --project "$PID" --title "v0.1 release" | sed -n 's/^task_id: //p')
 ft task create --project "$PID" --title "Deploy v0.1" --dep "$M"
 
 # What can the agent or a human pick up next?
@@ -100,6 +100,15 @@ never both.
 Every command that takes `-p/--project` falls back to the configured project (`project` in the
 project file, or `default_project` in the machine file) when the flag is omitted; mutating commands
 error if no default is configured.
+
+Text output follows one convention:
+
+- commands that report a single result print yaml-like `key: value` lines, ending with `project`
+  (e.g. `task_id: t-xxx`, `created: true`, `title: ...`, `project: factotum`);
+- list commands print a table with a `PROJECT` column;
+- `get` prints a human-readable block, including the `project`.
+
+`-o json` / `-o yaml` remain the machine-readable interfaces and are unaffected.
 
 Invalid invocations (wrong argument count, or a missing required flag) print the command's help to
 stderr and exit with status `2`, instead of a terse one-line error.

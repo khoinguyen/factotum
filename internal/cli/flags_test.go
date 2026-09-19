@@ -43,7 +43,7 @@ func TestShorthandFlags(t *testing.T) {
 		t.Fatalf("task update -t/-b mismatch:\n%s", out)
 	}
 	r.run("task", "assign", taskID, "-a", actorID)
-	if out := r.run("task", "note", "create", taskID, "-b", "hello"); !strings.Contains(out, "notes=1") {
+	if out := r.run("task", "note", "create", taskID, "-b", "hello"); !strings.Contains(out, "noted: true") {
 		t.Fatalf("task note add -b mismatch:\n%s", out)
 	}
 	if milestoneID := firstField(t, r.run("milestone", "create", "-p", projectID, "-t", "v1")); milestoneID == "" {

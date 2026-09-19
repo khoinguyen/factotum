@@ -19,7 +19,9 @@ func newActorCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(actor, func() { deps.printf("%s\t%s\t%s\n", actor.ID, actor.Kind, actor.Name) },
+			return deps.emit(actor, func() {
+				deps.printFields(f("actor_id", actor.ID), f("created", true))
+			},
 				hint{Command: "ft actor list", About: "see all actors"})
 		},
 	}

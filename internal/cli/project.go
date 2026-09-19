@@ -38,7 +38,9 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 				{Command: fmt.Sprintf("ft project repo create %s <name>", project.ID), About: "register a repository"},
 				{Command: fmt.Sprintf("ft task create --project %s --title \"...\"", project.ID), About: "add the first task"},
 			}
-			return deps.emit(project, func() { deps.printf("%s\t%s\n", project.ID, project.Name) }, hints...)
+			return deps.emit(project, func() {
+				deps.printFields(f("project", project.ID), f("created", true))
+			}, hints...)
 		},
 	}
 	create.Flags().StringVar(&description, "description", "", "project description")
@@ -91,6 +93,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 			if err := deps.Projects.Delete(cmd.Context(), core.ProjectID(args[0])); err != nil {
 				return err
 			}
+			deps.printFields(f("project", args[0]), f("deleted", true))
 			deps.suggest(hint{Command: "ft project list", About: "review the remaining projects"})
 			return nil
 		},
@@ -165,7 +168,9 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(project, func() { deps.printf("added\t%s\t%s\n", repo.Name, project.ID) },
+			return deps.emit(project, func() {
+				deps.printFields(f("project", project.ID), f("repo", repo.Name), f("created", true))
+			},
 				hint{Command: fmt.Sprintf("ft task create --project %s --repo %s --title \"...\"", project.ID, repo.Name), About: "add a task in this repo"},
 				hint{Command: fmt.Sprintf("ft project get %s", project.ID), About: "inspect the project"})
 		},
@@ -186,9 +191,9 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 			return deps.emit(project.Repos, func() {
 				rows := make([][]string, 0, len(project.Repos))
 				for _, repo := range project.Repos {
-					rows = append(rows, []string{repo.Name, repo.Description, repo.Path, repo.URL})
+					rows = append(rows, []string{string(project.ID), repo.Name, repo.Description, repo.Path, repo.URL})
 				}
-				deps.printTable([]string{"NAME", "BRIEF", "PATH", "URL"}, rows)
+				deps.printTable([]string{"PROJECT", "NAME", "BRIEF", "PATH", "URL"}, rows)
 			}, projectRepoHints(project)...)
 		},
 	}
@@ -202,6 +207,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			deps.printFields(f("project", project.ID), f("repo", args[1]), f("deleted", true))
 			deps.suggest(hint{Command: fmt.Sprintf("ft project get %s", project.ID), About: "see the updated project"})
 			return nil
 		},
@@ -232,7 +238,9 @@ func newProjectRepoUpdateCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(project, func() { deps.printf("updated\t%s\t%s\n", args[1], project.ID) },
+			return deps.emit(project, func() {
+				deps.printFields(f("project", project.ID), f("repo", args[1]), f("updated", true))
+			},
 				hint{Command: fmt.Sprintf("ft project repo list %s", project.ID), About: "see all repositories"})
 		},
 	}

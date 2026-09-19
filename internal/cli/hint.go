@@ -60,8 +60,8 @@ func (d *Deps) taskGetHints(ctx context.Context, task *core.Task) []hint {
 		return []hint{{Command: fmt.Sprintf("ft task next --project %s", project), About: "pick up the next task"}}
 	case core.StatusReadyForReview:
 		return []hint{
+			{Command: fmt.Sprintf("ft task note create %s --body \"PR: <url>\" --link pr=<url>", id), About: "attach the PR link"},
 			{Command: fmt.Sprintf("ft task done %s", id), About: "accept and finish"},
-			{Command: fmt.Sprintf("ft task note create %s --body \"...\"", id), About: "leave review feedback"},
 		}
 	case core.StatusInProgress:
 		return []hint{

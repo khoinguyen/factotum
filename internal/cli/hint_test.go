@@ -181,3 +181,20 @@ func TestTaskGetSuggestsBlockingDependency(t *testing.T) {
 		t.Fatalf("blocked task should not suggest starting:\n%s", stderr)
 	}
 }
+
+func TestReviewTransitionRemindsToAttachPRLink(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "one"))
+	r.run("task", "start", taskID)
+
+	_, stderr := r.runSplit("task", "review", taskID)
+	if !strings.Contains(stderr, "attach the PR link") || !strings.Contains(stderr, "--link pr=<url>") {
+		t.Fatalf("review should remind attaching the PR link:\n%s", stderr)
+	}
+
+	_, stderr = r.runSplit("task", "get", taskID)
+	if !strings.Contains(stderr, "--link pr=<url>") {
+		t.Fatalf("viewing a ready_for_review task should suggest the PR link:\n%s", stderr)
+	}
+}

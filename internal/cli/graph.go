@@ -20,7 +20,7 @@ func newGraphCommand(deps *Deps) *cobra.Command {
 
 	renderCmd := &cobra.Command{
 		Use:   "render",
-		Short: "Render the DAG as agent text, json, tree, html, dot, or mermaid",
+		Short: "Render the DAG as summary, agent text, json, tree, html, dot, or mermaid",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			projectID = string(deps.resolveProject(projectID))
 			if err := requireProject(cmd, core.ProjectID(projectID)); err != nil {
@@ -79,7 +79,7 @@ func newGraphCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	renderCmd.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
-	renderCmd.Flags().StringVarP(&format, "format", "f", "tree", "output format: agent, json, tree, html, dot, mermaid")
+	renderCmd.Flags().StringVarP(&format, "format", "f", "tree", "output format: summary, agent, json, tree, html, dot, mermaid")
 	renderCmd.Flags().StringVarP(&layout, "layout", "l", "tree", "graph layout: tree or waves")
 	renderCmd.Flags().StringVar(&out, "out", "", "write to a file instead of stdout (- for stdout)")
 	renderCmd.Flags().StringVar(&theme, "theme", "", "html theme: auto, light, or dark")

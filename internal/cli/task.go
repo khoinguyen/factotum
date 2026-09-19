@@ -764,7 +764,10 @@ func newTaskApplyCommand(deps *Deps) *cobra.Command {
 				results = append(results, result)
 			}
 			return deps.emit(results, func() {
-				for _, result := range results {
+				for i, result := range results {
+					if i > 0 {
+						deps.printf("---\n")
+					}
 					fields := []field{f("task_id", result.TaskID), f("updated", result.Updated)}
 					if result.DryRun {
 						fields = append(fields, f("dry_run", true))

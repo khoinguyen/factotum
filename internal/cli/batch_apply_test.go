@@ -27,6 +27,12 @@ func TestBatchApplyFromFileAndDryRun(t *testing.T) {
 	if !strings.Contains(out, "task_id: "+a) || !strings.Contains(out, "task_id: "+b) {
 		t.Fatalf("batch apply should report every document:\n%s", out)
 	}
+	if !strings.Contains(out, "\n---\n") {
+		t.Fatalf("batch output should separate documents with ---:\n%s", out)
+	}
+	if jsonOut := r.run("task", "apply", "-f", path, "-o", "json"); !strings.HasPrefix(strings.TrimSpace(jsonOut), "[") {
+		t.Fatalf("batch -o json should be an array:\n%s", jsonOut)
+	}
 	if got := r.run("task", "get", a); !strings.Contains(got, "(done)") {
 		t.Fatalf("first document not applied:\n%s", got)
 	}

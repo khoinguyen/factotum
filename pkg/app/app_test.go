@@ -609,6 +609,34 @@ func TestTaskSetClearsLabels(t *testing.T) {
 	}
 }
 
+func TestTaskSetRejectsStaleExpectation(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "x"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	stale := task.UpdatedAt
+
+	concurrent := *task
+	concurrent.Title = "other"
+	concurrent.UpdatedAt = stale.Add(time.Minute)
+	if err := h.backend.Tasks().Update(ctx, &concurrent); err != nil {
+		t.Fatalf("concurrent Update() error = %v", err)
+	}
+
+	title := "mine"
+	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Title: &title, Expect: &stale}); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("Set(stale expect) error = %v, want ErrConflict", err)
+	}
+
+	fresh := concurrent.UpdatedAt
+	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Title: &title, Expect: &fresh}); err != nil {
+		t.Fatalf("Set(fresh expect) error = %v", err)
+	}
+}
+
 func mustSnapshot(t *testing.T, h *harness, projectID core.ProjectID) *Snapshot {
 	t.Helper()
 	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID)

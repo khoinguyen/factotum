@@ -106,9 +106,11 @@ come from a file (`body=@notes.md`) or stdin (`body=-`).
 
 `task get -o json|yaml` prints a round-trippable task document. Edit it and feed it back with
 `task apply -f <file>` (format inferred from the extension; override with `--format`), or open it
-in `$EDITOR` with `task edit <task>`. Immutable fields (`id`, `project_id`, `created_at`,
-`updated_at`) and command-managed relations (`assignee`, `deps`, `waiting_on`) may be echoed back
-unchanged but any modification is rejected.
+in `$EDITOR` with `task edit <task>`. `id` and `project_id` are immutable, and command-managed
+relations (`assignee`, `deps`, `waiting_on`) may be echoed back unchanged but any modification is
+rejected. `updated_at` is a compare-and-swap token: applying a document produced before a concurrent
+change fails with a conflict instead of overwriting it (`created_at` is carried for information
+only).
 
 ## Next-step suggestions
 

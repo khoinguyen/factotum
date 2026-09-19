@@ -90,12 +90,9 @@ func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
 	if doc.ProjectID != nil && *doc.ProjectID != string(current.ProjectID) {
 		return app.TaskSet{}, fmt.Errorf("%w: project_id is immutable", core.ErrInvalid)
 	}
-	if doc.CreatedAt != nil && !doc.CreatedAt.Equal(current.CreatedAt) {
-		return app.TaskSet{}, fmt.Errorf("%w: created_at is immutable", core.ErrInvalid)
-	}
-	if doc.UpdatedAt != nil && !doc.UpdatedAt.Equal(current.UpdatedAt) {
-		return app.TaskSet{}, fmt.Errorf("%w: updated_at is read-only", core.ErrInvalid)
-	}
+	// created_at is server-owned bookkeeping; it is carried for visibility and
+	// otherwise ignored. updated_at is a real compare-and-swap token: the store
+	// rejects the write if the task changed since the document was read.
 	if doc.Assignee != nil && !equalOptionalString(doc.Assignee, actorIDString(current.AssigneeID)) {
 		return app.TaskSet{}, fmt.Errorf("%w: assignee is managed by `ft task assign`", core.ErrInvalid)
 	}
@@ -144,6 +141,7 @@ func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
 	if doc.Labels != nil && !equalStringSet(doc.Labels, current.Labels) {
 		set.Labels = *doc.Labels
 	}
+	set.Expect = doc.UpdatedAt
 	return set, nil
 }
 

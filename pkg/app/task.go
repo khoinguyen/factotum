@@ -253,6 +253,37 @@ func (s *TaskService) Assign(ctx context.Context, id core.TaskID, actorID *core.
 	return task, nil
 }
 
+// Claim assigns the task to actorID only if it is still unassigned (or already
+// theirs), using a compare-and-swap on UpdatedAt so concurrent claimants do not
+// both win. It returns ErrConflict when someone else holds the task.
+func (s *TaskService) Claim(ctx context.Context, id core.TaskID, actorID core.ActorID) (*core.Task, error) {
+	task, err := s.backend.Tasks().Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.backend.Actors().Get(ctx, actorID); err != nil {
+		return nil, fmt.Errorf("assignee: %w", err)
+	}
+	if task.AssigneeID != nil && *task.AssigneeID != actorID {
+		return nil, fmt.Errorf("%w: task %s is already assigned to %s", core.ErrConflict, id, *task.AssigneeID)
+	}
+	expected := task.UpdatedAt
+	task.AssigneeID = &actorID
+	task.UpdatedAt = s.clock.Now()
+	if err := s.backend.Tasks().UpdateExpected(ctx, task, expected); err != nil {
+		return nil, err
+	}
+	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
+		ProjectID: task.ProjectID,
+		TaskID:    &task.ID,
+		Kind:      core.EventTaskAssigned,
+		Summary:   fmt.Sprintf("claimed %s by %s", task.ID, actorID),
+	}); err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
 func (s *TaskService) SetWaitingOn(ctx context.Context, id core.TaskID, actorIDs []core.ActorID) (*core.Task, error) {
 	task, err := s.backend.Tasks().Get(ctx, id)
 	if err != nil {

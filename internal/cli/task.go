@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +26,7 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 		newTaskListCommand(deps),
 		newTaskGetCommand(deps),
 		newTaskUpdateCommand(deps),
+		newTaskSetCommand(deps),
 		newTaskDepCommand(deps),
 		newTaskAssignCommand(deps),
 		newTaskNoteCommand(deps),
@@ -484,6 +487,111 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVarP(&repo, "repo", "r", "", "repository name within the project")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "label (repeatable; replaces existing)")
 	return cmd
+}
+
+func newTaskSetCommand(deps *Deps) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "set <task> field=value [field=value...]",
+		Short: "Set task fields (status, priority, kind, repo, title, body, labels)",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 2 {
+				return usageError(cmd, "expected <task> and at least one field=value assignment")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			set, err := parseTaskSet(args[1:])
+			if err != nil {
+				return err
+			}
+			task, err := deps.Tasks.Set(cmd.Context(), core.TaskID(args[0]), set)
+			if err != nil {
+				return err
+			}
+			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Status, task.Title) },
+				hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the updated task"})
+		},
+	}
+	return cmd
+}
+
+// parseTaskSet turns `field=value` assignments into a TaskSet. Long text
+// fields accept `@path` (read from a file) or `-` (read from stdin).
+func parseTaskSet(assignments []string) (app.TaskSet, error) {
+	var set app.TaskSet
+	for _, assignment := range assignments {
+		key, value, ok := strings.Cut(assignment, "=")
+		if !ok {
+			return app.TaskSet{}, fmt.Errorf("invalid assignment %q, want field=value", assignment)
+		}
+		switch key {
+		case "status":
+			status := core.TaskStatus(value)
+			if !status.Valid() {
+				return app.TaskSet{}, fmt.Errorf("invalid status %q", value)
+			}
+			set.Status = &status
+		case "priority":
+			priority, err := strconv.Atoi(value)
+			if err != nil {
+				return app.TaskSet{}, fmt.Errorf("invalid priority %q, want an integer", value)
+			}
+			set.Priority = &priority
+		case "kind":
+			kind := core.TaskKind(value)
+			if !kind.Valid() {
+				return app.TaskSet{}, fmt.Errorf("invalid kind %q, want task or milestone", value)
+			}
+			set.Kind = &kind
+		case "repo":
+			set.Repo = &value
+		case "title":
+			set.Title = &value
+		case "body", "description":
+			text, err := readFieldValue(value)
+			if err != nil {
+				return app.TaskSet{}, err
+			}
+			set.Description = &text
+		case "labels":
+			set.Labels = parseLabels(value)
+		default:
+			return app.TaskSet{}, fmt.Errorf("unknown field %q, want status, priority, kind, repo, title, body, or labels", key)
+		}
+	}
+	return set, nil
+}
+
+func readFieldValue(value string) (string, error) {
+	switch {
+	case value == "-":
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", fmt.Errorf("read stdin: %w", err)
+		}
+		return string(data), nil
+	case strings.HasPrefix(value, "@"):
+		path := strings.TrimPrefix(value, "@")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", path, err)
+		}
+		return string(data), nil
+	default:
+		return value, nil
+	}
+}
+
+// parseLabels splits a comma-separated list. An empty value yields an empty,
+// non-nil slice, which clears the task's labels.
+func parseLabels(value string) []string {
+	labels := []string{}
+	for _, label := range strings.Split(value, ",") {
+		if label = strings.TrimSpace(label); label != "" {
+			labels = append(labels, label)
+		}
+	}
+	return labels
 }
 
 func optionalString(value string) *string {

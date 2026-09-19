@@ -25,6 +25,12 @@ func (d *Deps) printFields(fields ...field) {
 	}
 }
 
+// warnf writes an advisory warning to stderr. Warnings never touch stdout, so
+// structured output stays parseable.
+func (d *Deps) warnf(format string, args ...any) {
+	_, _ = fmt.Fprintf(d.Err, "ft: warning: "+format+"\n", args...)
+}
+
 // repoValue renders a single repository reference, shortened and clickable.
 func (d *Deps) repoValue(value string) string {
 	return d.hyperlink(repoURL(value), shortRepo(value))

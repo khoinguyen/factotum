@@ -90,6 +90,7 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 					return err
 				}
 			}
+			warnDuplicateTitle(cmd.Context(), deps, task)
 			hints := []hint{
 				{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the task"},
 				{Command: fmt.Sprintf("ft task next --project %s", task.ProjectID), About: "see what to start"},
@@ -729,6 +730,28 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 // taskFields is the canonical single-result field set for a task: identity, an
 // optional action field (created/updated), then kind/title/status/project, with
 // repo last.
+// warnDuplicateTitle advises (without blocking) when the new task's title
+// matches an existing task in the same project, case-insensitively.
+func warnDuplicateTitle(ctx context.Context, deps *Deps, task *core.Task) {
+	tasks, err := deps.Tasks.List(ctx, store.TaskFilter{ProjectID: task.ProjectID})
+	if err != nil {
+		return
+	}
+	var duplicates []string
+	for _, other := range tasks {
+		if other.ID == task.ID {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(other.Title), strings.TrimSpace(task.Title)) {
+			duplicates = append(duplicates, string(other.ID))
+		}
+	}
+	if len(duplicates) == 0 {
+		return
+	}
+	deps.warnf("a task titled %q already exists: %s", task.Title, strings.Join(duplicates, ", "))
+}
+
 func (d *Deps) taskFields(task *core.Task, action ...field) []field {
 	fields := []field{f("task_id", task.ID)}
 	fields = append(fields, action...)

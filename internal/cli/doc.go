@@ -50,7 +50,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(artifact, func() {
-				deps.printFields(f("doc_id", artifact.ID), f("created", true), f("title", artifact.Title), f("project", artifact.ProjectID))
+				deps.printFields(f("doc_id", artifact.ID), f("created", true), f("kind", artifact.Kind), f("title", artifact.Title), f("project", artifact.ProjectID))
 			},
 				hint{Command: fmt.Sprintf("ft doc list --project %s", artifact.ProjectID), About: "see all artifacts"},
 				hint{Command: `ft doc search "<query>"`, About: "search titles and bodies"})
@@ -81,9 +81,9 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			return deps.emit(artifacts, func() {
 				rows := make([][]string, 0, len(artifacts))
 				for _, artifact := range artifacts {
-					rows = append(rows, []string{string(artifact.ID), string(artifact.ProjectID), string(artifact.Kind), artifact.Title})
+					rows = append(rows, []string{string(artifact.ID), string(artifact.Kind), artifact.Title, string(artifact.ProjectID)})
 				}
-				deps.printTable([]string{"ID", "PROJECT", "KIND", "TITLE"}, rows)
+				deps.printTable([]string{"ID", "KIND", "TITLE", "PROJECT"}, rows)
 			}, docListHints(listProject)...)
 		},
 	}
@@ -104,9 +104,9 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			return deps.emit(artifacts, func() {
 				rows := make([][]string, 0, len(artifacts))
 				for _, artifact := range artifacts {
-					rows = append(rows, []string{string(artifact.ID), string(artifact.ProjectID), string(artifact.Kind), artifact.Title})
+					rows = append(rows, []string{string(artifact.ID), string(artifact.Kind), artifact.Title, string(artifact.ProjectID)})
 				}
-				deps.printTable([]string{"ID", "PROJECT", "KIND", "TITLE"}, rows)
+				deps.printTable([]string{"ID", "KIND", "TITLE", "PROJECT"}, rows)
 			}, docSearchHints(searchProject)...)
 		},
 	}

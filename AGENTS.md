@@ -206,13 +206,20 @@ sg scan -r sgconfig.yml                           # run project rules (if config
   file, `default_project` in the machine file) when the flag is omitted. Mutating commands error
   when no default is configured; list/filter commands fall back to all.
 - Text output has one shape:
-  - single-result commands print yaml-like `key: value` lines, with `project` last, e.g.
-    `task_id: t-xxx`, `created: true`, `title: ...`, `project: factotum`. Use `updated: true`/
-    `deleted: true`/`noted: true` for actions; transitions carry `status: ...`.
-  - list commands print a table with a `PROJECT` column.
-  - `get` prints a human block that includes `project`.
-- Future fields follow these shapes: new single-result fields are `key: value` before `project`,
-  new list columns are added to the table. `-o json|yaml` stay the machine-readable interfaces.
+  - single-result commands print yaml-like `key: value` lines in
+    `id/action/kind/title/status/project/repo` order, ending with `project` then `repo` (e.g.
+    `task_id: t-xxx`, `created: true`, `kind: task`, `title: ...`, `status: todo`,
+    `project: factotum`, `repo: github:org/repo`). Use `updated: true`/`deleted: true`/
+    `noted: true` for actions; transitions carry `status: ...`.
+  - list commands print a table with `PROJECT` and, where relevant, a trailing `REPO` column.
+  - `get` prints a human block that includes `project` and the shortened `repo`.
+- Repository references are shortened for display: `github:org/repo` (from a full https/scp URL or
+  an already-short `provider:org/repo`), `Local` for a local checkout, `-` when absent. On a
+  terminal the shortened form is an OSC 8 hyperlink to the browsable URL; piped output and tests
+  stay plain. Use `Deps.repoValue`/`Deps.repoCellValue` (`shortRepo`/`repoURL`/`repoCell` for pure
+  logic).
+- Future fields follow these shapes: new single-result fields go before `project`, new list columns
+  are added before `REPO`. `-o json|yaml` stay the machine-readable interfaces.
 - Resolve the project with `Deps.resolveProject` and reject a missing one with `requireProject`.
 
 ## Dogfooding: use `ft` for the work itself

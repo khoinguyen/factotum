@@ -103,10 +103,16 @@ error if no default is configured.
 
 Text output follows one convention:
 
-- commands that report a single result print yaml-like `key: value` lines, ending with `project`
-  (e.g. `task_id: t-xxx`, `created: true`, `title: ...`, `project: factotum`);
-- list commands print a table with a `PROJECT` column;
-- `get` prints a human-readable block, including the `project`.
+- commands that report a single result print yaml-like `key: value` lines in
+  `id/action/kind/title/status/project/repo` order, ending with `project` then `repo`
+  (e.g. `task_id: t-xxx`, `created: true`, `title: ...`, `project: factotum`,
+  `repo: github:org/repo`);
+- list commands print a table with `PROJECT` and, where relevant, a trailing `REPO` column;
+- `get` prints a human-readable block, including the `project` and shortened `repo`.
+
+Repository references are shortened for display: `github:org/repo` (from a full `https`/scp URL or
+an already-short `provider:org/repo`), `Local` for a local checkout, and `-` when absent. On a
+terminal the shortened form is a clickable link to the browsable URL; piped output stays plain.
 
 `-o json` / `-o yaml` remain the machine-readable interfaces and are unaffected.
 

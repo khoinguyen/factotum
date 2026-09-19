@@ -9,8 +9,16 @@ import (
 )
 
 // ErrUsage marks a validation error whose help has already been printed. The
-// entrypoint exits non-zero without echoing a terse error line.
+// entrypoint exits non-zero after the reason and help have gone to stderr.
 var ErrUsage = errors.New("usage error")
+
+// usageFailure carries the human-readable reason for a usage error while still
+// matching ErrUsage, so the reason can be printed without the sentinel prefix.
+type usageFailure struct{ reason string }
+
+func (u usageFailure) Error() string { return u.reason }
+
+func (u usageFailure) Is(target error) bool { return target == ErrUsage }
 
 // exactArgs validates the argument count and, on mismatch, prints the command's
 // help instead of a terse "accepts N arg(s)" message.
@@ -39,7 +47,9 @@ func requireFlags(cmd *cobra.Command, names ...string) error {
 }
 
 func usageError(cmd *cobra.Command, format string, args ...any) error {
+	reason := fmt.Sprintf(format, args...)
+	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "ft:", reason)
 	cmd.SetOut(cmd.ErrOrStderr())
 	_ = cmd.Help()
-	return fmt.Errorf("%w: %s", ErrUsage, fmt.Sprintf(format, args...))
+	return usageFailure{reason: reason}
 }

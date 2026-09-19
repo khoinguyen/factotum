@@ -158,7 +158,19 @@ func TestParseRepoSpec(t *testing.T) {
 	}
 }
 
-func TestTaskShowResolvesActorsAndNotes(t *testing.T) {
+func TestTaskAndProjectHelpUseGetNotShow(t *testing.T) {
+	r := newRunner(t)
+	taskHelp := r.run("task", "--help")
+	if !strings.Contains(taskHelp, "get ") || strings.Contains(taskHelp, "show") {
+		t.Fatalf("task help must list get and not show:\n%s", taskHelp)
+	}
+	projectHelp := r.run("project", "--help")
+	if !strings.Contains(projectHelp, "get ") || strings.Contains(projectHelp, "show") {
+		t.Fatalf("project help must list get and not show:\n%s", projectHelp)
+	}
+}
+
+func TestTaskGetResolvesActorsAndNotes(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	r.run("actor", "add", "--kind", "agent", "claude")
@@ -167,7 +179,7 @@ func TestTaskShowResolvesActorsAndNotes(t *testing.T) {
 	r.run("task", "note", "add", taskID, "--body", "first note")
 	r.run("task", "note", "add", taskID, "--body", "second note")
 
-	shown := r.run("task", "show", taskID)
+	shown := r.run("task", "get", taskID)
 	if !strings.HasPrefix(shown, "(todo) ") {
 		t.Fatalf("header should be '(status) ID: title':\n%s", shown)
 	}
@@ -176,7 +188,7 @@ func TestTaskShowResolvesActorsAndNotes(t *testing.T) {
 	}
 	for _, want := range []string{"=== Notes ===", "first note", "second note"} {
 		if !strings.Contains(shown, want) {
-			t.Fatalf("task show missing %q:\n%s", want, shown)
+			t.Fatalf("task get missing %q:\n%s", want, shown)
 		}
 	}
 }
@@ -190,7 +202,7 @@ func TestTaskBodyFile(t *testing.T) {
 	}
 
 	taskID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "big", "--body-file", bodyFile))
-	shown := r.run("task", "show", taskID)
+	shown := r.run("task", "get", taskID)
 	if !strings.Contains(shown, "=== Description ===") || !strings.Contains(shown, "lots of detail") {
 		t.Fatalf("body-file not applied:\n%s", shown)
 	}
@@ -199,7 +211,7 @@ func TestTaskBodyFile(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	r.run("task", "update", taskID, "--body-file", bodyFile)
-	if shown := r.run("task", "show", taskID); !strings.Contains(shown, "revised body") {
+	if shown := r.run("task", "get", taskID); !strings.Contains(shown, "revised body") {
 		t.Fatalf("body-file update not applied:\n%s", shown)
 	}
 }
@@ -210,8 +222,8 @@ func TestTaskUpdateKind(t *testing.T) {
 	taskID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "feature flag rollout"))
 
 	r.run("task", "update", taskID, "--kind", "milestone")
-	if shown := r.run("task", "show", taskID); !strings.Contains(shown, "milestone") {
-		t.Fatalf("task show does not reflect milestone kind:\n%s", shown)
+	if shown := r.run("task", "get", taskID); !strings.Contains(shown, "milestone") {
+		t.Fatalf("task get does not reflect milestone kind:\n%s", shown)
 	}
 }
 
@@ -229,11 +241,11 @@ func TestTaskRepoFlow(t *testing.T) {
 		t.Fatalf("repo filter wrong:\n%s", listed)
 	}
 
-	if shown := r.run("task", "show", dataID); !strings.Contains(shown, "repo: data") {
-		t.Fatalf("show missing repo:\n%s", shown)
+	if shown := r.run("task", "get", dataID); !strings.Contains(shown, "repo: data") {
+		t.Fatalf("get missing repo:\n%s", shown)
 	}
 	r.run("task", "update", dataID, "--repo", "devops")
-	if shown := r.run("task", "show", dataID); !strings.Contains(shown, "repo: devops") {
+	if shown := r.run("task", "get", dataID); !strings.Contains(shown, "repo: devops") {
 		t.Fatalf("update repo failed:\n%s", shown)
 	}
 
@@ -270,8 +282,8 @@ func TestProjectRepoCommands(t *testing.T) {
 	}
 
 	r.run("project", "repo", "update", projectID, "backend", "--brief", "API and workers")
-	if out := r.run("project", "show", projectID); !strings.Contains(out, "API and workers") {
-		t.Fatalf("project show missing updated brief:\n%s", out)
+	if out := r.run("project", "get", projectID); !strings.Contains(out, "API and workers") {
+		t.Fatalf("project get missing updated brief:\n%s", out)
 	}
 
 	r.run("project", "repo", "rm", projectID, "backend")
@@ -284,8 +296,8 @@ func TestProjectCreateWithRepoSpecifics(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Beta",
 		"--repo", "name=web,url=git@example.com:acme/web.git,brief=Frontend app,path=repos/web"))
-	if out := r.run("project", "show", projectID); !strings.Contains(out, "Frontend app") {
-		t.Fatalf("project show missing repo brief:\n%s", out)
+	if out := r.run("project", "get", projectID); !strings.Contains(out, "Frontend app") {
+		t.Fatalf("project get missing repo brief:\n%s", out)
 	}
 }
 
@@ -312,7 +324,7 @@ func TestCLIFlow(t *testing.T) {
 	}
 
 	r.run("task", "review", firstID)
-	if shown := r.run("task", "show", firstID); !strings.Contains(shown, "ready_for_review") {
+	if shown := r.run("task", "get", firstID); !strings.Contains(shown, "ready_for_review") {
 		t.Fatalf("task status not updated:\n%s", shown)
 	}
 	after := r.run("graph", "render", "--project", projectID, "--format", "agent")

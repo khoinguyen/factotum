@@ -34,7 +34,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			hints := []hint{
-				{Command: fmt.Sprintf("ft project show %s", project.ID), About: "inspect the project"},
+				{Command: fmt.Sprintf("ft project get %s", project.ID), About: "inspect the project"},
 				{Command: fmt.Sprintf("ft project repo add %s <name>", project.ID), About: "register a repository"},
 				{Command: fmt.Sprintf("ft task add --project %s --title \"...\"", project.ID), About: "add the first task"},
 			}
@@ -62,9 +62,9 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	show := &cobra.Command{
-		Use:   "show <project>",
-		Short: "Show a project",
+	get := &cobra.Command{
+		Use:   "get <project>",
+		Short: "Get a project",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project, err := deps.Projects.Get(cmd.Context(), core.ProjectID(args[0]))
@@ -96,7 +96,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(create, list, show, newProjectRepoCommand(deps), rm)
+	cmd.AddCommand(create, list, get, newProjectRepoCommand(deps), rm)
 	return cmd
 }
 
@@ -167,7 +167,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 			}
 			return deps.emit(project, func() { deps.printf("added\t%s\t%s\n", repo.Name, project.ID) },
 				hint{Command: fmt.Sprintf("ft task add --project %s --repo %s --title \"...\"", project.ID, repo.Name), About: "add a task in this repo"},
-				hint{Command: fmt.Sprintf("ft project show %s", project.ID), About: "inspect the project"})
+				hint{Command: fmt.Sprintf("ft project get %s", project.ID), About: "inspect the project"})
 		},
 	}
 	add.Flags().StringVar(&url, "url", "", "repository URL")
@@ -202,7 +202,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deps.suggest(hint{Command: fmt.Sprintf("ft project show %s", project.ID), About: "see the updated project"})
+			deps.suggest(hint{Command: fmt.Sprintf("ft project get %s", project.ID), About: "see the updated project"})
 			return nil
 		},
 	}

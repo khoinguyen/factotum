@@ -75,10 +75,10 @@ ft event list --project "$PID"
 
 | Area | Commands |
 | --- | --- |
-| Project | `project create`, `project list`, `project show`, `project rm` |
+| Project | `project create`, `project list`, `project get`, `project rm` |
 | Repositories | `project repo add`, `repo list`, `repo update`, `repo rm` |
 | Actor | `actor add --kind human\|agent`, `actor list` |
-| Task | `task add --repo <name>`, `task list --repo <name>`, `task show`, `task update`, `task rm` |
+| Task | `task add --repo <name>`, `task list --repo <name>`, `task get`, `task update`, `task rm` |
 | Dependencies | `task dep add`, `task dep rm` (cycles are rejected) |
 | Assignment | `task assign --actor <ref>` / `--unassign` |
 | Status | `task start`, `review`, `done`, `reopen`, `block`, `cancel` |
@@ -106,7 +106,7 @@ After text output, `ft` prints a short `Next:` block of natural follow-up comman
 pipes and redirections stay clean:
 
 ```sh
-$ ft task show APS-10803
+$ ft task get APS-10803
 (todo) APS-10803: Executor loop + reaper (multi-replica, SKIP LOCKED claims)
 repo: backend
 assignee: (agent) agent
@@ -117,7 +117,7 @@ Next:
   ft task assign APS-10803 --actor <actor>  claim it (see ft actor list)
 ```
 
-Suggestions are context-aware: `task next` points at `task show` for the top task, `task show`
+Suggestions are context-aware: `task next` points at `task get` for the top task, `task get`
 points at the next status transition (or at a blocking dependency when one is unmet), and mutations
 point at the relevant inspection command. They are suppressed for `-o json`, by `--no-hints`, by
 `FACTOTUM_NO_HINTS=1`, or by `no_hints = true` in the config file.

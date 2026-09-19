@@ -212,7 +212,7 @@ through the tool, not around it.
 ft task next                                        # default_project resolves from .factotum/config.toml
 ft task next --all                                  # rank ready work across every registered project
 ft task next -n 5 --for <actor>                     # what a specific human or agent should pick up
-ft task show <task>                                 # its Next: block names the natural follow-up command
+ft task get <task>                                  # its Next: block names the natural follow-up command
 ft graph render --project factotum --format agent   # the whole DAG as text
 ```
 

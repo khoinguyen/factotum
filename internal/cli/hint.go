@@ -39,8 +39,8 @@ func (d *Deps) suggest(hints ...hint) {
 	_, _ = fmt.Fprint(d.Err, b.String())
 }
 
-// taskShowHints guides the viewer from inspecting a task to acting on it.
-func (d *Deps) taskShowHints(ctx context.Context, task *core.Task) []hint {
+// taskGetHints guides the viewer from inspecting a task to acting on it.
+func (d *Deps) taskGetHints(ctx context.Context, task *core.Task) []hint {
 	id := string(task.ID)
 	project := string(task.ProjectID)
 
@@ -48,7 +48,7 @@ func (d *Deps) taskShowHints(ctx context.Context, task *core.Task) []hint {
 		hints := make([]hint, 0, len(waiting))
 		for _, dep := range waiting {
 			hints = append(hints, hint{
-				Command: fmt.Sprintf("ft task show %s", dep),
+				Command: fmt.Sprintf("ft task get %s", dep),
 				About:   "inspect this dependency first",
 			})
 		}
@@ -96,7 +96,7 @@ func (d *Deps) unresolvedDeps(ctx context.Context, task *core.Task) []core.TaskI
 func eventListHints(projectID, taskID string) []hint {
 	var hints []hint
 	if taskID != "" {
-		hints = append(hints, hint{Command: fmt.Sprintf("ft task show %s", taskID), About: "inspect the task behind these events"})
+		hints = append(hints, hint{Command: fmt.Sprintf("ft task get %s", taskID), About: "inspect the task behind these events"})
 	}
 	if projectID != "" {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft task next --project %s", projectID), About: "see what to start"})
@@ -143,7 +143,7 @@ func projectListHints(projects []*core.Project) []hint {
 		return []hint{{Command: `ft project create "<name>"`, About: "create your first project"}}
 	}
 	return []hint{
-		{Command: fmt.Sprintf("ft project show %s", projects[0].ID), About: "inspect the first project"},
+		{Command: fmt.Sprintf("ft project get %s", projects[0].ID), About: "inspect the first project"},
 		{Command: `ft project create "<name>"`, About: "create another project"},
 	}
 }
@@ -168,7 +168,7 @@ func projectRepoHints(project *core.Project) []hint {
 	} else {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft project repo add %s <name>", project.ID), About: "register a repository"})
 	}
-	return append(hints, hint{Command: fmt.Sprintf("ft project show %s", project.ID), About: "inspect the project"})
+	return append(hints, hint{Command: fmt.Sprintf("ft project get %s", project.ID), About: "inspect the project"})
 }
 
 func taskListHints(tasks []*core.Task, projectID string) []hint {
@@ -182,7 +182,7 @@ func taskListHints(tasks []*core.Task, projectID string) []hint {
 	}
 	switch {
 	case len(tasks) > 0:
-		hints = append(hints, hint{Command: fmt.Sprintf("ft task show %s", tasks[0].ID), About: "inspect the first task"})
+		hints = append(hints, hint{Command: fmt.Sprintf("ft task get %s", tasks[0].ID), About: "inspect the first task"})
 	case project != "":
 		hints = append(hints, hint{Command: fmt.Sprintf("ft task add --project %s --title \"...\"", project), About: "add a task"})
 	}
@@ -203,7 +203,7 @@ func taskNextHints(projectID string, top *core.Task) []hint {
 		}
 	}
 	hints := []hint{
-		{Command: fmt.Sprintf("ft task show %s", top.ID), About: "understand the task to start"},
+		{Command: fmt.Sprintf("ft task get %s", top.ID), About: "understand the task to start"},
 		{Command: fmt.Sprintf("ft task start %s", top.ID), About: "begin work"},
 	}
 	if top.AssigneeID == nil {

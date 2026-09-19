@@ -183,6 +183,12 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 				if task.Repo != "" {
 					deps.printf("repo: %s\n", deps.repoValue(task.Repo))
 				}
+				if len(task.Labels) > 0 {
+					deps.printf("labels: %s\n", strings.Join(task.Labels, ", "))
+				}
+				if task.Priority != 0 {
+					deps.printf("priority: %d\n", task.Priority)
+				}
 				if task.AssigneeID != nil {
 					deps.printf("assignee: %s\n", actorLabel(actors, *task.AssigneeID))
 				}

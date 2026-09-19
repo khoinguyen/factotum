@@ -218,6 +218,21 @@ func testTask(t *testing.T, be store.Backend) {
 		t.Fatalf("Get() after update Status = %q, want in_progress", reloaded.Status)
 	}
 
+	// Conditional update (compare-and-swap on UpdatedAt): the current token
+	// succeeds, a stale one is rejected.
+	token := reloaded.UpdatedAt
+	reloaded.Title = "one cas"
+	reloaded.UpdatedAt = token.Add(time.Minute)
+	if err := repo.UpdateExpected(ctx, reloaded, token); err != nil {
+		t.Fatalf("UpdateExpected(current) error = %v", err)
+	}
+	if err := repo.UpdateExpected(ctx, reloaded, token); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("UpdateExpected(stale) error = %v, want ErrConflict", err)
+	}
+	if _, err := repo.Get(ctx, "t-1"); err != nil {
+		t.Fatalf("Get() after conditional update error = %v", err)
+	}
+
 	if err := repo.Delete(ctx, "t-3"); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}

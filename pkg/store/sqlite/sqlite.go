@@ -310,6 +310,40 @@ func (r *taskRepo) Update(ctx context.Context, task *core.Task) error {
 	return nil
 }
 
+func (r *taskRepo) UpdateExpected(ctx context.Context, task *core.Task, expected time.Time) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin task update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var data string
+	err = tx.QueryRowContext(ctx, "SELECT data FROM tasks WHERE id = ?", string(task.ID)).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: task %s", core.ErrNotFound, task.ID)
+	}
+	if err != nil {
+		return fmt.Errorf("get task: %w", err)
+	}
+	var stored core.Task
+	if err := json.Unmarshal([]byte(data), &stored); err != nil {
+		return fmt.Errorf("decode task: %w", err)
+	}
+	if !stored.UpdatedAt.Equal(expected) {
+		return fmt.Errorf("%w: task %s was modified", core.ErrConflict, task.ID)
+	}
+	encoded, err := encode(task)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE tasks SET project_id = ?, repo = ?, kind = ?, status = ?, data = ? WHERE id = ?",
+		string(task.ProjectID), task.Repo, string(task.Kind), string(task.Status), encoded, string(task.ID)); err != nil {
+		return fmt.Errorf("update task: %w", err)
+	}
+	return tx.Commit()
+}
+
 func (r *taskRepo) Delete(ctx context.Context, id core.TaskID) error {
 	result, err := r.db.ExecContext(ctx, "DELETE FROM tasks WHERE id = ?", string(id))
 	if err != nil {

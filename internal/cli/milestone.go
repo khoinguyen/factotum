@@ -31,7 +31,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(task, func() { deps.printf("%s\t%s\n", task.ID, task.Title) },
-				hint{Command: fmt.Sprintf("ft task dep add <task> %s", task.ID), About: "gate a task behind this milestone"},
+				hint{Command: fmt.Sprintf("ft task dep create <task> %s", task.ID), About: "gate a task behind this milestone"},
 				hint{Command: fmt.Sprintf("ft milestone list --project %s", task.ProjectID), About: "see all milestones"})
 		},
 	}

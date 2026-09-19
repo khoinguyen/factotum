@@ -43,7 +43,7 @@ func writeEditorScript(t *testing.T, script string) string {
 func newDocTask(t *testing.T, r *runner) string {
 	t.Helper()
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	return firstField(t, r.run("task", "add", "-p", projectID, "-t", "doc", "-b", "body text"))
+	return firstField(t, r.run("task", "create", "-p", projectID, "-t", "doc", "-b", "body text"))
 }
 
 func TestTaskGetJSONDocumentRoundTripsUnchanged(t *testing.T) {

@@ -15,9 +15,9 @@ func newDocCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "doc", Short: "Manage specs, docs, and memory"}
 
 	var projectID, kind, title, body, path, taskID string
-	add := &cobra.Command{
-		Use:   "add",
-		Short: "Add an artifact (spec, doc, or memory)",
+	create := &cobra.Command{
+		Use:   "create",
+		Short: "Create an artifact (spec, doc, or memory)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireFlags(cmd, "project", "title"); err != nil {
 				return err
@@ -50,12 +50,12 @@ func newDocCommand(deps *Deps) *cobra.Command {
 				hint{Command: `ft doc search "<query>"`, About: "search titles and bodies"})
 		},
 	}
-	add.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
-	add.Flags().StringVarP(&kind, "kind", "k", string(core.ArtifactDoc), "artifact kind: spec, doc, or memory")
-	add.Flags().StringVarP(&title, "title", "t", "", "artifact title (required)")
-	add.Flags().StringVarP(&body, "body", "b", "", "inline content")
-	add.Flags().StringVarP(&path, "file", "f", "", "read content from a file")
-	add.Flags().StringVar(&taskID, "task", "", "attach to a task")
+	create.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
+	create.Flags().StringVarP(&kind, "kind", "k", string(core.ArtifactDoc), "artifact kind: spec, doc, or memory")
+	create.Flags().StringVarP(&title, "title", "t", "", "artifact title (required)")
+	create.Flags().StringVarP(&body, "body", "b", "", "inline content")
+	create.Flags().StringVarP(&path, "file", "f", "", "read content from a file")
+	create.Flags().StringVar(&taskID, "task", "", "attach to a task")
 
 	var listProject, listKind string
 	list := &cobra.Command{
@@ -104,6 +104,6 @@ func newDocCommand(deps *Deps) *cobra.Command {
 	}
 	search.Flags().StringVarP(&searchProject, "project", "p", "", "filter by project id")
 
-	cmd.AddCommand(add, list, search)
+	cmd.AddCommand(create, list, search)
 	return cmd
 }

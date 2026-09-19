@@ -10,8 +10,8 @@ func newActorCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "actor", Short: "Manage humans and agents"}
 
 	var kind string
-	add := &cobra.Command{
-		Use:   "add <name>",
+	create := &cobra.Command{
+		Use:   "create <name>",
 		Short: "Register a human or agent",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -23,7 +23,7 @@ func newActorCommand(deps *Deps) *cobra.Command {
 				hint{Command: "ft actor list", About: "see all actors"})
 		},
 	}
-	add.Flags().StringVarP(&kind, "kind", "k", string(core.ActorHuman), "actor kind: human or agent")
+	create.Flags().StringVarP(&kind, "kind", "k", string(core.ActorHuman), "actor kind: human or agent")
 
 	list := &cobra.Command{
 		Use:   "list",
@@ -43,6 +43,6 @@ func newActorCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(add, list)
+	cmd.AddCommand(create, list)
 	return cmd
 }

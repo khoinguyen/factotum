@@ -14,9 +14,11 @@ func (JSON) Format() string { return "json" }
 
 type jsonStats struct {
 	Scope      int `json:"scope"`
+	Resolved   int `json:"resolved"`
 	Done       int `json:"done"`
 	ReadyAgent int `json:"readyAgent"`
 	ReadyHuman int `json:"readyHuman"`
+	DepBlocked int `json:"depBlocked"`
 	Blocked    int `json:"blocked"`
 	Cycles     int `json:"cycles"`
 	Waves      int `json:"waves"`
@@ -76,9 +78,11 @@ func (JSON) Render(_ context.Context, w io.Writer, view View) error {
 		ExternalDeps: []string{},
 		Stats: jsonStats{
 			Scope:      derived.stats.Scope,
+			Resolved:   derived.stats.Resolved,
 			Done:       derived.stats.Done,
 			ReadyAgent: derived.stats.ReadyAgent,
 			ReadyHuman: derived.stats.ReadyHuman,
+			DepBlocked: derived.stats.DepBlocked,
 			Blocked:    derived.stats.Blocked,
 			Cycles:     derived.stats.Cycles,
 			Waves:      derived.stats.Waves,

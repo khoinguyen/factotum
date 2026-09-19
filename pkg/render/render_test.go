@@ -92,10 +92,13 @@ func TestBuiltinsNames(t *testing.T) {
 func TestAgentRender(t *testing.T) {
 	view := fixture(t, "Acme")
 	out := renderString(t, Agent{}, view)
-	for _, want := range []string{"Acme", "next agent:", "a ", "next human:", "b ", "blocked:", "a1"} {
+	for _, want := range []string{"Acme", "next agent:", "a ", "next human:", "b ", "dep-blocked:", "a1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("agent output missing %q:\n%s", want, out)
 		}
+	}
+	if !strings.Contains(out, "stats: scope=5 resolved=1 done=1 ready_agent=1 ready_human=2 dep_blocked=1 blocked=0") {
+		t.Fatalf("agent stats should distinguish resolved/done and dep-blocked/blocked:\n%s", out)
 	}
 	if out != renderString(t, Agent{}, view) {
 		t.Fatal("agent render is not deterministic")

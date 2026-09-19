@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -27,6 +28,8 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 		newTaskGetCommand(deps),
 		newTaskUpdateCommand(deps),
 		newTaskSetCommand(deps),
+		newTaskApplyCommand(deps),
+		newTaskEditCommand(deps),
 		newTaskDepCommand(deps),
 		newTaskAssignCommand(deps),
 		newTaskNoteCommand(deps),
@@ -152,7 +155,7 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() {
+			return deps.emit(taskDocFrom(task), func() {
 				actors := deps.actorResolver(cmd.Context())
 				deps.printf("(%s) %s: %s\n", task.Status, task.ID, task.Title)
 				if task.Kind == core.KindMilestone {
@@ -592,6 +595,101 @@ func parseLabels(value string) []string {
 		}
 	}
 	return labels
+}
+
+func newTaskApplyCommand(deps *Deps) *cobra.Command {
+	var filename, format string
+
+	cmd := &cobra.Command{
+		Use:   "apply -f <file>",
+		Short: "Apply a task document (json or yaml)",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireFlags(cmd, "filename"); err != nil {
+				return err
+			}
+			data, err := os.ReadFile(filename)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", filename, err)
+			}
+			doc, err := parseTaskDoc(data, docFormat(filename, format))
+			if err != nil {
+				return err
+			}
+			if doc.ID == nil || *doc.ID == "" {
+				return fmt.Errorf("%w: document is missing id", core.ErrInvalid)
+			}
+			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(*doc.ID))
+			if err != nil {
+				return err
+			}
+			set, err := doc.taskSet(task)
+			if err != nil {
+				return err
+			}
+			if set.Empty() {
+				deps.printf("%s\tunchanged\n", task.ID)
+				return nil
+			}
+			updated, err := deps.Tasks.Set(cmd.Context(), task.ID, set)
+			if err != nil {
+				return err
+			}
+			return deps.emit(taskDocFrom(updated), func() { deps.printf("%s\t%s\t%s\n", updated.ID, updated.Status, updated.Title) },
+				hint{Command: fmt.Sprintf("ft task get %s", updated.ID), About: "inspect the applied task"})
+		},
+	}
+	cmd.Flags().StringVarP(&filename, "filename", "f", "", "task document file (required)")
+	cmd.Flags().StringVar(&format, "format", "", "document format: json or yaml (default by extension)")
+	return cmd
+}
+
+func newTaskEditCommand(deps *Deps) *cobra.Command {
+	var format string
+
+	cmd := &cobra.Command{
+		Use:   "edit <task>",
+		Short: "Edit a task document in $EDITOR",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
+			if err != nil {
+				return err
+			}
+			original, err := marshalTaskDoc(taskDocFrom(task), format)
+			if err != nil {
+				return err
+			}
+			edited, err := editTask(original, format)
+			if err != nil {
+				return err
+			}
+			if bytes.Equal(bytes.TrimSpace(original), bytes.TrimSpace(edited)) {
+				deps.printf("%s\tunchanged\n", task.ID)
+				return nil
+			}
+			doc, err := parseTaskDoc(edited, format)
+			if err != nil {
+				return err
+			}
+			set, err := doc.taskSet(task)
+			if err != nil {
+				return err
+			}
+			if set.Empty() {
+				deps.printf("%s\tunchanged\n", task.ID)
+				return nil
+			}
+			updated, err := deps.Tasks.Set(cmd.Context(), task.ID, set)
+			if err != nil {
+				return err
+			}
+			return deps.emit(taskDocFrom(updated), func() { deps.printf("%s\t%s\t%s\n", updated.ID, updated.Status, updated.Title) },
+				hint{Command: fmt.Sprintf("ft task get %s", updated.ID), About: "inspect the edited task"})
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "yaml", "document format: json or yaml")
+	return cmd
 }
 
 func optionalString(value string) *string {

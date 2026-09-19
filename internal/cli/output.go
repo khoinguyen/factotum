@@ -20,6 +20,15 @@ type nextEntry struct {
 	Labels  []string `json:"labels" yaml:"labels"`
 }
 
+// applyResult is one entry of `task apply` output.
+type applyResult struct {
+	TaskID  string `json:"task_id" yaml:"task_id"`
+	Updated bool   `json:"updated" yaml:"updated"`
+	DryRun  bool   `json:"dry_run,omitempty" yaml:"dry_run,omitempty"`
+	Project string `json:"project" yaml:"project"`
+	Repo    string `json:"repo" yaml:"repo"`
+}
+
 // field is one `key: value` line of single-result text output.
 type field struct {
 	Key   string

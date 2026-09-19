@@ -234,7 +234,7 @@ func matchesTask(task core.Task, filter store.TaskFilter) bool {
 	if filter.Kind != nil && task.Kind != *filter.Kind {
 		return false
 	}
-	return true
+	return store.MatchLabels(task, filter.Labels)
 }
 
 func (r *taskRepo) Update(_ context.Context, task *core.Task) error {

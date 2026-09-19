@@ -284,6 +284,9 @@ func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.T
 		if err := json.Unmarshal([]byte(data), &task); err != nil {
 			return nil, fmt.Errorf("decode task: %w", err)
 		}
+		if !store.MatchLabels(task, filter.Labels) {
+			continue
+		}
 		out = append(out, &task)
 	}
 	return out, rows.Err()

@@ -15,7 +15,10 @@ func TestBatchApplyFromFileAndDryRun(t *testing.T) {
 	plan := "id: " + a + "\nstatus: done\n---\nid: " + b + "\ntitle: renamed b\n"
 	path := writeDoc(t, "plan.yaml", plan)
 
-	r.run("task", "apply", "-f", path, "--dry-run")
+	dryRunOut := r.run("task", "apply", "-f", path, "--dry-run")
+	if !strings.Contains(dryRunOut, "dry_run: true") {
+		t.Fatalf("dry-run output should be marked:\n%s", dryRunOut)
+	}
 	if got := r.run("task", "get", a); !strings.Contains(got, "(todo)") {
 		t.Fatalf("dry-run must not write:\n%s", got)
 	}

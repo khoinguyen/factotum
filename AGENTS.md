@@ -325,6 +325,10 @@ Concise and easy to digest: short phrases, no walls of text. Cover, in order:
 
 - **Intention** — what this PR does and why, in one or two sentences.
 - **Fit** — where it lands in the existing system (packages, ports, command surface).
+- **Exercise** — a real CLI transcript (the exact command and its output) showing the change.
+  Required whenever the PR changes command output or behavior. Run it against a throwaway store
+  (`--store jsonfile --store-opt path=$(mktemp -d)/db.json`, or a temp config) with
+  public-appropriate content — never the real database or personal data. Keep it short.
 - **Risks** — what could break and the blast radius.
 - **Reviewer focus** — the few things a human should scrutinize most.
 - **Tests** — the scenarios added or exercised, and how to run them.

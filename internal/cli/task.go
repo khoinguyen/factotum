@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,6 +37,7 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 		newTaskWaitCommand(deps),
 		newTaskNoteCommand(deps),
 		newTaskNextCommand(deps),
+		newTaskClaimCommand(deps),
 		newTaskDeleteCommand(deps),
 		statusCommand(deps, "start", core.StatusInProgress, "Mark a task in progress"),
 		statusCommand(deps, "review", core.StatusReadyForReview, "Mark a task ready for review"),
@@ -527,6 +529,80 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&rankerName, "rank", "composite", "ranker: composite, unblock, milestone, or toward")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 0, "maximum number of tasks (0 means all)")
 	return cmd
+}
+
+func newTaskClaimCommand(deps *Deps) *cobra.Command {
+	var projectID, forRef string
+
+	cmd := &cobra.Command{
+		Use:   "claim",
+		Short: "Claim the highest-ranked ready task for an actor",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ref := forRef
+			if ref == "" {
+				ref = deps.Config.DefaultActor
+			}
+			if ref == "" {
+				return usageError(cmd, "provide --for <actor>, or set default_actor")
+			}
+			actor, err := deps.Actors.Resolve(cmd.Context(), ref)
+			if err != nil {
+				return err
+			}
+			project := deps.resolveProject(projectID)
+			if err := requireProject(cmd, project); err != nil {
+				return err
+			}
+			snapshot, err := app.LoadSnapshot(cmd.Context(), deps.Backend, project)
+			if err != nil {
+				return err
+			}
+			candidates := claimable(snapshot, unionIDs(snapshot.Ready.Agent, snapshot.Ready.Human))
+			if len(candidates) == 0 {
+				return fmt.Errorf("%w: no ready task to claim", core.ErrNotFound)
+			}
+			ranker, err := deps.Rankers.MustLookup("composite")
+			if err != nil {
+				return err
+			}
+			scored, err := ranker.Rank(cmd.Context(), rank.Request{Graph: snapshot.Graph, Tasks: snapshot.Tasks, Candidates: candidates})
+			if err != nil {
+				return err
+			}
+			for _, entry := range scored {
+				task, err := deps.Tasks.Claim(cmd.Context(), entry.TaskID, actor.ID)
+				if err == nil {
+					return deps.emit(taskDocFrom(task), func() {
+						deps.printFields(deps.taskFields(task, f("assignee", actor.ID))...)
+					}, hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"})
+				}
+				if !errors.Is(err, core.ErrConflict) {
+					return err
+				}
+			}
+			return fmt.Errorf("%w: no ready task to claim", core.ErrNotFound)
+		},
+	}
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "project id (defaults to the configured project)")
+	cmd.Flags().StringVar(&forRef, "for", "", "actor to claim for (id or name; defaults to default_actor)")
+	return cmd
+}
+
+// claimable keeps only unassigned candidates, so repeated claims take new work
+// rather than re-claiming what the actor already holds.
+func claimable(snapshot *app.Snapshot, candidates []core.TaskID) []core.TaskID {
+	out := make([]core.TaskID, 0, len(candidates))
+	for _, id := range candidates {
+		task, ok := snapshot.Graph.Task(id)
+		if !ok {
+			continue
+		}
+		if task.AssigneeID == nil {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func newTaskDeleteCommand(deps *Deps) *cobra.Command {

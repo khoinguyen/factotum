@@ -637,6 +637,33 @@ func TestTaskSetRejectsStaleExpectation(t *testing.T) {
 	}
 }
 
+func TestTaskClaimIsExclusive(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "work"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	claude, _ := h.actors.Add(ctx, core.ActorAgent, "claude")
+	other, _ := h.actors.Add(ctx, core.ActorAgent, "other")
+
+	claimed, err := h.tasks.Claim(ctx, task.ID, claude.ID)
+	if err != nil {
+		t.Fatalf("Claim() error = %v", err)
+	}
+	if claimed.AssigneeID == nil || *claimed.AssigneeID != claude.ID {
+		t.Fatalf("Claim().AssigneeID = %v, want %s", claimed.AssigneeID, claude.ID)
+	}
+	if _, err := h.tasks.Claim(ctx, task.ID, other.ID); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("second Claim() error = %v, want ErrConflict", err)
+	}
+	// The holder reclaiming is a no-op, not a conflict.
+	if _, err := h.tasks.Claim(ctx, task.ID, claude.ID); err != nil {
+		t.Fatalf("re-Claim() error = %v", err)
+	}
+}
+
 func mustSnapshot(t *testing.T, h *harness, projectID core.ProjectID) *Snapshot {
 	t.Helper()
 	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID)

@@ -26,6 +26,7 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 		newTaskCreateCommand(deps),
 		newTaskListCommand(deps),
 		newTaskGetCommand(deps),
+		newTaskContextCommand(deps),
 		newTaskUpdateCommand(deps),
 		newTaskSetCommand(deps),
 		newTaskApplyCommand(deps),

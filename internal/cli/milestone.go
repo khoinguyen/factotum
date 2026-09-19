@@ -70,7 +70,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			deps.printf("%s\t%s\n", task.ID, task.Status)
-			deps.suggest(deps.taskShowHints(cmd.Context(), task)...)
+			deps.suggest(deps.taskGetHints(cmd.Context(), task)...)
 			return nil
 		},
 	}

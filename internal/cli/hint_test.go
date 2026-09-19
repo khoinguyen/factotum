@@ -55,8 +55,8 @@ func TestHintsAfterTaskNext(t *testing.T) {
 	if !strings.Contains(stderr, "Next:") {
 		t.Fatalf("task next missing suggestions:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "ft task show "+taskID) {
-		t.Fatalf("task next should suggest task show %s:\n%s", taskID, stderr)
+	if !strings.Contains(stderr, "ft task get "+taskID) {
+		t.Fatalf("task next should suggest task get %s:\n%s", taskID, stderr)
 	}
 }
 
@@ -87,24 +87,24 @@ func TestHintsAfterTaskAdd(t *testing.T) {
 	}
 }
 
-func TestTaskShowGuidesWorkflow(t *testing.T) {
+func TestTaskGetGuidesWorkflow(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	taskID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "one"))
 
-	if _, stderr := r.runSplit("task", "show", taskID); !strings.Contains(stderr, "ft task start "+taskID) {
+	if _, stderr := r.runSplit("task", "get", taskID); !strings.Contains(stderr, "ft task start "+taskID) {
 		t.Fatalf("todo task should suggest start:\n%s", stderr)
 	}
 	r.run("task", "start", taskID)
-	if _, stderr := r.runSplit("task", "show", taskID); !strings.Contains(stderr, "ft task review "+taskID) {
+	if _, stderr := r.runSplit("task", "get", taskID); !strings.Contains(stderr, "ft task review "+taskID) {
 		t.Fatalf("in-progress task should suggest review:\n%s", stderr)
 	}
 	r.run("task", "review", taskID)
-	if _, stderr := r.runSplit("task", "show", taskID); !strings.Contains(stderr, "ft task done "+taskID) {
+	if _, stderr := r.runSplit("task", "get", taskID); !strings.Contains(stderr, "ft task done "+taskID) {
 		t.Fatalf("in-review task should suggest done:\n%s", stderr)
 	}
 	r.run("task", "done", taskID)
-	if _, stderr := r.runSplit("task", "show", taskID); !strings.Contains(stderr, "ft task next --project "+projectID) {
+	if _, stderr := r.runSplit("task", "get", taskID); !strings.Contains(stderr, "ft task next --project "+projectID) {
 		t.Fatalf("resolved task should suggest next:\n%s", stderr)
 	}
 }
@@ -126,7 +126,7 @@ func TestTaskReopenReturnsToTodo(t *testing.T) {
 	if fields := strings.Fields(out); len(fields) != 2 || fields[0] != taskID || fields[1] != "todo" {
 		t.Fatalf("task reopen = %q, want %s todo", out, taskID)
 	}
-	if show := r.run("task", "show", taskID); !strings.HasPrefix(show, "(todo)") {
+	if show := r.run("task", "get", taskID); !strings.HasPrefix(show, "(todo)") {
 		t.Fatalf("reopened task should be todo:\n%s", show)
 	}
 }
@@ -167,14 +167,14 @@ func TestTaskNextRequiresProjectOrAll(t *testing.T) {
 	}
 }
 
-func TestTaskShowSuggestsBlockingDependency(t *testing.T) {
+func TestTaskGetSuggestsBlockingDependency(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	depID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "dep"))
 	blockedID := firstField(t, r.run("task", "add", "--project", projectID, "--title", "blocked", "--dep", depID))
 
-	_, stderr := r.runSplit("task", "show", blockedID)
-	if !strings.Contains(stderr, "ft task show "+depID) {
+	_, stderr := r.runSplit("task", "get", blockedID)
+	if !strings.Contains(stderr, "ft task get "+depID) {
 		t.Fatalf("blocked task should suggest inspecting its dependency:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "ft task start "+blockedID) {

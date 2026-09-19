@@ -22,7 +22,7 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 	cmd.AddCommand(
 		newTaskAddCommand(deps),
 		newTaskListCommand(deps),
-		newTaskShowCommand(deps),
+		newTaskGetCommand(deps),
 		newTaskUpdateCommand(deps),
 		newTaskDepCommand(deps),
 		newTaskAssignCommand(deps),
@@ -81,7 +81,7 @@ func newTaskAddCommand(deps *Deps) *cobra.Command {
 				}
 			}
 			hints := []hint{
-				{Command: fmt.Sprintf("ft task show %s", task.ID), About: "inspect the task"},
+				{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the task"},
 				{Command: fmt.Sprintf("ft task next --project %s", task.ProjectID), About: "see what to start"},
 			}
 			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Kind, task.Title) }, hints...)
@@ -139,10 +139,10 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 	return list
 }
 
-func newTaskShowCommand(deps *Deps) *cobra.Command {
+func newTaskGetCommand(deps *Deps) *cobra.Command {
 	return &cobra.Command{
-		Use:   "show <task>",
-		Short: "Show a task",
+		Use:   "get <task>",
+		Short: "Get a task",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
@@ -197,7 +197,7 @@ func newTaskShowCommand(deps *Deps) *cobra.Command {
 						deps.printf("---\n")
 					}
 				}
-			}, deps.taskShowHints(cmd.Context(), task)...)
+			}, deps.taskGetHints(cmd.Context(), task)...)
 		},
 	}
 }
@@ -212,7 +212,7 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 			if _, err := deps.Tasks.AddDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1])); err != nil {
 				return err
 			}
-			deps.suggest(hint{Command: fmt.Sprintf("ft task show %s", args[0]), About: "see the updated graph"})
+			deps.suggest(hint{Command: fmt.Sprintf("ft task get %s", args[0]), About: "see the updated graph"})
 			return nil
 		},
 	}
@@ -224,7 +224,7 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 			if _, err := deps.Tasks.RemoveDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1])); err != nil {
 				return err
 			}
-			deps.suggest(hint{Command: fmt.Sprintf("ft task show %s", args[0]), About: "see the updated graph"})
+			deps.suggest(hint{Command: fmt.Sprintf("ft task get %s", args[0]), About: "see the updated graph"})
 			return nil
 		},
 	}
@@ -282,7 +282,7 @@ func statusCommand(deps *Deps, use string, status core.TaskStatus, short string)
 				return err
 			}
 			deps.printf("%s\t%s\n", task.ID, task.Status)
-			deps.suggest(deps.taskShowHints(cmd.Context(), task)...)
+			deps.suggest(deps.taskGetHints(cmd.Context(), task)...)
 			return nil
 		},
 	}
@@ -315,7 +315,7 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			deps.printf("%s\tnotes=%d\n", task.ID, len(task.Notes))
-			deps.suggest(hint{Command: fmt.Sprintf("ft task show %s", task.ID), About: "review the note"})
+			deps.suggest(hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "review the note"})
 			return nil
 		},
 	}
@@ -473,7 +473,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(task, func() { deps.printf("%s\t%s\t%s\n", task.ID, task.Status, task.Title) },
-				hint{Command: fmt.Sprintf("ft task show %s", task.ID), About: "inspect the updated task"})
+				hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the updated task"})
 		},
 	}
 	cmd.Flags().StringVarP(&title, "title", "t", "", "task title")

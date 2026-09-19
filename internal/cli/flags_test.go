@@ -39,7 +39,7 @@ func TestShorthandFlags(t *testing.T) {
 		t.Fatalf("task list -r mismatch:\n%s", out)
 	}
 	r.run("task", "update", taskID, "-t", "renamed", "-b", "updated")
-	if out := r.run("task", "show", taskID); !strings.Contains(out, "renamed") || !strings.Contains(out, "updated") {
+	if out := r.run("task", "get", taskID); !strings.Contains(out, "renamed") || !strings.Contains(out, "updated") {
 		t.Fatalf("task update -t/-b mismatch:\n%s", out)
 	}
 	r.run("task", "assign", taskID, "-a", actorID)

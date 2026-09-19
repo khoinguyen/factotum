@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -192,6 +194,49 @@ func parseTaskDoc(data []byte, format string) (taskDoc, error) {
 		return taskDoc{}, fmt.Errorf("unknown format %q, want json or yaml", format)
 	}
 	return doc, nil
+}
+
+// parseTaskDocs decodes one or more task documents: a JSON array, or YAML
+// documents separated by `---` (a single document of either form also works).
+func parseTaskDocs(data []byte, format string) ([]taskDoc, error) {
+	switch format {
+	case "json":
+		if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '[' {
+			var docs []taskDoc
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&docs); err != nil {
+				return nil, fmt.Errorf("parse json: %w", err)
+			}
+			return docs, nil
+		}
+		doc, err := parseTaskDoc(data, format)
+		if err != nil {
+			return nil, err
+		}
+		return []taskDoc{doc}, nil
+	case "yaml":
+		var docs []taskDoc
+		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		decoder.KnownFields(true)
+		for {
+			var doc taskDoc
+			err := decoder.Decode(&doc)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return nil, fmt.Errorf("parse yaml: %w", err)
+			}
+			docs = append(docs, doc)
+		}
+		if len(docs) == 0 {
+			return nil, fmt.Errorf("no documents found")
+		}
+		return docs, nil
+	default:
+		return nil, fmt.Errorf("unknown format %q, want json or yaml", format)
+	}
 }
 
 func marshalTaskDoc(doc taskDoc, format string) ([]byte, error) {

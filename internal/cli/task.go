@@ -716,51 +716,80 @@ func parseLabels(value string) []string {
 
 func newTaskApplyCommand(deps *Deps) *cobra.Command {
 	var filename, format string
+	var dryRun bool
 
 	cmd := &cobra.Command{
 		Use:   "apply -f <file>",
-		Short: "Apply a task document (json or yaml)",
+		Short: "Apply one or more task documents (json or yaml; - for stdin)",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireFlags(cmd, "filename"); err != nil {
 				return err
 			}
-			data, err := os.ReadFile(filename)
-			if err != nil {
-				return fmt.Errorf("read %s: %w", filename, err)
-			}
-			doc, err := parseTaskDoc(data, docFormat(filename, format))
+			data, err := readDocument(cmd.Context(), filename)
 			if err != nil {
 				return err
 			}
-			if doc.ID == nil || *doc.ID == "" {
-				return fmt.Errorf("%w: document is missing id", core.ErrInvalid)
-			}
-			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(*doc.ID))
+			docs, err := parseTaskDocs(data, docFormat(filename, format))
 			if err != nil {
 				return err
 			}
-			set, err := doc.taskSet(task)
-			if err != nil {
-				return err
+			results := make([]applyResult, 0, len(docs))
+			for _, doc := range docs {
+				if doc.ID == nil || *doc.ID == "" {
+					return fmt.Errorf("%w: document is missing id", core.ErrInvalid)
+				}
+				task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(*doc.ID))
+				if err != nil {
+					return err
+				}
+				set, err := doc.taskSet(task)
+				if err != nil {
+					return err
+				}
+				result := applyResult{TaskID: string(task.ID), Project: string(task.ProjectID), Repo: task.Repo}
+				switch {
+				case set.Empty():
+				case dryRun:
+					result.Updated = true
+					result.DryRun = true
+				default:
+					updated, err := deps.Tasks.Set(cmd.Context(), task.ID, set)
+					if err != nil {
+						return err
+					}
+					result.Updated = true
+					result.Repo = updated.Repo
+				}
+				results = append(results, result)
 			}
-			if set.Empty() {
-				return deps.emit(taskDocFrom(task), func() {
-					deps.printFields(deps.taskFields(task, f("updated", false))...)
-				})
-			}
-			updated, err := deps.Tasks.Set(cmd.Context(), task.ID, set)
-			if err != nil {
-				return err
-			}
-			return deps.emit(taskDocFrom(updated), func() {
-				deps.printFields(deps.taskFields(updated, f("updated", true))...)
-			}, hint{Command: fmt.Sprintf("ft task get %s", updated.ID), About: "inspect the applied task"})
+			return deps.emit(results, func() {
+				for _, result := range results {
+					deps.printFields(f("task_id", result.TaskID), f("updated", result.Updated), f("project", result.Project), f("repo", deps.repoValue(result.Repo)))
+				}
+			})
 		},
 	}
-	cmd.Flags().StringVarP(&filename, "filename", "f", "", "task document file (required)")
+	cmd.Flags().StringVarP(&filename, "filename", "f", "", "task document file, or - for stdin (required)")
 	cmd.Flags().StringVar(&format, "format", "", "document format: json or yaml (default by extension)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report changes without writing")
 	return cmd
+}
+
+// readDocument reads a task document from a file, or stdin when name is "-".
+func readDocument(_ context.Context, name string) ([]byte, error) {
+	if name == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, fmt.Errorf("read stdin: %w", err)
+		}
+		return data, nil
+	}
+	data, err := os.ReadFile(name)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", name, err)
+	}
+	return data, nil
 }
 
 func newTaskEditCommand(deps *Deps) *cobra.Command {

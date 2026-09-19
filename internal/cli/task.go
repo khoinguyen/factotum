@@ -32,6 +32,7 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 		newTaskEditCommand(deps),
 		newTaskDepCommand(deps),
 		newTaskAssignCommand(deps),
+		newTaskWaitCommand(deps),
 		newTaskNoteCommand(deps),
 		newTaskNextCommand(deps),
 		newTaskDeleteCommand(deps),
@@ -314,6 +315,51 @@ func newTaskAssignCommand(deps *Deps) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&actorRef, "actor", "a", "", "actor id or name")
 	cmd.Flags().BoolVar(&unassign, "unassign", false, "clear the assignee")
+	return cmd
+}
+
+func newTaskWaitCommand(deps *Deps) *cobra.Command {
+	var actorRefs []string
+	var clear bool
+
+	cmd := &cobra.Command{
+		Use:   "wait <task>",
+		Short: "Set or clear the actors a task is waiting on",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if clear && len(actorRefs) > 0 {
+				return usageError(cmd, "only one of --on or --clear may be set")
+			}
+			if !clear && len(actorRefs) == 0 {
+				return usageError(cmd, "provide --on <actor> or --clear")
+			}
+			var actorIDs []core.ActorID
+			for _, ref := range actorRefs {
+				actor, err := deps.Actors.Resolve(cmd.Context(), ref)
+				if err != nil {
+					return err
+				}
+				actorIDs = append(actorIDs, actor.ID)
+			}
+			task, err := deps.Tasks.SetWaitingOn(cmd.Context(), core.TaskID(args[0]), actorIDs)
+			if err != nil {
+				return err
+			}
+			waiting := "-"
+			if len(task.WaitingOn) > 0 {
+				ids := make([]string, 0, len(task.WaitingOn))
+				for _, id := range task.WaitingOn {
+					ids = append(ids, string(id))
+				}
+				waiting = strings.Join(ids, ", ")
+			}
+			return deps.emit(task, func() {
+				deps.printFields(f("task_id", task.ID), f("waiting_on", waiting), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
+			}, hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the task"})
+		},
+	}
+	cmd.Flags().StringArrayVar(&actorRefs, "on", nil, "actor to wait on (id or name; repeatable)")
+	cmd.Flags().BoolVar(&clear, "clear", false, "clear the waiting-on list")
 	return cmd
 }
 

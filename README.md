@@ -78,7 +78,7 @@ ft event list --project "$PID"
 | Project | `project create`, `project list`, `project get`, `project rm` |
 | Repositories | `project repo add`, `repo list`, `repo update`, `repo rm` |
 | Actor | `actor add --kind human\|agent`, `actor list` |
-| Task | `task add --repo <name>`, `task list --repo <name>`, `task get`, `task update`, `task rm` |
+| Task | `task add --repo <name>`, `task list --repo <name>`, `task get`, `task update`, `task set field=value...`, `task rm` |
 | Dependencies | `task dep add`, `task dep rm` (cycles are rejected) |
 | Assignment | `task assign --actor <ref>` / `--unassign` |
 | Status | `task start`, `review`, `done`, `reopen`, `block`, `cancel` |
@@ -99,6 +99,10 @@ never both.
 
 Invalid invocations (wrong argument count, or a missing required flag) print the command's help to
 stderr and exit with status `2`, instead of a terse one-line error.
+
+`task set <task> field=value...` assigns several fields at once, validating each type: `status`,
+`kind`, `priority` (integer), `repo`, `title`, `labels` (comma-separated), and `body`. Long text can
+come from a file (`body=@notes.md`) or stdin (`body=-`).
 
 ## Next-step suggestions
 

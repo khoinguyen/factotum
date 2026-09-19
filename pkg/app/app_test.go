@@ -498,6 +498,117 @@ func TestTaskRepoAssociation(t *testing.T) {
 	}
 }
 
+func TestTaskSetAppliesTypedFields(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "original"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	status := core.StatusInProgress
+	priority := 7
+	title := "renamed"
+	description := "long body"
+	labels := []string{"ui", "api"}
+	updated, err := h.tasks.Set(ctx, task.ID, TaskSet{
+		Status:      &status,
+		Priority:    &priority,
+		Title:       &title,
+		Description: &description,
+		Labels:      labels,
+	})
+	if err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if updated.Status != status {
+		t.Errorf("Status = %q, want %q", updated.Status, status)
+	}
+	if updated.Priority != priority {
+		t.Errorf("Priority = %d, want %d", updated.Priority, priority)
+	}
+	if updated.Title != title {
+		t.Errorf("Title = %q, want %q", updated.Title, title)
+	}
+	if updated.Description != description {
+		t.Errorf("Description = %q, want %q", updated.Description, description)
+	}
+	if len(updated.Labels) != 2 || updated.Labels[0] != "ui" || updated.Labels[1] != "api" {
+		t.Errorf("Labels = %v, want [ui api]", updated.Labels)
+	}
+}
+
+func TestTaskSetRejectsInvalidStatus(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "x"})
+
+	bad := core.TaskStatus("bogus")
+	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Status: &bad}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Set(bad status) error = %v, want ErrInvalid", err)
+	}
+}
+
+func TestTaskSetValidatesRepo(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project, err := h.projects.Create(ctx, "Acme", "", []core.Repository{{Name: "data"}})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "x"})
+
+	bad := "nope"
+	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Repo: &bad}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Set(bad repo) error = %v, want ErrInvalid", err)
+	}
+}
+
+func TestSetStatusEmitsStatusEvent(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "x"})
+
+	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusDone); err != nil {
+		t.Fatalf("SetStatus() error = %v", err)
+	}
+	events, err := h.backend.Events().List(ctx, store.EventFilter{TaskID: &task.ID})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	var found *core.Event
+	for i := range events {
+		if events[i].Kind == core.EventTaskStatusChanged {
+			found = events[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no status event in %v", events)
+	}
+	if found.Data["to"] != "done" {
+		t.Fatalf("status event data = %v, want to=done", found.Data)
+	}
+}
+
+func TestTaskSetClearsLabels(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "x"})
+
+	empty := []string{}
+	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Labels: empty}); err != nil {
+		t.Fatalf("Set(clear labels) error = %v", err)
+	}
+	reloaded, _ := h.tasks.Get(ctx, task.ID)
+	if len(reloaded.Labels) != 0 {
+		t.Fatalf("Labels = %v, want empty", reloaded.Labels)
+	}
+}
+
 func mustSnapshot(t *testing.T, h *harness, projectID core.ProjectID) *Snapshot {
 	t.Helper()
 	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID)

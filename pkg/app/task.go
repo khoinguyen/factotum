@@ -101,37 +101,76 @@ type TaskUpdate struct {
 }
 
 func (s *TaskService) Update(ctx context.Context, id core.TaskID, patch TaskUpdate) (*core.Task, error) {
+	return s.Set(ctx, id, TaskSet{
+		Kind:        patch.Kind,
+		Repo:        patch.Repo,
+		Title:       patch.Title,
+		Description: patch.Description,
+		Priority:    patch.Priority,
+		Labels:      patch.Labels,
+	})
+}
+
+// TaskSet is a partial update to a task. A nil field is left unchanged; a
+// non-nil Labels slice replaces the existing labels (an empty slice clears
+// them).
+type TaskSet struct {
+	Kind        *core.TaskKind
+	Repo        *string
+	Title       *string
+	Description *string
+	Priority    *int
+	Status      *core.TaskStatus
+	Labels      []string
+}
+
+func (set TaskSet) hasNonStatus() bool {
+	return set.Kind != nil || set.Repo != nil || set.Title != nil ||
+		set.Description != nil || set.Priority != nil || set.Labels != nil
+}
+
+// Set applies a partial update. Setting the status emits a status-changed
+// event; any other field emits an updated event. It is the single code path
+// behind `task set`, `task update`, and the status transition commands.
+func (s *TaskService) Set(ctx context.Context, id core.TaskID, set TaskSet) (*core.Task, error) {
+	if set.Status != nil && !set.Status.Valid() {
+		return nil, fmt.Errorf("%w: unknown status %q", core.ErrInvalid, *set.Status)
+	}
 	task, err := s.backend.Tasks().Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if patch.Kind != nil {
-		if !patch.Kind.Valid() {
-			return nil, fmt.Errorf("%w: unknown task kind %q", core.ErrInvalid, *patch.Kind)
+	from := task.Status
+	if set.Kind != nil {
+		if !set.Kind.Valid() {
+			return nil, fmt.Errorf("%w: unknown task kind %q", core.ErrInvalid, *set.Kind)
 		}
-		task.Kind = *patch.Kind
+		task.Kind = *set.Kind
 	}
-	if patch.Repo != nil {
+	if set.Repo != nil {
 		project, err := s.backend.Projects().Get(ctx, task.ProjectID)
 		if err != nil {
 			return nil, err
 		}
-		if err := checkRepo(project, *patch.Repo); err != nil {
+		if err := checkRepo(project, *set.Repo); err != nil {
 			return nil, err
 		}
-		task.Repo = *patch.Repo
+		task.Repo = *set.Repo
 	}
-	if patch.Title != nil {
-		task.Title = *patch.Title
+	if set.Title != nil {
+		task.Title = *set.Title
 	}
-	if patch.Description != nil {
-		task.Description = *patch.Description
+	if set.Description != nil {
+		task.Description = *set.Description
 	}
-	if patch.Priority != nil {
-		task.Priority = *patch.Priority
+	if set.Priority != nil {
+		task.Priority = *set.Priority
 	}
-	if patch.Labels != nil {
-		task.Labels = patch.Labels
+	if set.Labels != nil {
+		task.Labels = set.Labels
+	}
+	if set.Status != nil {
+		task.Status = *set.Status
 	}
 	task.UpdatedAt = s.clock.Now()
 	if err := task.Validate(); err != nil {
@@ -140,13 +179,26 @@ func (s *TaskService) Update(ctx context.Context, id core.TaskID, patch TaskUpda
 	if err := s.backend.Tasks().Update(ctx, task); err != nil {
 		return nil, err
 	}
-	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
-		ProjectID: task.ProjectID,
-		TaskID:    &task.ID,
-		Kind:      core.EventTaskUpdated,
-		Summary:   fmt.Sprintf("updated %s", task.ID),
-	}); err != nil {
-		return nil, err
+	if set.Status != nil {
+		if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
+			ProjectID: task.ProjectID,
+			TaskID:    &task.ID,
+			Kind:      core.EventTaskStatusChanged,
+			Summary:   fmt.Sprintf("%s %s -> %s", task.ID, from, *set.Status),
+			Data:      map[string]any{"from": string(from), "to": string(*set.Status)},
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if set.hasNonStatus() {
+		if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
+			ProjectID: task.ProjectID,
+			TaskID:    &task.ID,
+			Kind:      core.EventTaskUpdated,
+			Summary:   fmt.Sprintf("updated %s", task.ID),
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return task, nil
 }
@@ -155,26 +207,7 @@ func (s *TaskService) SetStatus(ctx context.Context, id core.TaskID, status core
 	if !status.Valid() {
 		return nil, fmt.Errorf("%w: unknown status %q", core.ErrInvalid, status)
 	}
-	task, err := s.backend.Tasks().Get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	from := task.Status
-	task.Status = status
-	task.UpdatedAt = s.clock.Now()
-	if err := s.backend.Tasks().Update(ctx, task); err != nil {
-		return nil, err
-	}
-	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
-		ProjectID: task.ProjectID,
-		TaskID:    &task.ID,
-		Kind:      core.EventTaskStatusChanged,
-		Summary:   fmt.Sprintf("%s %s -> %s", task.ID, from, status),
-		Data:      map[string]any{"from": string(from), "to": string(status)},
-	}); err != nil {
-		return nil, err
-	}
-	return task, nil
+	return s.Set(ctx, id, TaskSet{Status: &status})
 }
 
 func (s *TaskService) Assign(ctx context.Context, id core.TaskID, actorID *core.ActorID) (*core.Task, error) {

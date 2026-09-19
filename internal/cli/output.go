@@ -7,6 +7,19 @@ import (
 	isatty "github.com/mattn/go-isatty"
 )
 
+// nextEntry is the lossless structured shape of `task next`, so a JSON
+// consumer gets the same fields as the text table.
+type nextEntry struct {
+	TaskID  string   `json:"task_id" yaml:"task_id"`
+	Score   float64  `json:"score" yaml:"score"`
+	Title   string   `json:"title" yaml:"title"`
+	Kind    string   `json:"kind" yaml:"kind"`
+	Status  string   `json:"status" yaml:"status"`
+	Project string   `json:"project" yaml:"project"`
+	Repo    string   `json:"repo" yaml:"repo"`
+	Labels  []string `json:"labels" yaml:"labels"`
+}
+
 // field is one `key: value` line of single-result text output.
 type field struct {
 	Key   string

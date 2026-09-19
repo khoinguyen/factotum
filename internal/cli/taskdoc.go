@@ -16,6 +16,20 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 )
 
+type linkDoc struct {
+	Kind  string `json:"kind" yaml:"kind"`
+	URL   string `json:"url" yaml:"url"`
+	Title string `json:"title,omitempty" yaml:"title,omitempty"`
+}
+
+type noteDoc struct {
+	ID        string    `json:"id" yaml:"id"`
+	Author    string    `json:"author,omitempty" yaml:"author,omitempty"`
+	Body      string    `json:"body" yaml:"body"`
+	Links     []linkDoc `json:"links,omitempty" yaml:"links,omitempty"`
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+}
+
 // taskDoc is the stable document exchanged by `task get -o json|yaml` and
 // `task apply -f`. Pointer fields distinguish an omitted field (leave
 // unchanged, or ignore for read-only fields) from an explicit value.
@@ -33,6 +47,7 @@ type taskDoc struct {
 	Deps        *[]string  `json:"deps,omitempty" yaml:"deps,omitempty"`
 	Dependents  *[]string  `json:"dependents,omitempty" yaml:"dependents,omitempty"`
 	WaitingOn   *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
+	Notes       []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
 	CreatedAt   *time.Time `json:"created_at,omitempty" yaml:"created_at,omitempty"`
 	UpdatedAt   *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 }
@@ -59,6 +74,14 @@ func taskDocFrom(task *core.Task) taskDoc {
 	}
 	createdAt := task.CreatedAt
 	updatedAt := task.UpdatedAt
+	notes := make([]noteDoc, 0, len(task.Notes))
+	for _, note := range task.Notes {
+		entry := noteDoc{ID: note.ID, Author: string(note.Author), Body: note.Body, CreatedAt: note.CreatedAt}
+		for _, link := range note.Links {
+			entry.Links = append(entry.Links, linkDoc{Kind: string(link.Kind), URL: link.URL, Title: link.Title})
+		}
+		notes = append(notes, entry)
+	}
 	doc := taskDoc{
 		ID:          &id,
 		ProjectID:   &projectID,
@@ -71,6 +94,7 @@ func taskDocFrom(task *core.Task) taskDoc {
 		Labels:      &labels,
 		Deps:        &deps,
 		WaitingOn:   &waitingOn,
+		Notes:       notes,
 		CreatedAt:   &createdAt,
 		UpdatedAt:   &updatedAt,
 	}
@@ -110,6 +134,9 @@ func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
 	}
 	if !equalStringSet(doc.WaitingOn, currentWaiting) {
 		return app.TaskSet{}, fmt.Errorf("%w: waiting_on is managed by `ft task wait`", core.ErrInvalid)
+	}
+	if !equalNotes(doc.Notes, current.Notes) {
+		return app.TaskSet{}, fmt.Errorf("%w: notes are managed by `ft task note`", core.ErrInvalid)
 	}
 
 	var set app.TaskSet
@@ -227,6 +254,23 @@ func editTask(contents []byte, format string) ([]byte, error) {
 		return nil, fmt.Errorf("editor %q: %w", editor, err)
 	}
 	return os.ReadFile(path)
+}
+
+// equalNotes reports whether an optional document note list matches the
+// current notes. A nil document list means "not supplied".
+func equalNotes(doc []noteDoc, current []core.Note) bool {
+	if doc == nil {
+		return true
+	}
+	if len(doc) != len(current) {
+		return false
+	}
+	for i := range doc {
+		if doc[i].ID != current[i].ID || doc[i].Body != current[i].Body {
+			return false
+		}
+	}
+	return true
 }
 
 func actorIDString(id *core.ActorID) string {

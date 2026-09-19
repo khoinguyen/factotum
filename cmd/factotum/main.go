@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 
@@ -32,8 +31,8 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		if errors.Is(err, cli.ErrUsage) {
 			return 2
 		}
-		_, _ = fmt.Fprintln(stderr, "ft:", err)
-		return 1
+		cli.PrintError(stderr, deps.OutputFormat, err)
+		return cli.ExitCode(err)
 	}
 	return 0
 }

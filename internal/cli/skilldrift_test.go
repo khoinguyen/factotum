@@ -37,6 +37,30 @@ func TestEmbeddedSkillsReferenceRealCommandsAndFlags(t *testing.T) {
 	}
 }
 
+func TestSkillCommandLinesExtractsFencedAndInline(t *testing.T) {
+	body := "```sh\nft task next\n```\n\nRun `ft memory search terra` and `ft done <task>`.\n"
+	got := skillCommandLines(body)
+	want := []string{"ft task next", "ft memory search terra", "ft done <task>"}
+	if len(got) != len(want) {
+		t.Fatalf("skillCommandLines() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("skillCommandLines() = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestStaleSkillReferencesDetectsInlineBacktick(t *testing.T) {
+	root := skillDriftRoot(t)
+	body := "Use `ft task frobnicate` and `ft memory search --bogus` here.\n"
+	stale := staleSkillReferences(root, body)
+	joined := strings.Join(stale, "\n")
+	if len(stale) != 2 || !strings.Contains(joined, "frobnicate") || !strings.Contains(joined, "--bogus") {
+		t.Fatalf("stale = %v, want the inline stale command and flag", stale)
+	}
+}
+
 func TestStaleSkillReferencesDetectsBadCommandAndFlag(t *testing.T) {
 	root := skillDriftRoot(t)
 	body := "```sh\nft task frobnicate\nft memory search --bogus\nft task next --limit 1\n```\n"

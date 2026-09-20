@@ -104,6 +104,10 @@ Never claim a unit is done because the code "looks right". Run the tests.
   suppression, skipped test, `//nolint`) requires **explicit human approval**, and the reason is
   documented inline next to it.
 - Public behavior is documented; there is no dead code.
+- If the CLI surface changed (commands, flags, or output), the embedded skills
+  (`internal/skills/content/*.md`, served by `ft skill`) were updated to match. Review them with
+  `ft skill list` and `ft skill get <name>`; a deterministic CI drift check is planned
+  (t-skill-drift).
 - The work is refactored for clarity and simplicity after it is green.
 
 ## Commands (mise)
@@ -296,7 +300,9 @@ chore/mise-pins
 Workflow:
 
 1. Branch from up-to-date `main` (`git switch main && git pull && git switch -c feat/...`).
-2. Develop test-first and get `mise run ci` green.
+2. Develop test-first and get `mise run ci` green. If the CLI surface changed, update the
+   embedded skills (`internal/skills/content/`) in the same branch and review them with `ft skill
+   get <name>`.
 3. Commit after **every meaningful unit** (not one big batch): imperative subject, and a short
    body explaining *why* when it is not obvious.
 4. Include the matching `ft` graph changes (statuses, notes, new tasks/milestones) in the same

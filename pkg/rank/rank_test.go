@@ -43,6 +43,14 @@ func order(scored []Scored) []core.TaskID {
 	return out
 }
 
+func scoresByID(scored []Scored) map[core.TaskID]float64 {
+	out := make(map[core.TaskID]float64, len(scored))
+	for _, s := range scored {
+		out[s.TaskID] = s.Score
+	}
+	return out
+}
+
 func equalOrder(got, want []core.TaskID) bool {
 	if len(got) != len(want) {
 		return false
@@ -106,7 +114,7 @@ func TestTowardRankerPrefersPathToTarget(t *testing.T) {
 	}
 }
 
-func TestCompositeBreaksTiesByPriorityThenID(t *testing.T) {
+func TestCompositeRanksByPriorityWeight(t *testing.T) {
 	high := task("high", core.StatusTodo)
 	high.Priority = 5
 	low := task("low", core.StatusTodo)
@@ -123,6 +131,76 @@ func TestCompositeBreaksTiesByPriorityThenID(t *testing.T) {
 	}
 	if !equalOrder(order(scored), []core.TaskID{"high", "low"}) {
 		t.Fatalf("Rank() = %v, want [high low]", order(scored))
+	}
+	byID := scoresByID(scored)
+	if byID["high"] <= byID["low"] {
+		t.Fatalf("priority term did not lift high above low: %v", byID)
+	}
+}
+
+func TestCompositeZeroPriorityIsNeutral(t *testing.T) {
+	tasks := []core.Task{task("a", core.StatusTodo), task("b", core.StatusTodo)}
+	composite, err := NewComposite(DefaultWeights())
+	if err != nil {
+		t.Fatalf("NewComposite() error = %v", err)
+	}
+	scored, err := composite.Rank(context.Background(), request(t, tasks, ""))
+	if err != nil {
+		t.Fatalf("Rank() error = %v", err)
+	}
+	if !equalOrder(order(scored), []core.TaskID{"a", "b"}) {
+		t.Fatalf("Rank() = %v, want [a b]", order(scored))
+	}
+	byID := scoresByID(scored)
+	if byID["a"] != 0 || byID["b"] != 0 {
+		t.Fatalf("equal priorities should not change scores, got %v", byID)
+	}
+}
+
+func TestCompositePriorityWeightLowersLowPriority(t *testing.T) {
+	critical := task("critical", core.StatusTodo)
+	chore := task("chore", core.StatusTodo)
+	chore.Priority = -10
+	blocked1 := task("blocked-1", core.StatusTodo, "chore")
+	blocked2 := task("blocked-2", core.StatusTodo, "chore")
+	tasks := []core.Task{critical, chore, blocked1, blocked2}
+
+	composite, err := NewComposite(Weights{Unblock: 1, Milestone: 1, Toward: 1, Priority: 2})
+	if err != nil {
+		t.Fatalf("NewComposite() error = %v", err)
+	}
+	scored, err := composite.Rank(context.Background(), request(t, tasks, ""))
+	if err != nil {
+		t.Fatalf("Rank() error = %v", err)
+	}
+	if !equalOrder(order(scored), []core.TaskID{"critical", "chore"}) {
+		t.Fatalf("Rank() = %v, want [critical chore]", order(scored))
+	}
+	byID := scoresByID(scored)
+	if byID["chore"] >= byID["critical"] {
+		t.Fatalf("low priority was not measurably lowered: %v", byID)
+	}
+}
+
+func TestUnblockBreaksTiesByPriorityThenID(t *testing.T) {
+	high := task("b-high", core.StatusTodo)
+	high.Priority = 5
+	low := task("a-low", core.StatusTodo)
+	low.Priority = 1
+	tasks := []core.Task{low, high}
+
+	scored, err := Unblock{}.Rank(context.Background(), request(t, tasks, ""))
+	if err != nil {
+		t.Fatalf("Rank() error = %v", err)
+	}
+	if !equalOrder(order(scored), []core.TaskID{"b-high", "a-low"}) {
+		t.Fatalf("Rank() = %v, want [b-high a-low]", order(scored))
+	}
+}
+
+func TestNewCompositeRejectsNegativePriorityWeight(t *testing.T) {
+	if _, err := NewComposite(Weights{Priority: -1}); err == nil {
+		t.Fatal("NewComposite() error = nil, want error for negative priority weight")
 	}
 }
 

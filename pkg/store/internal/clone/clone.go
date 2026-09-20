@@ -29,6 +29,18 @@ func Task(task core.Task) core.Task {
 		notBefore := *task.NotBefore
 		task.NotBefore = &notBefore
 	}
+	if task.Snooze != nil {
+		snooze := *task.Snooze
+		if snooze.Until != nil {
+			until := *snooze.Until
+			snooze.Until = &until
+		}
+		if snooze.UntilTask != nil {
+			id := *snooze.UntilTask
+			snooze.UntilTask = &id
+		}
+		task.Snooze = &snooze
+	}
 	if task.Milestone != nil {
 		meta := *task.Milestone
 		if meta.TargetDate != nil {

@@ -5,6 +5,27 @@ import (
 	"time"
 )
 
+func TestSnoozeValidate(t *testing.T) {
+	until := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	taskID := TaskID("t-1")
+	tests := []struct {
+		name    string
+		snooze  Snooze
+		wantErr bool
+	}{
+		{"until", Snooze{Until: &until}, false},
+		{"until task", Snooze{UntilTask: &taskID}, false},
+		{"indefinite", Snooze{Indefinite: true}, false},
+		{"empty", Snooze{}, true},
+		{"two conditions", Snooze{Until: &until, Indefinite: true}, true},
+	}
+	for _, tt := range tests {
+		if err := tt.snooze.Validate(); (err != nil) != tt.wantErr {
+			t.Errorf("%s: Validate() error = %v, wantErr %v", tt.name, err, tt.wantErr)
+		}
+	}
+}
+
 func TestTaskReadyAt(t *testing.T) {
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	past := now.Add(-time.Hour)

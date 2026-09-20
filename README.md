@@ -79,6 +79,7 @@ ft event list --project "$PID"
 | Repositories | `project repo create`, `repo list`, `repo update`, `repo delete` |
 | Actor | `actor create --kind human\|agent`, `actor list` |
 | Task | `task create --repo <name>`, `task list --repo <name>`, `task get`, `task update`, `task set field=value...`, `task apply -f`, `task edit`, `task delete` |
+| Snooze | `task snooze --until <date>\|--until-task <task>\|--indefinite`, `task unsnooze` |
 | Dependencies | `task dep create`, `task dep delete` (cycles are rejected) |
 | Assignment | `task assign --actor <ref>` / `--unassign` |
 | Status | `task start\|review\|done\|reopen\|block\|cancel`, or the top-level shortcuts `ft start\|review\|done\|reopen\|block\|cancel` |

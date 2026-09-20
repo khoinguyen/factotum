@@ -72,6 +72,43 @@ func TestReadySetExcludesNotBefore(t *testing.T) {
 	}
 }
 
+func TestReadySetExcludesSnoozed(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+	future := now.Add(time.Hour)
+
+	open := task("open", core.KindTask, core.StatusTodo)
+	snoozedUntil := task("snoozed-until", core.KindTask, core.StatusTodo)
+	snoozedUntil.Snooze = &core.Snooze{Until: &future}
+	woken := task("woken", core.KindTask, core.StatusTodo)
+	woken.Snooze = &core.Snooze{Until: &past}
+	parked := task("parked", core.KindTask, core.StatusTodo)
+	parked.Snooze = &core.Snooze{Indefinite: true}
+	blocker := task("blocker", core.KindTask, core.StatusTodo)
+	untilTask := core.TaskID("blocker")
+	waiting := task("waiting", core.KindTask, core.StatusTodo)
+	waiting.Snooze = &core.Snooze{UntilTask: &untilTask}
+
+	tasks := []core.Task{open, snoozedUntil, woken, parked, blocker, waiting}
+	g, err := NewAt(tasks, core.DefaultResolutionPolicy(), now)
+	if err != nil {
+		t.Fatalf("NewAt() error = %v", err)
+	}
+	if got := g.ReadySet(); !equalIDs(got, []core.TaskID{"blocker", "open", "woken"}) {
+		t.Fatalf("ReadySet() = %v, want [blocker open woken]", got)
+	}
+
+	// Once the blocker resolves, the until-task snooze wakes automatically.
+	blocker.Status = core.StatusDone
+	later, err := NewAt([]core.Task{open, snoozedUntil, woken, parked, blocker, waiting}, core.DefaultResolutionPolicy(), now)
+	if err != nil {
+		t.Fatalf("NewAt() error = %v", err)
+	}
+	if got := later.ReadySet(); !equalIDs(got, []core.TaskID{"open", "waiting", "woken"}) {
+		t.Fatalf("ReadySet() after blocker = %v, want [open waiting woken]", got)
+	}
+}
+
 func TestReadySetIgnoresNotBeforeWithoutClock(t *testing.T) {
 	future := time.Now().Add(24 * time.Hour)
 	deferred := task("deferred", core.KindTask, core.StatusTodo)

@@ -34,6 +34,16 @@ Each command prints a `Next:` hint with the natural follow-up, so you rarely
 need to remember the exact verb. Pass `--no-hints` (or set
 `FACTOTUM_NO_HINTS=1`) to silence them.
 
+Park work you cannot start yet without cancelling it:
+
+```sh
+ft task snooze <task> --until +7d        # also --until-task <task>, or --indefinite
+ft task unsnooze <task>
+```
+
+A snoozed task leaves ranking until its condition passes (a date or task
+condition clears itself; indefinite waits for `unsnooze`).
+
 ## Record what you learn and file new work
 
 ```sh

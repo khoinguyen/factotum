@@ -1,6 +1,31 @@
 package core
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestTaskReadyAt(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+	future := now.Add(time.Hour)
+	tests := []struct {
+		name      string
+		notBefore *time.Time
+		want      bool
+	}{
+		{"no constraint", nil, true},
+		{"past", &past, true},
+		{"now", &now, true},
+		{"future", &future, false},
+	}
+	for _, tt := range tests {
+		task := Task{NotBefore: tt.notBefore}
+		if got := task.ReadyAt(now); got != tt.want {
+			t.Errorf("%s: ReadyAt() = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
 
 func TestTaskKindValid(t *testing.T) {
 	tests := []struct {

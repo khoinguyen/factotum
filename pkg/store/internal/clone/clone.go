@@ -25,6 +25,10 @@ func Task(task core.Task) core.Task {
 	task.Labels = append([]string(nil), task.Labels...)
 	task.Deps = append([]core.TaskID(nil), task.Deps...)
 	task.Notes = notes(task.Notes)
+	if task.NotBefore != nil {
+		notBefore := *task.NotBefore
+		task.NotBefore = &notBefore
+	}
 	if task.Milestone != nil {
 		meta := *task.Milestone
 		if meta.TargetDate != nil {

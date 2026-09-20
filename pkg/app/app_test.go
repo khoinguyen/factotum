@@ -224,7 +224,7 @@ func TestLoadAllSnapshotMergesProjects(t *testing.T) {
 	first, _ := h.tasks.Add(ctx, TaskInput{ProjectID: alpha.ID, Title: "first"})
 	second, _ := h.tasks.Add(ctx, TaskInput{ProjectID: beta.ID, Title: "second"})
 
-	snapshot, err := LoadAllSnapshot(ctx, h.backend)
+	snapshot, err := LoadAllSnapshot(ctx, h.backend, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("LoadAllSnapshot() error = %v", err)
 	}
@@ -723,9 +723,82 @@ func TestTaskClaimIsExclusive(t *testing.T) {
 
 func mustSnapshot(t *testing.T, h *harness, projectID core.ProjectID) *Snapshot {
 	t.Helper()
-	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID)
+	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("LoadSnapshot() error = %v", err)
 	}
 	return snapshot
+}
+
+func TestTaskSetNotBefore(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "soak"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	deadline := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	updated, err := h.tasks.Set(ctx, task.ID, TaskSet{NotBefore: &deadline})
+	if err != nil {
+		t.Fatalf("Set(not_before) error = %v", err)
+	}
+	if updated.NotBefore == nil || !updated.NotBefore.Equal(deadline) {
+		t.Fatalf("NotBefore = %v, want %v", updated.NotBefore, deadline)
+	}
+
+	cleared, err := h.tasks.Set(ctx, task.ID, TaskSet{ClearNotBefore: true})
+	if err != nil {
+		t.Fatalf("Set(clear) error = %v", err)
+	}
+	if cleared.NotBefore != nil {
+		t.Fatalf("NotBefore = %v, want nil after clear", cleared.NotBefore)
+	}
+}
+
+func TestSnapshotExcludesNotBeforeUntilDeadline(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "soak"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	deadline := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{NotBefore: &deadline}); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	before, err := LoadSnapshot(ctx, h.backend, project.ID, deadline.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if got := unionIDs(before.Ready.Agent, before.Ready.Human); len(got) != 0 {
+		t.Fatalf("ready before deadline = %v, want none", got)
+	}
+
+	after, err := LoadSnapshot(ctx, h.backend, project.ID, deadline.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	got := append(append([]core.TaskID{}, after.Ready.Agent...), after.Ready.Human...)
+	if len(got) != 1 || got[0] != task.ID {
+		t.Fatalf("ready after deadline = %v, want [%s]", got, task.ID)
+	}
+}
+
+func unionIDs(groups ...[]core.TaskID) []core.TaskID {
+	seen := make(map[core.TaskID]struct{})
+	var out []core.TaskID
+	for _, group := range groups {
+		for _, id := range group {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	return out
 }

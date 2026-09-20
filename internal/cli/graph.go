@@ -26,7 +26,7 @@ func newGraphCommand(deps *Deps) *cobra.Command {
 			if err := requireProject(cmd, core.ProjectID(projectID)); err != nil {
 				return err
 			}
-			snapshot, err := app.LoadSnapshot(cmd.Context(), deps.Backend, core.ProjectID(projectID))
+			snapshot, err := app.LoadSnapshot(cmd.Context(), deps.Backend, core.ProjectID(projectID), deps.Clock.Now())
 			if err != nil {
 				return err
 			}

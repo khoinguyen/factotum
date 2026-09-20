@@ -50,6 +50,7 @@ type taskDoc struct {
 	Dependents  *[]string  `json:"dependents,omitempty" yaml:"dependents,omitempty"`
 	WaitingOn   *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
 	Notes       []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
+	NotBefore   *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
 	CreatedAt   *time.Time `json:"created_at,omitempty" yaml:"created_at,omitempty"`
 	UpdatedAt   *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 }
@@ -103,6 +104,10 @@ func taskDocFrom(task *core.Task) taskDoc {
 	if task.AssigneeID != nil {
 		assignee := string(*task.AssigneeID)
 		doc.Assignee = &assignee
+	}
+	if task.NotBefore != nil {
+		notBefore := *task.NotBefore
+		doc.NotBefore = &notBefore
 	}
 	return doc
 }
@@ -167,6 +172,10 @@ func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
 	}
 	if doc.Priority != nil && *doc.Priority != current.Priority {
 		set.Priority = doc.Priority
+	}
+	if doc.NotBefore != nil && (current.NotBefore == nil || !doc.NotBefore.Equal(*current.NotBefore)) {
+		notBefore := *doc.NotBefore
+		set.NotBefore = &notBefore
 	}
 	if doc.Labels != nil && !equalStringSet(doc.Labels, current.Labels) {
 		set.Labels = *doc.Labels

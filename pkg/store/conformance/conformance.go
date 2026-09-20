@@ -146,8 +146,9 @@ func testTask(t *testing.T, be store.Backend) {
 	ctx := context.Background()
 	repo := be.Tasks()
 
+	notBefore := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	tasks := []*core.Task{
-		{ID: "t-1", ProjectID: "prj-1", Repo: "backend", Kind: core.KindTask, Title: "one", Status: core.StatusTodo},
+		{ID: "t-1", ProjectID: "prj-1", Repo: "backend", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, NotBefore: &notBefore},
 		{ID: "t-2", ProjectID: "prj-1", Repo: "backend", Kind: core.KindTask, Title: "two", Status: core.StatusDone},
 		{ID: "t-3", ProjectID: "prj-2", Repo: "web", Kind: core.KindTask, Title: "three", Status: core.StatusTodo},
 		{ID: "m-1", ProjectID: "prj-1", Kind: core.KindMilestone, Title: "release", Status: core.StatusTodo},
@@ -167,6 +168,9 @@ func testTask(t *testing.T, be store.Backend) {
 	}
 	if got.Title != "one" {
 		t.Fatalf("Get().Title = %q, want one", got.Title)
+	}
+	if got.NotBefore == nil || !got.NotBefore.Equal(notBefore) {
+		t.Fatalf("Get().NotBefore = %v, want %v", got.NotBefore, notBefore)
 	}
 	if _, err := repo.Get(ctx, "nope"); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("Get() missing error = %v, want ErrNotFound", err)

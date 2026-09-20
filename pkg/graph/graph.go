@@ -5,6 +5,7 @@ package graph
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 )
@@ -15,6 +16,7 @@ type Graph struct {
 	deps       map[core.TaskID][]core.TaskID
 	dependents map[core.TaskID][]core.TaskID
 	ids        []core.TaskID
+	now        time.Time
 }
 
 // ReadyBucket classifies startable tasks by the kind of actor that should pick
@@ -25,12 +27,26 @@ type ReadyBucket struct {
 	Human []core.TaskID
 }
 
+// New builds a graph with no time reference, so not_before constraints are
+// ignored. Use NewAt to evaluate readiness against a clock.
 func New(tasks []core.Task, policy core.ResolutionPolicy) (*Graph, error) {
+	return newGraph(tasks, policy, time.Time{})
+}
+
+// NewAt builds a graph that evaluates not_before constraints at now: a task
+// whose not_before is in the future is excluded from the ready set while still
+// blocking its dependents.
+func NewAt(tasks []core.Task, policy core.ResolutionPolicy, now time.Time) (*Graph, error) {
+	return newGraph(tasks, policy, now)
+}
+
+func newGraph(tasks []core.Task, policy core.ResolutionPolicy, now time.Time) (*Graph, error) {
 	g := &Graph{
 		policy:     policy,
 		tasks:      make(map[core.TaskID]core.Task, len(tasks)),
 		deps:       make(map[core.TaskID][]core.TaskID, len(tasks)),
 		dependents: make(map[core.TaskID][]core.TaskID, len(tasks)),
+		now:        now,
 	}
 	for _, t := range tasks {
 		if _, ok := g.tasks[t.ID]; ok {
@@ -105,6 +121,9 @@ func (g *Graph) ReadySet() []core.TaskID {
 	for _, id := range g.ids {
 		t := g.tasks[id]
 		if t.Resolves(g.policy) || t.Status == core.StatusBlocked || t.Status == core.StatusInProgress {
+			continue
+		}
+		if !g.now.IsZero() && !t.ReadyAt(g.now) {
 			continue
 		}
 		if g.depsResolved(t) {

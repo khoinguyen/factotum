@@ -23,6 +23,7 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 		"doc":       newDocCommand,
 		"event":     newEventCommand,
 		"graph":     newGraphCommand,
+		"memory":    newMemoryCommand,
 		"milestone": newMilestoneCommand,
 		"project":   newProjectCommand,
 		"task":      newTaskCommand,

@@ -196,6 +196,15 @@ Every backend passes the shared contract suite in `pkg/store/conformance`.
 | JSON file | `--store jsonfile --store-opt path=...` | Single document, atomic writes. |
 | SQLite | `--store sqlite --store-opt path=...` | Pure-Go driver (`modernc.org/sqlite`). |
 
+### Schema migrations
+
+The SQLite backend versions its schema with `PRAGMA user_version`. On open it
+applies any pending migration steps in order, each in its own transaction. When
+an existing database predates the binary, the file is backed up first to
+`<path>.bak-v<from>-<UTC timestamp>` (keeping the five most recent) before it is
+changed, so a failed migration leaves the original intact. A database written by
+a newer binary is rejected with a clear error rather than modified.
+
 ## Design
 
 - **Hexagonal architecture.** A pure domain core (`pkg/core`) surrounded by ports and adapters.

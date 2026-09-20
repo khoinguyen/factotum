@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -63,8 +64,42 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project_id);
 CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);
 `
 
+// backupRetention is how many pre-migration backups to keep per database.
+const backupRetention = 5
+
+// currentSchemaVersion is the schema version this binary writes. It is a var so
+// tests can exercise pending and failing migrations.
+var currentSchemaVersion = 1
+
+// nowFunc is overridable in tests so backup names are deterministic.
+var nowFunc = time.Now
+
+// migration is one ordered, transactional schema step (version-1 -> version).
+type migration struct {
+	version int
+	apply   func(ctx context.Context, tx *sql.Tx) error
+}
+
+var migrations = []migration{{version: 1, apply: migrateV1}}
+
+// migrateV1 creates the base schema and the pre-release additive columns.
+func migrateV1(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	// Pre-release databases may lack tasks.repo.
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE tasks ADD COLUMN repo TEXT"); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("tasks.repo: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS idx_tasks_repo ON tasks(repo)"); err != nil {
+		return fmt.Errorf("index tasks.repo: %w", err)
+	}
+	return nil
+}
+
 type Backend struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
@@ -81,7 +116,7 @@ func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	backend := &Backend{db: db}
+	backend := &Backend{db: db, path: path}
 	if err := backend.Migrate(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -89,16 +124,103 @@ func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
 	return backend, nil
 }
 
+// Migrate brings the database up to currentSchemaVersion. It refuses a database
+// from a newer binary, backs the file up before changing an existing database,
+// and applies each pending step in its own transaction.
 func (b *Backend) Migrate(ctx context.Context) error {
-	if _, err := b.db.ExecContext(ctx, schema); err != nil {
-		return fmt.Errorf("migrate: %w", err)
+	version, err := b.schemaVersion(ctx)
+	if err != nil {
+		return err
 	}
-	// Pre-release schema evolution: add columns older databases may lack.
-	if _, err := b.db.ExecContext(ctx, "ALTER TABLE tasks ADD COLUMN repo TEXT"); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		return fmt.Errorf("migrate tasks.repo: %w", err)
+	if version > currentSchemaVersion {
+		return fmt.Errorf("%w: database schema version %d is newer than this binary supports (%d)", core.ErrInvalid, version, currentSchemaVersion)
 	}
-	if _, err := b.db.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS idx_tasks_repo ON tasks(repo)"); err != nil {
-		return fmt.Errorf("index tasks.repo: %w", err)
+	if version == currentSchemaVersion {
+		return nil
+	}
+	existing, err := b.hasUserTables(ctx)
+	if err != nil {
+		return err
+	}
+	if existing {
+		if err := b.backup(version); err != nil {
+			return fmt.Errorf("backup before migration: %w", err)
+		}
+	}
+	for _, step := range migrations {
+		if step.version <= version {
+			continue
+		}
+		if err := b.applyMigration(ctx, step); err != nil {
+			return fmt.Errorf("migrate to schema version %d: %w", step.version, err)
+		}
+	}
+	return nil
+}
+
+func (b *Backend) schemaVersion(ctx context.Context) (int, error) {
+	var version int
+	if err := b.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return 0, fmt.Errorf("read schema version: %w", err)
+	}
+	return version, nil
+}
+
+func (b *Backend) hasUserTables(ctx context.Context) (bool, error) {
+	var count int
+	if err := b.db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").Scan(&count); err != nil {
+		return false, fmt.Errorf("inspect schema: %w", err)
+	}
+	return count > 0, nil
+}
+
+func (b *Backend) applyMigration(ctx context.Context, step migration) error {
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := step.apply(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", step.version)); err != nil {
+		return fmt.Errorf("stamp schema version: %w", err)
+	}
+	return tx.Commit()
+}
+
+// backup copies the database file next to itself before a migration and keeps
+// the most recent backupRetention copies.
+func (b *Backend) backup(fromVersion int) error {
+	if b.path == "" || b.path == ":memory:" {
+		return nil
+	}
+	data, err := os.ReadFile(b.path)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(b.path)
+	base := filepath.Base(b.path)
+	name := fmt.Sprintf("%s.bak-v%d-%s", base, fromVersion, nowFunc().UTC().Format("20060102T150405Z"))
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
+		return err
+	}
+	return pruneBackups(dir, base)
+}
+
+func pruneBackups(dir, base string) error {
+	matches, err := filepath.Glob(filepath.Join(dir, base+".bak-*"))
+	if err != nil {
+		return err
+	}
+	if len(matches) <= backupRetention {
+		return nil
+	}
+	sort.Strings(matches)
+	for _, stale := range matches[:len(matches)-backupRetention] {
+		if err := os.Remove(stale); err != nil {
+			return err
+		}
 	}
 	return nil
 }

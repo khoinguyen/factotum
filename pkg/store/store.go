@@ -12,6 +12,9 @@ import (
 type Config struct {
 	Backend string
 	Options map[string]string
+	// Noticef, when set, receives human-readable notices (such as a schema
+	// migration and its backup path) that must not pollute structured stdout.
+	Noticef func(format string, args ...any)
 }
 
 func (c Config) Option(key string) string {

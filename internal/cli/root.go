@@ -106,7 +106,13 @@ func NewRoot(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			backend, err := factory(cmd.Context(), store.Config{Backend: cfg.Store.Backend, Options: cfg.Store.Options})
+			backend, err := factory(cmd.Context(), store.Config{
+				Backend: cfg.Store.Backend,
+				Options: cfg.Store.Options,
+				Noticef: func(format string, args ...any) {
+					_, _ = fmt.Fprintf(deps.Err, "ft: "+format+"\n", args...)
+				},
+			})
 			if err != nil {
 				return err
 			}

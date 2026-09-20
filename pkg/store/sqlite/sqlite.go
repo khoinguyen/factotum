@@ -98,8 +98,16 @@ func migrateV1(ctx context.Context, tx *sql.Tx) error {
 }
 
 type Backend struct {
-	db   *sql.DB
-	path string
+	db      *sql.DB
+	path    string
+	noticef func(format string, args ...any)
+}
+
+// notice emits a human-readable migration notice, if a sink is configured.
+func (b *Backend) notice(format string, args ...any) {
+	if b.noticef != nil {
+		b.noticef(format, args...)
+	}
 }
 
 func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
@@ -116,7 +124,7 @@ func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	backend := &Backend{db: db, path: path}
+	backend := &Backend{db: db, path: path, noticef: cfg.Noticef}
 	if err := backend.Migrate(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -143,9 +151,11 @@ func (b *Backend) Migrate(ctx context.Context) error {
 		return err
 	}
 	if existing {
-		if err := b.backup(version); err != nil {
+		backupPath, err := b.backup(version)
+		if err != nil {
 			return fmt.Errorf("backup before migration: %w", err)
 		}
+		b.notice("database schema v%d is older than v%d; backing up to %s and migrating", version, currentSchemaVersion, backupPath)
 	}
 	for _, step := range migrations {
 		if step.version <= version {
@@ -154,6 +164,9 @@ func (b *Backend) Migrate(ctx context.Context) error {
 		if err := b.applyMigration(ctx, step); err != nil {
 			return fmt.Errorf("migrate to schema version %d: %w", step.version, err)
 		}
+	}
+	if existing {
+		b.notice("database schema migrated to v%d", currentSchemaVersion)
 	}
 	return nil
 }
@@ -190,22 +203,26 @@ func (b *Backend) applyMigration(ctx context.Context, step migration) error {
 }
 
 // backup copies the database file next to itself before a migration and keeps
-// the most recent backupRetention copies.
-func (b *Backend) backup(fromVersion int) error {
+// the most recent backupRetention copies. It returns the backup path ("" when
+// there is nothing to back up).
+func (b *Backend) backup(fromVersion int) (string, error) {
 	if b.path == "" || b.path == ":memory:" {
-		return nil
+		return "", nil
 	}
 	data, err := os.ReadFile(b.path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	dir := filepath.Dir(b.path)
 	base := filepath.Base(b.path)
-	name := fmt.Sprintf("%s.bak-v%d-%s", base, fromVersion, nowFunc().UTC().Format("20060102T150405Z"))
-	if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
-		return err
+	backupPath := filepath.Join(dir, fmt.Sprintf("%s.bak-v%d-%s", base, fromVersion, nowFunc().UTC().Format("20060102T150405Z")))
+	if err := os.WriteFile(backupPath, data, 0o600); err != nil {
+		return "", err
 	}
-	return pruneBackups(dir, base)
+	if err := pruneBackups(dir, base); err != nil {
+		return "", err
+	}
+	return backupPath, nil
 }
 
 func pruneBackups(dir, base string) error {

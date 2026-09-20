@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,6 +107,45 @@ CREATE TABLE tasks (
 	}
 	if reloaded.Title != "old" {
 		t.Fatalf("Get(old task).Title = %q, want old", reloaded.Title)
+	}
+}
+
+func TestMigrateNotifiesOnUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.db")
+	raw := openRaw(t, path)
+	if _, err := raw.Exec("CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL)"); err != nil {
+		t.Fatalf("create old schema: %v", err)
+	}
+	_ = raw.Close()
+
+	var notices []string
+	cfg := sqliteConfig(path)
+	cfg.Noticef = func(format string, args ...any) { notices = append(notices, fmt.Sprintf(format, args...)) }
+	backend, err := Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+
+	joined := strings.Join(notices, "\n")
+	if !strings.Contains(joined, "v0") || !strings.Contains(joined, fmt.Sprintf("v%d", currentSchemaVersion)) || !strings.Contains(joined, ".bak-") {
+		t.Fatalf("notices = %v, want the from/to versions and the backup path", notices)
+	}
+}
+
+func TestMigrateFreshDoesNotNotify(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "factotum.db")
+	var notices []string
+	cfg := sqliteConfig(path)
+	cfg.Noticef = func(format string, args ...any) { notices = append(notices, fmt.Sprintf(format, args...)) }
+	backend, err := Open(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	if len(notices) != 0 {
+		t.Fatalf("fresh database should not notify, got %v", notices)
 	}
 }
 

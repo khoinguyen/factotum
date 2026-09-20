@@ -314,19 +314,76 @@ func TestArtifactsAndMemorySearch(t *testing.T) {
 		t.Fatalf("Add(memory) error = %v", err)
 	}
 
-	found, err := h.artifacts.Search(ctx, project.ID, "terraform")
+	found, err := h.artifacts.Search(ctx, store.ArtifactFilter{ProjectID: project.ID}, "terraform")
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
 	if len(found) != 1 || found[0].Title != "Deploy notes" {
 		t.Fatalf("Search() = %v, want Deploy notes", found)
 	}
-	none, err := h.artifacts.Search(ctx, project.ID, "kubernetes")
+	none, err := h.artifacts.Search(ctx, store.ArtifactFilter{ProjectID: project.ID}, "kubernetes")
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
 	if len(none) != 0 {
 		t.Fatalf("Search() = %v, want none", none)
+	}
+}
+
+func TestArtifactSearchRanksTitleBeforeBody(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+
+	titles := []string{"run scripts", "Terraform notes"}
+	expected := []string{"Terraform notes", "run scripts"}
+	for _, title := range titles {
+		body := "nothing"
+		if title == "run scripts" {
+			body = "terraform apply"
+		}
+		if _, err := h.artifacts.Add(ctx, ArtifactInput{ProjectID: project.ID, Kind: core.ArtifactMemory, Title: title, Body: body}); err != nil {
+			t.Fatalf("Add(%q) error = %v", title, err)
+		}
+	}
+
+	found, err := h.artifacts.Search(ctx, store.ArtifactFilter{ProjectID: project.ID}, "terraform")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	got := make([]string, 0, len(found))
+	for _, artifact := range found {
+		got = append(got, artifact.Title)
+	}
+	if len(got) != len(expected) {
+		t.Fatalf("Search() = %v, want %v", got, expected)
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Fatalf("Search() order = %v, want %v", got, expected)
+		}
+	}
+}
+
+func TestArtifactSearchFiltersByKind(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+
+	if _, err := h.artifacts.Add(ctx, ArtifactInput{ProjectID: project.ID, Kind: core.ArtifactDoc, Title: "terraform doc", Body: "keep"}); err != nil {
+		t.Fatalf("Add(doc) error = %v", err)
+	}
+	if _, err := h.artifacts.Add(ctx, ArtifactInput{ProjectID: project.ID, Kind: core.ArtifactMemory, Title: "terraform memory", Body: "keep"}); err != nil {
+		t.Fatalf("Add(memory) error = %v", err)
+	}
+
+	kind := core.ArtifactMemory
+	found, err := h.artifacts.Search(ctx, store.ArtifactFilter{ProjectID: project.ID, Kind: &kind}, "terraform")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(found) != 1 || found[0].Title != "terraform memory" {
+		t.Fatalf("Search() = %v, want only the memory artifact", found)
 	}
 }
 

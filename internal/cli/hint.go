@@ -119,6 +119,24 @@ func docSearchHints(projectID string) []hint {
 	return []hint{{Command: fmt.Sprintf("ft doc list --project %s", projectID), About: "browse all artifacts"}}
 }
 
+func memoryListHints(projectID string) []hint {
+	if projectID == "" {
+		return nil
+	}
+	return []hint{{Command: fmt.Sprintf("ft memory create --project %s --title \"...\"", projectID), About: "add a memory"}}
+}
+
+func memoryGetHints(artifact *core.Artifact) []hint {
+	var hints []hint
+	if artifact.TaskID != nil {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft task get %s", *artifact.TaskID), About: "the task this memory belongs to"})
+	}
+	if artifact.ProjectID != "" {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft memory list --project %s", artifact.ProjectID), About: "see all memory"})
+	}
+	return hints
+}
+
 func milestoneListHints(projectID string, milestones []*core.Task) []hint {
 	var hints []hint
 	if projectID != "" {

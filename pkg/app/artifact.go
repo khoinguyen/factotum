@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -77,25 +78,47 @@ func (s *ArtifactService) List(ctx context.Context, filter store.ArtifactFilter)
 	return s.backend.Artifacts().List(ctx, filter)
 }
 
-// Search returns project artifacts whose title or body contains the query,
-// case-insensitively. An empty query returns everything.
-func (s *ArtifactService) Search(ctx context.Context, projectID core.ProjectID, query string) ([]*core.Artifact, error) {
-	artifacts, err := s.backend.Artifacts().List(ctx, store.ArtifactFilter{ProjectID: projectID})
+// Search returns the artifacts in filter scope whose title or body contains
+// the query, case-insensitively. Results are ordered by relevance: title
+// matches before body-only matches, then by title and id (case-insensitive)
+// ascending, so the order is deterministic. An empty query returns everything
+// in scope in the same stable order.
+func (s *ArtifactService) Search(ctx context.Context, filter store.ArtifactFilter, query string) ([]*core.Artifact, error) {
+	artifacts, err := s.backend.Artifacts().List(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-	if query == "" {
-		return artifacts, nil
-	}
-	needle := strings.ToLower(query)
-	out := make([]*core.Artifact, 0)
+	needle := strings.ToLower(strings.TrimSpace(query))
+	matches := make([]searchMatch, 0, len(artifacts))
 	for _, artifact := range artifacts {
-		if strings.Contains(strings.ToLower(artifact.Title), needle) ||
-			strings.Contains(strings.ToLower(artifact.Body), needle) {
-			out = append(out, artifact)
+		titleHit := strings.Contains(strings.ToLower(artifact.Title), needle)
+		bodyHit := strings.Contains(strings.ToLower(artifact.Body), needle)
+		if needle != "" && !titleHit && !bodyHit {
+			continue
 		}
+		matches = append(matches, searchMatch{artifact: artifact, titleHit: titleHit})
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].titleHit != matches[j].titleHit {
+			return matches[i].titleHit
+		}
+		left := strings.ToLower(matches[i].artifact.Title)
+		right := strings.ToLower(matches[j].artifact.Title)
+		if left != right {
+			return left < right
+		}
+		return matches[i].artifact.ID < matches[j].artifact.ID
+	})
+	out := make([]*core.Artifact, 0, len(matches))
+	for _, match := range matches {
+		out = append(out, match.artifact)
 	}
 	return out, nil
+}
+
+type searchMatch struct {
+	artifact *core.Artifact
+	titleHit bool
 }
 
 func (s *ArtifactService) Delete(ctx context.Context, id core.ArtifactID) error {

@@ -136,6 +136,33 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 	}
 	list.Flags().StringVarP(&listProject, "project", "p", "", "filter by project id")
 
+	var searchProject string
+	search := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search memory titles and bodies",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			project := deps.resolveProject(searchProject)
+			kind := core.ArtifactMemory
+			artifacts, err := deps.Artifacts.Search(cmd.Context(), store.ArtifactFilter{ProjectID: project, Kind: &kind}, args[0])
+			if err != nil {
+				return err
+			}
+			entries := make([]memoryEntry, 0, len(artifacts))
+			for _, artifact := range artifacts {
+				entries = append(entries, memoryEntryFrom(artifact))
+			}
+			return deps.emit(entries, func() {
+				rows := make([][]string, 0, len(entries))
+				for _, entry := range entries {
+					rows = append(rows, []string{entry.ID, entry.Title, entry.Project})
+				}
+				deps.printTable([]string{"ID", "TITLE", "PROJECT"}, rows)
+			}, memorySearchHints(artifacts, string(project))...)
+		},
+	}
+	search.Flags().StringVarP(&searchProject, "project", "p", "", "filter by project id")
+
 	get := &cobra.Command{
 		Use:   "get <memory>",
 		Short: "Get a memory artifact",
@@ -169,6 +196,6 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(create, list, get)
+	cmd.AddCommand(create, list, search, get)
 	return cmd
 }

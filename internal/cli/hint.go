@@ -126,6 +126,14 @@ func memoryListHints(projectID string) []hint {
 	return []hint{{Command: fmt.Sprintf("ft memory create --project %s --title \"...\"", projectID), About: "add a memory"}}
 }
 
+func memorySearchHints(artifacts []*core.Artifact, projectID string) []hint {
+	var hints []hint
+	if len(artifacts) > 0 {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft memory get %s", artifacts[0].ID), About: "read the top match"})
+	}
+	return append(hints, memoryListHints(projectID)...)
+}
+
 func memoryGetHints(artifact *core.Artifact) []hint {
 	var hints []hint
 	if artifact.TaskID != nil {

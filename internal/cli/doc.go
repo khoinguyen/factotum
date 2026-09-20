@@ -97,7 +97,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			searchProject = string(deps.resolveProject(searchProject))
-			artifacts, err := deps.Artifacts.Search(cmd.Context(), core.ProjectID(searchProject), args[0])
+			artifacts, err := deps.Artifacts.Search(cmd.Context(), store.ArtifactFilter{ProjectID: core.ProjectID(searchProject)}, args[0])
 			if err != nil {
 				return err
 			}

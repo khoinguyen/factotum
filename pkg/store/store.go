@@ -88,6 +88,9 @@ type ArtifactRepo interface {
 	Create(ctx context.Context, artifact *core.Artifact) error
 	Get(ctx context.Context, id core.ArtifactID) (*core.Artifact, error)
 	List(ctx context.Context, filter ArtifactFilter) ([]*core.Artifact, error)
+	// Search returns artifacts in filter scope whose title or body matches the
+	// query, ranked by relevance. An empty query matches everything in scope.
+	Search(ctx context.Context, filter ArtifactFilter, query string) ([]SearchHit, error)
 	Update(ctx context.Context, artifact *core.Artifact) error
 	Delete(ctx context.Context, id core.ArtifactID) error
 }

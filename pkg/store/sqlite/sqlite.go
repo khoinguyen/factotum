@@ -69,7 +69,7 @@ const backupRetention = 5
 
 // currentSchemaVersion is the schema version this binary writes. It is a var so
 // tests can exercise pending and failing migrations.
-var currentSchemaVersion = 1
+var currentSchemaVersion = 2
 
 // nowFunc is overridable in tests so backup names are deterministic.
 var nowFunc = time.Now
@@ -80,7 +80,10 @@ type migration struct {
 	apply   func(ctx context.Context, tx *sql.Tx) error
 }
 
-var migrations = []migration{{version: 1, apply: migrateV1}}
+var migrations = []migration{
+	{version: 1, apply: migrateV1},
+	{version: 2, apply: migrateV2},
+}
 
 // migrateV1 creates the base schema and the pre-release additive columns.
 func migrateV1(ctx context.Context, tx *sql.Tx) error {
@@ -93,6 +96,49 @@ func migrateV1(ctx context.Context, tx *sql.Tx) error {
 	}
 	if _, err := tx.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS idx_tasks_repo ON tasks(repo)"); err != nil {
 		return fmt.Errorf("index tasks.repo: %w", err)
+	}
+	return nil
+}
+
+// migrateV2 adds the FTS5 index over artifact titles and bodies and backfills
+// it from existing rows.
+func migrateV2(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, "CREATE VIRTUAL TABLE IF NOT EXISTS artifacts_fts USING fts5(title, body)"); err != nil {
+		return fmt.Errorf("artifacts_fts: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT rowid, data FROM artifacts")
+	if err != nil {
+		return fmt.Errorf("read artifacts: %w", err)
+	}
+	type entry struct {
+		rowid int64
+		title string
+		body  string
+	}
+	var entries []entry
+	for rows.Next() {
+		var rowid int64
+		var data string
+		if err := rows.Scan(&rowid, &data); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		artifact, err := decodeArtifact(data)
+		if err != nil {
+			_ = rows.Close()
+			return err
+		}
+		entries = append(entries, entry{rowid: rowid, title: artifact.Title, body: artifact.Body})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	_ = rows.Close()
+	for _, item := range entries {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO artifacts_fts(rowid, title, body) VALUES (?, ?, ?)", item.rowid, item.title, item.body); err != nil {
+			return fmt.Errorf("index artifact: %w", err)
+		}
 	}
 	return nil
 }
@@ -612,25 +658,48 @@ func decodeActor(data string) (*core.Actor, error) {
 type artifactRepo struct{ db *sql.DB }
 
 func (r *artifactRepo) Create(ctx context.Context, artifact *core.Artifact) error {
-	exists, err := rowExists(ctx, r.db, "SELECT 1 FROM artifacts WHERE id = ?", string(artifact.ID))
+	data, err := encode(artifact)
+	if err != nil {
+		return err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	exists, err := rowExistsTx(ctx, tx, "SELECT 1 FROM artifacts WHERE id = ?", string(artifact.ID))
 	if err != nil {
 		return err
 	}
 	if exists {
 		return fmt.Errorf("%w: artifact %s", core.ErrAlreadyExists, artifact.ID)
 	}
-	data, err := encode(artifact)
-	if err != nil {
-		return err
-	}
 	var taskID any
 	if artifact.TaskID != nil {
 		taskID = string(*artifact.TaskID)
 	}
-	if _, err := r.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		"INSERT INTO artifacts (id, project_id, task_id, kind, data) VALUES (?, ?, ?, ?, ?)",
 		string(artifact.ID), string(artifact.ProjectID), taskID, string(artifact.Kind), data); err != nil {
 		return fmt.Errorf("insert artifact: %w", err)
+	}
+	if err := indexArtifact(ctx, tx, artifact); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// indexArtifact (re)writes the artifact's row in the FTS index.
+func indexArtifact(ctx context.Context, tx *sql.Tx, artifact *core.Artifact) error {
+	var rowid int64
+	if err := tx.QueryRowContext(ctx, "SELECT rowid FROM artifacts WHERE id = ?", string(artifact.ID)).Scan(&rowid); err != nil {
+		return fmt.Errorf("artifact rowid: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM artifacts_fts WHERE rowid = ?", rowid); err != nil {
+		return fmt.Errorf("unindex artifact: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO artifacts_fts(rowid, title, body) VALUES (?, ?, ?)", rowid, artifact.Title, artifact.Body); err != nil {
+		return fmt.Errorf("index artifact: %w", err)
 	}
 	return nil
 }
@@ -688,43 +757,134 @@ func (r *artifactRepo) List(ctx context.Context, filter store.ArtifactFilter) ([
 	return out, rows.Err()
 }
 
+func (r *artifactRepo) Search(ctx context.Context, filter store.ArtifactFilter, query string) ([]store.SearchHit, error) {
+	terms := store.LexicalTerms(query)
+	conditions := make([]string, 0, 3)
+	args := make([]any, 0, 4)
+	if filter.ProjectID != "" {
+		conditions = append(conditions, "a.project_id = ?")
+		args = append(args, string(filter.ProjectID))
+	}
+	if filter.TaskID != nil {
+		conditions = append(conditions, "a.task_id = ?")
+		args = append(args, string(*filter.TaskID))
+	}
+	if filter.Kind != nil {
+		conditions = append(conditions, "a.kind = ?")
+		args = append(args, string(*filter.Kind))
+	}
+
+	statement := "SELECT a.data FROM artifacts a"
+	queryArgs := args
+	hasWhere := false
+	if len(terms) > 0 {
+		// FTS5 matches token prefixes; every term must appear (implicit AND).
+		statement = "SELECT a.data, bm25(artifacts_fts, 10.0, 1.0) AS rank FROM artifacts_fts JOIN artifacts a ON a.rowid = artifacts_fts.rowid WHERE artifacts_fts MATCH ?"
+		queryArgs = append([]any{ftsQuery(terms)}, args...)
+		hasWhere = true
+	}
+	if len(conditions) > 0 {
+		if hasWhere {
+			statement += " AND " + strings.Join(conditions, " AND ")
+		} else {
+			statement += " WHERE " + strings.Join(conditions, " AND ")
+		}
+	}
+	statement += " ORDER BY a.id"
+
+	rows, err := r.db.QueryContext(ctx, statement, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("search artifacts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	hits := make([]store.SearchHit, 0)
+	for rows.Next() {
+		var data string
+		score := 0.0
+		if len(terms) > 0 {
+			var rank float64
+			if err := rows.Scan(&data, &rank); err != nil {
+				return nil, err
+			}
+			score = -rank
+		} else if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		artifact, err := decodeArtifact(data)
+		if err != nil {
+			return nil, err
+		}
+		hits = append(hits, store.SearchHit{Artifact: artifact, Score: score})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	store.SortSearchHits(hits)
+	return hits, nil
+}
+
+// ftsQuery turns lexical terms into an FTS5 prefix query (implicit AND).
+func ftsQuery(terms []string) string {
+	parts := make([]string, 0, len(terms))
+	for _, term := range terms {
+		parts = append(parts, term+"*")
+	}
+	return strings.Join(parts, " ")
+}
+
 func (r *artifactRepo) Update(ctx context.Context, artifact *core.Artifact) error {
-	exists, err := rowExists(ctx, r.db, "SELECT 1 FROM artifacts WHERE id = ?", string(artifact.ID))
+	data, err := encode(artifact)
+	if err != nil {
+		return err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	exists, err := rowExistsTx(ctx, tx, "SELECT 1 FROM artifacts WHERE id = ?", string(artifact.ID))
 	if err != nil {
 		return err
 	}
 	if !exists {
 		return fmt.Errorf("%w: artifact %s", core.ErrNotFound, artifact.ID)
 	}
-	data, err := encode(artifact)
-	if err != nil {
-		return err
-	}
 	var taskID any
 	if artifact.TaskID != nil {
 		taskID = string(*artifact.TaskID)
 	}
-	if _, err := r.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		"UPDATE artifacts SET project_id = ?, task_id = ?, kind = ?, data = ? WHERE id = ?",
 		string(artifact.ProjectID), taskID, string(artifact.Kind), data, string(artifact.ID)); err != nil {
 		return fmt.Errorf("update artifact: %w", err)
 	}
-	return nil
+	if err := indexArtifact(ctx, tx, artifact); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *artifactRepo) Delete(ctx context.Context, id core.ArtifactID) error {
-	result, err := r.db.ExecContext(ctx, "DELETE FROM artifacts WHERE id = ?", string(id))
-	if err != nil {
-		return fmt.Errorf("delete artifact: %w", err)
-	}
-	affected, err := result.RowsAffected()
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if affected == 0 {
+	defer func() { _ = tx.Rollback() }()
+	var rowid int64
+	err = tx.QueryRowContext(ctx, "SELECT rowid FROM artifacts WHERE id = ?", string(id)).Scan(&rowid)
+	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: artifact %s", core.ErrNotFound, id)
 	}
-	return nil
+	if err != nil {
+		return fmt.Errorf("find artifact: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM artifacts WHERE id = ?", string(id)); err != nil {
+		return fmt.Errorf("delete artifact: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM artifacts_fts WHERE rowid = ?", rowid); err != nil {
+		return fmt.Errorf("unindex artifact: %w", err)
+	}
+	return tx.Commit()
 }
 
 func decodeArtifact(data string) (*core.Artifact, error) {
@@ -812,6 +972,18 @@ func (r *eventRepo) List(ctx context.Context, filter store.EventFilter) ([]*core
 func rowExists(ctx context.Context, db *sql.DB, query string, args ...any) (bool, error) {
 	var one int
 	err := db.QueryRowContext(ctx, query, args...).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("query: %w", err)
+	}
+	return true, nil
+}
+
+func rowExistsTx(ctx context.Context, tx *sql.Tx, query string, args ...any) (bool, error) {
+	var one int
+	err := tx.QueryRowContext(ctx, query, args...).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

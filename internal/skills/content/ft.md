@@ -62,8 +62,8 @@ code.
 ft task list -p <project> --status todo
 ft task get <task>              # description, deps, dependents, notes, memory
 ft task context <task>          # task + deps + notes + memory + recent events
-ft doc search "<query>"         # specs and docs
-ft memory search "<query>"      # agent memory
+ft doc search "<query>"         # specs and docs (terms ANDed, prefix match)
+ft memory search "<query>"      # agent memory (same lexical search)
 ft memory get <memory>          # read one memory back
 ```
 

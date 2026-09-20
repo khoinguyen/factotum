@@ -719,7 +719,7 @@ func newTaskSetCommand(deps *Deps) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			set, err := parseTaskSet(args[1:])
+			set, err := parseTaskSet(args[1:], deps.Clock.Now())
 			if err != nil {
 				return err
 			}
@@ -737,8 +737,9 @@ func newTaskSetCommand(deps *Deps) *cobra.Command {
 }
 
 // parseTaskSet turns `field=value` assignments into a TaskSet. Long text
-// fields accept `@path` (read from a file) or `-` (read from stdin).
-func parseTaskSet(assignments []string) (app.TaskSet, error) {
+// fields accept `@path` (read from a file) or `-` (read from stdin). now
+// anchors relative not_before values such as `+7d`.
+func parseTaskSet(assignments []string, now time.Time) (app.TaskSet, error) {
 	var set app.TaskSet
 	for _, assignment := range assignments {
 		key, value, ok := strings.Cut(assignment, "=")
@@ -781,7 +782,7 @@ func parseTaskSet(assignments []string) (app.TaskSet, error) {
 				set.ClearNotBefore = true
 				break
 			}
-			notBefore, err := parseNotBefore(value)
+			notBefore, err := parseNotBefore(value, now)
 			if err != nil {
 				return app.TaskSet{}, fmt.Errorf("invalid not_before %q: %w", value, err)
 			}
@@ -793,17 +794,48 @@ func parseTaskSet(assignments []string) (app.TaskSet, error) {
 	return set, nil
 }
 
-// parseNotBefore accepts an RFC3339 timestamp or a date (midnight UTC).
-func parseNotBefore(value string) (time.Time, error) {
+// parseNotBefore accepts an RFC3339 timestamp, a date (midnight UTC), or a
+// relative offset from now such as +7d, +36h, +30m, or +1w.
+func parseNotBefore(value string, now time.Time) (time.Time, error) {
 	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "+") {
+		duration, err := parseRelativeDuration(value[1:])
+		if err != nil {
+			return time.Time{}, err
+		}
+		return now.Add(duration), nil
+	}
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
 		return parsed, nil
 	}
 	parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC)
 	if err != nil {
-		return time.Time{}, errors.New("want RFC3339 or YYYY-MM-DD")
+		return time.Time{}, errors.New("want RFC3339, YYYY-MM-DD, or +<duration>")
 	}
 	return parsed, nil
+}
+
+// parseRelativeDuration parses a compact duration like 7d, 36h, 30m, or 1w.
+func parseRelativeDuration(value string) (time.Duration, error) {
+	if value == "" {
+		return 0, errors.New("empty duration")
+	}
+	number, err := strconv.Atoi(value[:len(value)-1])
+	if err != nil || number < 0 {
+		return 0, fmt.Errorf("invalid duration %q", value)
+	}
+	switch unit := value[len(value)-1]; unit {
+	case 'm':
+		return time.Duration(number) * time.Minute, nil
+	case 'h':
+		return time.Duration(number) * time.Hour, nil
+	case 'd':
+		return time.Duration(number) * 24 * time.Hour, nil
+	case 'w':
+		return time.Duration(number) * 7 * 24 * time.Hour, nil
+	default:
+		return 0, fmt.Errorf("unknown duration unit %q", string(unit))
+	}
 }
 
 func readFieldValue(value string) (string, error) {

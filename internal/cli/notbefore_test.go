@@ -4,7 +4,54 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestParseNotBefore(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		in      string
+		want    time.Time
+		wantErr bool
+	}{
+		{"2030-01-01", time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), false},
+		{"2030-01-01T10:00:00Z", time.Date(2030, 1, 1, 10, 0, 0, 0, time.UTC), false},
+		{"+7d", now.Add(7 * 24 * time.Hour), false},
+		{"+1w", now.Add(7 * 24 * time.Hour), false},
+		{"+36h", now.Add(36 * time.Hour), false},
+		{"+30m", now.Add(30 * time.Minute), false},
+		{"soon", time.Time{}, true},
+		{"+7x", time.Time{}, true},
+		{"+", time.Time{}, true},
+	}
+	for _, tt := range tests {
+		got, err := parseNotBefore(tt.in, now)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("parseNotBefore(%q) error = nil, want error", tt.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseNotBefore(%q) error = %v", tt.in, err)
+			continue
+		}
+		if !got.Equal(tt.want) {
+			t.Errorf("parseNotBefore(%q) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestTaskSetNotBeforeRelativeDefers(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "soak"))
+
+	r.run("task", "set", taskID, "not_before=+7d")
+	if out := r.run("task", "next", "--project", projectID); strings.Contains(out, taskID) {
+		t.Fatalf("+7d task should not be ready:\n%s", out)
+	}
+}
 
 func TestTaskSetNotBeforeDefersFromNext(t *testing.T) {
 	r := newRunner(t)

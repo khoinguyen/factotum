@@ -120,8 +120,11 @@ Invalid invocations (wrong argument count, or a missing required flag) print the
 stderr and exit with status `2`, instead of a terse one-line error.
 
 `task set <task> field=value...` assigns several fields at once, validating each type: `status`,
-`kind`, `priority` (integer), `repo`, `title`, `labels` (comma-separated), and `body`. Long text can
-come from a file (`body=@notes.md`) or stdin (`body=-`).
+`kind`, `priority` (integer), `repo`, `title`, `labels` (comma-separated), `body`, and `not_before`.
+Long text can come from a file (`body=@notes.md`) or stdin (`body=-`). `not_before` accepts a date
+(`2026-10-01`), an RFC3339 timestamp, or a relative offset (`+7d`, `+36h`, `+1w`); an empty value
+clears it. A task whose `not_before` is in the future is excluded from readiness and `task next`
+until the time passes, then becomes ready with no manual step.
 
 `task get -o json|yaml` prints a round-trippable task document. Edit it and feed it back with
 `task apply -f <file>` (format inferred from the extension; override with `--format`), or open it
@@ -130,6 +133,35 @@ relations (`assignee`, `deps`, `waiting_on`) may be echoed back unchanged but an
 rejected. `updated_at` is a compare-and-swap token: applying a document produced before a concurrent
 change fails with a conflict instead of overwriting it (`created_at` is carried for information
 only).
+
+## Soak gates
+
+A release is not trustworthy the moment it ships; you usually want a soak period
+before declaring it good. Model that as a verification milestone that depends on
+the release, carries a `not_before` deadline, and resolves only on explicit
+sign-off. There is no auto-pass, so a human must confirm the soak succeeded.
+
+```sh
+# 1. The release milestone.
+ft milestone create -p factotum -t "Release v1.4"
+
+# 2. The gate: a milestone that depends on the release and waits a week.
+gate=$(ft task create -p factotum -t "Verify v1.4 soak" -k milestone \
+  --dep <release> --no-hints | sed -n 's/^task_id: //p')
+ft task set "$gate" not_before=+7d
+
+# 3. While the soak runs, the gate is not ready and is absent from task next.
+ft task next -p factotum
+
+# 4. Once the soak passes, a human verifies and resolves the gate; dependents
+#    then unblock. Resolution is an explicit status change, never automatic.
+ft task done "$gate"
+```
+
+Until `not_before` passes the gate is excluded from readiness and `task next`;
+once it passes it becomes ready with no manual step. Auto-resolution from
+metrics (for example an error-budget or SLO gate) is intentionally out of scope;
+revisit a dedicated `gate` kind only if metrics-driven gates are needed.
 
 ## Next-step suggestions
 

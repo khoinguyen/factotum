@@ -78,7 +78,8 @@ ft memory get <memory>
   `key: value` lines for single results and tables for lists.
 - Never edit a database by hand: go through `ft`.
 - `ft task set <id> field=value ...` updates fields, including
-  `not_before=YYYY-MM-DD` to defer a task and `not_before=` to clear it.
+  `not_before=YYYY-MM-DD` (or `+7d`) to defer a task and `not_before=` to clear
+  it.
 
 ## Getting help
 

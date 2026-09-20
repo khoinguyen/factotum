@@ -388,13 +388,7 @@ func (r *artifactRepo) List(_ context.Context, filter store.ArtifactFilter) ([]*
 	defer r.backend.mu.Unlock()
 	out := make([]*core.Artifact, 0, len(r.backend.state.Artifacts))
 	for _, artifact := range r.backend.state.Artifacts {
-		if filter.ProjectID != "" && artifact.ProjectID != filter.ProjectID {
-			continue
-		}
-		if filter.TaskID != nil && (artifact.TaskID == nil || *artifact.TaskID != *filter.TaskID) {
-			continue
-		}
-		if filter.Kind != nil && artifact.Kind != *filter.Kind {
+		if !store.MatchesArtifactFilter(&artifact, filter) {
 			continue
 		}
 		cloned := clone.Artifact(artifact)
@@ -402,6 +396,26 @@ func (r *artifactRepo) List(_ context.Context, filter store.ArtifactFilter) ([]*
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+func (r *artifactRepo) Search(_ context.Context, filter store.ArtifactFilter, query string) ([]store.SearchHit, error) {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	terms := store.LexicalTerms(query)
+	hits := make([]store.SearchHit, 0)
+	for _, artifact := range r.backend.state.Artifacts {
+		if !store.MatchesArtifactFilter(&artifact, filter) {
+			continue
+		}
+		score, matched := store.LexicalScore(&artifact, terms)
+		if !matched {
+			continue
+		}
+		cloned := clone.Artifact(artifact)
+		hits = append(hits, store.SearchHit{Artifact: &cloned, Score: score})
+	}
+	store.SortSearchHits(hits)
+	return hits, nil
 }
 
 func (r *artifactRepo) Update(_ context.Context, artifact *core.Artifact) error {

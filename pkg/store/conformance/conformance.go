@@ -20,6 +20,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("Actor", func(t *testing.T) { testActor(t, factory(t)) })
 	t.Run("Task", func(t *testing.T) { testTask(t, factory(t)) })
 	t.Run("Artifact", func(t *testing.T) { testArtifact(t, factory(t)) })
+	t.Run("ArtifactSearch", func(t *testing.T) { testArtifactSearch(t, factory(t)) })
 	t.Run("Event", func(t *testing.T) { testEvent(t, factory(t)) })
 }
 
@@ -286,6 +287,82 @@ func testTask(t *testing.T, be store.Backend) {
 	if _, err := repo.Get(ctx, "t-3"); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("Get() after delete error = %v, want ErrNotFound", err)
 	}
+}
+
+func testArtifactSearch(t *testing.T, be store.Backend) {
+	t.Helper()
+	ctx := context.Background()
+	repo := be.Artifacts()
+	taskID := core.TaskID("t-9")
+
+	artifacts := []*core.Artifact{
+		{ID: "art-t", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "Terraform notes", Body: "apply in devops"},
+		{ID: "art-b", ProjectID: "prj-1", TaskID: &taskID, Kind: core.ArtifactMemory, Title: "run scripts", Body: "terraform then kubectl"},
+		{ID: "art-x", ProjectID: "prj-2", Kind: core.ArtifactDoc, Title: "Kubernetes notes", Body: "cluster upgrade"},
+		{ID: "art-n", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "unrelated", Body: "nothing here"},
+	}
+	for _, artifact := range artifacts {
+		if err := repo.Create(ctx, artifact); err != nil {
+			t.Fatalf("Create(%s) error = %v", artifact.ID, err)
+		}
+	}
+
+	prj := store.ArtifactFilter{ProjectID: "prj-1"}
+	memory := core.ArtifactMemory
+
+	assertSearch(t, repo, ctx, prj, "terraform", []core.ArtifactID{"art-t", "art-b"})
+	assertSearch(t, repo, ctx, prj, "terra", []core.ArtifactID{"art-t", "art-b"})     // prefix
+	assertSearch(t, repo, ctx, prj, "TERRAFORM", []core.ArtifactID{"art-t", "art-b"}) // case-insensitive
+	assertSearch(t, repo, ctx, prj, "terraform apply", []core.ArtifactID{"art-t"})    // all terms
+	assertSearch(t, repo, ctx, prj, "terraform kubectl", []core.ArtifactID{"art-b"})  // title vs body
+	assertSearch(t, repo, ctx, prj, "kubernetes", nil)                                // other project
+	assertSearch(t, repo, ctx, store.ArtifactFilter{ProjectID: "prj-1", Kind: &memory}, "terraform", []core.ArtifactID{"art-t", "art-b"})
+	assertSearch(t, repo, ctx, store.ArtifactFilter{ProjectID: "prj-1", Kind: &memory}, "kubernetes", nil)
+	assertSearch(t, repo, ctx, store.ArtifactFilter{TaskID: &taskID}, "terraform", []core.ArtifactID{"art-b"})
+
+	// Empty query returns everything in scope, ordered by title then id.
+	assertSearch(t, repo, ctx, prj, "", []core.ArtifactID{"art-b", "art-t", "art-n"})
+
+	// Repeating a query is deterministic.
+	assertSearch(t, repo, ctx, prj, "terraform", []core.ArtifactID{"art-t", "art-b"})
+
+	// Updates reindex.
+	updated := &core.Artifact{ID: "art-t", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "Rust notes", Body: "cargo build"}
+	if err := repo.Update(ctx, updated); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	assertSearch(t, repo, ctx, prj, "terraform", []core.ArtifactID{"art-b"})
+	assertSearch(t, repo, ctx, prj, "cargo", []core.ArtifactID{"art-t"})
+
+	// Deletes unindex.
+	if err := repo.Delete(ctx, "art-b"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	assertSearch(t, repo, ctx, prj, "terraform", nil)
+}
+
+func assertSearch(t *testing.T, repo store.ArtifactRepo, ctx context.Context, filter store.ArtifactFilter, query string, want []core.ArtifactID) {
+	t.Helper()
+	hits, err := repo.Search(ctx, filter, query)
+	if err != nil {
+		t.Fatalf("Search(%q) error = %v", query, err)
+	}
+	if len(hits) != len(want) {
+		t.Fatalf("Search(%q) = %v, want %v", query, hitIDs(hits), want)
+	}
+	for i, id := range want {
+		if hits[i].Artifact.ID != id {
+			t.Fatalf("Search(%q) = %v, want %v", query, hitIDs(hits), want)
+		}
+	}
+}
+
+func hitIDs(hits []store.SearchHit) []core.ArtifactID {
+	out := make([]core.ArtifactID, 0, len(hits))
+	for _, hit := range hits {
+		out = append(out, hit.Artifact.ID)
+	}
+	return out
 }
 
 func testArtifact(t *testing.T, be store.Backend) {

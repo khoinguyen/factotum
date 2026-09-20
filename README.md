@@ -135,6 +135,18 @@ rejected. `updated_at` is a compare-and-swap token: applying a document produced
 change fails with a conflict instead of overwriting it (`created_at` is carried for information
 only).
 
+## Search
+
+`ft doc search <query>` and `ft memory search <query>` share one lexical
+full-text search over artifact titles and bodies. The query is split into terms
+on non-alphanumeric characters; every term must match, case-insensitively, as a
+token prefix — `terra` matches `terraform`, and `infra-as-code` matches `infra`,
+`as`, and `code`. Results are ranked by relevance with title matches ahead of
+body-only matches, then by title and id, so the order is deterministic. An empty
+query returns everything in scope. On SQLite this is an FTS5 index with bm25
+ranking; the memory and JSON backends apply the same rules, so every backend
+returns the same order. No network or embeddings are involved.
+
 ## Soak gates
 
 A release is not trustworthy the moment it ships; you usually want a soak period

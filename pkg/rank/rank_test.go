@@ -204,6 +204,23 @@ func TestNewCompositeRejectsNegativePriorityWeight(t *testing.T) {
 	}
 }
 
+func TestEmptyCandidateSetYieldsNoResults(t *testing.T) {
+	tasks := []core.Task{task("a", core.StatusTodo), task("b", core.StatusTodo)}
+	composite, err := NewComposite(DefaultWeights())
+	if err != nil {
+		t.Fatalf("NewComposite() error = %v", err)
+	}
+	req := request(t, tasks, "")
+	req.Candidates = []core.TaskID{}
+	scored, err := composite.Rank(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Rank() error = %v", err)
+	}
+	if len(scored) != 0 {
+		t.Fatalf("Rank() = %v, want none for an explicit empty candidate set", order(scored))
+	}
+}
+
 func TestRepoScopesCandidates(t *testing.T) {
 	data := task("data-1", core.StatusTodo)
 	data.Repo = "data"

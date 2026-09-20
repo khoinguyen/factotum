@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -54,7 +53,14 @@ func newTaskContextCommand(deps *Deps) *cobra.Command {
 		Short: "Bundle a task with its dependencies, notes, memory, and recent events",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			selected := contextFields(fields)
+			requested := parseFieldList(fields)
+			if err := validateFieldList(requested, contextSectionNames); err != nil {
+				return usageError(cmd, "%s", err)
+			}
+			selected := make(map[string]bool, len(requested))
+			for _, name := range requested {
+				selected[name] = true
+			}
 			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
 			if err != nil {
 				return err
@@ -99,15 +105,8 @@ func newTaskContextCommand(deps *Deps) *cobra.Command {
 	return cmd
 }
 
-func contextFields(value string) map[string]bool {
-	out := map[string]bool{}
-	for _, name := range strings.Split(value, ",") {
-		if name = strings.TrimSpace(name); name != "" {
-			out[name] = true
-		}
-	}
-	return out
-}
+// contextSectionNames are the selectable sections of a task context bundle.
+var contextSectionNames = []string{"task", "deps", "notes", "memory", "events"}
 
 func contextDeps(ctx context.Context, deps *Deps, task *core.Task) []contextDep {
 	snapshot, err := app.LoadSnapshot(ctx, deps.Backend, task.ProjectID, deps.Clock.Now())

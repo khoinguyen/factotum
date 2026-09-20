@@ -159,7 +159,9 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 }
 
 func newTaskGetCommand(deps *Deps) *cobra.Command {
-	return &cobra.Command{
+	var fields string
+
+	cmd := &cobra.Command{
 		Use:   "get <task>",
 		Short: "Get a task",
 		Args:  exactArgs(1),
@@ -176,6 +178,18 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 					ids = append(ids, string(id))
 				}
 				doc.Dependents = &ids
+			}
+			if fields != "" {
+				requested := parseFieldList(fields)
+				projected, err := projectFields(taskDocValues(doc), taskDocFieldNames, requested)
+				if err != nil {
+					return usageError(cmd, "%s", err)
+				}
+				return deps.emit(projected, func() {
+					for _, name := range requested {
+						deps.printf("%s: %s\n", name, formatFieldValue(projected[name]))
+					}
+				})
 			}
 			return deps.emit(doc, func() {
 				actors := deps.actorResolver(cmd.Context())
@@ -245,6 +259,8 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 			}, deps.taskGetHints(cmd.Context(), task)...)
 		},
 	}
+	cmd.Flags().StringVar(&fields, "fields", "", "comma-separated fields to include (default all)")
+	return cmd
 }
 
 func newTaskDepCommand(deps *Deps) *cobra.Command {

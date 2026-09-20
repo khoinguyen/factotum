@@ -112,6 +112,71 @@ func taskDocFrom(task *core.Task) taskDoc {
 	return doc
 }
 
+// taskDocFieldNames lists every selectable field of a task document.
+var taskDocFieldNames = []string{
+	"id", "project_id", "repo", "kind", "title", "description", "status",
+	"priority", "labels", "assignee", "deps", "dependents", "waiting_on",
+	"notes", "not_before", "created_at", "updated_at",
+}
+
+// taskDocValues renders a task document as selectable key/value pairs. Keys
+// that the document does not carry are omitted.
+func taskDocValues(doc taskDoc) map[string]any {
+	out := make(map[string]any, len(taskDocFieldNames))
+	if doc.ID != nil {
+		out["id"] = *doc.ID
+	}
+	if doc.ProjectID != nil {
+		out["project_id"] = *doc.ProjectID
+	}
+	if doc.Repo != nil {
+		out["repo"] = *doc.Repo
+	}
+	if doc.Kind != nil {
+		out["kind"] = *doc.Kind
+	}
+	if doc.Title != nil {
+		out["title"] = *doc.Title
+	}
+	if doc.Description != nil {
+		out["description"] = *doc.Description
+	}
+	if doc.Status != nil {
+		out["status"] = *doc.Status
+	}
+	if doc.Priority != nil {
+		out["priority"] = *doc.Priority
+	}
+	if doc.Labels != nil {
+		out["labels"] = *doc.Labels
+	}
+	if doc.Assignee != nil {
+		out["assignee"] = *doc.Assignee
+	}
+	if doc.Deps != nil {
+		out["deps"] = *doc.Deps
+	}
+	if doc.Dependents != nil {
+		out["dependents"] = *doc.Dependents
+	}
+	if doc.WaitingOn != nil {
+		out["waiting_on"] = *doc.WaitingOn
+	}
+	if len(doc.Notes) > 0 {
+		out["notes"] = doc.Notes
+	}
+	if doc.NotBefore != nil {
+		out["not_before"] = *doc.NotBefore
+	}
+	if doc.CreatedAt != nil {
+		out["created_at"] = *doc.CreatedAt
+	}
+	if doc.UpdatedAt != nil {
+		out["updated_at"] = *doc.UpdatedAt
+	}
+	return out
+}
+
 // taskSet validates the document against the current task and maps its mutable
 // fields into an app.TaskSet. Immutable and command-managed fields may be
 // echoed unchanged but must not be modified.

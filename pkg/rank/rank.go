@@ -5,6 +5,7 @@ package rank
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -84,10 +85,11 @@ type Weights struct {
 	Unblock   float64
 	Milestone float64
 	Toward    float64
+	Priority  float64
 }
 
 func DefaultWeights() Weights {
-	return Weights{Unblock: 1, Milestone: 1, Toward: 1}
+	return Weights{Unblock: 1, Milestone: 1, Toward: 1, Priority: 1}
 }
 
 type Composite struct {
@@ -95,7 +97,7 @@ type Composite struct {
 }
 
 func NewComposite(weights Weights) (*Composite, error) {
-	if weights.Unblock < 0 || weights.Milestone < 0 || weights.Toward < 0 {
+	if weights.Unblock < 0 || weights.Milestone < 0 || weights.Toward < 0 || weights.Priority < 0 {
 		return nil, fmt.Errorf("%w: ranking weights must be non-negative", core.ErrInvalid)
 	}
 	return &Composite{weights: weights}, nil
@@ -106,15 +108,20 @@ func (c *Composite) Name() string { return "composite" }
 func (c *Composite) Rank(_ context.Context, req Request) ([]Scored, error) {
 	ids := candidates(req)
 
+	priority := priorityByID(req.Tasks)
 	rawUnblock := make(map[core.TaskID]float64, len(ids))
 	rawMilestone := make(map[core.TaskID]float64, len(ids))
 	rawToward := make(map[core.TaskID]float64, len(ids))
 	maxUnblock := 0.0
+	maxPriority := 0.0
 
 	for _, id := range ids {
 		rawUnblock[id] = float64(req.Graph.UnblockCount(id))
 		if rawUnblock[id] > maxUnblock {
 			maxUnblock = rawUnblock[id]
+		}
+		if abs := math.Abs(float64(priority[id])); abs > maxPriority {
+			maxPriority = abs
 		}
 		if distance, ok := req.Graph.DistanceToMilestone(id); ok {
 			rawMilestone[id] = 1 / float64(distance+1)
@@ -132,7 +139,11 @@ func (c *Composite) Rank(_ context.Context, req Request) ([]Scored, error) {
 		if maxUnblock > 0 {
 			unblock = rawUnblock[id] / maxUnblock
 		}
-		score := c.weights.Unblock*unblock + c.weights.Milestone*rawMilestone[id] + c.weights.Toward*rawToward[id]
+		priorityTerm := 0.0
+		if maxPriority > 0 {
+			priorityTerm = float64(priority[id]) / maxPriority
+		}
+		score := c.weights.Unblock*unblock + c.weights.Milestone*rawMilestone[id] + c.weights.Toward*rawToward[id] + c.weights.Priority*priorityTerm
 		out = append(out, Scored{TaskID: id, Score: score})
 	}
 	return sortScored(out, req), nil
@@ -167,11 +178,16 @@ func candidates(req Request) []core.TaskID {
 	return out
 }
 
-func sortScored(out []Scored, req Request) []Scored {
-	priority := make(map[core.TaskID]int, len(req.Tasks))
-	for _, task := range req.Tasks {
+func priorityByID(tasks []*core.Task) map[core.TaskID]int {
+	priority := make(map[core.TaskID]int, len(tasks))
+	for _, task := range tasks {
 		priority[task.ID] = task.Priority
 	}
+	return priority
+}
+
+func sortScored(out []Scored, req Request) []Scored {
+	priority := priorityByID(req.Tasks)
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Score != out[j].Score {
 			return out[i].Score > out[j].Score

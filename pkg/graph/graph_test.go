@@ -66,7 +66,21 @@ func TestReadySet(t *testing.T) {
 
 	// m1 is a milestone in ready_for_review: still open work (needs its explicit
 	// Done gate), so it is startable, but it does not unblock t7.
-	want := []core.TaskID{"m1", "t1", "t3", "t6", "t8"}
+	want := []core.TaskID{"m1", "t1", "t6", "t8"}
+	if got := g.ReadySet(); !equalIDs(got, want) {
+		t.Fatalf("ReadySet() = %v, want %v", got, want)
+	}
+}
+
+func TestReadySetExcludesBlockedAndInProgress(t *testing.T) {
+	g := mustGraph(t,
+		task("todo", core.KindTask, core.StatusTodo),
+		task("blocked", core.KindTask, core.StatusBlocked),
+		task("doing", core.KindTask, core.StatusInProgress),
+		task("after-blocked", core.KindTask, core.StatusTodo, "blocked"),
+		task("after-doing", core.KindTask, core.StatusTodo, "doing"),
+	)
+	want := []core.TaskID{"todo"}
 	if got := g.ReadySet(); !equalIDs(got, want) {
 		t.Fatalf("ReadySet() = %v, want %v", got, want)
 	}

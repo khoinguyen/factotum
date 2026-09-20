@@ -705,19 +705,56 @@ func TestTaskClaimIsExclusive(t *testing.T) {
 	claude, _ := h.actors.Add(ctx, core.ActorAgent, "claude")
 	other, _ := h.actors.Add(ctx, core.ActorAgent, "other")
 
-	claimed, err := h.tasks.Claim(ctx, task.ID, claude.ID)
+	claimed, err := h.tasks.Claim(ctx, task.ID, claude.ID, false)
 	if err != nil {
 		t.Fatalf("Claim() error = %v", err)
 	}
 	if claimed.AssigneeID == nil || *claimed.AssigneeID != claude.ID {
 		t.Fatalf("Claim().AssigneeID = %v, want %s", claimed.AssigneeID, claude.ID)
 	}
-	if _, err := h.tasks.Claim(ctx, task.ID, other.ID); !errors.Is(err, core.ErrConflict) {
+	if claimed.Status != core.StatusTodo {
+		t.Fatalf("Claim() without start changed status to %q, want todo", claimed.Status)
+	}
+	if _, err := h.tasks.Claim(ctx, task.ID, other.ID, false); !errors.Is(err, core.ErrConflict) {
 		t.Fatalf("second Claim() error = %v, want ErrConflict", err)
 	}
 	// The holder reclaiming is a no-op, not a conflict.
-	if _, err := h.tasks.Claim(ctx, task.ID, claude.ID); err != nil {
+	if _, err := h.tasks.Claim(ctx, task.ID, claude.ID, false); err != nil {
 		t.Fatalf("re-Claim() error = %v", err)
+	}
+}
+
+func TestTaskClaimStartBeginsWork(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "work"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	claude, _ := h.actors.Add(ctx, core.ActorAgent, "claude")
+
+	claimed, err := h.tasks.Claim(ctx, task.ID, claude.ID, true)
+	if err != nil {
+		t.Fatalf("Claim(start) error = %v", err)
+	}
+	if claimed.AssigneeID == nil || *claimed.AssigneeID != claude.ID {
+		t.Fatalf("Claim(start).AssigneeID = %v, want %s", claimed.AssigneeID, claude.ID)
+	}
+	if claimed.Status != core.StatusInProgress {
+		t.Fatalf("Claim(start).Status = %q, want in_progress", claimed.Status)
+	}
+
+	events, err := h.backend.Events().List(ctx, store.EventFilter{TaskID: &task.ID})
+	if err != nil {
+		t.Fatalf("List(events) error = %v", err)
+	}
+	kinds := make(map[core.EventKind]bool, len(events))
+	for _, event := range events {
+		kinds[event.Kind] = true
+	}
+	if !kinds[core.EventTaskAssigned] || !kinds[core.EventTaskStatusChanged] {
+		t.Fatalf("events = %v, want assigned and status-changed", kinds)
 	}
 }
 

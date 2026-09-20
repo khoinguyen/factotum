@@ -536,6 +536,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 
 func newTaskClaimCommand(deps *Deps) *cobra.Command {
 	var projectID, forRef string
+	var start bool
 
 	cmd := &cobra.Command{
 		Use:   "claim",
@@ -574,11 +575,15 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			for _, entry := range scored {
-				task, err := deps.Tasks.Claim(cmd.Context(), entry.TaskID, actor.ID)
+				task, err := deps.Tasks.Claim(cmd.Context(), entry.TaskID, actor.ID, start)
 				if err == nil {
+					next := hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"}
+					if start {
+						next = hint{Command: fmt.Sprintf("ft task review %s", task.ID), About: "hand off when done"}
+					}
 					return deps.emit(taskDocFrom(task), func() {
 						deps.printFields(deps.taskFields(task, f("assignee", actor.ID))...)
-					}, hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"})
+					}, next)
 				}
 				if !errors.Is(err, core.ErrConflict) {
 					return err
@@ -589,6 +594,7 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&projectID, "project", "p", "", "project id (defaults to the configured project)")
 	cmd.Flags().StringVar(&forRef, "for", "", "actor to claim for (id or name; defaults to default_actor)")
+	cmd.Flags().BoolVar(&start, "start", false, "also move the claimed task to in_progress")
 	return cmd
 }
 

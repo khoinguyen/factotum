@@ -264,8 +264,10 @@ func (s *TaskService) Assign(ctx context.Context, id core.TaskID, actorID *core.
 
 // Claim assigns the task to actorID only if it is still unassigned (or already
 // theirs), using a compare-and-swap on UpdatedAt so concurrent claimants do not
-// both win. It returns ErrConflict when someone else holds the task.
-func (s *TaskService) Claim(ctx context.Context, id core.TaskID, actorID core.ActorID) (*core.Task, error) {
+// both win. It returns ErrConflict when someone else holds the task. When start
+// is true it also moves the task to in_progress in the same CAS, so there is no
+// window where the task is claimed but not started.
+func (s *TaskService) Claim(ctx context.Context, id core.TaskID, actorID core.ActorID, start bool) (*core.Task, error) {
 	task, err := s.backend.Tasks().Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -276,8 +278,12 @@ func (s *TaskService) Claim(ctx context.Context, id core.TaskID, actorID core.Ac
 	if task.AssigneeID != nil && *task.AssigneeID != actorID {
 		return nil, fmt.Errorf("%w: task %s is already assigned to %s", core.ErrConflict, id, *task.AssigneeID)
 	}
+	from := task.Status
 	expected := task.UpdatedAt
 	task.AssigneeID = &actorID
+	if start {
+		task.Status = core.StatusInProgress
+	}
 	task.UpdatedAt = s.clock.Now()
 	if err := s.backend.Tasks().UpdateExpected(ctx, task, expected); err != nil {
 		return nil, err
@@ -289,6 +295,17 @@ func (s *TaskService) Claim(ctx context.Context, id core.TaskID, actorID core.Ac
 		Summary:   fmt.Sprintf("claimed %s by %s", task.ID, actorID),
 	}); err != nil {
 		return nil, err
+	}
+	if start {
+		if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
+			ProjectID: task.ProjectID,
+			TaskID:    &task.ID,
+			Kind:      core.EventTaskStatusChanged,
+			Summary:   fmt.Sprintf("%s %s -> %s", task.ID, from, task.Status),
+			Data:      map[string]any{"from": string(from), "to": string(task.Status)},
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return task, nil
 }

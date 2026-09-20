@@ -97,13 +97,14 @@ func (g *Graph) ExternalDeps() []core.TaskID {
 }
 
 // ReadySet returns the startable tasks: unresolved tasks whose known
-// dependencies all resolve under the policy. A dependency that is missing from
-// the graph blocks the task.
+// dependencies all resolve under the policy. Tasks that are blocked or already
+// in progress are not startable, so they are excluded. A dependency that is
+// missing from the graph blocks the task.
 func (g *Graph) ReadySet() []core.TaskID {
 	out := make([]core.TaskID, 0, len(g.ids))
 	for _, id := range g.ids {
 		t := g.tasks[id]
-		if t.Resolves(g.policy) {
+		if t.Resolves(g.policy) || t.Status == core.StatusBlocked || t.Status == core.StatusInProgress {
 			continue
 		}
 		if g.depsResolved(t) {

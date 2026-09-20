@@ -150,8 +150,10 @@ func (c *Composite) Rank(_ context.Context, req Request) ([]Scored, error) {
 }
 
 func candidates(req Request) []core.TaskID {
+	// A nil candidate set means "unspecified" and falls back to the ready set;
+	// a non-nil empty set means the caller filtered everything out.
 	ids := req.Candidates
-	if len(ids) == 0 {
+	if ids == nil {
 		ids = req.Graph.ReadySet()
 	}
 	if req.Actor == nil && req.Repo == nil {

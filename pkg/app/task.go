@@ -118,19 +118,22 @@ func (s *TaskService) Update(ctx context.Context, id core.TaskID, patch TaskUpda
 // task's UpdatedAt and fails with ErrConflict if the task changed since it was
 // read.
 type TaskSet struct {
-	Kind        *core.TaskKind
-	Repo        *string
-	Title       *string
-	Description *string
-	Priority    *int
-	Status      *core.TaskStatus
-	Labels      []string
-	Expect      *time.Time
+	Kind           *core.TaskKind
+	Repo           *string
+	Title          *string
+	Description    *string
+	Priority       *int
+	Status         *core.TaskStatus
+	Labels         []string
+	NotBefore      *time.Time
+	ClearNotBefore bool
+	Expect         *time.Time
 }
 
 func (set TaskSet) hasNonStatus() bool {
 	return set.Kind != nil || set.Repo != nil || set.Title != nil ||
-		set.Description != nil || set.Priority != nil || set.Labels != nil
+		set.Description != nil || set.Priority != nil || set.Labels != nil ||
+		set.NotBefore != nil || set.ClearNotBefore
 }
 
 // Empty reports whether the set carries no changes.
@@ -177,6 +180,12 @@ func (s *TaskService) Set(ctx context.Context, id core.TaskID, set TaskSet) (*co
 	}
 	if set.Labels != nil {
 		task.Labels = set.Labels
+	}
+	if set.ClearNotBefore {
+		task.NotBefore = nil
+	} else if set.NotBefore != nil {
+		notBefore := *set.NotBefore
+		task.NotBefore = &notBefore
 	}
 	if set.Status != nil {
 		task.Status = *set.Status

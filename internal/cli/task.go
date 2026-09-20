@@ -193,6 +193,9 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 				if task.Priority != 0 {
 					deps.printf("priority: %d\n", task.Priority)
 				}
+				if task.NotBefore != nil {
+					deps.printf("not_before: %s\n", task.NotBefore.UTC().Format(time.RFC3339))
+				}
 				if task.AssigneeID != nil {
 					deps.printf("assignee: %s\n", actorLabel(actors, *task.AssigneeID))
 				}
@@ -451,9 +454,9 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 			var snapshot *app.Snapshot
 			var err error
 			if all {
-				snapshot, err = app.LoadAllSnapshot(cmd.Context(), deps.Backend)
+				snapshot, err = app.LoadAllSnapshot(cmd.Context(), deps.Backend, deps.Clock.Now())
 			} else {
-				snapshot, err = app.LoadSnapshot(cmd.Context(), deps.Backend, core.ProjectID(projectID))
+				snapshot, err = app.LoadSnapshot(cmd.Context(), deps.Backend, core.ProjectID(projectID), deps.Clock.Now())
 			}
 			if err != nil {
 				return err
@@ -554,7 +557,7 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 			if err := requireProject(cmd, project); err != nil {
 				return err
 			}
-			snapshot, err := app.LoadSnapshot(cmd.Context(), deps.Backend, project)
+			snapshot, err := app.LoadSnapshot(cmd.Context(), deps.Backend, project, deps.Clock.Now())
 			if err != nil {
 				return err
 			}
@@ -686,7 +689,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 func newTaskSetCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set <task> field=value [field=value...]",
-		Short: "Set task fields (status, priority, kind, repo, title, body, labels)",
+		Short: "Set task fields (status, priority, kind, repo, title, body, labels, not_before)",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 2 {
 				return usageError(cmd, "expected <task> and at least one field=value assignment")
@@ -751,11 +754,34 @@ func parseTaskSet(assignments []string) (app.TaskSet, error) {
 			set.Description = &text
 		case "labels":
 			set.Labels = parseLabels(value)
+		case "not_before":
+			if strings.TrimSpace(value) == "" {
+				set.ClearNotBefore = true
+				break
+			}
+			notBefore, err := parseNotBefore(value)
+			if err != nil {
+				return app.TaskSet{}, fmt.Errorf("invalid not_before %q: %w", value, err)
+			}
+			set.NotBefore = &notBefore
 		default:
-			return app.TaskSet{}, fmt.Errorf("unknown field %q, want status, priority, kind, repo, title, body, or labels", key)
+			return app.TaskSet{}, fmt.Errorf("unknown field %q, want status, priority, kind, repo, title, body, labels, or not_before", key)
 		}
 	}
 	return set, nil
+}
+
+// parseNotBefore accepts an RFC3339 timestamp or a date (midnight UTC).
+func parseNotBefore(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, nil
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC)
+	if err != nil {
+		return time.Time{}, errors.New("want RFC3339 or YYYY-MM-DD")
+	}
+	return parsed, nil
 }
 
 func readFieldValue(value string) (string, error) {
@@ -931,7 +957,7 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 // graph build failure (e.g. an unrelated cycle) yields none rather than failing
 // the read.
 func dependentsOf(ctx context.Context, deps *Deps, task *core.Task) []core.TaskID {
-	snapshot, err := app.LoadSnapshot(ctx, deps.Backend, task.ProjectID)
+	snapshot, err := app.LoadSnapshot(ctx, deps.Backend, task.ProjectID, deps.Clock.Now())
 	if err != nil {
 		return nil
 	}

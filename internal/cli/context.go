@@ -110,7 +110,7 @@ func contextFields(value string) map[string]bool {
 }
 
 func contextDeps(ctx context.Context, deps *Deps, task *core.Task) []contextDep {
-	snapshot, err := app.LoadSnapshot(ctx, deps.Backend, task.ProjectID)
+	snapshot, err := app.LoadSnapshot(ctx, deps.Backend, task.ProjectID, deps.Clock.Now())
 	if err != nil {
 		return nil
 	}

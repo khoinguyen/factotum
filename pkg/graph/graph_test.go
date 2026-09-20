@@ -3,6 +3,7 @@ package graph
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 )
@@ -40,6 +41,46 @@ func equalIDs(got, want []core.TaskID) bool {
 		}
 	}
 	return true
+}
+
+func TestReadySetExcludesNotBefore(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+	future := now.Add(time.Hour)
+
+	ready := task("ready", core.KindTask, core.StatusTodo)
+	pastTask := task("past", core.KindTask, core.StatusTodo)
+	pastTask.NotBefore = &past
+	deferred := task("deferred", core.KindTask, core.StatusTodo)
+	deferred.NotBefore = &future
+	dependent := task("dependent", core.KindTask, core.StatusTodo, "deferred")
+
+	g, err := NewAt([]core.Task{ready, pastTask, deferred, dependent}, core.DefaultResolutionPolicy(), now)
+	if err != nil {
+		t.Fatalf("NewAt() error = %v", err)
+	}
+	if got := g.ReadySet(); !equalIDs(got, []core.TaskID{"past", "ready"}) {
+		t.Fatalf("ReadySet() = %v, want [past ready]", got)
+	}
+
+	later, err := NewAt([]core.Task{ready, pastTask, deferred, dependent}, core.DefaultResolutionPolicy(), future.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("NewAt() error = %v", err)
+	}
+	if got := later.ReadySet(); !equalIDs(got, []core.TaskID{"deferred", "past", "ready"}) {
+		t.Fatalf("ReadySet() after deadline = %v, want [deferred past ready]", got)
+	}
+}
+
+func TestReadySetIgnoresNotBeforeWithoutClock(t *testing.T) {
+	future := time.Now().Add(24 * time.Hour)
+	deferred := task("deferred", core.KindTask, core.StatusTodo)
+	deferred.NotBefore = &future
+
+	g := mustGraph(t, deferred)
+	if got := g.ReadySet(); !equalIDs(got, []core.TaskID{"deferred"}) {
+		t.Fatalf("ReadySet() = %v, want [deferred]", got)
+	}
 }
 
 func TestNewRejectsDuplicateIDs(t *testing.T) {

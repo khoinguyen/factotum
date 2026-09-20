@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/graph"
@@ -20,7 +21,9 @@ type Snapshot struct {
 	Ready   graph.ReadyBucket
 }
 
-func LoadSnapshot(ctx context.Context, backend store.Backend, projectID core.ProjectID) (*Snapshot, error) {
+// LoadSnapshot loads a project's state and evaluates readiness at now, so
+// not_before constraints in the future are excluded from the ready buckets.
+func LoadSnapshot(ctx context.Context, backend store.Backend, projectID core.ProjectID, now time.Time) (*Snapshot, error) {
 	project, err := backend.Projects().Get(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -42,7 +45,7 @@ func LoadSnapshot(ctx context.Context, backend store.Backend, projectID core.Pro
 	for _, task := range tasks {
 		copied = append(copied, *task)
 	}
-	built, err := graph.New(copied, project.Policy)
+	built, err := graph.NewAt(copied, project.Policy, now)
 	if err != nil {
 		return nil, fmt.Errorf("build graph: %w", err)
 	}
@@ -59,7 +62,7 @@ func LoadSnapshot(ctx context.Context, backend store.Backend, projectID core.Pro
 // LoadAllSnapshot merges every project's tasks into a single graph for
 // cross-project queries such as ranking. Snapshot.Project is nil; the default
 // resolution policy is used.
-func LoadAllSnapshot(ctx context.Context, backend store.Backend) (*Snapshot, error) {
+func LoadAllSnapshot(ctx context.Context, backend store.Backend, now time.Time) (*Snapshot, error) {
 	tasks, err := backend.Tasks().List(ctx, store.TaskFilter{})
 	if err != nil {
 		return nil, err
@@ -77,7 +80,7 @@ func LoadAllSnapshot(ctx context.Context, backend store.Backend) (*Snapshot, err
 	for _, task := range tasks {
 		copied = append(copied, *task)
 	}
-	built, err := graph.New(copied, core.DefaultResolutionPolicy())
+	built, err := graph.NewAt(copied, core.DefaultResolutionPolicy(), now)
 	if err != nil {
 		return nil, fmt.Errorf("build graph: %w", err)
 	}

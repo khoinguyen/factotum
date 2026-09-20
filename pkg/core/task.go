@@ -114,8 +114,15 @@ type Task struct {
 	Deps        []TaskID
 	Notes       []Note
 	Milestone   *MilestoneMeta
+	NotBefore   *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// ReadyAt reports whether the task's not_before constraint has elapsed at now.
+// A task with no constraint is always ready.
+func (t Task) ReadyAt(now time.Time) bool {
+	return t.NotBefore == nil || !t.NotBefore.After(now)
 }
 
 func (t Task) Validate() error {

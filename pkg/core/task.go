@@ -99,6 +99,32 @@ type MilestoneMeta struct {
 	ReleaseRef string
 }
 
+// Snooze parks a task out of ranking until a condition passes: a date, another
+// task resolving, or indefinitely (until explicitly unsnoozed). Exactly one
+// condition is set.
+type Snooze struct {
+	Until      *time.Time
+	UntilTask  *TaskID
+	Indefinite bool
+}
+
+func (s Snooze) Validate() error {
+	conditions := 0
+	if s.Until != nil {
+		conditions++
+	}
+	if s.UntilTask != nil {
+		conditions++
+	}
+	if s.Indefinite {
+		conditions++
+	}
+	if conditions != 1 {
+		return fmt.Errorf("%w: snooze needs exactly one of until, until_task, or indefinite", ErrInvalid)
+	}
+	return nil
+}
+
 type Task struct {
 	ID          TaskID
 	ProjectID   ProjectID
@@ -115,6 +141,7 @@ type Task struct {
 	Notes       []Note
 	Milestone   *MilestoneMeta
 	NotBefore   *time.Time
+	Snooze      *Snooze
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -159,6 +186,12 @@ func (t Task) Validate() error {
 	for _, n := range t.Notes {
 		if err := n.Validate(); err != nil {
 			return fmt.Errorf("task note: %w", err)
+		}
+	}
+
+	if t.Snooze != nil {
+		if err := t.Snooze.Validate(); err != nil {
+			return fmt.Errorf("task snooze: %w", err)
 		}
 	}
 

@@ -24,6 +24,8 @@ const (
 	EventTaskDepAdded         EventKind = "task.dep_added"
 	EventTaskDepRemoved       EventKind = "task.dep_removed"
 	EventTaskNoteAdded        EventKind = "task.note_added"
+	EventTaskSnoozed          EventKind = "task.snoozed"
+	EventTaskUnsnoozed        EventKind = "task.unsnoozed"
 
 	EventActorCreated EventKind = "actor.created"
 	EventActorUpdated EventKind = "actor.updated"
@@ -40,7 +42,7 @@ func (k EventKind) Valid() bool {
 		EventProjectRepoAdded, EventProjectRepoUpdated, EventProjectRepoRemoved,
 		EventTaskCreated, EventTaskUpdated, EventTaskDeleted, EventTaskStatusChanged,
 		EventTaskAssigned, EventTaskWaitingOnChanged, EventTaskDepAdded, EventTaskDepRemoved,
-		EventTaskNoteAdded,
+		EventTaskNoteAdded, EventTaskSnoozed, EventTaskUnsnoozed,
 		EventActorCreated, EventActorUpdated, EventActorDeleted,
 		EventArtifactCreated, EventArtifactUpdated, EventArtifactDeleted:
 		return true

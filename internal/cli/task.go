@@ -36,6 +36,8 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 		newTaskAssignCommand(deps),
 		newTaskWaitCommand(deps),
 		newTaskNoteCommand(deps),
+		newTaskSnoozeCommand(deps),
+		newTaskUnsnoozeCommand(deps),
 		newTaskNextCommand(deps),
 		newTaskClaimCommand(deps),
 		newTaskDeleteCommand(deps),
@@ -209,6 +211,9 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 				}
 				if task.NotBefore != nil {
 					deps.printf("not_before: %s\n", task.NotBefore.UTC().Format(time.RFC3339))
+				}
+				if task.Snooze != nil {
+					deps.printf("snoozed: %s\n", app.SnoozeDescription(*task.Snooze))
 				}
 				if task.AssigneeID != nil {
 					deps.printf("assignee: %s\n", actorLabel(actors, *task.AssigneeID))

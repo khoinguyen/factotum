@@ -126,11 +126,37 @@ func (g *Graph) ReadySet() []core.TaskID {
 		if !g.now.IsZero() && !t.ReadyAt(g.now) {
 			continue
 		}
+		if g.snoozeActive(t) {
+			continue
+		}
 		if g.depsResolved(t) {
 			out = append(out, id)
 		}
 	}
 	return out
+}
+
+// snoozeActive reports whether a task is parked by a snooze whose condition has
+// not passed. A date or task condition auto-clears once it is met; an
+// indefinite snooze stays until explicitly removed.
+func (g *Graph) snoozeActive(t core.Task) bool {
+	snooze := t.Snooze
+	if snooze == nil {
+		return false
+	}
+	if snooze.Indefinite {
+		return true
+	}
+	if snooze.Until != nil && (g.now.IsZero() || snooze.Until.After(g.now)) {
+		return true
+	}
+	if snooze.UntilTask != nil {
+		dep, ok := g.tasks[*snooze.UntilTask]
+		if !ok || !dep.Resolves(g.policy) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Graph) depsResolved(t core.Task) bool {

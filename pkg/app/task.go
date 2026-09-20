@@ -310,6 +310,91 @@ func (s *TaskService) Claim(ctx context.Context, id core.TaskID, actorID core.Ac
 	return task, nil
 }
 
+// Snooze parks a task out of ranking until the given condition passes. A date
+// or task condition clears itself once met; indefinite lasts until Unsnooze.
+func (s *TaskService) Snooze(ctx context.Context, id core.TaskID, snooze core.Snooze) (*core.Task, error) {
+	if err := snooze.Validate(); err != nil {
+		return nil, err
+	}
+	task, err := s.backend.Tasks().Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if snooze.UntilTask != nil {
+		if *snooze.UntilTask == id {
+			return nil, fmt.Errorf("%w: a task cannot snooze until itself", core.ErrInvalid)
+		}
+		if _, err := s.backend.Tasks().Get(ctx, *snooze.UntilTask); err != nil {
+			return nil, fmt.Errorf("snooze until task: %w", err)
+		}
+	}
+	stored := snooze
+	if snooze.Until != nil {
+		until := *snooze.Until
+		stored.Until = &until
+	}
+	if snooze.UntilTask != nil {
+		untilTask := *snooze.UntilTask
+		stored.UntilTask = &untilTask
+	}
+	task.Snooze = &stored
+	task.UpdatedAt = s.clock.Now()
+	if err := task.Validate(); err != nil {
+		return nil, err
+	}
+	if err := s.backend.Tasks().Update(ctx, task); err != nil {
+		return nil, err
+	}
+	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
+		ProjectID: task.ProjectID,
+		TaskID:    &task.ID,
+		Kind:      core.EventTaskSnoozed,
+		Summary:   fmt.Sprintf("snoozed %s %s", task.ID, SnoozeDescription(stored)),
+	}); err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+// Unsnooze removes a task's snooze.
+func (s *TaskService) Unsnooze(ctx context.Context, id core.TaskID) (*core.Task, error) {
+	task, err := s.backend.Tasks().Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if task.Snooze == nil {
+		return nil, fmt.Errorf("%w: task %s is not snoozed", core.ErrInvalid, id)
+	}
+	task.Snooze = nil
+	task.UpdatedAt = s.clock.Now()
+	if err := s.backend.Tasks().Update(ctx, task); err != nil {
+		return nil, err
+	}
+	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
+		ProjectID: task.ProjectID,
+		TaskID:    &task.ID,
+		Kind:      core.EventTaskUnsnoozed,
+		Summary:   fmt.Sprintf("unsnoozed %s", task.ID),
+	}); err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+// SnoozeDescription renders a snooze condition for humans.
+func SnoozeDescription(snooze core.Snooze) string {
+	switch {
+	case snooze.Indefinite:
+		return "indefinitely"
+	case snooze.Until != nil:
+		return "until " + snooze.Until.UTC().Format(time.RFC3339)
+	case snooze.UntilTask != nil:
+		return "until " + string(*snooze.UntilTask)
+	default:
+		return ""
+	}
+}
+
 func (s *TaskService) SetWaitingOn(ctx context.Context, id core.TaskID, actorIDs []core.ActorID) (*core.Task, error) {
 	task, err := s.backend.Tasks().Get(ctx, id)
 	if err != nil {

@@ -758,6 +758,103 @@ func TestTaskClaimStartBeginsWork(t *testing.T) {
 	}
 }
 
+func TestTaskSnoozeExcludesAndWakes(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "park me"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	future := now.Add(time.Hour)
+	past := now.Add(-time.Hour)
+
+	if _, err := h.tasks.Snooze(ctx, task.ID, core.Snooze{Until: &future}); err != nil {
+		t.Fatalf("Snooze(future) error = %v", err)
+	}
+	if got := readyIDs(t, h, project.ID, now); len(got) != 0 {
+		t.Fatalf("ready while snoozed = %v, want none", got)
+	}
+	if got := readyIDs(t, h, project.ID, future.Add(time.Hour)); len(got) != 1 || got[0] != task.ID {
+		t.Fatalf("ready after deadline = %v, want [%s]", got, task.ID)
+	}
+	// A past deadline is already elapsed, so the task stays ready.
+	if _, err := h.tasks.Snooze(ctx, task.ID, core.Snooze{Until: &past}); err != nil {
+		t.Fatalf("Snooze(past) error = %v", err)
+	}
+	if got := readyIDs(t, h, project.ID, now); len(got) != 1 || got[0] != task.ID {
+		t.Fatalf("ready with elapsed snooze = %v, want [%s]", got, task.ID)
+	}
+}
+
+func TestTaskSnoozeUntilTask(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	blocker, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "blocker"})
+	parked, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "parked"})
+	if _, err := h.tasks.Snooze(ctx, parked.ID, core.Snooze{UntilTask: &blocker.ID}); err != nil {
+		t.Fatalf("Snooze(until task) error = %v", err)
+	}
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	if got := readyIDs(t, h, project.ID, now); len(got) != 1 || got[0] != blocker.ID {
+		t.Fatalf("ready before blocker resolves = %v, want [%s]", got, blocker.ID)
+	}
+	if _, err := h.tasks.SetStatus(ctx, blocker.ID, core.StatusDone); err != nil {
+		t.Fatalf("SetStatus() error = %v", err)
+	}
+	if got := readyIDs(t, h, project.ID, now); len(got) != 1 || got[0] != parked.ID {
+		t.Fatalf("ready after blocker resolves = %v, want [%s]", got, parked.ID)
+	}
+}
+
+func TestTaskUnsnooze(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "park me"})
+	if _, err := h.tasks.Snooze(ctx, task.ID, core.Snooze{Indefinite: true}); err != nil {
+		t.Fatalf("Snooze(indefinite) error = %v", err)
+	}
+	if _, err := h.tasks.Unsnooze(ctx, task.ID); err != nil {
+		t.Fatalf("Unsnooze() error = %v", err)
+	}
+	if got := readyIDs(t, h, project.ID, time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)); len(got) != 1 || got[0] != task.ID {
+		t.Fatalf("ready after unsnooze = %v, want [%s]", got, task.ID)
+	}
+	if _, err := h.tasks.Unsnooze(ctx, task.ID); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("second Unsnooze() error = %v, want ErrInvalid", err)
+	}
+}
+
+func TestTaskSnoozeRejectsBadCondition(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "park me"})
+
+	if _, err := h.tasks.Snooze(ctx, task.ID, core.Snooze{}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Snooze(empty) error = %v, want ErrInvalid", err)
+	}
+	if _, err := h.tasks.Snooze(ctx, task.ID, core.Snooze{UntilTask: &task.ID}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Snooze(self) error = %v, want ErrInvalid", err)
+	}
+	missing := core.TaskID("t-missing")
+	if _, err := h.tasks.Snooze(ctx, task.ID, core.Snooze{UntilTask: &missing}); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("Snooze(missing) error = %v, want ErrNotFound", err)
+	}
+}
+
+func readyIDs(t *testing.T, h *harness, projectID core.ProjectID, now time.Time) []core.TaskID {
+	t.Helper()
+	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID, now)
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	return unionIDs(snapshot.Ready.Agent, snapshot.Ready.Human)
+}
+
 func mustSnapshot(t *testing.T, h *harness, projectID core.ProjectID) *Snapshot {
 	t.Helper()
 	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))

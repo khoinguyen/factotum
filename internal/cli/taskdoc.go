@@ -32,6 +32,12 @@ type noteDoc struct {
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
 }
 
+type snoozeDoc struct {
+	Until      *time.Time `json:"until,omitempty" yaml:"until,omitempty"`
+	UntilTask  *string    `json:"until_task,omitempty" yaml:"until_task,omitempty"`
+	Indefinite bool       `json:"indefinite,omitempty" yaml:"indefinite,omitempty"`
+}
+
 // taskDoc is the stable document exchanged by `task get -o json|yaml` and
 // `task apply -f`. Pointer fields distinguish an omitted field (leave
 // unchanged, or ignore for read-only fields) from an explicit value.
@@ -51,6 +57,7 @@ type taskDoc struct {
 	WaitingOn   *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
 	Notes       []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
 	NotBefore   *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
+	Snooze      *snoozeDoc `json:"snooze,omitempty" yaml:"snooze,omitempty"`
 	CreatedAt   *time.Time `json:"created_at,omitempty" yaml:"created_at,omitempty"`
 	UpdatedAt   *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 }
@@ -108,6 +115,22 @@ func taskDocFrom(task *core.Task) taskDoc {
 	if task.NotBefore != nil {
 		notBefore := *task.NotBefore
 		doc.NotBefore = &notBefore
+	}
+	if task.Snooze != nil {
+		doc.Snooze = snoozeDocFrom(*task.Snooze)
+	}
+	return doc
+}
+
+func snoozeDocFrom(snooze core.Snooze) *snoozeDoc {
+	doc := &snoozeDoc{Indefinite: snooze.Indefinite}
+	if snooze.Until != nil {
+		until := *snooze.Until
+		doc.Until = &until
+	}
+	if snooze.UntilTask != nil {
+		untilTask := string(*snooze.UntilTask)
+		doc.UntilTask = &untilTask
 	}
 	return doc
 }
@@ -209,6 +232,9 @@ func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
 	}
 	if !equalNotes(doc.Notes, current.Notes) {
 		return app.TaskSet{}, fmt.Errorf("%w: notes are managed by `ft task note`", core.ErrInvalid)
+	}
+	if !equalSnooze(doc.Snooze, current.Snooze) {
+		return app.TaskSet{}, fmt.Errorf("%w: snooze is managed by `ft task snooze`", core.ErrInvalid)
 	}
 
 	var set app.TaskSet
@@ -390,6 +416,38 @@ func equalNotes(doc []noteDoc, current []core.Note) bool {
 		}
 	}
 	return true
+}
+
+// equalSnooze reports whether an optional document snooze matches the current
+// snooze. A nil document snooze means "not supplied".
+func equalSnooze(doc *snoozeDoc, current *core.Snooze) bool {
+	if doc == nil {
+		return true
+	}
+	if current == nil {
+		return false
+	}
+	if doc.Indefinite != current.Indefinite {
+		return false
+	}
+	if !equalOptionalTime(doc.Until, current.Until) {
+		return false
+	}
+	return equalOptionalTask(doc.UntilTask, current.UntilTask)
+}
+
+func equalOptionalTime(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
+}
+
+func equalOptionalTask(left *string, right *core.TaskID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == string(*right)
 }
 
 func actorIDString(id *core.ActorID) string {

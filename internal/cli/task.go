@@ -97,7 +97,7 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 					return err
 				}
 			}
-			warnDuplicateTitle(cmd.Context(), deps, task)
+			deps.warnDuplicateTitle(cmd.Context(), task)
 			hints := []hint{
 				{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the task"},
 				{Command: fmt.Sprintf("ft task next --project %s", task.ProjectID), About: "see what to start"},
@@ -1178,10 +1178,11 @@ func dependentsOf(ctx context.Context, deps *Deps, task *core.Task) []core.TaskI
 // taskFields is the canonical single-result field set for a task: identity, an
 // optional action field (created/updated), then kind/title/status/project, with
 // repo last.
-// warnDuplicateTitle advises (without blocking) when the new task's title
-// matches an existing task in the same project, case-insensitively.
-func warnDuplicateTitle(ctx context.Context, deps *Deps, task *core.Task) {
-	tasks, err := deps.Tasks.List(ctx, store.TaskFilter{ProjectID: task.ProjectID})
+// warnDuplicateTitle advises (without blocking) when a new task looks like an
+// existing one. An exact title match always warns; otherwise, when a judge is
+// configured, a shortlist is scored for related or duplicate work.
+func (d *Deps) warnDuplicateTitle(ctx context.Context, task *core.Task) {
+	tasks, err := d.Tasks.List(ctx, store.TaskFilter{ProjectID: task.ProjectID})
 	if err != nil {
 		return
 	}
@@ -1194,10 +1195,77 @@ func warnDuplicateTitle(ctx context.Context, deps *Deps, task *core.Task) {
 			duplicates = append(duplicates, string(other.ID))
 		}
 	}
-	if len(duplicates) == 0 {
+	if len(duplicates) > 0 {
+		d.warnf("a task titled %q already exists: %s", task.Title, strings.Join(duplicates, ", "))
 		return
 	}
-	deps.warnf("a task titled %q already exists: %s", task.Title, strings.Join(duplicates, ", "))
+	if d.Duplicate == nil {
+		return
+	}
+	candidates := similarTasks(task, tasks, 8)
+	if len(candidates) == 0 {
+		return
+	}
+	verdict, err := d.Duplicate.Check(ctx, task, candidates)
+	if err != nil || verdict.Action == "none" || verdict.Candidate == nil {
+		return
+	}
+	d.warnf("a related task may already exist: %s (score %.2f); consider `ft task dep %s %s`",
+		verdict.Candidate.ID, verdict.Rating, task.ID, verdict.Candidate.ID)
+}
+
+// similarTasks returns up to limit tasks in the same project whose title shares a
+// token with the new task, ranked by overlap. Retrieval stays in code.
+func similarTasks(task *core.Task, tasks []*core.Task, limit int) []*core.Task {
+	want := titleTokens(task.Title)
+	if len(want) == 0 {
+		return nil
+	}
+	type scored struct {
+		task    *core.Task
+		overlap int
+	}
+	var ranked []scored
+	for _, other := range tasks {
+		if other.ID == task.ID {
+			continue
+		}
+		have := titleTokens(other.Title)
+		overlap := 0
+		for token := range want {
+			if have[token] {
+				overlap++
+			}
+		}
+		if overlap > 0 {
+			ranked = append(ranked, scored{task: other, overlap: overlap})
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].overlap > ranked[j].overlap })
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	out := make([]*core.Task, 0, len(ranked))
+	for _, item := range ranked {
+		out = append(out, item.task)
+	}
+	return out
+}
+
+func titleTokens(title string) map[string]bool {
+	tokens := map[string]bool{}
+	for _, token := range strings.FieldsFunc(strings.ToLower(title), func(r rune) bool {
+		return !isTokenRune(r)
+	}) {
+		if len(token) > 2 {
+			tokens[token] = true
+		}
+	}
+	return tokens
+}
+
+func isTokenRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= '0' && r <= '9'
 }
 
 func (d *Deps) taskFields(task *core.Task, action ...field) []field {

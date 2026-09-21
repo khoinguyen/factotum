@@ -54,6 +54,8 @@ type Deps struct {
 	Intent *app.IntentService
 	// Rerank reorders a lexical artifact shortlist by meaning.
 	Rerank *app.RerankService
+	// Duplicate advises when a new task looks like an existing one.
+	Duplicate *app.DuplicateService
 }
 
 func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(string) string) *Deps {
@@ -98,6 +100,7 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.When = app.NewWhenService(d.Judge)
 	d.Intent = app.NewIntentService(d.Judge)
 	d.Rerank = app.NewRerankService(d.Judge)
+	d.Duplicate = app.NewDuplicateService(d.Judge)
 	d.Projects = app.NewProjectService(backend, d.Clock, d.IDs)
 	d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
 	d.Actors = app.NewActorService(backend, d.Clock, d.IDs)

@@ -724,7 +724,10 @@ func newTaskSetCommand(deps *Deps) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			set, err := parseTaskSet(args[1:], deps.Clock.Now())
+			now := deps.Clock.Now()
+			set, err := parseTaskSet(args[1:], func(value string) (time.Time, error) {
+				return deps.parseWhen(cmd.Context(), value, now)
+			})
 			if err != nil {
 				return err
 			}
@@ -742,9 +745,9 @@ func newTaskSetCommand(deps *Deps) *cobra.Command {
 }
 
 // parseTaskSet turns `field=value` assignments into a TaskSet. Long text
-// fields accept `@path` (read from a file) or `-` (read from stdin). now
-// anchors relative not_before values such as `+7d`.
-func parseTaskSet(assignments []string, now time.Time) (app.TaskSet, error) {
+// fields accept `@path` (read from a file) or `-` (read from stdin). resolveWhen
+// parses a not_before value, trying the deterministic forms then natural language.
+func parseTaskSet(assignments []string, resolveWhen func(string) (time.Time, error)) (app.TaskSet, error) {
 	var set app.TaskSet
 	for _, assignment := range assignments {
 		key, value, ok := strings.Cut(assignment, "=")
@@ -787,7 +790,7 @@ func parseTaskSet(assignments []string, now time.Time) (app.TaskSet, error) {
 				set.ClearNotBefore = true
 				break
 			}
-			notBefore, err := parseNotBefore(value, now)
+			notBefore, err := resolveWhen(value)
 			if err != nil {
 				return app.TaskSet{}, fmt.Errorf("invalid not_before %q: %w", value, err)
 			}

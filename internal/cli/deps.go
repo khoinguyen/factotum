@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"io"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -42,6 +45,9 @@ type Deps struct {
 	// Judge is the model-backed judgment port. It is Disabled when no API key is
 	// configured, so every judge-backed feature falls back to its deterministic path.
 	Judge judge.Judge
+	// When resolves natural-language date phrases. Nil until Attach, and its judge is
+	// Disabled without a key, so the deterministic formats still work.
+	When *app.WhenService
 }
 
 func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(string) string) *Deps {
@@ -83,8 +89,28 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Config = cfg
 	d.Backend = backend
 	d.Judge = newJudge(d.Getenv, cfg)
+	d.When = app.NewWhenService(d.Judge)
 	d.Projects = app.NewProjectService(backend, d.Clock, d.IDs)
 	d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
 	d.Actors = app.NewActorService(backend, d.Clock, d.IDs)
 	d.Artifacts = app.NewArtifactService(backend, d.Clock, d.IDs)
+}
+
+// errWhenFormat names the accepted time forms for a usage error.
+var errWhenFormat = errors.New("want RFC3339, YYYY-MM-DD, +<duration>, or a natural-language date")
+
+// parseWhen resolves a time phrase: the deterministic formats first, then the judge
+// for natural language. With no judge, only the deterministic forms are accepted.
+func (d *Deps) parseWhen(ctx context.Context, value string, now time.Time) (time.Time, error) {
+	if when, err := parseNotBefore(value, now); err == nil {
+		return when, nil
+	}
+	if d.When == nil {
+		return time.Time{}, errWhenFormat
+	}
+	when, err := d.When.Parse(ctx, value, now)
+	if errors.Is(err, judge.ErrUnavailable) {
+		return time.Time{}, errWhenFormat
+	}
+	return when, err
 }

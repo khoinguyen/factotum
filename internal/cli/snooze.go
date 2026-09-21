@@ -34,7 +34,7 @@ func newTaskSnoozeCommand(deps *Deps) *cobra.Command {
 			var snooze core.Snooze
 			switch {
 			case cmd.Flags().Changed("until"):
-				when, err := parseNotBefore(until, deps.Clock.Now())
+				when, err := deps.parseWhen(cmd.Context(), until, deps.Clock.Now())
 				if err != nil {
 					return usageError(cmd, "invalid --until %q: %s", until, err)
 				}

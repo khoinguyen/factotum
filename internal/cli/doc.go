@@ -91,6 +91,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 	list.Flags().StringVarP(&listKind, "kind", "k", "", "filter by kind")
 
 	var searchProject string
+	var searchNoRerank bool
 	search := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search artifact titles and bodies",
@@ -101,6 +102,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			artifacts = deps.maybeRerank(cmd, args[0], artifacts, searchNoRerank)
 			return deps.emit(artifacts, func() {
 				rows := make([][]string, 0, len(artifacts))
 				for _, artifact := range artifacts {
@@ -111,6 +113,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	search.Flags().StringVarP(&searchProject, "project", "p", "", "filter by project id")
+	search.Flags().BoolVar(&searchNoRerank, "no-rerank", false, "keep lexical order instead of reranking by meaning")
 
 	cmd.AddCommand(create, list, search)
 	return cmd

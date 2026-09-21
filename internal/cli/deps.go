@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/pkg/app"
+	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/judge"
 	_ "github.com/khoinguyen/factotum/pkg/judge/typesafe" // register the default provider
 	"github.com/khoinguyen/factotum/pkg/rank"
@@ -50,6 +52,8 @@ type Deps struct {
 	When *app.WhenService
 	// Intent reads closed-set task fields from a natural-language phrase.
 	Intent *app.IntentService
+	// Rerank reorders a lexical artifact shortlist by meaning.
+	Rerank *app.RerankService
 }
 
 func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(string) string) *Deps {
@@ -93,6 +97,7 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Judge = newJudge(d.Getenv, cfg)
 	d.When = app.NewWhenService(d.Judge)
 	d.Intent = app.NewIntentService(d.Judge)
+	d.Rerank = app.NewRerankService(d.Judge)
 	d.Projects = app.NewProjectService(backend, d.Clock, d.IDs)
 	d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
 	d.Actors = app.NewActorService(backend, d.Clock, d.IDs)
@@ -116,4 +121,23 @@ func (d *Deps) parseWhen(ctx context.Context, value string, now time.Time) (time
 		return time.Time{}, errWhenFormat
 	}
 	return when, err
+}
+
+// rerankArtifacts reorders a lexical shortlist by meaning. With no judge it reports
+// that --rerank needs a key, rather than silently returning lexical order.
+// maybeRerank reorders a lexical shortlist by meaning when a judge is configured and
+// rerank is not disabled. Search must never fail because the judge is absent or slow,
+// so it falls back to the lexical order; a real failure is reported as a warning.
+func (d *Deps) maybeRerank(cmd *cobra.Command, query string, artifacts []*core.Artifact, disabled bool) []*core.Artifact {
+	if disabled || len(artifacts) < 2 || d.Rerank == nil {
+		return artifacts
+	}
+	ordered, err := d.Rerank.Rerank(cmd.Context(), query, artifacts)
+	if err == nil {
+		return ordered
+	}
+	if !errors.Is(err, judge.ErrUnavailable) {
+		_, _ = fmt.Fprintf(d.Err, "ft: warning: rerank unavailable (%v); using lexical order\n", err)
+	}
+	return artifacts
 }

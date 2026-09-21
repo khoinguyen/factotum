@@ -443,7 +443,9 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			deps.printFields(f("task_id", task.ID), f("noted", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
-			deps.suggest(hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "review the note"})
+			hints := []hint{{Command: fmt.Sprintf("ft task get %s", task.ID), About: "review the note"}}
+			hints = append(hints, deps.referenceHints(cmd.Context(), task, body)...)
+			deps.suggest(hints...)
 			return nil
 		},
 	}
@@ -1217,7 +1219,15 @@ func (d *Deps) warnDuplicateTitle(ctx context.Context, task *core.Task) {
 // similarTasks returns up to limit tasks in the same project whose title shares a
 // token with the new task, ranked by overlap. Retrieval stays in code.
 func similarTasks(task *core.Task, tasks []*core.Task, limit int) []*core.Task {
-	want := titleTokens(task.Title)
+	return rankSimilar(titleTokens(task.Title), tasks, task.ID, limit)
+}
+
+// similarTasksByText ranks tasks by overlap with a piece of prose (a note body).
+func similarTasksByText(text string, tasks []*core.Task, exclude core.TaskID, limit int) []*core.Task {
+	return rankSimilar(titleTokens(text), tasks, exclude, limit)
+}
+
+func rankSimilar(want map[string]bool, tasks []*core.Task, exclude core.TaskID, limit int) []*core.Task {
 	if len(want) == 0 {
 		return nil
 	}
@@ -1227,10 +1237,10 @@ func similarTasks(task *core.Task, tasks []*core.Task, limit int) []*core.Task {
 	}
 	var ranked []scored
 	for _, other := range tasks {
-		if other.ID == task.ID {
+		if other.ID == exclude {
 			continue
 		}
-		have := titleTokens(other.Title)
+		have := titleTokens(other.Title + " " + other.Description)
 		overlap := 0
 		for token := range want {
 			if have[token] {
@@ -1266,6 +1276,30 @@ func titleTokens(title string) map[string]bool {
 
 func isTokenRune(r rune) bool {
 	return r >= 'a' && r <= 'z' || r >= '0' && r <= '9'
+}
+
+// referenceHints returns a hint to link the task a note body refers to, if any. It
+// never creates the edge: the caller runs the suggested command.
+func (d *Deps) referenceHints(ctx context.Context, task *core.Task, text string) []hint {
+	if d.Reference == nil {
+		return nil
+	}
+	tasks, err := d.Tasks.List(ctx, store.TaskFilter{ProjectID: task.ProjectID})
+	if err != nil {
+		return nil
+	}
+	candidates := similarTasksByText(text, tasks, task.ID, 5)
+	if len(candidates) == 0 {
+		return nil
+	}
+	ref, err := d.Reference.Find(ctx, text, candidates)
+	if err != nil || ref.Task == nil {
+		return nil
+	}
+	return []hint{{
+		Command: fmt.Sprintf("ft task dep %s %s", task.ID, ref.Task.ID),
+		About:   fmt.Sprintf("link the referenced task %q", ref.Task.Title),
+	}}
 }
 
 func (d *Deps) taskFields(task *core.Task, action ...field) []field {

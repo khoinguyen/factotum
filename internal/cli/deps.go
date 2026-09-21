@@ -56,6 +56,8 @@ type Deps struct {
 	Rerank *app.RerankService
 	// Duplicate advises when a new task looks like an existing one.
 	Duplicate *app.DuplicateService
+	// Reference finds the task a note refers to in prose.
+	Reference *app.ReferenceService
 }
 
 func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(string) string) *Deps {
@@ -101,6 +103,7 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Intent = app.NewIntentService(d.Judge)
 	d.Rerank = app.NewRerankService(d.Judge)
 	d.Duplicate = app.NewDuplicateService(d.Judge)
+	d.Reference = app.NewReferenceService(d.Judge)
 	d.Projects = app.NewProjectService(backend, d.Clock, d.IDs)
 	d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
 	d.Actors = app.NewActorService(backend, d.Clock, d.IDs)

@@ -48,6 +48,8 @@ type Deps struct {
 	// When resolves natural-language date phrases. Nil until Attach, and its judge is
 	// Disabled without a key, so the deterministic formats still work.
 	When *app.WhenService
+	// Intent reads closed-set task fields from a natural-language phrase.
+	Intent *app.IntentService
 }
 
 func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(string) string) *Deps {
@@ -90,6 +92,7 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Backend = backend
 	d.Judge = newJudge(d.Getenv, cfg)
 	d.When = app.NewWhenService(d.Judge)
+	d.Intent = app.NewIntentService(d.Judge)
 	d.Projects = app.NewProjectService(backend, d.Clock, d.IDs)
 	d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
 	d.Actors = app.NewActorService(backend, d.Clock, d.IDs)

@@ -16,6 +16,7 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/judge"
 	"github.com/khoinguyen/factotum/pkg/rank"
 	"github.com/khoinguyen/factotum/pkg/store"
 )
@@ -714,34 +715,182 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 }
 
 func newTaskSetCommand(deps *Deps) *cobra.Command {
+	var yes bool
 	cmd := &cobra.Command{
-		Use:   "set <task> field=value [field=value...]",
-		Short: "Set task fields (status, priority, kind, repo, title, body, labels, not_before)",
+		Use:   "set <task> field=value... | <phrase>",
+		Short: "Set task fields, from field=value assignments or a natural-language phrase",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 2 {
-				return usageError(cmd, "expected <task> and at least one field=value assignment")
+				return usageError(cmd, "expected <task> and field=value assignments or a phrase")
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			now := deps.Clock.Now()
-			set, err := parseTaskSet(args[1:], func(value string) (time.Time, error) {
-				return deps.parseWhen(cmd.Context(), value, now)
-			})
-			if err != nil {
-				return err
+			// An argument containing '=' is a field assignment; the rest form a phrase.
+			// Field names are a closed set that always contains '=', so a phrase never
+			// collides with an assignment. Both may be combined, e.g. a phrase plus a
+			// verbatim body=@file.
+			assignments, phraseParts := splitAssignments(args[1:])
+			if len(phraseParts) == 0 {
+				now := deps.Clock.Now()
+				set, err := parseTaskSet(assignments, func(value string) (time.Time, error) {
+					return deps.parseWhen(cmd.Context(), value, now)
+				})
+				if err != nil {
+					return err
+				}
+				return deps.applyTaskSet(cmd, args[0], set)
 			}
-			task, err := deps.Tasks.Set(cmd.Context(), core.TaskID(args[0]), set)
-			if err != nil {
-				return err
-			}
-			return deps.emit(task, func() {
-				deps.printFields(deps.taskFields(task, f("updated", true))...)
-			},
-				hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the updated task"})
+			return deps.setFromPhrase(cmd, args[0], strings.Join(phraseParts, " "), assignments, yes)
 		},
 	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "apply a phrase without asking for confirmation")
 	return cmd
+}
+
+// splitAssignments separates field=value arguments from phrase words.
+func splitAssignments(args []string) (assignments, phrase []string) {
+	for _, arg := range args {
+		if strings.Contains(arg, "=") {
+			assignments = append(assignments, arg)
+		} else {
+			phrase = append(phrase, arg)
+		}
+	}
+	return assignments, phrase
+}
+
+// applyTaskSet writes a parsed set and reports the updated task.
+func (d *Deps) applyTaskSet(cmd *cobra.Command, taskRef string, set app.TaskSet) error {
+	task, err := d.Tasks.Set(cmd.Context(), core.TaskID(taskRef), set)
+	if err != nil {
+		return err
+	}
+	return d.emit(task, func() {
+		d.printFields(d.taskFields(task, f("updated", true))...)
+	},
+		hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the updated task"})
+}
+
+// mergeTaskSet applies over on top of base. Explicit field=value assignments win over
+// the phrase for any field they both set.
+func mergeTaskSet(base, over app.TaskSet) app.TaskSet {
+	if over.Kind != nil {
+		base.Kind = over.Kind
+	}
+	if over.Repo != nil {
+		base.Repo = over.Repo
+	}
+	if over.Title != nil {
+		base.Title = over.Title
+	}
+	if over.Description != nil {
+		base.Description = over.Description
+	}
+	if over.Priority != nil {
+		base.Priority = over.Priority
+	}
+	if over.Status != nil {
+		base.Status = over.Status
+	}
+	if over.Labels != nil {
+		base.Labels = over.Labels
+	}
+	if over.NotBefore != nil {
+		base.NotBefore = over.NotBefore
+	}
+	if over.ClearNotBefore {
+		base.ClearNotBefore = true
+	}
+	return base
+}
+
+// setFromPhrase turns a natural-language phrase into a TaskSet. Without --yes it
+// prints what it read and stops, so the caller confirms before the mutation.
+func (d *Deps) setFromPhrase(cmd *cobra.Command, taskRef, phrase string, assignments []string, yes bool) error {
+	if d.Intent == nil {
+		return usageError(cmd, "a phrase needs a configured judge; set TYPESAFE_API_KEY")
+	}
+	labels, err := d.knownLabels(cmd.Context())
+	if err != nil {
+		return err
+	}
+	set, err := d.Intent.ParseTaskIntent(cmd.Context(), phrase, labels, d.Clock.Now())
+	if err != nil {
+		if errors.Is(err, judge.ErrUnavailable) {
+			return usageError(cmd, "a phrase needs a configured judge; set TYPESAFE_API_KEY")
+		}
+		return usageError(cmd, "could not read %q: %s", phrase, err)
+	}
+	// Explicit field=value assignments ride along and win on conflict, so a phrase can
+	// be combined with a verbatim body=@file or title=.
+	if len(assignments) > 0 {
+		explicit, err := parseTaskSet(assignments, func(value string) (time.Time, error) {
+			return d.parseWhen(cmd.Context(), value, d.Clock.Now())
+		})
+		if err != nil {
+			return err
+		}
+		set = mergeTaskSet(set, explicit)
+	}
+	if !yes {
+		fields := appendSetFields([]field{f("task_id", core.TaskID(taskRef)), f("parsed", true)}, set)
+		d.printFields(fields...)
+		apply := []string{"ft", "task", "set", taskRef, fmt.Sprintf("%q", phrase)}
+		apply = append(append(apply, assignments...), "--yes")
+		d.suggest(hint{Command: strings.Join(apply, " "), About: "apply it"})
+		return nil
+	}
+	return d.applyTaskSet(cmd, taskRef, set)
+}
+
+// appendSetFields renders the fields a parsed set carries, for confirmation output.
+func appendSetFields(fields []field, set app.TaskSet) []field {
+	if set.Status != nil {
+		fields = append(fields, f("status", *set.Status))
+	}
+	if set.Kind != nil {
+		fields = append(fields, f("kind", *set.Kind))
+	}
+	if set.Priority != nil {
+		fields = append(fields, f("priority", *set.Priority))
+	}
+	if set.Labels != nil {
+		fields = append(fields, f("labels", strings.Join(set.Labels, ", ")))
+	}
+	if set.Title != nil {
+		fields = append(fields, f("title", *set.Title))
+	}
+	if set.Repo != nil {
+		fields = append(fields, f("repo", *set.Repo))
+	}
+	if set.Description != nil {
+		fields = append(fields, f("description", *set.Description))
+	}
+	if set.NotBefore != nil {
+		fields = append(fields, f("not_before", set.NotBefore.UTC().Format(time.RFC3339)))
+	}
+	return fields
+}
+
+// knownLabels returns the distinct labels already used in the project, so the intent
+// parser can offer them as candidates.
+func (d *Deps) knownLabels(ctx context.Context) ([]string, error) {
+	tasks, err := d.Tasks.List(ctx, store.TaskFilter{})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var labels []string
+	for _, task := range tasks {
+		for _, label := range task.Labels {
+			if !seen[label] {
+				seen[label] = true
+				labels = append(labels, label)
+			}
+		}
+	}
+	return labels, nil
 }
 
 // parseTaskSet turns `field=value` assignments into a TaskSet. Long text

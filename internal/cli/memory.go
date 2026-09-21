@@ -137,6 +137,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 	list.Flags().StringVarP(&listProject, "project", "p", "", "filter by project id")
 
 	var searchProject string
+	var searchNoRerank bool
 	search := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search memory titles and bodies",
@@ -148,6 +149,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			artifacts = deps.maybeRerank(cmd, args[0], artifacts, searchNoRerank)
 			entries := make([]memoryEntry, 0, len(artifacts))
 			for _, artifact := range artifacts {
 				entries = append(entries, memoryEntryFrom(artifact))
@@ -162,6 +164,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	search.Flags().StringVarP(&searchProject, "project", "p", "", "filter by project id")
+	search.Flags().BoolVar(&searchNoRerank, "no-rerank", false, "keep lexical order instead of reranking by meaning")
 
 	get := &cobra.Command{
 		Use:   "get <memory>",

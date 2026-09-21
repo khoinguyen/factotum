@@ -7,6 +7,8 @@ import (
 
 	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/pkg/app"
+	"github.com/khoinguyen/factotum/pkg/judge"
+	"github.com/khoinguyen/factotum/pkg/judge/typesafe"
 	"github.com/khoinguyen/factotum/pkg/rank"
 	"github.com/khoinguyen/factotum/pkg/registry"
 	"github.com/khoinguyen/factotum/pkg/render"
@@ -36,6 +38,10 @@ type Deps struct {
 	Tasks     *app.TaskService
 	Actors    *app.ActorService
 	Artifacts *app.ArtifactService
+
+	// Judge is the model-backed judgment port. It is Disabled when no API key is
+	// configured, so every judge-backed feature falls back to its deterministic path.
+	Judge judge.Judge
 }
 
 func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(string) string) *Deps {
@@ -48,12 +54,25 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 		Out:            out,
 		Err:            errOut,
 		Getenv:         getenv,
+		Judge:          newJudge(getenv),
 		StoreFactories: registry.New[store.Factory](),
 		Rankers:        rank.Builtins(),
 		Renderers:      render.Builtins(),
 	}
 	deps.Commands = builtinCommands()
 	return deps
+}
+
+// newJudge builds the judge from the environment. With no key it returns Disabled so
+// callers fall back and no request is ever attempted. The config file's
+// secrets.typesafe_api_key fallback is not wired yet (config.Config does not parse
+// [secrets]); until then the key must come from TYPESAFE_API_KEY.
+func newJudge(getenv func(string) string) judge.Judge {
+	key := typesafe.ResolveAPIKey(getenv, "")
+	if key == "" {
+		return judge.Disabled{}
+	}
+	return typesafe.New(typesafe.Config{APIKey: key})
 }
 
 func (d *Deps) Attach(cfg config.Config, backend store.Backend) {

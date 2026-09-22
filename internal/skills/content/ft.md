@@ -72,13 +72,18 @@ ft memory get <memory>          # read one memory back
 Memory is a first-class, searchable artifact for durable agent knowledge:
 
 ```sh
-ft memory create -p <project> -t "Title" -b "What to remember"
+ft memory create -p <project> -t "Title" --brief "when to load me" -b "What to remember"
 ft memory list -p <project>
 ft memory search "<query>" -p <project>
 ft memory get <memory>
-ft memory update <memory> [-t "Title"] [-b "Content" | -f file] [--task <task>]
+ft memory update <memory> [-t "Title"] [--brief "..."] [-b "Content" | -f file] [--task <task>]
 ft memory delete <memory>
 ```
+
+A memory carries three things, all authored by the agent: a `title`, a one-line
+`brief` (what it is and when to load it), and the full `body`. `ft memory list`
+and `ft task context` show the brief; `ft memory get` returns the body. `ft`
+stores them verbatim and never generates them.
 
 `ft memory update` patches in place; `--task <task>` attaches the memory to a
 task and `--task ""` detaches it. Only memory artifacts are accepted: the verbs

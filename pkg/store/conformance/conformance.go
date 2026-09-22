@@ -299,7 +299,7 @@ func testArtifactSearch(t *testing.T, be store.Backend) {
 		{ID: "art-t", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "Terraform notes", Body: "apply in devops"},
 		{ID: "art-b", ProjectID: "prj-1", TaskID: &taskID, Kind: core.ArtifactMemory, Title: "run scripts", Body: "terraform then kubectl"},
 		{ID: "art-x", ProjectID: "prj-2", Kind: core.ArtifactDoc, Title: "Kubernetes notes", Body: "cluster upgrade"},
-		{ID: "art-n", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "unrelated", Body: "nothing here"},
+		{ID: "art-n", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "unrelated", Brief: "quickstart guide", Body: "nothing here"},
 	}
 	for _, artifact := range artifacts {
 		if err := repo.Create(ctx, artifact); err != nil {
@@ -315,6 +315,7 @@ func testArtifactSearch(t *testing.T, be store.Backend) {
 	assertSearch(t, repo, ctx, prj, "TERRAFORM", []core.ArtifactID{"art-t", "art-b"}) // case-insensitive
 	assertSearch(t, repo, ctx, prj, "terraform apply", []core.ArtifactID{"art-t"})    // all terms
 	assertSearch(t, repo, ctx, prj, "terraform kubectl", []core.ArtifactID{"art-b"})  // title vs body
+	assertSearch(t, repo, ctx, prj, "quickstart", []core.ArtifactID{"art-n"})         // brief-only match
 	assertSearch(t, repo, ctx, prj, "kubernetes", nil)                                // other project
 	assertSearch(t, repo, ctx, store.ArtifactFilter{ProjectID: "prj-1", Kind: &memory}, "terraform", []core.ArtifactID{"art-t", "art-b"})
 	assertSearch(t, repo, ctx, store.ArtifactFilter{ProjectID: "prj-1", Kind: &memory}, "kubernetes", nil)
@@ -373,7 +374,7 @@ func testArtifact(t *testing.T, be store.Backend) {
 
 	artifacts := []*core.Artifact{
 		{ID: "art-1", ProjectID: "prj-1", Kind: core.ArtifactSpec, Title: "spec"},
-		{ID: "art-2", ProjectID: "prj-1", TaskID: &taskID, Kind: core.ArtifactMemory, Title: "memory", Body: "remember"},
+		{ID: "art-2", ProjectID: "prj-1", TaskID: &taskID, Kind: core.ArtifactMemory, Title: "memory", Brief: "remember briefly", Body: "remember"},
 		{ID: "art-3", ProjectID: "prj-2", Kind: core.ArtifactDoc, Title: "doc"},
 	}
 	for _, artifact := range artifacts {
@@ -415,6 +416,14 @@ func testArtifact(t *testing.T, be store.Backend) {
 	}
 	if len(byKind) != 1 || byKind[0].ID != "art-1" {
 		t.Fatalf("List(kind) = %v, want [art-1]", byKind)
+	}
+
+	briefed, err := repo.Get(ctx, "art-2")
+	if err != nil {
+		t.Fatalf("Get(art-2) error = %v", err)
+	}
+	if briefed.Brief != "remember briefly" {
+		t.Fatalf("Get(art-2) Brief = %q, want the stored brief", briefed.Brief)
 	}
 
 	got, err := repo.Get(ctx, "art-1")

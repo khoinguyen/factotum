@@ -38,19 +38,23 @@ func LexicalTerms(query string) []string {
 }
 
 // LexicalScore scores an artifact against pre-split terms. Every term must
-// match a title or body token by prefix; a title match weighs more than a body
-// match. It reports whether the artifact matched all terms.
+// match a title, brief, or body token by prefix; a title match weighs more than
+// a brief match, which weighs more than a body match. It reports whether the
+// artifact matched all terms.
 func LexicalScore(artifact *core.Artifact, terms []string) (float64, bool) {
 	if len(terms) == 0 {
 		return 0, true
 	}
 	titleTokens := LexicalTerms(artifact.Title)
+	briefTokens := LexicalTerms(artifact.Brief)
 	bodyTokens := LexicalTerms(artifact.Body)
 	score := 0.0
 	for _, term := range terms {
 		switch {
 		case hasTokenPrefix(titleTokens, term):
 			score += 3
+		case hasTokenPrefix(briefTokens, term):
+			score += 2
 		case hasTokenPrefix(bodyTokens, term):
 			score++
 		default:

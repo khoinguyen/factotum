@@ -19,6 +19,21 @@ func planAgent(t *testing.T, r *runner, tasks ...agent.Task) *fake.Agent {
 	return ag
 }
 
+// executePrompt runs a command with the runner's setup and returns any error,
+// including non-usage errors that runSplit would treat as fatal.
+func executePrompt(t *testing.T, r *runner, args ...string) (string, string, error) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &stdout, &stderr, nil)
+	base := r.setup(deps)
+	root := NewRoot(deps)
+	root.SetArgs(append(append([]string{}, base...), args...))
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	err := root.Execute()
+	return stdout.String(), stderr.String(), err
+}
+
 func TestPromptPreviewDoesNotCreateTasks(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
@@ -131,21 +146,64 @@ func TestPromptAgentCommandFlagOverridesConfigured(t *testing.T) {
 	}
 }
 
+func TestPromptApplyRejectsInvalidPlanBeforeWriting(t *testing.T) {
+	cases := []struct {
+		name string
+		task agent.Task
+		want string
+	}{
+		{"unknown kind", agent.Task{Kind: "epic", Title: "Bad"}, "unknown task kind"},
+		{"empty title", agent.Task{Title: "   "}, "title is required"},
+		{"unknown repo", agent.Task{Title: "Bad", Repo: "nope"}, "not part of project"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			projectID := firstField(t, r.run("project", "create", "Acme"))
+			planAgent(t, r, agent.Task{Title: "Good"}, tc.task)
+
+			_, _, err := executePrompt(t, r, "prompt", "--yes", "--project", projectID, "build", "login")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Execute() error = %v, want it to mention %q", err, tc.want)
+			}
+			if list := r.run("task", "list", "--project", projectID); strings.Contains(list, "Good") {
+				t.Fatalf("an invalid plan must not be applied partially:\n%s", list)
+			}
+		})
+	}
+}
+
+func TestPromptUnknownProviderIsConfigError(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	if err := os.WriteFile(r.userPath, []byte("[agent]\nprovider = \"bogus\"\n"), 0o600); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+
+	_, _, err := executePrompt(t, r, "prompt", "--project", projectID, "build", "login")
+	if err == nil || !strings.Contains(err.Error(), "unknown provider") || !strings.Contains(err.Error(), "bogus") {
+		t.Fatalf("Execute() error = %v, want the unknown provider named", err)
+	}
+}
+
+func TestPromptEmptyPlanIsNoted(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	planAgent(t, r)
+
+	out := r.run("prompt", "--project", projectID, "build", "login")
+	if !strings.Contains(out, "(no tasks proposed)") {
+		t.Fatalf("an empty plan should say so:\n%s", out)
+	}
+}
+
 func TestPromptAgentFailureIsReported(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	ag := planAgent(t, r)
 	ag.FailWith(errors.New("agent exploded"))
 
-	var stdout, stderr bytes.Buffer
-	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &stdout, &stderr, nil)
-	base := r.setup(deps)
-	root := NewRoot(deps)
-	root.SetArgs(append(append([]string{}, base...), "prompt", "--project", projectID, "build", "login"))
-	root.SetOut(&stdout)
-	root.SetErr(&stderr)
-
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "agent exploded") {
+	if _, _, err := executePrompt(t, r, "prompt", "--project", projectID, "build", "login"); err == nil || !strings.Contains(err.Error(), "agent exploded") {
 		t.Fatalf("Execute() error = %v, want the agent failure surfaced", err)
 	}
 }

@@ -47,6 +47,9 @@ type Deps struct {
 	// Judge is the model-backed judgment port. It is Disabled when no API key is
 	// configured, so every judge-backed feature falls back to its deterministic path.
 	Judge judge.Judge
+	// JudgeOverride, when set, replaces the configured judge. Tests inject a fake
+	// here so judge-backed command paths run without a network.
+	JudgeOverride judge.Judge
 	// When resolves natural-language date phrases. Nil until Attach, and its judge is
 	// Disabled without a key, so the deterministic formats still work.
 	When *app.WhenService
@@ -98,7 +101,11 @@ func newJudge(getenv func(string) string, cfg config.Config) judge.Judge {
 func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Config = cfg
 	d.Backend = backend
-	d.Judge = newJudge(d.Getenv, cfg)
+	if d.JudgeOverride != nil {
+		d.Judge = d.JudgeOverride
+	} else {
+		d.Judge = newJudge(d.Getenv, cfg)
+	}
 	d.When = app.NewWhenService(d.Judge)
 	d.Intent = app.NewIntentService(d.Judge)
 	d.Rerank = app.NewRerankService(d.Judge)

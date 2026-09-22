@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
+	"sort"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -61,22 +61,7 @@ const memoryRelationShortlist = 8
 // best-effort: with no judge configured it prints nothing, and it never blocks
 // or mutates the write.
 func (d *Deps) adviseMemoryRelation(ctx context.Context, artifact *core.Artifact) {
-	query := strings.TrimSpace(artifact.Title + " " + artifact.Brief)
-	kind := core.ArtifactMemory
-	found, err := d.Artifacts.Search(ctx, store.ArtifactFilter{ProjectID: artifact.ProjectID, Kind: &kind}, query)
-	if err != nil {
-		return
-	}
-	shortlist := make([]*core.Artifact, 0, memoryRelationShortlist)
-	for _, candidate := range found {
-		if candidate.ID == artifact.ID {
-			continue
-		}
-		shortlist = append(shortlist, candidate)
-		if len(shortlist) == memoryRelationShortlist {
-			break
-		}
-	}
+	shortlist := d.memoryShortlist(ctx, artifact)
 	if len(shortlist) == 0 {
 		return
 	}
@@ -92,14 +77,78 @@ func (d *Deps) adviseMemoryRelation(ctx context.Context, artifact *core.Artifact
 	}
 }
 
+// memoryShortlist returns the project's other memory ranked by how many terms
+// its title, brief, and body share with the written memory's title and brief.
+// It is a token-overlap shortlist rather than Search, whose all-terms-AND
+// semantics would miss the common case of a related-but-not-identical entry.
+func (d *Deps) memoryShortlist(ctx context.Context, artifact *core.Artifact) []*core.Artifact {
+	kind := core.ArtifactMemory
+	all, err := d.Artifacts.List(ctx, store.ArtifactFilter{ProjectID: artifact.ProjectID, Kind: &kind})
+	if err != nil {
+		return nil
+	}
+	want := store.LexicalTerms(artifact.Title + " " + artifact.Brief)
+	if len(want) == 0 {
+		return nil
+	}
+	type scored struct {
+		artifact *core.Artifact
+		overlap  int
+	}
+	ranked := make([]scored, 0, len(all))
+	for _, candidate := range all {
+		if candidate.ID == artifact.ID {
+			continue
+		}
+		have := store.LexicalTerms(candidate.Title + " " + candidate.Brief + " " + candidate.Body)
+		if overlap := tokenOverlap(want, have); overlap > 0 {
+			ranked = append(ranked, scored{candidate, overlap})
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].overlap != ranked[j].overlap {
+			return ranked[i].overlap > ranked[j].overlap
+		}
+		return ranked[i].artifact.ID < ranked[j].artifact.ID
+	})
+	if len(ranked) > memoryRelationShortlist {
+		ranked = ranked[:memoryRelationShortlist]
+	}
+	out := make([]*core.Artifact, 0, len(ranked))
+	for _, item := range ranked {
+		out = append(out, item.artifact)
+	}
+	return out
+}
+
+func tokenOverlap(want, have []string) int {
+	haveSet := make(map[string]bool, len(have))
+	for _, token := range have {
+		haveSet[token] = true
+	}
+	overlap := 0
+	for _, token := range want {
+		if haveSet[token] {
+			overlap++
+		}
+	}
+	return overlap
+}
+
 // memoryRelationNote renders the advisory for a related or superseding memory,
-// or "" when there is nothing to advise.
+// or "" when there is nothing to advise. It names the actionable verbs so the
+// author can reconcile the entry.
 func memoryRelationNote(rel app.MemoryRelation) string {
 	if rel.Candidate == nil || rel.Action == "unrelated" {
 		return ""
 	}
-	return fmt.Sprintf("ft: note: this memory %s %s (%q, %.2f) - ft memory get %s",
-		rel.Action, rel.Candidate.ID, rel.Candidate.Title, rel.Confidence, rel.Candidate.ID)
+	verb := "is related to"
+	if rel.Action == "supersedes" {
+		verb = "supersedes"
+	}
+	id := string(rel.Candidate.ID)
+	return fmt.Sprintf("ft: note: this memory %s %s (%q, %.2f)\n  reconcile: ft memory get %s | ft memory update %s | ft memory delete %s",
+		verb, id, rel.Candidate.Title, rel.Confidence, id, id, id)
 }
 
 func newMemoryCommand(deps *Deps) *cobra.Command {

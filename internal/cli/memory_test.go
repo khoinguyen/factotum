@@ -10,6 +10,8 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/judge"
+	"github.com/khoinguyen/factotum/pkg/judge/fake"
 )
 
 func TestMemoryRelationNote(t *testing.T) {
@@ -18,8 +20,46 @@ func TestMemoryRelationNote(t *testing.T) {
 	}
 	rel := app.MemoryRelation{Action: "supersedes", Candidate: &core.Artifact{ID: "art-1", Title: "Old"}, Confidence: 0.82}
 	note := memoryRelationNote(rel)
-	if !strings.Contains(note, "supersedes") || !strings.Contains(note, "art-1") || !strings.Contains(note, "0.82") {
-		t.Fatalf("note = %q", note)
+	for _, want := range []string{"supersedes art-1", "0.82", "ft memory get art-1", "ft memory update art-1", "ft memory delete art-1"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("note missing %q:\n%s", want, note)
+		}
+	}
+	related := memoryRelationNote(app.MemoryRelation{Action: "related", Candidate: &core.Artifact{ID: "art-2", Title: "T"}, Confidence: 0.6})
+	if !strings.Contains(related, "is related to art-2") {
+		t.Fatalf("related wording = %q", related)
+	}
+}
+
+func TestMemoryWriteAdvisoryWithJudge(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	first := firstField(t, r.run("memory", "create", "-p", projectID, "-t", "Deploy notes", "--brief", "old steps"))
+
+	r.judge = fake.New(map[string]judge.Answer{
+		"rel::" + first: {Rating: 2, Confidence: 0.9},
+	})
+	_, stderr := r.runSplit("memory", "create", "-p", projectID, "-t", "Deploy runbook", "--brief", "new steps")
+	if !strings.Contains(stderr, "supersedes "+first) || !strings.Contains(stderr, "ft memory update "+first) {
+		t.Fatalf("expected a supersede advisory for %s:\n%s", first, stderr)
+	}
+}
+
+func TestMemoryWriteSucceedsOnJudgeError(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("memory", "create", "-p", projectID, "-t", "Deploy notes", "--brief", "old")
+
+	f := fake.New(nil)
+	f.FailWith(errors.New("boom"))
+	r.judge = f
+
+	out, stderr := r.runSplit("memory", "create", "-p", projectID, "-t", "Deploy runbook", "--brief", "new")
+	if !strings.Contains(out, "created: true") {
+		t.Fatalf("write should succeed despite a judge error:\n%s", out)
+	}
+	if !strings.Contains(stderr, "warning") {
+		t.Fatalf("a judge error should warn, not fail:\n%s", stderr)
 	}
 }
 

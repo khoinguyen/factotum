@@ -188,6 +188,10 @@ func newAgent(getenv func(string) string, cfg config.Config) (agent.Agent, error
 	return built, nil
 }
 
+// Attach records the loaded config and, when backend is non-nil, the services
+// bound to the caller's store. A command that does not touch the caller's store
+// passes a nil backend, so it runs even when that store is misconfigured; its
+// Projects/Tasks/... services stay nil and must not be called.
 func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Config = cfg
 	d.Backend = backend
@@ -209,11 +213,13 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Reference = app.NewReferenceService(d.Judge)
 	d.Checks = check.NewRegistry()
 	checkbuiltins.RegisterAll(d.Checks, d.Judge)
-	d.Projects = app.NewProjectService(backend, d.Clock, d.IDs)
-	d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
-	d.Actors = app.NewActorService(backend, d.Clock, d.IDs)
-	d.Artifacts = app.NewArtifactService(backend, d.Clock, d.IDs)
-	d.TaskChecks = app.NewCheckService(backend, d.Clock, d.IDs, d.Checks)
+	if backend != nil {
+		d.Projects = app.NewProjectService(backend, d.Clock, d.IDs)
+		d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
+		d.Actors = app.NewActorService(backend, d.Clock, d.IDs)
+		d.Artifacts = app.NewArtifactService(backend, d.Clock, d.IDs)
+		d.TaskChecks = app.NewCheckService(backend, d.Clock, d.IDs, d.Checks)
+	}
 	if d.EmbedderOverride != nil {
 		d.Embedder = d.EmbedderOverride
 	} else {

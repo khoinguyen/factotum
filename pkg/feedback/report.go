@@ -79,17 +79,36 @@ func (r Report) Sanitize(home string) Report {
 	return r
 }
 
-// tokenPattern matches secrets whose shape is distinctive enough to redact: a
-// known provider prefix followed by an opaque run, or any long run of
-// identifier characters (which covers hex digests and base64 blobs).
-var tokenPattern = regexp.MustCompile(
-	`(?:sk|ghp|gho|ghs|ghr|github_pat|apikey|xox[baprs])[-_][A-Za-z0-9_-]{8,}` +
-		`|[A-Za-z0-9_-]{32,}`)
+const redactedMarker = "[redacted]"
+
+// prefixedTokenPattern matches a known provider prefix followed by an opaque
+// run: the shape alone marks it as a secret, so it is always redacted.
+var prefixedTokenPattern = regexp.MustCompile(
+	`(?:sk|ghp|gho|ghs|ghr|github_pat|apikey|xox[baprs])[-_][A-Za-z0-9_-]{8,}`)
+
+// longRunPattern matches any identifier run long enough to be a hex digest or a
+// base64 blob. A match is redacted only when secretShaped agrees, so ordinary
+// long words and hyphenated phrases survive.
+var longRunPattern = regexp.MustCompile(`[A-Za-z0-9_-]{32,}`)
+
+// secretShaped reports whether a long identifier run looks like a secret. A
+// digest or opaque blob carries digits, while ordinary prose (a long word or a
+// hyphenated phrase) usually does not.
+func secretShaped(run string) bool {
+	return strings.ContainsAny(run, "0123456789")
+}
 
 func redact(value, home string) string {
+	home = strings.TrimRight(home, `/\`)
 	if home != "" {
 		homePattern := regexp.MustCompile(regexp.QuoteMeta(home) + `([/\\]|$)`)
 		value = homePattern.ReplaceAllString(value, "$$HOME$1")
 	}
-	return tokenPattern.ReplaceAllString(value, "[redacted]")
+	value = prefixedTokenPattern.ReplaceAllString(value, redactedMarker)
+	return longRunPattern.ReplaceAllStringFunc(value, func(run string) string {
+		if secretShaped(run) {
+			return redactedMarker
+		}
+		return run
+	})
 }

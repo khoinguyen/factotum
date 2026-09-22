@@ -163,6 +163,42 @@ func TestFeedbackCreateUsesAddedTransport(t *testing.T) {
 	}
 }
 
+func TestFeedbackCreateSucceedsWithUnknownCallerStore(t *testing.T) {
+	r := newRunner(t)
+	sink := filepath.Join(t.TempDir(), "factotum.json")
+	writeFeedbackConfig(t, r, map[string]string{"factotum": sink})
+
+	out := r.run("feedback", "create", "-b", "caller backend is bogus", "--store", "nope")
+
+	if !strings.HasPrefix(firstField(t, out), "t-") {
+		t.Fatalf("feedback create did not print a task id:\n%s", out)
+	}
+	if !containsTaskMessage(storedTasks(t, sink), "caller backend is bogus") {
+		t.Fatalf("feedback did not land in the factotum store %s", sink)
+	}
+}
+
+func TestFeedbackCreateSucceedsWithUnopenableCallerStore(t *testing.T) {
+	r := newRunner(t)
+	sink := filepath.Join(t.TempDir(), "factotum.json")
+	writeFeedbackConfig(t, r, map[string]string{"factotum": sink})
+	// The caller's store path sits under a regular file, so opening it fails.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write blocker file: %v", err)
+	}
+	callerPath := filepath.Join(blocker, "nested", "db.json")
+
+	out := r.run("feedback", "create", "-b", "caller path is unwritable", "--store-opt", "path="+callerPath)
+
+	if !strings.HasPrefix(firstField(t, out), "t-") {
+		t.Fatalf("feedback create did not print a task id:\n%s", out)
+	}
+	if !containsTaskMessage(storedTasks(t, sink), "caller path is unwritable") {
+		t.Fatalf("feedback did not land in the factotum store %s", sink)
+	}
+}
+
 func TestFeedbackCreateFailsWithoutSink(t *testing.T) {
 	r := newRunner(t)
 	err := r.runErr("feedback", "create", "-b", "nowhere to go")

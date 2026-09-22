@@ -21,6 +21,9 @@ func newFeedbackCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "feedback",
 		Short: "Report a bug or friction back to the Factotum maintainers",
+		// Reporting targets the sink database, never the caller's project store,
+		// so a broken caller store must not block it.
+		Annotations: map[string]string{annotationNoCallerStore: "true"},
 	}
 	cmd.AddCommand(newFeedbackCreateCommand(deps))
 	return cmd
@@ -34,7 +37,8 @@ func newFeedbackCreateCommand(deps *Deps) *cobra.Command {
 		Short: "Record feedback into the Factotum database",
 		Long: "Record one piece of feedback into the Factotum database, not the caller's\n" +
 			"project store, so a bug or friction found while working on any project reaches\n" +
-			"the maintainers.\n\n" +
+			"the maintainers. Reporting does not touch the caller's store, so it works even\n" +
+			"when that store is misconfigured or absent.\n\n" +
 			"Collected: the message, the command or flow involved, the ft version, and the\n" +
 			"originating project and repository. Paths under $HOME and token-shaped strings\n" +
 			"are redacted before the report is stored. The sink is the project named by\n" +

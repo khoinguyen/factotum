@@ -95,9 +95,10 @@ the Factotum database, not the caller's project store, so a bug found while
 working on any project reaches the maintainers. It prints the stored task id. The
 sink is the project named by `--feedback-store` (default `factotum`), resolved
 from the machine-scoped `[projects.<id>]` entry; `--transport` selects the sink
-transport (only `db` ships today). The report collects the message, the
-command/flow involved, the `ft` version, and the originating project and repo;
-paths under `$HOME` and token-shaped strings are redacted before storing.
+transport (only `db` ships today). Reporting does not touch the caller's store, so
+it works even when that store is misconfigured or absent. The report collects the
+message, the command/flow involved, the `ft` version, and the originating project
+and repo; paths under `$HOME` and token-shaped strings are redacted before storing.
 
 ## Break a prompt into tasks
 

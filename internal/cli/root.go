@@ -46,6 +46,23 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 	return reg
 }
 
+// annotationNoCallerStore marks a command whose work never reads or writes the
+// caller's project store, so it must run even when that store is misconfigured
+// or absent (for example ft feedback, which targets the sink database).
+const annotationNoCallerStore = "ft/no-caller-store"
+
+// needsCallerStore reports whether cmd, or an ancestor, requires the caller's
+// project store to be opened before it runs. It defaults to true, so only a
+// command that opts out via annotation is exempt.
+func needsCallerStore(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Annotations[annotationNoCallerStore] == "true" {
+			return false
+		}
+	}
+	return true
+}
+
 func NewRoot(deps *Deps) *cobra.Command {
 	var configPath, userConfigPath, storeBackend, actorRef, output string
 	var storeOpts []string
@@ -110,6 +127,10 @@ func NewRoot(deps *Deps) *cobra.Command {
 				return err
 			}
 
+			if !needsCallerStore(cmd) {
+				deps.Attach(cfg, nil)
+				return nil
+			}
 			factory, err := deps.StoreFactories.MustLookup(cfg.Store.Backend)
 			if err != nil {
 				return err

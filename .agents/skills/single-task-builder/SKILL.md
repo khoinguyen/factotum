@@ -61,6 +61,9 @@ is the chief's call.
 ## Report to the chief and stop
 
 When the reviewer approves — or you and he cannot agree — report the outcome to the chief: task id,
-PR number, verdict, and anything unresolved. Then stop; the chief decides what happens next.
+PR number, verdict, and anything unresolved. The chief gave you its name (`chief`) and surface ref at
+spawn; message it the same way you message the reviewer (`cmux set-buffer` + `cmux paste-buffer
+--surface <chief-ref>` + `cmux send-key --surface <chief-ref> enter`), or find it with
+`cmux find-window --content chief`. Then stop; the chief decides what happens next.
 - **Escalation:** if after three rounds you and the reviewer cannot align, tell the chief and leave
   the PR open for Khoi.

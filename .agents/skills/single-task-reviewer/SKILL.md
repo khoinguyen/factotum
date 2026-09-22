@@ -62,7 +62,9 @@ Never trust the PR body or "CI green" alone. Reproduce it:
 ## Report to the chief and stop
 
 Report to the chief: task id, PR number, the commit you reviewed, approved or not, and residual
-watch items (include the PR comment link). Then stop and wait.
+watch items (include the PR comment link). The chief gave you its name (`chief`) and surface ref at
+spawn; message it the same way you message the builder, or find it with
+`cmux find-window --content chief`. Then stop and wait.
 - **Escalation:** if after three rounds you and the builder cannot align, tell the chief, post your
   verdict and the builder's disagreement on the PR, and leave it open for Khoi.
 

@@ -30,19 +30,23 @@ type Report struct {
 	Repo string
 }
 
-// Title is the task title: the first line of the message, whitespace-collapsed
-// and clamped so one long line cannot become the whole title.
+// Title is the task title: the first non-blank line of the message,
+// whitespace-collapsed and clamped so one long line cannot become the whole
+// title. Leading blank lines are skipped so a pasted report that opens with a
+// blank line still produces a valid title.
 func (r Report) Title() string {
-	line := r.Message
-	if index := strings.IndexAny(line, "\r\n"); index >= 0 {
-		line = line[:index]
+	for _, line := range strings.Split(r.Message, "\n") {
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" {
+			continue
+		}
+		runes := []rune(line)
+		if len(runes) > titleLimit {
+			return string(runes[:titleLimit]) + "..."
+		}
+		return line
 	}
-	line = strings.Join(strings.Fields(line), " ")
-	runes := []rune(line)
-	if len(runes) > titleLimit {
-		return string(runes[:titleLimit]) + "..."
-	}
-	return line
+	return ""
 }
 
 // Body is the stored description: the message first, then the context lines that

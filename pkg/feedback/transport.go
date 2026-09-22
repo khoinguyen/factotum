@@ -50,18 +50,16 @@ func DBFactory(env Env) (Transport, error) {
 		return nil, errors.New("feedback: direct-db transport needs a store backend")
 	}
 	return &dbTransport{
-		backend: env.Backend,
-		tasks:   app.NewTaskService(env.Backend, env.Clock, env.IDs),
-		clock:   env.Clock,
-		project: env.Project,
+		projects: app.NewProjectService(env.Backend, env.Clock, env.IDs),
+		tasks:    app.NewTaskService(env.Backend, env.Clock, env.IDs),
+		project:  env.Project,
 	}, nil
 }
 
 type dbTransport struct {
-	backend store.Backend
-	tasks   *app.TaskService
-	clock   app.Clock
-	project core.ProjectID
+	projects *app.ProjectService
+	tasks    *app.TaskService
+	project  core.ProjectID
 }
 
 func (t *dbTransport) Send(ctx context.Context, report Report) (*core.Task, error) {
@@ -82,20 +80,13 @@ func (t *dbTransport) Send(ctx context.Context, report Report) (*core.Task, erro
 }
 
 func (t *dbTransport) ensureProject(ctx context.Context) error {
-	if _, err := t.backend.Projects().Get(ctx, t.project); err == nil {
+	if _, err := t.projects.Get(ctx, t.project); err == nil {
 		return nil
 	} else if !errors.Is(err, core.ErrNotFound) {
 		return fmt.Errorf("feedback sink project %q: %w", t.project, err)
 	}
-	now := t.clock.Now()
-	project := &core.Project{
-		ID:        t.project,
-		Name:      string(t.project),
-		Policy:    core.DefaultResolutionPolicy(),
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := t.backend.Projects().Create(ctx, project); err != nil && !errors.Is(err, core.ErrAlreadyExists) {
+	_, err := t.projects.CreateWithID(ctx, t.project, string(t.project), "", nil)
+	if err != nil && !errors.Is(err, core.ErrAlreadyExists) {
 		return fmt.Errorf("create feedback sink project %q: %w", t.project, err)
 	}
 	return nil

@@ -12,6 +12,21 @@ func TestReportTitleUsesFirstLine(t *testing.T) {
 	}
 }
 
+func TestReportTitleSkipsLeadingBlankLines(t *testing.T) {
+	cases := map[string]string{
+		"\nreal bug starts on line two": "real bug starts on line two",
+		"   \n\t\n  real bug":           "real bug",
+		"first line\nsecond line":       "first line",
+		"\n\n\nonly on the fourth line": "only on the fourth line",
+		"   \t  ":                       "",
+	}
+	for message, want := range cases {
+		if got := (Report{Message: message}).Title(); got != want {
+			t.Errorf("Title(%q) = %q, want %q", message, got, want)
+		}
+	}
+}
+
 func TestReportTitleTruncates(t *testing.T) {
 	report := Report{Message: strings.Repeat("a", 200)}
 	got := report.Title()

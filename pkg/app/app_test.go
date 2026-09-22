@@ -550,6 +550,32 @@ func TestProjectCreateUsesSlugID(t *testing.T) {
 	}
 }
 
+func TestProjectCreateWithIDKeepsExplicitID(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project, err := h.projects.CreateWithID(ctx, "factotum", "factotum", "", nil)
+	if err != nil {
+		t.Fatalf("CreateWithID() error = %v", err)
+	}
+	if project.ID != "factotum" || project.Name != "factotum" {
+		t.Fatalf("project = %+v, want id and name factotum", project)
+	}
+	events, err := h.backend.Events().List(ctx, store.EventFilter{Kinds: []core.EventKind{core.EventProjectCreated}})
+	if err != nil {
+		t.Fatalf("List(events) error = %v", err)
+	}
+	if len(events) != 1 || events[0].ProjectID != "factotum" {
+		t.Fatalf("events = %+v, want one project.created for factotum", events)
+	}
+}
+
+func TestProjectCreateWithIDValidates(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.projects.CreateWithID(context.Background(), "", "", "", nil); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("CreateWithID(empty) error = %v, want ErrInvalid", err)
+	}
+}
+
 func TestTaskKindUpdate(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

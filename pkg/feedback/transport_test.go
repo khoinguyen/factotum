@@ -86,6 +86,13 @@ func TestDBSendCreatesMissingProject(t *testing.T) {
 	if _, err := backend.Projects().Get(context.Background(), env.Project); err != nil {
 		t.Fatalf("project not created: %v", err)
 	}
+	events, err := backend.Events().List(context.Background(), store.EventFilter{Kinds: []core.EventKind{core.EventProjectCreated}})
+	if err != nil {
+		t.Fatalf("List(events) error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("project.created events = %d, want 1", len(events))
+	}
 }
 
 func TestDBSendRejectsEmptyMessage(t *testing.T) {

@@ -27,6 +27,12 @@ resolve your own refs once and pass them explicitly.
 - Pass them to every command: `--workspace <ws>`, `--surface <ref>`, and `--pane <ref>` where it takes one.
 - Enumerate with `cmux tree --all`, `cmux list-pane-surfaces`, `cmux list-workspaces`. There is **no**
   `cmux list-surfaces`.
+- **Workspace groups:** your workspace lives in a group, and plain `cmux new-workspace` creates a
+  workspace **outside** the group. To create one inside, use
+  `cmux workspace-group new-workspace <group> …`, or move an existing one with
+  `cmux workspace-group add --group <group> --workspace <ws>`. Resolve your group once with
+  `cmux workspace-group list --json` (the group whose `member_workspace_refs` include your workspace
+  ref).
 - Deliver a message: `cmux set-buffer --name <n> "<one line>"`, then
   `cmux paste-buffer --name <n> --surface <ref>`, then `cmux send-key --surface <ref> enter`.
   **Flatten the text to a single line first** — an embedded newline submits early, so a multi-line
@@ -83,8 +89,10 @@ resolve your own refs once and pass them explicitly.
    worktree, and spawn new `builder-<t2>`/`reviewer-<t2>` in the same right-column layout. **Never
    reuse a subagent across tasks** — a fresh context is the point.
    **Park an escalated pair** so the primary workspace stays chief + the current pair: create a
-   workspace named after the task and move the pair there, builder left, reviewer right.
-   `cmux new-workspace --name <t>` (it starts with a spare `Terminal` surface), then
+   workspace named after the task **inside your workspace group** and move the pair there, builder
+   left, reviewer right. `cmux workspace-group new-workspace <group> --name <t> --placement end`
+   (plain `new-workspace` would land outside the group; the new workspace starts with a spare
+   `Terminal` surface), then 
    `cmux move-surface --surface <builder-ref> --workspace <t>`,
    `cmux move-surface --surface <reviewer-ref> --workspace <t>`,
    `cmux split-off --surface <reviewer-ref> right --workspace <t>` (reviewer to the right pane), and

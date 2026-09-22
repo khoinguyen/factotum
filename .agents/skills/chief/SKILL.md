@@ -37,18 +37,24 @@ resolve your own refs once and pass them explicitly.
 
 1. **Pick the next task.** `ft task next` ranks ready work (or follow Khoi's named task). Skip any
    task that carries an open human decision — surface it to Khoi instead of building it.
-2. **Prepare names.** For task `<t>` and a two-to-four-word brief: the branch is
-   `ft/<t>-<short-brief>`, and the pair is named `builder-<t>` and `reviewer-<t>`.
+2. **Set up the builder's worktree.** The chief stays in the repo on `main`; **each subagent gets its
+   own directory** so branch switches never collide. Create the builder's worktree + branch before
+   spawning:
+   `git worktree add /tmp/ft-<t> -b ft/<t>-<short-brief> origin/main`
+   Pass that path to the builder; it commits there and never creates or switches a branch itself.
 3. **Lay out the workspace.** One workspace: chief left (full height), builder top-right, reviewer
    bottom-right. Name your own pane first so your subagents can find you:
-   `cmux rename-tab --surface <chief-surface> chief`. Then, passing refs:
-   - `cmux new-split right --workspace <ws> --surface <chief-surface> --command 'opencode --prompt "load the single-task-builder skill; you are builder-<t>" --auto'`
-     — builder in the new right pane.
-   - `cmux new-split down --workspace <ws> --surface <builder-ref> --command 'opencode --prompt "load the single-task-reviewer skill; you are reviewer-<t>" --auto'`
-     — reviewer stacked below the builder, leaving the chief full-height on the left.
+   `cmux rename-tab --surface <chief-surface> chief`. Then, passing refs and starting each agent **in
+   its own directory**:
+   - `cmux new-split right --workspace <ws> --surface <chief-surface> --command 'cd /tmp/ft-<t> && opencode --prompt "load the single-task-builder skill; you are builder-<t>; work in /tmp/ft-<t> on branch ft/<t>-<short-brief>" --auto'`
+     — builder in the new right pane, already in its worktree.
+   - `cmux new-split down --workspace <ws> --surface <builder-ref> --command 'cd <repo> && opencode --prompt "load the single-task-reviewer skill; you are reviewer-<t>" --auto'`
+     — reviewer stacked below the builder; it creates its own detached review worktree once the
+     branch is pushed (see the reviewer skill).
    - Name them: `cmux rename-tab --surface <builder-ref> builder-<t>` and the same for the reviewer.
    - Agent: **opencode**. Its positional arg is a project path, not a prompt, so pass the kickoff via
-     `--prompt`; `--auto` runs it unattended.
+     `--prompt`; `--auto` runs it unattended. Start it with `cd <worktree> && opencode …` so the agent
+     works in the right directory.
 4. **Wire them**, each message a single line, with explicit refs. Tell each the other's name, the task,
    and how to reach the chief. Your pane is named `chief`; give them that name and your surface ref.
    - to the builder: the task id, the branch `ft/<t>-<short-brief>`, that `reviewer-<t>` will review

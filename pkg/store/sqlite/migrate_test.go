@@ -371,6 +371,71 @@ func TestMigrateV3ToV4BackfillsTaskIndex(t *testing.T) {
 	}
 }
 
+func TestMigrateV4ToV5BackfillsTaskDeps(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.db")
+
+	// Build a v4 database: the base schema plus the search indexes, with tasks
+	// whose dependency edges predate the reverse index.
+	raw := openRaw(t, path)
+	tx, err := raw.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	for _, step := range migrations {
+		if step.version > 4 {
+			break
+		}
+		if err := step.apply(ctx, tx); err != nil {
+			t.Fatalf("apply v%d: %v", step.version, err)
+		}
+	}
+	tasks := []*core.Task{
+		{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo},
+		{ID: "t-2", ProjectID: "prj-1", Kind: core.KindTask, Title: "two", Status: core.StatusTodo, Deps: []core.TaskID{"t-1"}},
+		{ID: "t-3", ProjectID: "prj-1", Kind: core.KindTask, Title: "three", Status: core.StatusTodo, Deps: []core.TaskID{"t-1", "t-2"}},
+	}
+	for _, task := range tasks {
+		data, err := encode(task)
+		if err != nil {
+			t.Fatalf("encode %s: %v", task.ID, err)
+		}
+		if _, err := tx.Exec(
+			"INSERT INTO tasks (id, project_id, repo, kind, status, data) VALUES (?, ?, ?, ?, ?, ?)",
+			string(task.ID), string(task.ProjectID), nil, string(task.Kind), string(task.Status), data,
+		); err != nil {
+			t.Fatalf("insert %s: %v", task.ID, err)
+		}
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 4"); err != nil {
+		t.Fatalf("stamp v4: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	// Reopen: the v5 migration must build and backfill the dependency index.
+	backend, err := Open(ctx, sqliteConfig(path))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	if got := userVersion(t, path); got != currentSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", got, currentSchemaVersion)
+	}
+	dep := core.TaskID("t-1")
+	dependents, err := backend.Tasks().List(ctx, store.TaskFilter{ProjectID: "prj-1", DependsOn: &dep})
+	if err != nil {
+		t.Fatalf("List(DependsOn t-1) error = %v", err)
+	}
+	if len(dependents) != 2 || dependents[0].ID != "t-2" || dependents[1].ID != "t-3" {
+		t.Fatalf("List(DependsOn t-1) = %v, want [t-2 t-3]", dependents)
+	}
+}
+
 func taskHitIDs(hits []store.TaskSearchHit) []core.TaskID {
 	out := make([]core.TaskID, 0, len(hits))
 	for _, hit := range hits {

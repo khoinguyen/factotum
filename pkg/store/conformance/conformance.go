@@ -19,6 +19,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("Project", func(t *testing.T) { testProject(t, factory(t)) })
 	t.Run("Actor", func(t *testing.T) { testActor(t, factory(t)) })
 	t.Run("Task", func(t *testing.T) { testTask(t, factory(t)) })
+	t.Run("TaskDependents", func(t *testing.T) { testTaskDependents(t, factory(t)) })
 	t.Run("TaskSearch", func(t *testing.T) { testTaskSearch(t, factory(t)) })
 	t.Run("Artifact", func(t *testing.T) { testArtifact(t, factory(t)) })
 	t.Run("ArtifactSearch", func(t *testing.T) { testArtifactSearch(t, factory(t)) })
@@ -287,6 +288,72 @@ func testTask(t *testing.T, be store.Backend) {
 	}
 	if _, err := repo.Get(ctx, "t-3"); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("Get() after delete error = %v, want ErrNotFound", err)
+	}
+}
+
+// testTaskDependents pins the DependsOn reverse-edge filter: it returns the
+// tasks whose Deps name the given id, scoped by the rest of the filter.
+func testTaskDependents(t *testing.T, be store.Backend) {
+	t.Helper()
+	ctx := context.Background()
+	repo := be.Tasks()
+
+	tasks := []*core.Task{
+		{ID: "a", ProjectID: "prj-1", Kind: core.KindTask, Title: "a", Status: core.StatusTodo},
+		{ID: "b", ProjectID: "prj-1", Kind: core.KindTask, Title: "b", Status: core.StatusTodo, Deps: []core.TaskID{"a"}},
+		{ID: "c", ProjectID: "prj-1", Kind: core.KindTask, Title: "c", Status: core.StatusTodo, Deps: []core.TaskID{"a", "b"}},
+		{ID: "d", ProjectID: "prj-2", Kind: core.KindTask, Title: "d", Status: core.StatusTodo, Deps: []core.TaskID{"a"}},
+	}
+	for _, task := range tasks {
+		if err := repo.Create(ctx, task); err != nil {
+			t.Fatalf("Create(%s) error = %v", task.ID, err)
+		}
+	}
+
+	scoped := func(id core.TaskID) store.TaskFilter {
+		return store.TaskFilter{ProjectID: "prj-1", DependsOn: &id}
+	}
+	assertTaskIDs(t, repo, ctx, scoped("a"), []core.TaskID{"b", "c"})
+	assertTaskIDs(t, repo, ctx, scoped("b"), []core.TaskID{"c"})
+	assertTaskIDs(t, repo, ctx, scoped("c"), nil)
+	// Without a project scope the filter spans projects.
+	assertTaskIDs(t, repo, ctx, store.TaskFilter{DependsOn: depPtr("a")}, []core.TaskID{"b", "c", "d"})
+
+	// Updating a task's deps reindexes its outgoing edges.
+	cleared := &core.Task{ID: "c", ProjectID: "prj-1", Kind: core.KindTask, Title: "c", Status: core.StatusTodo}
+	if err := repo.Update(ctx, cleared); err != nil {
+		t.Fatalf("Update(c) error = %v", err)
+	}
+	assertTaskIDs(t, repo, ctx, scoped("a"), []core.TaskID{"b"})
+
+	// Deleting a task removes its outgoing edges but leaves the records of
+	// tasks that still name it as a dependency.
+	if err := repo.Delete(ctx, "b"); err != nil {
+		t.Fatalf("Delete(b) error = %v", err)
+	}
+	assertTaskIDs(t, repo, ctx, scoped("a"), nil)
+	assertTaskIDs(t, repo, ctx, scoped("b"), nil)
+}
+
+func depPtr(id core.TaskID) *core.TaskID { return &id }
+
+func assertTaskIDs(t *testing.T, repo store.TaskRepo, ctx context.Context, filter store.TaskFilter, want []core.TaskID) {
+	t.Helper()
+	tasks, err := repo.List(ctx, filter)
+	if err != nil {
+		t.Fatalf("List(%+v) error = %v", filter, err)
+	}
+	got := make([]core.TaskID, 0, len(tasks))
+	for _, task := range tasks {
+		got = append(got, task.ID)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("List(%+v) ids = %v, want %v", filter, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("List(%+v) ids = %v, want %v", filter, got, want)
+		}
 	}
 }
 

@@ -78,3 +78,31 @@ func TestDocGetNotFound(t *testing.T) {
 		t.Fatal("doc get unknown id error = nil, want not found")
 	}
 }
+
+func TestDocListAndGetYAMLAreSnakeCase(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	docID := firstField(t, r.run("doc", "create", "-p", projectID, "-t", "Product spec", "-k", "spec"))
+
+	list := r.run("doc", "list", "-p", projectID, "-o", "yaml")
+	get := r.run("doc", "get", docID, "-o", "yaml")
+	for _, out := range []string{list, get} {
+		if !strings.Contains(out, "project_id:") || !strings.Contains(out, "kind: spec") {
+			t.Fatalf("doc yaml missing snake_case keys:\n%s", out)
+		}
+		if strings.Contains(out, "ProjectID") || strings.Contains(out, "CreatedAt") {
+			t.Fatalf("doc yaml leaked Go field names:\n%s", out)
+		}
+	}
+}
+
+func TestDocSearchJSONIsSnakeCase(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("doc", "create", "-p", projectID, "-t", "Terraform notes", "-k", "spec", "-b", "apply in devops")
+
+	out := r.run("doc", "search", "terraform", "-p", projectID, "-o", "json")
+	if !strings.Contains(out, `"project_id"`) || strings.Contains(out, `"ProjectID"`) {
+		t.Fatalf("doc search json should be snake_case:\n%s", out)
+	}
+}

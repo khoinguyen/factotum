@@ -112,7 +112,13 @@ func newDocCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			artifacts = deps.maybeRerank(cmd, args[0], artifacts, searchNoRerank)
-			return deps.emit(artifacts, func() {
+			docs := make([]artifactDoc, 0, len(artifacts))
+			for _, artifact := range artifacts {
+				doc := artifactDocFrom(artifact)
+				doc.Body = "" // results stay lightweight; bodies load via ft doc get
+				docs = append(docs, doc)
+			}
+			return deps.emit(docs, func() {
 				rows := make([][]string, 0, len(artifacts))
 				for _, artifact := range artifacts {
 					rows = append(rows, []string{string(artifact.ID), string(artifact.Kind), artifact.Title, string(artifact.ProjectID)})

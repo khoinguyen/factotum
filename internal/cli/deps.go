@@ -8,7 +8,7 @@ import (
 	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/judge"
-	"github.com/khoinguyen/factotum/pkg/judge/typesafe"
+	_ "github.com/khoinguyen/factotum/pkg/judge/typesafe" // register the default provider
 	"github.com/khoinguyen/factotum/pkg/rank"
 	"github.com/khoinguyen/factotum/pkg/registry"
 	"github.com/khoinguyen/factotum/pkg/render"
@@ -54,7 +54,7 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 		Out:            out,
 		Err:            errOut,
 		Getenv:         getenv,
-		Judge:          newJudge(getenv),
+		Judge:          newJudge(getenv, config.Config{}),
 		StoreFactories: registry.New[store.Factory](),
 		Rankers:        rank.Builtins(),
 		Renderers:      render.Builtins(),
@@ -63,21 +63,26 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 	return deps
 }
 
-// newJudge builds the judge from the environment. With no key it returns Disabled so
-// callers fall back and no request is ever attempted. The config file's
-// secrets.typesafe_api_key fallback is not wired yet (config.Config does not parse
-// [secrets]); until then the key must come from TYPESAFE_API_KEY.
-func newJudge(getenv func(string) string) judge.Judge {
-	key := typesafe.ResolveAPIKey(getenv, "")
-	if key == "" {
+// newJudge builds the judge for the configured provider. The provider is chosen by
+// name; pkg/judge owns the registry and each provider (typesafe is the default) owns
+// its options and environment. An unknown provider or a build error disables the
+// judge, so callers fall back.
+func newJudge(getenv func(string) string, cfg config.Config) judge.Judge {
+	provider := cfg.Judge.Provider
+	if provider == "" {
+		provider = "typesafe"
+	}
+	built, err := judge.New(provider, getenv, cfg.Judge.Options)
+	if err != nil || built == nil {
 		return judge.Disabled{}
 	}
-	return typesafe.New(typesafe.Config{APIKey: key})
+	return built
 }
 
 func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Config = cfg
 	d.Backend = backend
+	d.Judge = newJudge(d.Getenv, cfg)
 	d.Projects = app.NewProjectService(backend, d.Clock, d.IDs)
 	d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
 	d.Actors = app.NewActorService(backend, d.Clock, d.IDs)

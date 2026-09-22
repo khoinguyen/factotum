@@ -302,3 +302,78 @@ func TestValidate(t *testing.T) {
 		t.Fatal("Validate() error = nil, want error")
 	}
 }
+
+func TestLoadReadsJudgeProviderAndOptions(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[judge]
+provider = "typesafe"
+
+[typesafe]
+model = "jev-preview"
+base_url = "https://staging.typesafe.ai"
+secret_api_key = "sk-123"
+`)
+	cfg, err := Load(Input{UserPath: user, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Judge.Provider != "typesafe" {
+		t.Fatalf("Provider = %q, want typesafe", cfg.Judge.Provider)
+	}
+	if cfg.Judge.Options["model"] != "jev-preview" {
+		t.Fatalf("model = %q, want jev-preview", cfg.Judge.Options["model"])
+	}
+	if cfg.Judge.Options["secret_api_key"] != "sk-123" {
+		t.Fatalf("secret_api_key = %q, want sk-123", cfg.Judge.Options["secret_api_key"])
+	}
+}
+
+func TestJudgeProviderDefaultsToTypeSafe(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(Input{UserPath: filepath.Join(dir, "none.toml"), ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Judge.Provider != "typesafe" {
+		t.Fatalf("Provider = %q, want the typesafe default", cfg.Judge.Provider)
+	}
+	if cfg.Judge.Options == nil {
+		t.Fatal("Options = nil, want an empty map")
+	}
+}
+
+func TestProviderOptionsAreGeneric(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[judge]
+provider = "example"
+
+[example]
+endpoint = "https://example.test"
+retries = 4
+`)
+	cfg, err := Load(Input{UserPath: user, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Judge.Options["endpoint"] != "https://example.test" {
+		t.Fatalf("endpoint = %q", cfg.Judge.Options["endpoint"])
+	}
+	if cfg.Judge.Options["retries"] != "4" {
+		t.Fatalf("retries = %q, want 4", cfg.Judge.Options["retries"])
+	}
+}
+
+func TestProjectProviderOverridesUser(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", "[judge]\nprovider = \"user-provider\"\n")
+	project := writeConfig(t, dir, "project.toml", "project = \"p\"\n[judge]\nprovider = \"project-provider\"\n")
+	cfg, err := Load(Input{UserPath: user, ProjectPath: project, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Judge.Provider != "project-provider" {
+		t.Fatalf("Provider = %q, want project-provider", cfg.Judge.Provider)
+	}
+}

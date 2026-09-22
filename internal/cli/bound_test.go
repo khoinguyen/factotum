@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -59,7 +60,7 @@ func TestOutputPolicy(t *testing.T) {
 		{"default non-interactive", false, "", false, true, maxOutputBytes, maxOutputLines, false},
 		{"interactive defaults full", false, "", true, false, 0, 0, false},
 		{"full flag wins", true, "", false, false, 0, 0, false},
-		{"env overrides interactive", false, "1024", true, true, 1024, maxOutputLines, false},
+		{"env is a byte budget, no line cap", false, "1024", true, true, 1024, 0, false},
 		{"env unlimited", false, "unlimited", false, false, 0, 0, false},
 		{"env zero disables", false, "0", false, false, 0, 0, false},
 		{"env off disables", false, "off", false, false, 0, 0, false},
@@ -109,6 +110,43 @@ func TestTruncateWindowPassesSmallOutputThrough(t *testing.T) {
 	got := truncateWindow(data, outputLimit{Bytes: maxOutputBytes, Lines: maxOutputLines}, "/tmp/ft-out.txt")
 	if got != string(data) {
 		t.Fatalf("small output changed:\ngot  %q\nwant %q", got, string(data))
+	}
+}
+
+func TestExceedsLimitBoundary(t *testing.T) {
+	limit := outputLimit{Bytes: 32, Lines: 4}
+	if exceedsLimit([]byte(strings.Repeat("a", 32)), limit) {
+		t.Fatal("output exactly at the byte limit must not be truncated")
+	}
+	if !exceedsLimit([]byte(strings.Repeat("a", 33)), limit) {
+		t.Fatal("output one byte over the limit must be truncated")
+	}
+	if exceedsLimit([]byte("a\nb\nc\nd"), limit) {
+		t.Fatal("output exactly at the line limit must not be truncated")
+	}
+	if !exceedsLimit([]byte("a\nb\nc\nd\ne"), limit) {
+		t.Fatal("output one line over the limit must be truncated")
+	}
+}
+
+func TestCapBytesKeepsValidUTF8(t *testing.T) {
+	text := strings.Repeat("é", 10)
+	if got := capBytes(text, 5, true); !utf8.ValidString(got) {
+		t.Fatalf("head cap produced invalid UTF-8: %q", got)
+	}
+	if got := capBytes(text, 5, false); !utf8.ValidString(got) {
+		t.Fatalf("tail cap produced invalid UTF-8: %q", got)
+	}
+}
+
+func TestTruncateWindowWithoutPath(t *testing.T) {
+	data := []byte(bigBody(200, 10))
+	got := truncateWindow(data, outputLimit{Bytes: 500, Lines: 50}, "")
+	if !strings.Contains(got, "truncated") {
+		t.Fatalf("window is missing the truncation marker:\n%s", got)
+	}
+	if strings.Contains(got, "full output:") {
+		t.Fatalf("no path should be printed when the spill failed:\n%s", got)
 	}
 }
 

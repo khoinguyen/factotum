@@ -45,20 +45,22 @@ resolve your own refs once and pass them explicitly.
 
 1. **Pick the next task.** `ft task next` ranks ready work (or follow Khoi's named task). Skip any
    task that carries an open human decision — surface it to Khoi instead of building it.
-2. **Set up the builder's worktree.** The chief stays in the repo on `main`; **each subagent gets its
-   own directory** so branch switches never collide. Create the builder's worktree + branch before
-   spawning:
+2. **Set up each agent's worktree.** The chief stays in the repo on `main`; **every subagent,
+   including the reviewer, gets its own directory** so branch switches never collide — never start an
+   agent in the main checkout (a shared checkout moves its HEAD when the chief switches branches).
+   Create both worktrees before spawning:
    `git worktree add /tmp/ft-<t> -b ft/<t>-<short-brief> origin/main`
-   Pass that path to the builder; it commits there and never creates or switches a branch itself.
+   `git worktree add --detach /tmp/review-<t> origin/main`
+   Pass the builder its path; it commits there and never creates or switches a branch itself.
 3. **Lay out the workspace.** One workspace: chief left (full height), builder top-right, reviewer
    bottom-right. Name your own pane first so your subagents can find you:
    `cmux rename-tab --surface <chief-surface> chief`. Then, passing refs and starting each agent **in
    its own directory**:
    - `cmux new-split right --workspace <ws> --surface <chief-surface> --command 'cd /tmp/ft-<t> && opencode --prompt "load the single-task-builder skill; you are builder-<t>; work in /tmp/ft-<t> on branch ft/<t>-<short-brief>" --auto'`
      — builder in the new right pane, already in its worktree.
-   - `cmux new-split down --workspace <ws> --surface <builder-ref> --command 'cd <repo> && opencode --prompt "load the single-task-reviewer skill; you are reviewer-<t>" --auto'`
-     — reviewer stacked below the builder; it creates its own detached review worktree once the
-     branch is pushed (see the reviewer skill).
+   - `cmux new-split down --workspace <ws> --surface <builder-ref> --command 'cd /tmp/review-<t> && opencode --prompt "load the single-task-reviewer skill; you are reviewer-<t>" --auto'`
+     — reviewer stacked below the builder, in **its own** detached worktree; it checks out the branch
+     under review there once it is pushed (see the reviewer skill).
    - Name them: `cmux rename-tab --surface <builder-ref> builder-<t>` and the same for the reviewer.
    - Agent: **opencode**. Its positional arg is a project path, not a prompt, so pass the kickoff via
      `--prompt`; `--auto` runs it unattended. Start it with `cd <worktree> && opencode …` so the agent
@@ -70,7 +72,10 @@ resolve your own refs once and pass them explicitly.
      ref you give them).
    - to the reviewer: the task id, that `builder-<t>` will send the hand-off, and the same chief note.
 5. **Wait.** They run the build → hand-off → triage → verdict loop between themselves. Do not read
-   their diffs. Wait for the builder (or reviewer) to report back to you.
+   their diffs. Wait for the builder (or reviewer) to report back to you. They run unattended and must
+   never block on an interactive prompt; if one stalls on a question, nudge it (paste `proceed without
+   asking: decide and document, or report the blocker to the chief and stop`) and file a skill-bug
+   task if it repeats.
 6. **Briefly check.** Confirm: PR approved, `mise run ci` green, task status. That is the whole
    check — the reviewer did the deep verification. Then `gh pr merge <n> --rebase --delete-branch`,
    sync `main`, and `ft task done <t>`.

@@ -166,6 +166,66 @@ func TestFollowUpAskedOnlyForBelowThresholdDimensions(t *testing.T) {
 	}
 }
 
+// TestCriteriaUseTheTypeSafeWireShape guards the real API: a noul or choice
+// criteria must be an object, not an array (the API returns 422 for an array).
+// The fake judge ignores criteria, so this asserts the captured request.
+func TestCriteriaUseTheTypeSafeWireShape(t *testing.T) {
+	answers := dims(map[string]float64{"scope_bounded": 0.3})
+	answers["gap::scope_bounded"] = judge.Answer{Choice: "non-goals missing", Confidence: 0.9}
+	j := fake.New(answers)
+	if _, err := New(j).Run(context.Background(), spec()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	requests := j.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(requests))
+	}
+	for id, question := range requests[0].Questions {
+		criteria, ok := question.Criteria.(map[string]any)
+		if !ok {
+			t.Fatalf("noul %s criteria type = %T, want map[string]any", id, question.Criteria)
+		}
+		if _, ok := criteria["true"]; !ok {
+			t.Errorf("noul %s criteria missing the true key: %v", id, criteria)
+		}
+		if _, ok := criteria["false"]; !ok {
+			t.Errorf("noul %s criteria missing the false key: %v", id, criteria)
+		}
+	}
+	criteria, ok := requests[1].Questions["gap::scope_bounded"].Criteria.(map[string]any)
+	if !ok {
+		t.Fatalf("choice criteria type = %T, want map[string]any", requests[1].Questions["gap::scope_bounded"].Criteria)
+	}
+	for _, option := range []string{"non-goals missing", "none"} {
+		if _, ok := criteria[option]; !ok {
+			t.Errorf("choice criteria missing %q: %v", option, criteria)
+		}
+	}
+}
+
+func TestConfidenceDerivedFromNoulWhenAbsent(t *testing.T) {
+	// TypeSafe returns no confidence for a noul answer, so it must be derived
+	// from the probability rather than reported as 0.
+	answers := map[string]judge.Answer{}
+	for _, name := range dimensionNames {
+		answers[name] = judge.Answer{Probability: 0.9}
+	}
+	answers[holisticName] = judge.Answer{Probability: 0.9}
+	result := run(t, answers)
+	if result.Confidence < 0.79 || result.Confidence > 0.81 {
+		t.Fatalf("confidence = %v, want ~0.80 derived from p=0.9", result.Confidence)
+	}
+}
+
+func TestConfidenceUsesProvidedWhenPresent(t *testing.T) {
+	answers := dims(map[string]float64{})
+	answers["scope_bounded"] = judge.Answer{Probability: 0.9, Confidence: 0.5}
+	result := run(t, answers)
+	if result.Confidence != 0.5 {
+		t.Fatalf("confidence = %v, want the provided 0.5", result.Confidence)
+	}
+}
+
 func TestJudgeUnavailablePropagates(t *testing.T) {
 	j := fake.New(nil)
 	j.FailWith(judge.ErrUnavailable)

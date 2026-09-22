@@ -247,21 +247,25 @@ func plainSegments(line string) []string {
 	}
 }
 
-// ftInvocations returns the first `ft <words>` command in a plain segment, up to
-// the end of the segment.
+// ftInvocations returns every `ft <words>` command in a plain segment, each
+// running up to the next `ft` word or the end of the segment.
 func ftInvocations(segment string) []string {
 	fields := strings.Fields(segment)
-	for i, token := range fields {
-		if token != "ft" {
+	var out []string
+	for i := 0; i < len(fields); i++ {
+		if fields[i] != "ft" {
 			continue
 		}
-		args := strings.Join(fields[i+1:], " ")
-		if args == "" {
-			return nil
+		end := i + 1
+		for end < len(fields) && fields[end] != "ft" {
+			end++
 		}
-		return []string{"ft " + args}
+		if end > i+1 {
+			out = append(out, "ft "+strings.Join(fields[i+1:end], " "))
+		}
+		i = end - 1
 	}
-	return nil
+	return out
 }
 
 // commandInventory walks the cobra command tree and serializes the real command
@@ -331,13 +335,25 @@ func skillReferences(root *cobra.Command, line string) []skillRef {
 	var refs []skillRef
 	cmd := root
 	descending := true
+	skipNext := false
 	for _, token := range strings.Fields(line)[1:] {
+		if skipNext {
+			skipNext = false
+			continue
+		}
 		if strings.HasPrefix(token, "-") {
 			name := token
+			inline := false
 			if eq := strings.IndexByte(name, '='); eq >= 0 {
 				name = name[:eq]
+				inline = true
 			}
 			refs = append(refs, skillRef{line: line, flag: true, token: name, valid: hasFlag(cmd, name)})
+			// A space-separated value belongs to the flag, not to the command
+			// chain, so the next token must not be read as a subcommand.
+			if !inline && flagTakesValue(cmd, name) {
+				skipNext = true
+			}
 			continue
 		}
 		if !descending {
@@ -459,16 +475,35 @@ func hasFlag(cmd *cobra.Command, name string) bool {
 	if name == "-h" || name == "--help" {
 		return true
 	}
+	return lookupFlag(cmd, name) != nil
+}
+
+// lookupFlag finds a long or short flag on cmd or inherited from its parents.
+func lookupFlag(cmd *cobra.Command, name string) *pflag.Flag {
 	flags := cmd.Flags()
 	inherited := cmd.InheritedFlags()
 	switch {
 	case strings.HasPrefix(name, "--"):
-		long := name[2:]
-		return flags.Lookup(long) != nil || inherited.Lookup(long) != nil
+		if flag := flags.Lookup(name[2:]); flag != nil {
+			return flag
+		}
+		return inherited.Lookup(name[2:])
 	case strings.HasPrefix(name, "-"):
-		short := name[1:]
-		return flags.ShorthandLookup(short) != nil || inherited.ShorthandLookup(short) != nil
+		if flag := flags.ShorthandLookup(name[1:]); flag != nil {
+			return flag
+		}
+		return inherited.ShorthandLookup(name[1:])
 	default:
+		return nil
+	}
+}
+
+// flagTakesValue reports whether a known flag consumes the following token: a
+// boolean flag carries a default value and needs none.
+func flagTakesValue(cmd *cobra.Command, name string) bool {
+	flag := lookupFlag(cmd, name)
+	if flag == nil {
 		return false
 	}
+	return flag.NoOptDefVal == ""
 }

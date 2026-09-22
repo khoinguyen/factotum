@@ -81,6 +81,22 @@ A bug, TODO, missing test, or follow-up spotted while working is a task: create
 it and link it (a note, or `--dep`). Update the graph in the same session as the
 code.
 
+## Report bugs and friction back to Factotum
+
+```sh
+ft feedback create -b "next lists blocked tasks" --flow "ft task next"
+ft feedback create -b "..." -p <project> -r <repo>   # with originating context
+```
+
+`ft feedback create` stores the report as a task labeled `external-feedback` in
+the Factotum database, not the caller's project store, so a bug found while
+working on any project reaches the maintainers. It prints the stored task id. The
+sink is the project named by `--feedback-store` (default `factotum`), resolved
+from the machine-scoped `[projects.<id>]` entry; `--transport` selects the sink
+transport (only `db` ships today). The report collects the message, the
+command/flow involved, the `ft` version, and the originating project and repo;
+paths under `$HOME` and token-shaped strings are redacted before storing.
+
 ## Break a prompt into tasks
 
 ```sh

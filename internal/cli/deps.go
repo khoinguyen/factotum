@@ -19,6 +19,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/doctor"
 	"github.com/khoinguyen/factotum/pkg/embed"
 	_ "github.com/khoinguyen/factotum/pkg/embed/transport" // register the embedding providers
+	"github.com/khoinguyen/factotum/pkg/feedback"
 	"github.com/khoinguyen/factotum/pkg/judge"
 	_ "github.com/khoinguyen/factotum/pkg/judge/typesafe" // register the default provider
 	"github.com/khoinguyen/factotum/pkg/rank"
@@ -43,6 +44,9 @@ type Deps struct {
 	ActorRef     string
 	OutputFormat string
 	NoHints      bool
+	// UserConfigPath is the machine-scoped config path this invocation loaded,
+	// so a command can resolve another project's store from the same file.
+	UserConfigPath string
 	// Full disables output bounding for one invocation (--full).
 	Full bool
 	// IsTerminal reports whether a writer is attached to a terminal. It defaults
@@ -57,6 +61,9 @@ type Deps struct {
 	Renderers      *registry.Registry[render.Renderer]
 	Checks         *registry.Registry[check.Check]
 	Commands       *registry.Registry[CommandFactory]
+	// FeedbackTransports resolves feedback sink transports by name; the direct-DB
+	// transport is the only built-in today.
+	FeedbackTransports *registry.Registry[feedback.Factory]
 
 	Projects  *app.ProjectService
 	Tasks     *app.TaskService
@@ -142,6 +149,7 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 		Renderers:      render.Builtins(),
 	}
 	deps.Commands = builtinCommands()
+	deps.FeedbackTransports = feedback.Builtins()
 	return deps
 }
 

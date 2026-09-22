@@ -10,7 +10,7 @@ the shortest path to using it well as an agent.
 ft task next                    # the highest-ranked ready task (uses the default project)
 ft task next --for <actor>      # what a specific human or agent should pick up
 ft task next -n 5               # a shortlist
-ft task next --explain          # why tasks are excluded: blocked, snoozed, deps, not_before
+ft task next --explain          # why tasks are excluded; honors --for/--label/--repo/-n
 ft task get <task>              # full detail; its Next: block names the follow-up command
 ft graph render --project <p>   # the whole DAG as text
 ```
@@ -18,8 +18,9 @@ ft graph render --project <p>   # the whole DAG as text
 `ft task next` ranks ready tasks by what unblocks the most work, proximity to a
 milestone, the `--toward` target, and priority. Use it instead of scanning the
 list by hand. When a task is missing from the ranking, `ft task next --explain`
-lists each excluded task with its reason, and `ft task get <task>` prints a
-`not ready because:` line for the same reason.
+lists each excluded task with its reason, applying the same
+`--for`/`--label`/`--repo`/`-n` filters as ranking, and `ft task get <task>`
+prints a `not ready because:` line for the same reason.
 
 ## Move work through its lifecycle
 
@@ -54,6 +55,7 @@ ft task check <task>                           # run every advisory check, cache
 ft task check <task> --check grooming --force  # one check, recompute
 ft task get <task>                             # shows the cached checks: block (no network)
 ft task get <task> --fields checks             # just the checks block
+ft task get <task> --fields not_ready          # just the readiness diagnostic
 ft task decide <task> --ready --reason "why"   # record a human decision
 ft task decide <task> --clear                  # restore the judge verdict
 ```

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/graph"
 )
 
 // parseFieldList splits a comma-separated field list into ordered, non-empty
@@ -60,6 +61,8 @@ func formatFieldValue(value any) string {
 		return typed.UTC().Format(time.RFC3339)
 	case []string:
 		return strings.Join(typed, ", ")
+	case notReadyDoc:
+		return reasonLabel(graph.NotReadyReason{Code: graph.ReasonCode(typed.ReasonCode), Detail: typed.Detail})
 	case []checkResultDoc:
 		return summarizeChecks(typed)
 	default:

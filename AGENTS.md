@@ -120,6 +120,7 @@ Never claim a unit is done because the code "looks right". Run the tests.
 | `mise run lint` | Run golangci-lint. |
 | `mise run test` | `go test -race ./...`. |
 | `mise run cover` | Tests with a coverage profile. |
+| `mise run bench` | Hot-path benchmarks (in-process; budgets in `pkg/app/bench_test.go`). |
 | `mise run build` | Build the CLI to `./bin/ft` (never the installed binary). |
 | `mise run install` | Install the CLI to `~/.local/bin/ft` (explicit; build does not). |
 | `mise run hooks` | Install the git pre-commit hook. |

@@ -29,6 +29,10 @@ run = "go test -race ./..."
 description = "Run tests and print total coverage"
 run = "go test -race -covermode=atomic -coverprofile=coverage.out ./... && go tool cover -func=coverage.out"
 
+[tasks.bench]
+description = "Run hot-path benchmarks (in-process; see budgets in pkg/app/bench_test.go)"
+run = "go test -run '^$' -bench . -benchmem ./pkg/..."
+
 [tasks.build]
 description = "Build the ft CLI to ./bin/ft (never the installed binary)"
 run = """

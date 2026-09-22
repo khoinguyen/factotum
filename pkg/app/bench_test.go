@@ -128,8 +128,10 @@ func BenchmarkLoadSnapshot(b *testing.B) {
 }
 
 // BenchmarkTaskGraphFacts measures the bounded neighborhood read that backs
-// `task get`. Unlike LoadSnapshot it must not grow with the number of tasks, so
-// the per-op cost should stay flat across scales.
+// `task get`. The neighborhood load is constant, and sqlite resolves dependents
+// from its task_deps index, so sqlite is scale-flat. memory and jsonfile scan
+// their in-memory set for DependsOn, so they grow O(tasks) (still well within
+// the point budget); the benchmark tracks both.
 func BenchmarkTaskGraphFacts(b *testing.B) {
 	scales := map[string][]int{"memory": {1000, 10000, 50000}, "sqlite": {1000, 10000, 50000}, "jsonfile": {1000}}
 	ctx := context.Background()

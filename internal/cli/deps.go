@@ -312,9 +312,10 @@ func (d *Deps) parseWhen(ctx context.Context, value string, now time.Time) (time
 // that --rerank needs a key, rather than silently returning lexical order.
 // maybeRerank reorders a lexical shortlist by meaning when a judge is configured and
 // rerank is not disabled. Search must never fail because the judge is absent or slow,
-// so it falls back to the lexical order; a real failure is reported as a warning.
+// so it falls back to the lexical order; a real failure is reported as a warning. An
+// empty query is never reranked: it lists everything in scope.
 func (d *Deps) maybeRerank(cmd *cobra.Command, query string, artifacts []*core.Artifact, disabled bool) []*core.Artifact {
-	if disabled || len(artifacts) < 2 || d.Rerank == nil {
+	if disabled || len(artifacts) < 2 || d.Rerank == nil || len(store.LexicalTerms(query)) == 0 {
 		return artifacts
 	}
 	ordered, err := d.Rerank.Rerank(cmd.Context(), query, artifacts)
@@ -329,9 +330,10 @@ func (d *Deps) maybeRerank(cmd *cobra.Command, query string, artifacts []*core.A
 
 // maybeRerankTasks reorders a lexical task shortlist by meaning when a judge is
 // configured and rerank is not disabled. Like maybeRerank, it never fails a
-// search: it falls back to lexical order and warns on a real failure.
+// search: it falls back to lexical order and warns on a real failure, and it never
+// reranks an empty query (which lists everything in scope).
 func (d *Deps) maybeRerankTasks(cmd *cobra.Command, query string, tasks []*core.Task, disabled bool) []*core.Task {
-	if disabled || len(tasks) < 2 || d.Rerank == nil {
+	if disabled || len(tasks) < 2 || d.Rerank == nil || len(store.LexicalTerms(query)) == 0 {
 		return tasks
 	}
 	ordered, err := d.Rerank.RerankTasks(cmd.Context(), query, tasks)

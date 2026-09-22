@@ -593,8 +593,11 @@ func (r *taskRepo) Search(ctx context.Context, filter store.TaskFilter, query st
 	queryArgs := args
 	hasWhere := false
 	if len(terms) > 0 {
-		// FTS5 matches token prefixes; every term must appear (implicit AND).
-		statement = "SELECT t.data, bm25(tasks_fts, 10.0, 5.0, 1.0) AS rank FROM tasks_fts JOIN tasks t ON t.rowid = tasks_fts.rowid WHERE tasks_fts MATCH ?"
+		// FTS5 selects the candidate set (every term must appear as a prefix).
+		// The shared LexicalTaskScore orders it, so sqlite ranks exactly like the
+		// scan backends and bm25's term-frequency factor cannot promote a
+		// lower-ranked column over a title hit.
+		statement = "SELECT t.data FROM tasks_fts JOIN tasks t ON t.rowid = tasks_fts.rowid WHERE tasks_fts MATCH ?"
 		queryArgs = append([]any{ftsQuery(terms)}, args...)
 		hasWhere = true
 	}
@@ -615,14 +618,7 @@ func (r *taskRepo) Search(ctx context.Context, filter store.TaskFilter, query st
 	hits := make([]store.TaskSearchHit, 0)
 	for rows.Next() {
 		var data string
-		score := 0.0
-		if len(terms) > 0 {
-			var rank float64
-			if err := rows.Scan(&data, &rank); err != nil {
-				return nil, err
-			}
-			score = -rank
-		} else if err := rows.Scan(&data); err != nil {
+		if err := rows.Scan(&data); err != nil {
 			return nil, err
 		}
 		var task core.Task
@@ -630,6 +626,10 @@ func (r *taskRepo) Search(ctx context.Context, filter store.TaskFilter, query st
 			return nil, fmt.Errorf("decode task: %w", err)
 		}
 		if !store.MatchLabels(task, filter.Labels) {
+			continue
+		}
+		score, matched := store.LexicalTaskScore(&task, terms)
+		if !matched {
 			continue
 		}
 		hits = append(hits, store.TaskSearchHit{Task: &task, Score: score})

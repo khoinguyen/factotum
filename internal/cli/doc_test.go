@@ -4,7 +4,31 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/khoinguyen/factotum/pkg/judge"
+	"github.com/khoinguyen/factotum/pkg/judge/fake"
 )
+
+func TestDocSearchEmptyQueryKeepsAllWithJudge(t *testing.T) {
+	r := newRunner(t)
+	// A judge that claims nothing answers must not hide an empty-query listing.
+	r.judge = fake.New(map[string]judge.Answer{
+		"which":  {Confidence: 0},
+		"exists": {Probability: 0},
+	})
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("doc", "create", "-p", projectID, "-t", "Terraform notes", "-k", "spec", "-b", "apply in devops")
+	r.run("doc", "create", "-p", projectID, "-t", "Terraform scripts", "-k", "spec", "-b", "run it")
+
+	out := r.run("doc", "search", "", "-p", projectID, "-o", "json")
+	var docs []map[string]any
+	if err := json.Unmarshal([]byte(out), &docs); err != nil {
+		t.Fatalf("doc search json = %v\n%s", err, out)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("doc search empty query with a judge returned %d docs, want 2\n%s", len(docs), out)
+	}
+}
 
 func TestDocListJSONIsSnakeCase(t *testing.T) {
 	r := newRunner(t)

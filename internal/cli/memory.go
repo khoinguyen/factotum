@@ -23,11 +23,12 @@ type memoryEntry struct {
 }
 
 // memoryContextEntry is one line of the project briefing `ft memory context`
-// emits: enough to decide what to load, never the body.
+// emits: enough to decide what to load, never the body. id, title, and brief
+// are always present; task_id is set only when the memory is attached to a task.
 type memoryContextEntry struct {
 	ID    string `json:"id" yaml:"id"`
 	Title string `json:"title" yaml:"title"`
-	Brief string `json:"brief,omitempty" yaml:"brief,omitempty"`
+	Brief string `json:"brief" yaml:"brief"`
 	Task  string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
 }
 

@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/khoinguyen/factotum/pkg/check"
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -52,14 +54,18 @@ func (s *CheckService) Run(ctx context.Context, taskID core.TaskID, names []stri
 	}
 	spec := specFrom(task)
 	results := make([]check.Result, 0, len(selected))
+	var errs []error
 	for _, c := range selected {
 		result, err := s.runOne(ctx, task, spec, c, force)
 		if err != nil {
-			return nil, err
+			// Checks are independent: one failing check must not hide the
+			// results of the others.
+			errs = append(errs, fmt.Errorf("%s: %w", c.Name(), err))
+			continue
 		}
 		results = append(results, result)
 	}
-	return results, nil
+	return results, errors.Join(errs...)
 }
 
 func (s *CheckService) runOne(ctx context.Context, task *core.Task, spec check.Spec, c check.Check, force bool) (check.Result, error) {
@@ -156,15 +162,19 @@ func (s *CheckService) Decide(ctx context.Context, taskID core.TaskID, checkName
 }
 
 func (s *CheckService) clearDecision(ctx context.Context, task *core.Task, c check.Check) (check.Result, error) {
-	override, err := s.latestOverride(ctx, task, c)
+	// Delete every override, not just the newest: a task may carry several
+	// decisions, and clearing must not resurface an older one.
+	overrides, err := s.overrides(ctx, task, c)
 	if err != nil {
 		return check.Result{}, err
 	}
-	if override == nil {
+	if len(overrides) == 0 {
 		return check.Result{}, fmt.Errorf("%w: no human decision to clear for check %q", core.ErrNotFound, c.Name())
 	}
-	if err := s.backend.Artifacts().Delete(ctx, override.artifact.ID); err != nil {
-		return check.Result{}, err
+	for _, override := range overrides {
+		if err := s.backend.Artifacts().Delete(ctx, override.artifact.ID); err != nil {
+			return check.Result{}, err
+		}
 	}
 	if err := s.setHumanDecided(ctx, task, false); err != nil {
 		return check.Result{}, err
@@ -223,22 +233,22 @@ func (s *CheckService) latest(ctx context.Context, task *core.Task, c check.Chec
 	return best, nil
 }
 
-func (s *CheckService) latestOverride(ctx context.Context, task *core.Task, c check.Check) (*stored, error) {
+// overrides returns every human-decision artifact for a check, newest first.
+func (s *CheckService) overrides(ctx context.Context, task *core.Task, c check.Check) ([]*stored, error) {
 	all, err := s.artifacts(ctx, task)
 	if err != nil {
 		return nil, err
 	}
-	var best *stored
+	var found []*stored
 	for _, artifact := range all {
 		result, err := check.Unmarshal(artifact.Body)
 		if err != nil || !result.Override || result.Check != c.Name() || result.CheckVersion != c.Version() {
 			continue
 		}
-		if best == nil || newer(artifact, best.artifact) {
-			best = &stored{artifact: artifact, result: result}
-		}
+		found = append(found, &stored{artifact: artifact, result: result})
 	}
-	return best, nil
+	sort.Slice(found, func(i, j int) bool { return newer(found[i].artifact, found[j].artifact) })
+	return found, nil
 }
 
 func (s *CheckService) artifacts(ctx context.Context, task *core.Task) ([]*core.Artifact, error) {

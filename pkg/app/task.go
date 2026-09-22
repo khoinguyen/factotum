@@ -327,6 +327,18 @@ func (s *TaskService) Snooze(ctx context.Context, id core.TaskID, snooze core.Sn
 		if _, err := s.backend.Tasks().Get(ctx, *snooze.UntilTask); err != nil {
 			return nil, fmt.Errorf("snooze until task: %w", err)
 		}
+		// Reject a logical deadlock: if the until-task depends on this task
+		// (directly or transitively), neither can ever resolve. UntilTask is not
+		// a dependency edge, so the cycle detector does not see it.
+		dependents, err := s.transitiveDependents(ctx, task.ProjectID, id)
+		if err != nil {
+			return nil, err
+		}
+		for _, dependent := range dependents {
+			if dependent == *snooze.UntilTask {
+				return nil, fmt.Errorf("%w: %s cannot snooze until %s because %s depends on it", core.ErrInvalid, id, *snooze.UntilTask, *snooze.UntilTask)
+			}
+		}
 	}
 	stored := snooze
 	if snooze.Until != nil {
@@ -354,6 +366,24 @@ func (s *TaskService) Snooze(ctx context.Context, id core.TaskID, snooze core.Sn
 		return nil, err
 	}
 	return task, nil
+}
+
+// transitiveDependents returns the tasks that transitively depend on id in the
+// project's graph.
+func (s *TaskService) transitiveDependents(ctx context.Context, projectID core.ProjectID, id core.TaskID) ([]core.TaskID, error) {
+	tasks, err := s.backend.Tasks().List(ctx, store.TaskFilter{ProjectID: projectID})
+	if err != nil {
+		return nil, err
+	}
+	copied := make([]core.Task, 0, len(tasks))
+	for _, task := range tasks {
+		copied = append(copied, *task)
+	}
+	built, err := graph.New(copied, core.DefaultResolutionPolicy())
+	if err != nil {
+		return nil, err
+	}
+	return built.TransitiveDependents(id), nil
 }
 
 // Unsnooze removes a task's snooze.

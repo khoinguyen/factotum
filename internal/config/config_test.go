@@ -456,3 +456,73 @@ func TestProjectProviderOverridesUser(t *testing.T) {
 		t.Fatalf("Provider = %q, want project-provider", cfg.Judge.Provider)
 	}
 }
+
+func TestAgentDefaultsToCommandProvider(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(Input{
+		UserPath:    filepath.Join(dir, "user.toml"),
+		ProjectPath: filepath.Join(dir, "project.toml"),
+		Getenv:      emptyEnv,
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Agent.Provider != "command" {
+		t.Fatalf("Agent.Provider = %q, want command", cfg.Agent.Provider)
+	}
+	if cfg.Agent.Options == nil {
+		t.Fatal("Agent.Options = nil, want an empty map")
+	}
+}
+
+func TestAgentOptionsFromFile(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[agent]
+provider = "command"
+command = "claude -p"
+timeout = "30s"
+`)
+	cfg, err := Load(Input{UserPath: user, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Agent.Provider != "command" {
+		t.Fatalf("Agent.Provider = %q, want command", cfg.Agent.Provider)
+	}
+	if cfg.Agent.Options["command"] != "claude -p" || cfg.Agent.Options["timeout"] != "30s" {
+		t.Fatalf("Agent.Options = %+v, want the file command and timeout", cfg.Agent.Options)
+	}
+}
+
+func TestAgentEnvOverridesFiles(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[agent]
+provider = "command"
+command = "from-file"
+`)
+	cfg, err := Load(Input{
+		UserPath:    user,
+		ProjectPath: filepath.Join(dir, "none.toml"),
+		Getenv: func(key string) string {
+			switch key {
+			case "FACTOTUM_AGENT_PROVIDER":
+				return "custom"
+			case "FACTOTUM_AGENT_COMMAND":
+				return "from-env"
+			default:
+				return ""
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Agent.Provider != "custom" {
+		t.Fatalf("Agent.Provider = %q, want custom", cfg.Agent.Provider)
+	}
+	if cfg.Agent.Options["command"] != "from-env" {
+		t.Fatalf("Agent.Options[command] = %q, want from-env", cfg.Agent.Options["command"])
+	}
+}

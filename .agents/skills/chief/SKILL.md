@@ -83,11 +83,13 @@ resolve your own refs once and pass them explicitly.
    worktree, and spawn new `builder-<t2>`/`reviewer-<t2>` in the same right-column layout. **Never
    reuse a subagent across tasks** — a fresh context is the point.
    **Park an escalated pair** so the primary workspace stays chief + the current pair: create a
-   workspace named after the task and move the pair there —
-   `cmux new-workspace --name <t>` then
-   `cmux move-surface --surface <builder-ref> --workspace <t>` (same for the reviewer). The parked
-   workspace carries the task id so Khoi finds it; keep its worktrees — never delete work handed to
-   Khoi.
+   workspace named after the task and move the pair there, builder left, reviewer right.
+   `cmux new-workspace --name <t>` (it starts with a spare `Terminal` surface), then
+   `cmux move-surface --surface <builder-ref> --workspace <t>`,
+   `cmux move-surface --surface <reviewer-ref> --workspace <t>`,
+   `cmux split-off --surface <reviewer-ref> right --workspace <t>` (reviewer to the right pane), and
+   `cmux close-surface --surface <spare-terminal> --workspace <t>`. The workspace carries the task id
+   so Khoi finds it; keep its worktrees — never delete work handed to Khoi.
 
 ## Keep your own context small
 

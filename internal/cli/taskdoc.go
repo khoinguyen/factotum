@@ -30,6 +30,8 @@ type noteDoc struct {
 	Body      string    `json:"body" yaml:"body"`
 	Links     []linkDoc `json:"links,omitempty" yaml:"links,omitempty"`
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+	// System is read-only provenance: set with `ft task note create --system`.
+	System bool `json:"system,omitempty" yaml:"system,omitempty"`
 }
 
 type snoozeDoc struct {
@@ -86,7 +88,7 @@ func taskDocFrom(task *core.Task) taskDoc {
 	updatedAt := task.UpdatedAt
 	notes := make([]noteDoc, 0, len(task.Notes))
 	for _, note := range task.Notes {
-		entry := noteDoc{ID: note.ID, Author: string(note.Author), Body: note.Body, CreatedAt: note.CreatedAt}
+		entry := noteDoc{ID: note.ID, Author: string(note.Author), Body: note.Body, CreatedAt: note.CreatedAt, System: note.System}
 		for _, link := range note.Links {
 			entry.Links = append(entry.Links, linkDoc{Kind: string(link.Kind), URL: link.URL, Title: link.Title})
 		}

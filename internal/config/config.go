@@ -233,6 +233,23 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// StoreFor returns the storage configuration for a named project, read from the
+// machine-scoped user file. It follows the same precedence as the default
+// project: the [projects.<id>] entry first, then the file's top-level [store].
+// ok is false when neither scope configures a store, so a caller can refuse to
+// silently fall back to a process-local default.
+func StoreFor(userPath, project string) (Store, bool, error) {
+	var user userFile
+	if err := decode(userPath, &user); err != nil {
+		return Store{}, false, err
+	}
+	entry := user.Projects[project]
+	if entry.DBPath == "" && entry.Store.Backend == "" && user.Store.Backend == "" {
+		return Store{}, false, nil
+	}
+	return resolveStore(project, fileStore{}, entry, user.Store), true, nil
+}
+
 func resolveProject(getenv func(string) string, projectScoped, userDefault string) string {
 	if value := getenv("FACTOTUM_PROJECT"); value != "" {
 		return value

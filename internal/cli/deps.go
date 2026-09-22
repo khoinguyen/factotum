@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/khoinguyen/factotum/internal/config"
+	"github.com/khoinguyen/factotum/pkg/agent"
+	_ "github.com/khoinguyen/factotum/pkg/agent/command" // register the default provider
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/embed"
@@ -55,6 +57,12 @@ type Deps struct {
 	// JudgeOverride, when set, replaces the configured judge. Tests inject a fake
 	// here so judge-backed command paths run without a network.
 	JudgeOverride judge.Judge
+	// Agent is the inference port behind `ft prompt`. It is Disabled when no agent
+	// CLI is configured, so the command reports that clearly.
+	Agent agent.Agent
+	// AgentOverride, when set, replaces the configured agent. Tests inject a fake
+	// here so prompt-backed command paths run without a network.
+	AgentOverride agent.Agent
 	// Embedder is the optional embedding port. It is Disabled when no provider is
 	// configured, so vector recall is off by default and memory search stays lexical.
 	Embedder embed.Embedder
@@ -96,6 +104,7 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 		Err:            errOut,
 		Getenv:         getenv,
 		Judge:          newJudge(getenv, config.Config{}),
+		Agent:          agent.Disabled{},
 		Embedder:       embed.Disabled{},
 		StoreFactories: registry.New[store.Factory](),
 		Rankers:        rank.Builtins(),
@@ -121,6 +130,22 @@ func newJudge(getenv func(string) string, cfg config.Config) judge.Judge {
 	return built
 }
 
+// newAgent builds the inference agent for the configured provider. The default
+// (command) provider needs a configured agent CLI; with none it is Disabled, so
+// `ft prompt` reports that no agent is configured. An unknown provider or a build
+// error also disables it.
+func newAgent(getenv func(string) string, cfg config.Config) agent.Agent {
+	provider := cfg.Agent.Provider
+	if provider == "" {
+		provider = "command"
+	}
+	built, err := agent.New(provider, getenv, cfg.Agent.Options)
+	if err != nil || built == nil {
+		return agent.Disabled{}
+	}
+	return built
+}
+
 func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Config = cfg
 	d.Backend = backend
@@ -128,6 +153,11 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 		d.Judge = d.JudgeOverride
 	} else {
 		d.Judge = newJudge(d.Getenv, cfg)
+	}
+	if d.AgentOverride != nil {
+		d.Agent = d.AgentOverride
+	} else {
+		d.Agent = newAgent(d.Getenv, cfg)
 	}
 	d.When = app.NewWhenService(d.Judge)
 	d.Intent = app.NewIntentService(d.Judge)

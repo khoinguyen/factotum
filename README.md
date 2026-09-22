@@ -180,6 +180,22 @@ of model is detected as a mismatch, so run `ft memory reindex` to re-embed the w
 index. Writes stay best-effort — a memory is created even when the embedder is down, and
 its skipped vector is backfilled by the next edit or `ft memory reindex`.
 
+Deleting a memory (`ft memory delete`) drops its vector too, best-effort: the artifact is
+removed first, then the side index forgets its vector. The embedder is not called, so an
+outage never blocks a delete; but if the index write itself fails, `ft` warns
+`memory vector not removed` and the delete still succeeds, leaving an orphan vector. No
+command garbage-collects orphans — `ft memory reindex` re-embeds the memories that still
+exist but does not prune ids that are gone — though an orphan stays invisible because only
+live memories are recalled.
+
+A misconfigured provider disables vector recall instead of failing: an unknown provider,
+or `command` with no command, records the reason and warns once per command at the first
+vector operation (`memory create`/`update`/`search`, `memory reindex`), for example
+`embed provider "command" is not usable (check endpoint/command); vector recall disabled`.
+Writes and searches then stay lexical, and `ft memory reindex` is a usage error until the
+provider is fixed. `ft doctor` reports these same problems (and an endpoint with no model,
+which is silently lexical at runtime), so use it to diagnose.
+
 ## Soak gates
 
 A release is not trustworthy the moment it ships; you usually want a soak period

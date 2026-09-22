@@ -99,9 +99,9 @@ type Deps struct {
 	// diagnose a subsystem without touching the network or the PATH. Nil uses the
 	// transport prober.
 	DoctorProbe doctor.Prober
-	// DoctorFixRunner, when set, runs a `ft doctor --fix` shell command in tests
-	// instead of sh -c.
-	DoctorFixRunner func(ctx context.Context, command string, out io.Writer) error
+	// DoctorFixRunner, when set, runs a `ft doctor --fix` command in tests instead
+	// of exec.
+	DoctorFixRunner func(ctx context.Context, argv []string, out io.Writer) error
 
 	vectorCloser io.Closer
 	vectorWarned bool

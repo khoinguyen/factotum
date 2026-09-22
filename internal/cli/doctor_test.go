@@ -121,6 +121,20 @@ func TestDoctorFailsOnUnknownProvider(t *testing.T) {
 	}
 }
 
+func TestDoctorFailsWhenHTTPProviderHasNoModel(t *testing.T) {
+	r := newRunner(t)
+	r.doctorProbe = &fakeDoctorProbe{}
+	writeUserConfig(t, r, "[embed]\nprovider = \"openai\"\nendpoint = \"http://127.0.0.1:8080\"\n[typesafe]\nsecret_api_key = \"k\"\n")
+
+	out, err := r.runDoctorWithInput("", "doctor")
+	if !errors.Is(err, errDoctorFailed) {
+		t.Fatalf("a missing model leaves vector recall off, so doctor should fail: %v", err)
+	}
+	if !strings.Contains(out, "embed.model: fail") || !strings.Contains(out, "[embed] model") {
+		t.Fatalf("doctor output should flag the missing model:\n%s", out)
+	}
+}
+
 func TestDoctorModelMissingOffersFixAndFixApplies(t *testing.T) {
 	r := newRunner(t)
 	probe := &fakeDoctorProbe{modelErr: errors.New("not found")}
@@ -128,8 +142,8 @@ func TestDoctorModelMissingOffersFixAndFixApplies(t *testing.T) {
 	writeUserConfig(t, r, "[embed]\nprovider = \"ollama\"\nendpoint = \"http://127.0.0.1:11434\"\nmodel = \"m\"\n[typesafe]\nsecret_api_key = \"k\"\n")
 
 	var ran []string
-	r.fixRunner = func(_ context.Context, command string, _ io.Writer) error {
-		ran = append(ran, command)
+	r.fixRunner = func(_ context.Context, argv []string, _ io.Writer) error {
+		ran = append(ran, strings.Join(argv, " "))
 		probe.modelErr = nil
 		return nil
 	}
@@ -159,7 +173,7 @@ func TestDoctorInteractiveConsent(t *testing.T) {
 	writeUserConfig(t, r, "[embed]\nprovider = \"ollama\"\nendpoint = \"http://127.0.0.1:11434\"\nmodel = \"m\"\n[typesafe]\nsecret_api_key = \"k\"\n")
 
 	ran := false
-	r.fixRunner = func(_ context.Context, _ string, _ io.Writer) error {
+	r.fixRunner = func(_ context.Context, _ []string, _ io.Writer) error {
 		ran = true
 		probe.modelErr = nil
 		return nil

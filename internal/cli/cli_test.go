@@ -35,7 +35,7 @@ type runner struct {
 	getenv      func(string) string
 	isTerminal  func(io.Writer) bool
 	doctorProbe doctor.Prober
-	fixRunner   func(context.Context, string, io.Writer) error
+	fixRunner   func(context.Context, []string, io.Writer) error
 }
 
 func newRunner(t *testing.T) *runner {

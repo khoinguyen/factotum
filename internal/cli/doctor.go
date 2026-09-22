@@ -169,8 +169,8 @@ func (d *Deps) applyDoctorFix(ctx context.Context, check doctor.Check) error {
 		if run == nil {
 			run = runDoctorCommand
 		}
-		_, _ = fmt.Fprintf(d.Err, "ft: %s: running %s\n", check.Name, check.Action.Command)
-		if err := run(ctx, check.Action.Command, d.Err); err != nil {
+		_, _ = fmt.Fprintf(d.Err, "ft: %s: running %s\n", check.Name, strings.Join(check.Action.Argv, " "))
+		if err := run(ctx, check.Action.Argv, d.Err); err != nil {
 			return fmt.Errorf("fix %s: %w", check.Name, err)
 		}
 		return nil
@@ -181,10 +181,13 @@ func (d *Deps) applyDoctorFix(ctx context.Context, check doctor.Check) error {
 	}
 }
 
-// runDoctorCommand runs a provider fix command (for example `ollama pull`) and
-// streams its output to w.
-func runDoctorCommand(ctx context.Context, command string, w io.Writer) error {
-	process := exec.CommandContext(ctx, "sh", "-c", command)
+// runDoctorCommand runs a provider fix (for example `ollama pull`) directly, with
+// no shell, so a config-derived model name cannot inject arguments.
+func runDoctorCommand(ctx context.Context, argv []string, w io.Writer) error {
+	if len(argv) == 0 {
+		return fmt.Errorf("empty fix command")
+	}
+	process := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	process.Stdout = w
 	process.Stderr = w
 	return process.Run()
@@ -240,7 +243,7 @@ func doctorActionCommand(action *doctor.Action) string {
 	if action.Kind == doctor.ActionReindex {
 		return fmt.Sprintf("ft memory reindex -p %s", action.Project)
 	}
-	return action.Command
+	return strings.Join(action.Argv, " ")
 }
 
 func doctorSummary(report doctor.Report) string {

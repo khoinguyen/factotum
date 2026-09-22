@@ -55,6 +55,9 @@ func (p *Probe) HasModel(ctx context.Context, ep doctor.Endpoint) error {
 	}
 	defer func() { _ = response.Body.Close() }()
 	data, _ := io.ReadAll(response.Body)
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("%w: %s: %s", doctor.ErrAuth, response.Status, truncate(data))
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("embed: %s: %s", response.Status, truncate(data))
 	}

@@ -25,6 +25,51 @@ run = "golangci-lint run"
 description = "Run tests with the race detector"
 run = "go test -race ./..."
 
+[tasks.test-embed]
+description = "Opt-in real-embedding test (starts a llama.cpp container unless FACTOTUM_EMBED_TEST_ENDPOINT is set)"
+run = """
+set -eu
+endpoint="${FACTOTUM_EMBED_TEST_ENDPOINT:-}"
+model="${FACTOTUM_EMBED_TEST_MODEL:-nomic-ai/nomic-embed-text-v1.5-GGUF:Q4_K_M}"
+provider="${FACTOTUM_EMBED_TEST_PROVIDER:-openai}"
+container="${FACTOTUM_EMBED_TEST_CONTAINER:-ft-embed-test}"
+volume="${FACTOTUM_EMBED_TEST_VOLUME:-ft-llamacpp-models}"
+image="${FACTOTUM_EMBED_TEST_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}"
+port="${FACTOTUM_EMBED_TEST_PORT:-18080}"
+
+if [ -z "$endpoint" ]; then
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "no FACTOTUM_EMBED_TEST_ENDPOINT set and docker is not installed" >&2
+    echo "start an embedding server, then set FACTOTUM_EMBED_TEST_ENDPOINT to it" >&2
+    exit 1
+  fi
+  # The named volume keeps the downloaded model, so re-runs skip the download.
+  docker volume create "$volume" >/dev/null
+  docker rm -f "$container" >/dev/null 2>&1 || true
+  docker run -d --name "$container" -p "127.0.0.1:${port}:8080" -e LLAMA_CACHE=/cache -v "${volume}:/cache" "$image" --embeddings --host 0.0.0.0 --port 8080 --ctx-size 2048 -hf "$model" >/dev/null
+  endpoint="http://127.0.0.1:${port}"
+  trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT INT TERM
+  echo "waiting for ${endpoint}/health"
+  i=0
+  while [ "$i" -lt 180 ]; do
+    if curl -fsS "${endpoint}/health" >/dev/null 2>&1; then
+      break
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  if [ "$i" -ge 180 ]; then
+    echo "embedding server did not become healthy" >&2
+    exit 1
+  fi
+fi
+
+export FACTOTUM_EMBED_TEST_ENDPOINT="$endpoint"
+export FACTOTUM_EMBED_TEST_PROVIDER="$provider"
+export FACTOTUM_EMBED_TEST_MODEL="$model"
+go test -count=1 -run TestRealEmbedding -v ./internal/cli/
+"""
+
 [tasks.cover]
 description = "Run tests and print total coverage"
 run = "go test -race -covermode=atomic -coverprofile=coverage.out ./... && go tool cover -func=coverage.out"

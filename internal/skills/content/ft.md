@@ -85,7 +85,9 @@ ft memory delete <memory>
 A memory carries three things, all authored by the agent: a `title`, a one-line
 `brief` (what it is and when to load it), and the full `body`. `ft memory list`
 and `ft task context` show the brief; `ft memory get` returns the body. `ft`
-stores them verbatim and never generates them.
+stores them verbatim and never generates them. When a judge is configured,
+`ft memory create`/`update` advise (on stderr) when the entry supersedes or is
+strongly related to existing memory - reconcile it in the same session.
 
 `ft memory update` patches in place; `--task <task>` attaches the memory to a
 task and `--task ""` detaches it. Only memory artifacts are accepted: the verbs

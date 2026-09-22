@@ -7,7 +7,32 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/khoinguyen/factotum/pkg/app"
+	"github.com/khoinguyen/factotum/pkg/core"
 )
+
+func TestMemoryRelationNote(t *testing.T) {
+	if got := memoryRelationNote(app.MemoryRelation{Action: "unrelated"}); got != "" {
+		t.Fatalf("unrelated note = %q, want empty", got)
+	}
+	rel := app.MemoryRelation{Action: "supersedes", Candidate: &core.Artifact{ID: "art-1", Title: "Old"}, Confidence: 0.82}
+	note := memoryRelationNote(rel)
+	if !strings.Contains(note, "supersedes") || !strings.Contains(note, "art-1") || !strings.Contains(note, "0.82") {
+		t.Fatalf("note = %q", note)
+	}
+}
+
+func TestMemoryWriteNoAdvisoryWithoutJudge(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("memory", "create", "-p", projectID, "-t", "Deploy notes", "--brief", "old")
+
+	_, stderr := r.runSplit("memory", "create", "-p", projectID, "-t", "Deploy notes again", "--brief", "old")
+	if strings.Contains(stderr, "ft: note:") {
+		t.Fatalf("no judge should mean no relation advisory:\n%s", stderr)
+	}
+}
 
 func TestMemoryContextListsBriefs(t *testing.T) {
 	r := newRunner(t)

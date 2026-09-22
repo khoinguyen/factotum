@@ -22,15 +22,16 @@ without filling yours. Khoi, the human owner, speaks as `Khoi:`.
 2. **Prepare names.** For task `<t>` and a two-to-four-word brief: workspace/session names are
    `builder-<t>` and `reviewer-<t>`, and the branch is `ft/<t>-<short-brief>`.
 3. **Lay out the workspace.** The chief, builder, and reviewer all run in **one workspace**: the
-   chief in the left pane (full height), the builder top-right, the reviewer bottom-right. From the
-   chief's pane:
+   chief in the left pane (full height), the builder top-right, the reviewer bottom-right. Name your
+   own pane first so your subagents can find you: `cmux rename-tab chief`. Then, from the chief's
+   pane:
    - `cmux new-split right --command '<agent> "load the single-task-builder skill; you are builder-<t>"'`
      — builder in the new right pane.
    - `cmux new-split down --surface <builder-ref> --command '<agent> "load the single-task-reviewer skill; you are reviewer-<t>"'`
      — reviewer stacked below the builder, leaving the chief full-height on the left.
-   Name the surfaces `builder-<t>` and `reviewer-<t>` (`cmux rename-tab`) so each can find the other.
-   The left/right/top/bottom shape is the point: the chief can watch both panes without switching
-   anything.
+   Name the new surfaces `builder-<t>` and `reviewer-<t>` (`cmux rename-tab --surface <ref> <name>`) so
+   each can find the other. The left/right/top/bottom shape is the point: the chief can watch both
+   panes without switching anything.
 4. **Wire them.** Tell each the other's name, the task, and how to reach the chief (you). Your pane is
    named `chief`; give them that name and your surface ref.
    - to the builder: the task id, the branch `ft/<t>-<short-brief>`, that `reviewer-<t>` will review

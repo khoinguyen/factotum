@@ -163,6 +163,10 @@ func (d *Deps) runInit(cmd *cobra.Command, opts initOptions) error {
 	if userPath == "" {
 		return fmt.Errorf("cannot locate the machine config: set $HOME or pass --user-config")
 	}
+	// The project config is written where `ft` will later read it: the caller's
+	// --config, else the CWD-relative default. `ft init -p` registers the current
+	// directory, so run from a subdirectory it writes .factotum/config.toml under
+	// the CWD, not the git root.
 	projectPath := d.ProjectConfigPath
 	if projectPath == "" {
 		projectPath = config.DefaultPath

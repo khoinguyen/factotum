@@ -137,6 +137,55 @@ func TestTaskSearchEmptyQueryKeepsAllWithJudge(t *testing.T) {
 	}
 }
 
+// TestTaskSearchJSONIsSnakeCase pins the structured shape of a search hit to the
+// same snake_case entry as `task list`, so no Go field name leaks.
+func TestTaskSearchJSONIsSnakeCase(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("project", "repo", "create", projectID, "api")
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Terraform notes", "-r", "api", "--label", "cli"))
+
+	out := r.run("task", "search", "terraform", "-p", projectID, "-o", "json")
+	for _, want := range []string{`"id"`, `"project_id"`, `"repo"`, `"kind"`, `"title"`, `"status"`, `"priority"`, `"labels"`, `"created_at"`, `"updated_at"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("task search json missing %s:\n%s", want, out)
+		}
+	}
+	for _, leak := range []string{`"ID"`, `"ProjectID"`, `"Repo"`, `"Kind"`, `"Title"`, `"Status"`, `"Priority"`, `"Labels"`, `"AssigneeID"`, `"CreatedAt"`, `"UpdatedAt"`} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("task search json leaked Go field %s:\n%s", leak, out)
+		}
+	}
+
+	var entries []taskListEntry
+	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+		t.Fatalf("task search json: %v\n%s", err, out)
+	}
+	if len(entries) != 1 || entries[0].ID != taskID || entries[0].ProjectID != projectID ||
+		entries[0].Repo != "api" || entries[0].Kind != "task" || entries[0].Title != "Terraform notes" ||
+		entries[0].Status != "todo" || len(entries[0].Labels) != 1 || entries[0].Labels[0] != "cli" {
+		t.Fatalf("task search json = %+v", entries)
+	}
+}
+
+func TestTaskSearchYAMLIsSnakeCase(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("task", "create", "-p", projectID, "-t", "Terraform notes")
+
+	out := r.run("task", "search", "terraform", "-p", projectID, "-o", "yaml")
+	for _, want := range []string{"id:", "project_id:", "created_at:", "updated_at:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("task search yaml missing %s:\n%s", want, out)
+		}
+	}
+	for _, leak := range []string{"ProjectID", "CreatedAt", "UpdatedAt", "AssigneeID"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("task search yaml leaked Go field %s:\n%s", leak, out)
+		}
+	}
+}
+
 func TestTaskSearchRequiresQuery(t *testing.T) {
 	r := newRunner(t)
 	_, stderr := r.runSplit("task", "search")

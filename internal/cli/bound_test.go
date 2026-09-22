@@ -185,8 +185,13 @@ func TestOutputOverByteThresholdTruncatesAndSpills(t *testing.T) {
 		t.Fatalf("bounded output is missing head or tail:\n%s", out)
 	}
 	path := spillPath(t, out)
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("spill file %s should be gone after a normal exit, stat err = %v", path, err)
+	t.Cleanup(func() { _ = os.Remove(path) })
+	spilled, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("spill file %s should persist after a normal exit: %v", path, err)
+	}
+	if got := string(spilled); got != full {
+		t.Fatalf("spill file does not hold the full output: %d bytes, want %d", len(got), len(full))
 	}
 }
 

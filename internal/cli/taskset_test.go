@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/app"
-	"github.com/khoinguyen/factotum/pkg/store/builtins"
 )
 
 // runErr executes a command against the runner's store and returns the error,
@@ -17,13 +16,9 @@ func (r *runner) runErr(args ...string) error {
 	r.t.Helper()
 	var out bytes.Buffer
 	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &out, &out, nil)
-	deps.JudgeOverride = r.judge
-	builtins.RegisterAll(deps.StoreFactories)
+	base := r.setup(deps)
 	root := NewRoot(deps)
-	root.SetArgs(append([]string{
-		"--store", "jsonfile", "--store-opt", "path=" + r.path,
-		"--config", r.projectPath, "--user-config", r.userPath,
-	}, args...))
+	root.SetArgs(append(append([]string{}, base...), args...))
 	root.SetOut(&out)
 	root.SetErr(&out)
 	return root.Execute()

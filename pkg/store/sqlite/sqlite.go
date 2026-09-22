@@ -21,7 +21,8 @@ import (
 	"github.com/khoinguyen/factotum/pkg/store"
 )
 
-const defaultPath = ".factotum/factotum.db"
+// DefaultPath is the database path used when no path option is configured.
+const DefaultPath = ".factotum/factotum.db"
 
 const schema = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -207,7 +208,7 @@ func (b *Backend) notice(format string, args ...any) {
 func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
 	path := cfg.Option("path")
 	if path == "" {
-		path = defaultPath
+		path = DefaultPath
 	}
 	if dir := filepath.Dir(path); dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

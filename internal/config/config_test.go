@@ -365,6 +365,85 @@ retries = 4
 	}
 }
 
+func TestLoadReadsEmbedOptions(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[embed]
+provider = "ollama"
+endpoint = "http://localhost:11434"
+model = "nomic-embed-text"
+command = "llamafile --embedding"
+timeout = "5s"
+`)
+	cfg, err := Load(Input{UserPath: user, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Embed.Provider != "ollama" {
+		t.Fatalf("Embed.Provider = %q, want ollama", cfg.Embed.Provider)
+	}
+	if cfg.Embed.Options["endpoint"] != "http://localhost:11434" {
+		t.Fatalf("endpoint = %q", cfg.Embed.Options["endpoint"])
+	}
+	if cfg.Embed.Options["model"] != "nomic-embed-text" {
+		t.Fatalf("model = %q", cfg.Embed.Options["model"])
+	}
+	if cfg.Embed.Options["timeout"] != "5s" {
+		t.Fatalf("timeout = %q", cfg.Embed.Options["timeout"])
+	}
+}
+
+func TestEmbedDisabledByDefault(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(Input{UserPath: filepath.Join(dir, "none.toml"), ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Embed.Provider != "" {
+		t.Fatalf("Embed.Provider = %q, want empty (disabled)", cfg.Embed.Provider)
+	}
+	if cfg.Embed.Options == nil {
+		t.Fatal("Embed.Options = nil, want an empty map")
+	}
+}
+
+func TestEmbedEnvOverridesFiles(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[embed]
+provider = "ollama"
+endpoint = "http://from-file"
+model = "from-file"
+`)
+	cfg, err := Load(Input{
+		UserPath:    user,
+		ProjectPath: filepath.Join(dir, "none.toml"),
+		Getenv: func(key string) string {
+			switch key {
+			case "FACTOTUM_EMBED_PROVIDER":
+				return "openai"
+			case "FACTOTUM_EMBED_ENDPOINT":
+				return "http://from-env"
+			case "FACTOTUM_EMBED_MODEL":
+				return "from-env"
+			case "FACTOTUM_EMBED_COMMAND":
+				return "embed-cmd"
+			default:
+				return ""
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Embed.Provider != "openai" {
+		t.Fatalf("Embed.Provider = %q, want openai", cfg.Embed.Provider)
+	}
+	if cfg.Embed.Options["endpoint"] != "http://from-env" || cfg.Embed.Options["model"] != "from-env" || cfg.Embed.Options["command"] != "embed-cmd" {
+		t.Fatalf("Embed.Options = %+v, want env overrides", cfg.Embed.Options)
+	}
+}
+
 func TestProjectProviderOverridesUser(t *testing.T) {
 	dir := t.TempDir()
 	user := writeConfig(t, dir, "user.toml", "[judge]\nprovider = \"user-provider\"\n")

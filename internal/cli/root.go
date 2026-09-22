@@ -120,10 +120,7 @@ func NewRoot(deps *Deps) *cobra.Command {
 			return nil
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
-			if deps.Backend != nil {
-				return deps.Backend.Close()
-			}
-			return nil
+			return deps.Close()
 		},
 	}
 

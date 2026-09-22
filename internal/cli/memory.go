@@ -12,6 +12,7 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/embed"
 	"github.com/khoinguyen/factotum/pkg/judge"
 	"github.com/khoinguyen/factotum/pkg/store"
 )
@@ -55,6 +56,61 @@ func requireMemory(artifact *core.Artifact) error {
 
 // memoryRelationShortlist bounds how many lexical neighbours are judged.
 const memoryRelationShortlist = 8
+
+// memoryVectorLimit bounds how many vector candidates are added to a lexical
+// result before the merge. It matches the rerank shortlist so the judge never sees
+// more options than it already did.
+const memoryVectorLimit = 25
+
+// embedMemory stores the artifact's vector best-effort. A write never fails because
+// the embedder is down: the vector is skipped and backfilled on the next edit or by
+// `ft memory reindex`. With no provider (Disabled) it is a no-op.
+func (d *Deps) embedMemory(ctx context.Context, artifact *core.Artifact) {
+	if d.Retriever == nil || !d.Retriever.Enabled() {
+		return
+	}
+	if err := d.Retriever.Upsert(ctx, artifact); err != nil {
+		if errors.Is(err, embed.ErrUnavailable) {
+			return
+		}
+		d.warnf("memory vector skipped (%v); run `ft memory reindex` to backfill", err)
+	}
+}
+
+// vectorCandidates merges semantic candidates into the lexical result by reciprocal
+// rank fusion. Vector failure never fails a search: it warns once and keeps lexical
+// order, because the lexical path is always the baseline.
+func (d *Deps) vectorCandidates(ctx context.Context, project core.ProjectID, query string, lexical []*core.Artifact) []*core.Artifact {
+	if d.Retriever == nil || !d.Retriever.Enabled() {
+		return lexical
+	}
+	kind := core.ArtifactMemory
+	universe, err := d.Artifacts.List(ctx, store.ArtifactFilter{ProjectID: project, Kind: &kind})
+	if err != nil {
+		d.warnVector(err)
+		return lexical
+	}
+	candidates, err := d.Retriever.Retrieve(ctx, query, universe, memoryVectorLimit)
+	if err != nil {
+		d.warnVector(err)
+		return lexical
+	}
+	return app.RRF(lexical, candidates)
+}
+
+// warnVector reports the first vector fallback in a command, so a broken embedder
+// is visible without flooding the output.
+func (d *Deps) warnVector(err error) {
+	if d.vectorWarned {
+		return
+	}
+	d.vectorWarned = true
+	if errors.Is(err, app.ErrModelMismatch) {
+		d.warnf("vector index model mismatch (%v); using lexical order. Run `ft memory reindex`", err)
+		return
+	}
+	d.warnf("vector retrieval unavailable (%v); using lexical order", err)
+}
 
 // adviseMemoryRelation prints an advisory when a written memory supersedes or is
 // strongly related to an existing one, so the author can reconcile them. It is
@@ -197,6 +253,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 				hint{Command: fmt.Sprintf("ft memory list --project %s", artifact.ProjectID), About: "see all memory"}); err != nil {
 				return err
 			}
+			deps.embedMemory(cmd.Context(), artifact)
 			deps.adviseMemoryRelation(cmd.Context(), artifact)
 			return nil
 		},
@@ -247,6 +304,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			artifacts = deps.vectorCandidates(cmd.Context(), project, args[0], artifacts)
 			artifacts = deps.maybeRerank(cmd, args[0], artifacts, searchNoRerank)
 			entries := make([]memoryEntry, 0, len(artifacts))
 			for _, artifact := range artifacts {
@@ -351,6 +409,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			}, memoryGetHints(updated)...); err != nil {
 				return err
 			}
+			deps.embedMemory(cmd.Context(), updated)
 			deps.adviseMemoryRelation(cmd.Context(), updated)
 			return nil
 		},
@@ -412,6 +471,42 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 	}
 	contextCmd.Flags().StringVarP(&ctxProject, "project", "p", "", "filter by project id")
 
-	cmd.AddCommand(create, list, search, get, update, del, contextCmd)
+	var reindexProject string
+	reindex := &cobra.Command{
+		Use:   "reindex",
+		Short: "Re-embed the project's memory into the vector index",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if deps.Retriever == nil || !deps.Retriever.Enabled() {
+				return usageError(cmd, "no embedding provider configured; set [embed] provider or FACTOTUM_EMBED_PROVIDER")
+			}
+			project := deps.resolveProject(reindexProject)
+			if err := requireProject(cmd, project); err != nil {
+				return err
+			}
+			kind := core.ArtifactMemory
+			artifacts, err := deps.Artifacts.List(cmd.Context(), store.ArtifactFilter{ProjectID: project, Kind: &kind})
+			if err != nil {
+				return err
+			}
+			count, err := deps.Retriever.Reindex(cmd.Context(), artifacts)
+			if err != nil {
+				return fmt.Errorf("reindex memory: %w", err)
+			}
+			result := memoryReindexResult{Reindexed: count, Model: deps.Retriever.Model(), Project: string(project)}
+			return deps.emit(result, func() {
+				deps.printFields(f("reindexed", count), f("model", result.Model), f("project", result.Project))
+			}, hint{Command: fmt.Sprintf("ft memory search --project %s", project), About: "search with vector recall"})
+		},
+	}
+	reindex.Flags().StringVarP(&reindexProject, "project", "p", "", "filter by project id")
+
+	cmd.AddCommand(create, list, search, get, update, del, contextCmd, reindex)
 	return cmd
+}
+
+// memoryReindexResult is the lossless structured shape of `ft memory reindex`.
+type memoryReindexResult struct {
+	Reindexed int    `json:"reindexed" yaml:"reindexed"`
+	Model     string `json:"model" yaml:"model"`
+	Project   string `json:"project" yaml:"project"`
 }

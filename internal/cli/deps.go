@@ -12,12 +12,17 @@ import (
 	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/embed"
+	_ "github.com/khoinguyen/factotum/pkg/embed/transport" // register the embedding providers
 	"github.com/khoinguyen/factotum/pkg/judge"
 	_ "github.com/khoinguyen/factotum/pkg/judge/typesafe" // register the default provider
 	"github.com/khoinguyen/factotum/pkg/rank"
 	"github.com/khoinguyen/factotum/pkg/registry"
 	"github.com/khoinguyen/factotum/pkg/render"
 	"github.com/khoinguyen/factotum/pkg/store"
+	storesqlite "github.com/khoinguyen/factotum/pkg/store/sqlite"
+	"github.com/khoinguyen/factotum/pkg/vector"
+	vsqlite "github.com/khoinguyen/factotum/pkg/vector/sqlite"
 )
 
 type CommandFactory func(deps *Deps) *cobra.Command
@@ -50,6 +55,23 @@ type Deps struct {
 	// JudgeOverride, when set, replaces the configured judge. Tests inject a fake
 	// here so judge-backed command paths run without a network.
 	JudgeOverride judge.Judge
+	// Embedder is the optional embedding port. It is Disabled when no provider is
+	// configured, so vector recall is off by default and memory search stays lexical.
+	Embedder embed.Embedder
+	// EmbedderOverride, when set, replaces the configured embedder. Tests inject a
+	// fake here so vector-backed command paths run without a network.
+	EmbedderOverride embed.Embedder
+	// Vectors is the vector side index. Nil when no embedding provider is configured.
+	Vectors vector.Index
+	// VectorsOverride, when set, replaces the built side index. Tests inject an
+	// in-memory index here.
+	VectorsOverride vector.Index
+	// Retriever adds semantic candidates to memory search when the embedder and side
+	// index are both configured.
+	Retriever *app.VectorRetriever
+
+	vectorCloser io.Closer
+	vectorWarned bool
 	// When resolves natural-language date phrases. Nil until Attach, and its judge is
 	// Disabled without a key, so the deterministic formats still work.
 	When *app.WhenService
@@ -74,6 +96,7 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 		Err:            errOut,
 		Getenv:         getenv,
 		Judge:          newJudge(getenv, config.Config{}),
+		Embedder:       embed.Disabled{},
 		StoreFactories: registry.New[store.Factory](),
 		Rankers:        rank.Builtins(),
 		Renderers:      render.Builtins(),
@@ -115,6 +138,66 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
 	d.Actors = app.NewActorService(backend, d.Clock, d.IDs)
 	d.Artifacts = app.NewArtifactService(backend, d.Clock, d.IDs)
+	if d.EmbedderOverride != nil {
+		d.Embedder = d.EmbedderOverride
+	} else {
+		d.Embedder = newEmbed(d.Getenv, cfg)
+	}
+	if d.VectorsOverride != nil {
+		d.Vectors = d.VectorsOverride
+	} else {
+		d.Vectors = d.openVectors(cfg)
+	}
+	d.Retriever = app.NewVectorRetriever(d.Embedder, d.Vectors, cfg.Embed.Options["model"])
+}
+
+// Close releases the vector side index and the storage backend.
+func (d *Deps) Close() error {
+	if d.vectorCloser != nil {
+		_ = d.vectorCloser.Close()
+		d.vectorCloser = nil
+	}
+	if d.Backend != nil {
+		return d.Backend.Close()
+	}
+	return nil
+}
+
+// newEmbed builds the embedder for the configured provider. An unknown provider or
+// a build error disables it, so callers fall back to lexical retrieval.
+func newEmbed(getenv func(string) string, cfg config.Config) embed.Embedder {
+	if cfg.Embed.Provider == "" {
+		return embed.Disabled{}
+	}
+	built, err := embed.New(cfg.Embed.Provider, getenv, cfg.Embed.Options)
+	if err != nil || built == nil {
+		return embed.Disabled{}
+	}
+	return built
+}
+
+// openVectors opens the vector side index when an embedding provider is configured.
+// The index is a SQLite file beside the store file; without a store path (the memory
+// backend) it is in-process and does not persist. With no provider the index is nil,
+// so vector recall stays off.
+func (d *Deps) openVectors(cfg config.Config) vector.Index {
+	if cfg.Embed.Provider == "" {
+		return nil
+	}
+	path := cfg.Store.Options["path"]
+	if path == "" && cfg.Store.Backend == "sqlite" {
+		path = storesqlite.DefaultPath
+	}
+	if path == "" || path == ":memory:" {
+		return vector.NewMemory()
+	}
+	index, err := vsqlite.Open(path + ".vectors.db")
+	if err != nil {
+		d.warnf("vector index unavailable (%v); using lexical search", err)
+		return nil
+	}
+	d.vectorCloser = index
+	return index
 }
 
 // errWhenFormat names the accepted time forms for a usage error.

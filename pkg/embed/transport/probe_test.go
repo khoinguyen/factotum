@@ -75,6 +75,14 @@ func TestProbeHasModelRejectsErrorStatus(t *testing.T) {
 	}
 }
 
+func TestProbeHasModelReportsAuthFailure(t *testing.T) {
+	probe := NewProbe(&fakeDoer{status: http.StatusUnauthorized, body: `{"error":"bad key"}`})
+	err := probe.HasModel(context.Background(), doctor.Endpoint{Protocol: "openai", URL: "http://x", APIKey: "bad", Model: "m"})
+	if !errors.Is(err, doctor.ErrAuth) {
+		t.Fatalf("a 401 should be ErrAuth, got %v", err)
+	}
+}
+
 func TestProbeResolvable(t *testing.T) {
 	probe := newProbe(&fakeDoer{}, func(name string) (string, error) {
 		if name == "on-path" {

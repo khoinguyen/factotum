@@ -11,9 +11,14 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrAuth marks a probe failure caused by rejected credentials (HTTP 401/403). A
+// check can then recommend fixing the key instead of the model.
+var ErrAuth = errors.New("endpoint rejected the credentials")
 
 // Status is a check's outcome. The report's exit is derived from these: any Fail
 // fails the report, and a caller may treat Warn as a failure with --strict.
@@ -33,8 +38,9 @@ const (
 type Action struct {
 	// Kind is ActionCommand or ActionReindex.
 	Kind string `json:"kind" yaml:"kind"`
-	// Command is the shell command for ActionCommand.
-	Command string `json:"command,omitempty" yaml:"command,omitempty"`
+	// Argv is the exact command to run for ActionCommand, executed without a
+	// shell so a config-derived model name cannot inject arguments.
+	Argv []string `json:"argv,omitempty" yaml:"argv,omitempty"`
 	// Project is the project whose memory to re-embed for ActionReindex.
 	Project string `json:"project,omitempty" yaml:"project,omitempty"`
 	// Description is the human summary of what the fix does.
@@ -200,9 +206,9 @@ func embedProviderCheck(e Embed) Check {
 func embedTransportChecks(ctx context.Context, in Input) []Check {
 	e := in.Embed
 	var checks []Check
-	reachable := false
 	if e.Provider != "command" && e.Endpoint != "" {
 		endpoint := Endpoint{Protocol: e.Provider, URL: e.Endpoint, APIKey: e.APIKey, Model: e.Model}
+		reachable := false
 		if in.Probe != nil {
 			if err := in.Probe.Reachable(ctx, endpoint); err != nil {
 				checks = append(checks, Check{
@@ -216,9 +222,12 @@ func embedTransportChecks(ctx context.Context, in Input) []Check {
 				checks = append(checks, Check{Name: "embed.endpoint", Status: StatusOK, Summary: fmt.Sprintf("endpoint %s is reachable", e.Endpoint)})
 			}
 		}
-	}
-	if reachable && e.Model != "" && in.Probe != nil {
-		checks = append(checks, embedModelCheck(ctx, in.Probe, e))
+		switch {
+		case e.Model == "":
+			checks = append(checks, missingModelCheck(e))
+		case reachable && in.Probe != nil:
+			checks = append(checks, embedModelCheck(ctx, in.Probe, e))
+		}
 	}
 	if e.Command != "" {
 		checks = append(checks, embedCommandCheck(ctx, in.Probe, e.Command))
@@ -226,10 +235,29 @@ func embedTransportChecks(ctx context.Context, in Input) []Check {
 	return checks
 }
 
+// missingModelCheck reports an HTTP provider with no model: without it openVectors
+// stays nil and vector recall is silently off, so this is a failure, not a skip.
+func missingModelCheck(e Embed) Check {
+	return Check{
+		Name:           "embed.model",
+		Status:         StatusFail,
+		Summary:        fmt.Sprintf("provider %q has no model configured; vector recall is off", e.Provider),
+		Recommendation: "set [embed] model to the embedding model the endpoint serves",
+	}
+}
+
 // embedModelCheck reports whether the endpoint serves the configured model.
 func embedModelCheck(ctx context.Context, probe Prober, e Embed) Check {
 	endpoint := Endpoint{Protocol: e.Provider, URL: e.Endpoint, APIKey: e.APIKey, Model: e.Model}
 	if err := probe.HasModel(ctx, endpoint); err != nil {
+		if errors.Is(err, ErrAuth) {
+			return Check{
+				Name:           "embed.model",
+				Status:         StatusFail,
+				Summary:        fmt.Sprintf("endpoint %s rejected the credentials: %v", e.Endpoint, err),
+				Recommendation: "fix [embed] api_key (or the provider's key) so the endpoint accepts the request",
+			}
+		}
 		check := Check{
 			Name:           "embed.model",
 			Status:         StatusFail,
@@ -239,7 +267,7 @@ func embedModelCheck(ctx context.Context, probe Prober, e Embed) Check {
 		if e.Provider == "ollama" {
 			check.Action = &Action{
 				Kind:        ActionCommand,
-				Command:     "ollama pull " + e.Model,
+				Argv:        []string{"ollama", "pull", e.Model},
 				Description: "pull " + e.Model + " from the Ollama registry",
 			}
 		}

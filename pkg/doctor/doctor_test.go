@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -165,8 +166,49 @@ func TestDiagnoseMissingOllamaModelOffersPull(t *testing.T) {
 	if c.Status != StatusFail {
 		t.Fatalf("embed.model = %+v, want fail", c)
 	}
-	if c.Action == nil || c.Action.Kind != ActionCommand || c.Action.Command != "ollama pull nomic-embed-text" {
-		t.Fatalf("embed.model action = %+v, want `ollama pull nomic-embed-text`", c.Action)
+	if c.Action == nil || c.Action.Kind != ActionCommand || strings.Join(c.Action.Argv, " ") != "ollama pull nomic-embed-text" {
+		t.Fatalf("embed.model action = %+v, want argv [ollama pull nomic-embed-text]", c.Action)
+	}
+}
+
+func TestDiagnoseHTTPProviderWithoutModelFails(t *testing.T) {
+	embed := healthyEmbed()
+	embed.Model = ""
+	report := Diagnose(context.Background(), Input{
+		Embed: embed,
+		Judge: Judge{Provider: "typesafe", Known: true, KeySet: true},
+		Probe: &fakeProbe{},
+	})
+	if c := findCheck(t, report, "embed.provider"); c.Status != StatusOK {
+		t.Fatalf("a provider with an endpoint is still configured: %+v", c)
+	}
+	if c := findCheck(t, report, "embed.endpoint"); c.Status != StatusOK {
+		t.Fatalf("the endpoint can still be probed without a model: %+v", c)
+	}
+	c := findCheck(t, report, "embed.model")
+	if c.Status != StatusFail || !strings.Contains(c.Recommendation, "[embed] model") {
+		t.Fatalf("embed.model = %+v, want fail recommending [embed] model", c)
+	}
+	if !report.Failed() {
+		t.Fatal("a missing model leaves vector recall off, so the report must fail")
+	}
+}
+
+func TestDiagnoseAuthFailureRecommendsKey(t *testing.T) {
+	report := Diagnose(context.Background(), Input{
+		Embed: healthyEmbed(),
+		Judge: Judge{Provider: "typesafe", Known: true, KeySet: true},
+		Probe: &fakeProbe{modelErr: fmt.Errorf("%w: 401 Unauthorized", ErrAuth)},
+	})
+	c := findCheck(t, report, "embed.model")
+	if c.Status != StatusFail {
+		t.Fatalf("embed.model = %+v, want fail", c)
+	}
+	if !strings.Contains(c.Recommendation, "api_key") {
+		t.Fatalf("an auth failure should recommend the key, not a pull: %+v", c)
+	}
+	if c.Action != nil {
+		t.Fatalf("an auth failure has no auto-fix: %+v", c.Action)
 	}
 }
 

@@ -249,3 +249,21 @@ pkg/app             use-case services
 
 This project is developed test-first. See [AGENTS.md](AGENTS.md) for the workflow and the
 definition of done.
+
+### Real-embedding tests
+
+Vector recall is tested with fakes by default, so `mise run ci` stays hermetic and offline. To
+exercise a real embedding model, run the opt-in integration test:
+
+```sh
+mise run test-embed                                  # starts a llama.cpp container, then removes it
+FACTOTUM_EMBED_TEST_ENDPOINT=http://127.0.0.1:8080 mise run test-embed   # or use an endpoint you run
+```
+
+With no endpoint set the task starts `ghcr.io/ggml-org/llama.cpp:server`, caches the pinned
+`nomic-ai/nomic-embed-text-v1.5-GGUF:Q4_K_M` model in the `ft-llamacpp-models` Docker volume (so
+re-runs skip the download), waits for health, runs `TestRealEmbedding*`, then removes the
+container. The tests assert that a tokenless paraphrase (`provisioning` → the Terraform memory) is
+recalled, that vectors persist to the side index and `ft memory reindex` re-embeds against the
+model, and that a changed model is detected as a mismatch. `TestRealEmbeddingRecallEval` prints
+lexical versus vector recall@1/recall@3 and MRR over a handful of labeled memories.

@@ -168,7 +168,20 @@ func matchesTask(task core.Task, filter store.TaskFilter) bool {
 	if filter.Kind != nil && task.Kind != *filter.Kind {
 		return false
 	}
+	if filter.DependsOn != nil && !taskDependsOn(task, *filter.DependsOn) {
+		return false
+	}
 	return store.MatchLabels(task, filter.Labels)
+}
+
+// taskDependsOn reports whether task lists id among its direct dependencies.
+func taskDependsOn(task core.Task, id core.TaskID) bool {
+	for _, dep := range task.Deps {
+		if dep == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *taskRepo) Search(_ context.Context, filter store.TaskFilter, query string) ([]store.TaskSearchHit, error) {

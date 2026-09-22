@@ -70,7 +70,7 @@ const backupRetention = 5
 
 // currentSchemaVersion is the schema version this binary writes. It is a var so
 // tests can exercise pending and failing migrations.
-var currentSchemaVersion = 4
+var currentSchemaVersion = 5
 
 // nowFunc is overridable in tests so backup names are deterministic.
 var nowFunc = time.Now
@@ -86,6 +86,7 @@ var migrations = []migration{
 	{version: 2, apply: migrateV2},
 	{version: 3, apply: migrateV3},
 	{version: 4, apply: migrateV4},
+	{version: 5, apply: migrateV5},
 }
 
 // migrateV1 creates the base schema and the pre-release additive columns.
@@ -232,6 +233,54 @@ func migrateV4(ctx context.Context, tx *sql.Tx) error {
 	for _, item := range entries {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO tasks_fts(rowid, title, description, notes) VALUES (?, ?, ?, ?)", item.rowid, item.title, item.body, item.notes); err != nil {
 			return fmt.Errorf("index task: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateV5 adds task_deps, a reverse index over dependency edges, and backfills
+// it from every task's stored Deps. It lets DependsOn resolve a task's direct
+// dependents with an index lookup instead of scanning and decoding every task.
+func migrateV5(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS task_deps (
+  task_id TEXT NOT NULL,
+  dep_id  TEXT NOT NULL,
+  PRIMARY KEY (task_id, dep_id)
+)`); err != nil {
+		return fmt.Errorf("task_deps: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS idx_task_deps_dep ON task_deps(dep_id)"); err != nil {
+		return fmt.Errorf("index task_deps: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT id, data FROM tasks")
+	if err != nil {
+		return fmt.Errorf("read tasks: %w", err)
+	}
+	type edge struct{ task, dep string }
+	var edges []edge
+	for rows.Next() {
+		var id, data string
+		if err := rows.Scan(&id, &data); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		var task core.Task
+		if err := json.Unmarshal([]byte(data), &task); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("decode task: %w", err)
+		}
+		for _, dep := range task.Deps {
+			edges = append(edges, edge{task: id, dep: string(dep)})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	_ = rows.Close()
+	for _, e := range edges {
+		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO task_deps (task_id, dep_id) VALUES (?, ?)", e.task, e.dep); err != nil {
+			return fmt.Errorf("index task dep: %w", err)
 		}
 	}
 	return nil
@@ -509,6 +558,9 @@ func (r *taskRepo) Create(ctx context.Context, task *core.Task) error {
 	if err := indexTask(ctx, tx, task); err != nil {
 		return err
 	}
+	if err := indexTaskDeps(ctx, tx, task); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -557,6 +609,14 @@ func taskFilterConditions(filter store.TaskFilter) ([]string, []any) {
 func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.Task, error) {
 	query := "SELECT data FROM tasks"
 	conditions, args := taskFilterConditions(filter)
+	if filter.DependsOn != nil {
+		// Resolve the reverse edge by driving from the dependency index. CROSS
+		// JOIN fixes the join order, so the planner visits only the dependents
+		// instead of scanning every task in the project.
+		query = "SELECT t.data FROM task_deps d CROSS JOIN tasks t ON t.id = d.task_id"
+		conditions = append([]string{"d.dep_id = ?"}, conditions...)
+		args = append([]any{string(*filter.DependsOn)}, args...)
+	}
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -588,6 +648,10 @@ func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.T
 func (r *taskRepo) Search(ctx context.Context, filter store.TaskFilter, query string) ([]store.TaskSearchHit, error) {
 	terms := store.LexicalTerms(query)
 	conditions, args := taskFilterConditions(filter)
+	if filter.DependsOn != nil {
+		conditions = append(conditions, "id IN (SELECT task_id FROM task_deps WHERE dep_id = ?)")
+		args = append(args, string(*filter.DependsOn))
+	}
 
 	statement := "SELECT t.data FROM tasks t"
 	queryArgs := args
@@ -666,6 +730,9 @@ func (r *taskRepo) Update(ctx context.Context, task *core.Task) error {
 	if err := indexTask(ctx, tx, task); err != nil {
 		return err
 	}
+	if err := indexTaskDeps(ctx, tx, task); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -703,6 +770,9 @@ func (r *taskRepo) UpdateExpected(ctx context.Context, task *core.Task, expected
 	if err := indexTask(ctx, tx, task); err != nil {
 		return err
 	}
+	if err := indexTaskDeps(ctx, tx, task); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -726,6 +796,9 @@ func (r *taskRepo) Delete(ctx context.Context, id core.TaskID) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM tasks_fts WHERE rowid = ?", rowid); err != nil {
 		return fmt.Errorf("unindex task: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM task_deps WHERE task_id = ?", string(id)); err != nil {
+		return fmt.Errorf("unindex task deps: %w", err)
+	}
 	return tx.Commit()
 }
 
@@ -740,6 +813,20 @@ func indexTask(ctx context.Context, tx *sql.Tx, task *core.Task) error {
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO tasks_fts(rowid, title, description, notes) VALUES (?, ?, ?, ?)", rowid, task.Title, task.Description, notesText(task)); err != nil {
 		return fmt.Errorf("index task: %w", err)
+	}
+	return nil
+}
+
+// indexTaskDeps (re)writes the task's outgoing dependency edges in the reverse
+// index, so DependsOn can find dependents without scanning tasks.
+func indexTaskDeps(ctx context.Context, tx *sql.Tx, task *core.Task) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM task_deps WHERE task_id = ?", string(task.ID)); err != nil {
+		return fmt.Errorf("clear task deps: %w", err)
+	}
+	for _, dep := range task.Deps {
+		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO task_deps (task_id, dep_id) VALUES (?, ?)", string(task.ID), string(dep)); err != nil {
+			return fmt.Errorf("index task dep: %w", err)
+		}
 	}
 	return nil
 }

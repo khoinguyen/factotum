@@ -38,6 +38,10 @@ type TaskFilter struct {
 	Statuses  []core.TaskStatus
 	Kind      *core.TaskKind
 	Labels    []string
+	// DependsOn, when set, keeps only tasks that declare the given task id in
+	// their Deps, i.e. the direct dependents of that id. It is a reverse-edge
+	// lookup, so a backend should serve it without scanning every task.
+	DependsOn *core.TaskID
 }
 
 // MatchLabels reports whether task carries every label in labels (AND).

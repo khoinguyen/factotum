@@ -27,6 +27,7 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 	cmd.AddCommand(
 		newTaskCreateCommand(deps),
 		newTaskListCommand(deps),
+		newTaskSearchCommand(deps),
 		newTaskGetCommand(deps),
 		newTaskContextCommand(deps),
 		newTaskUpdateCommand(deps),
@@ -159,6 +160,51 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 	list.Flags().StringArrayVarP(&kinds, "kind", "k", nil, "filter by kind")
 	list.Flags().StringArrayVarP(&labels, "label", "l", nil, "filter by label (repeatable; all must match)")
 	return list
+}
+
+func newTaskSearchCommand(deps *Deps) *cobra.Command {
+	var projectID, repo string
+	var statuses, kinds, labels []string
+	var noRerank bool
+
+	search := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search task titles, descriptions, and notes",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectID = string(deps.resolveProject(projectID))
+			filter := store.TaskFilter{ProjectID: core.ProjectID(projectID), Labels: labels}
+			if repo != "" {
+				filter.Repo = &repo
+			}
+			for _, status := range statuses {
+				filter.Statuses = append(filter.Statuses, core.TaskStatus(status))
+			}
+			if len(kinds) > 0 {
+				kind := core.TaskKind(kinds[0])
+				filter.Kind = &kind
+			}
+			tasks, err := deps.Tasks.Search(cmd.Context(), filter, args[0])
+			if err != nil {
+				return err
+			}
+			tasks = deps.maybeRerankTasks(cmd, args[0], tasks, noRerank)
+			return deps.emit(tasks, func() {
+				rows := make([][]string, 0, len(tasks))
+				for _, task := range tasks {
+					rows = append(rows, []string{string(task.ID), string(task.Kind), task.Title, string(task.Status), string(task.ProjectID), deps.repoValue(task.Repo)})
+				}
+				deps.printTable([]string{"ID", "KIND", "TITLE", "STATUS", "PROJECT", "REPO"}, rows)
+			}, taskSearchHints(tasks, projectID)...)
+		},
+	}
+	search.Flags().StringVarP(&projectID, "project", "p", "", "filter by project id")
+	search.Flags().StringVarP(&repo, "repo", "r", "", "filter by repository name")
+	search.Flags().StringArrayVarP(&statuses, "status", "s", nil, "filter by status (repeatable)")
+	search.Flags().StringArrayVarP(&kinds, "kind", "k", nil, "filter by kind")
+	search.Flags().StringArrayVarP(&labels, "label", "l", nil, "filter by label (repeatable; all must match)")
+	search.Flags().BoolVar(&noRerank, "no-rerank", false, "keep lexical order instead of reranking by meaning")
+	return search
 }
 
 func newTaskGetCommand(deps *Deps) *cobra.Command {

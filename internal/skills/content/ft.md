@@ -80,6 +80,7 @@ Without a configured agent, `ft prompt` reports a clear error.
 
 ```sh
 ft task list -p <project> --status todo
+ft task search "<query>"        # titles, descriptions, and notes (terms ANDed, prefix match)
 ft task get <task>              # description, deps, dependents, notes, memory
 ft task context <task>          # task + deps + notes + memory + recent events
 ft doc search "<query>"         # specs and docs (terms ANDed, prefix match)
@@ -87,6 +88,11 @@ ft doc get <artifact>           # read one spec/doc back
 ft memory search "<query>"      # agent memory (same lexical search)
 ft memory get <memory>          # read one memory back
 ```
+
+`ft task search` ranks a title match above a description match above a note match,
+with deterministic ties. When a judge is configured it then reranks the shortlist by
+meaning; `--no-rerank` keeps the lexical order, and a search never fails because the
+judge is absent or slow.
 
 ## Memory
 

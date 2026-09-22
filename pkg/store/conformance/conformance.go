@@ -19,6 +19,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("Project", func(t *testing.T) { testProject(t, factory(t)) })
 	t.Run("Actor", func(t *testing.T) { testActor(t, factory(t)) })
 	t.Run("Task", func(t *testing.T) { testTask(t, factory(t)) })
+	t.Run("TaskSearch", func(t *testing.T) { testTaskSearch(t, factory(t)) })
 	t.Run("Artifact", func(t *testing.T) { testArtifact(t, factory(t)) })
 	t.Run("ArtifactSearch", func(t *testing.T) { testArtifactSearch(t, factory(t)) })
 	t.Run("Event", func(t *testing.T) { testEvent(t, factory(t)) })
@@ -287,6 +288,87 @@ func testTask(t *testing.T, be store.Backend) {
 	if _, err := repo.Get(ctx, "t-3"); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("Get() after delete error = %v, want ErrNotFound", err)
 	}
+}
+
+func testTaskSearch(t *testing.T, be store.Backend) {
+	t.Helper()
+	ctx := context.Background()
+	repo := be.Tasks()
+
+	tasks := []*core.Task{
+		{ID: "t-title", ProjectID: "prj-1", Repo: "backend", Kind: core.KindTask, Title: "Terraform notes", Description: "apply in devops", Status: core.StatusTodo},
+		{ID: "t-body", ProjectID: "prj-1", Kind: core.KindTask, Title: "run scripts", Description: "terraform then kubectl", Status: core.StatusInProgress, Labels: []string{"groomed"}},
+		{ID: "t-note", ProjectID: "prj-1", Kind: core.KindMilestone, Title: "unrelated", Description: "nothing here", Status: core.StatusTodo, Notes: []core.Note{{ID: "note-1", Body: "terraform in the notes"}}},
+		{ID: "t-other", ProjectID: "prj-2", Kind: core.KindTask, Title: "Kubernetes notes", Description: "cluster upgrade", Status: core.StatusTodo},
+	}
+	for _, task := range tasks {
+		if err := repo.Create(ctx, task); err != nil {
+			t.Fatalf("Create(%s) error = %v", task.ID, err)
+		}
+	}
+
+	prj := store.TaskFilter{ProjectID: "prj-1"}
+	milestone := core.KindMilestone
+	todo := core.StatusTodo
+
+	// Title outranks description, which outranks notes.
+	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TaskID{"t-title", "t-body", "t-note"})
+	assertTaskSearch(t, repo, ctx, prj, "terra", []core.TaskID{"t-title", "t-body", "t-note"})     // prefix
+	assertTaskSearch(t, repo, ctx, prj, "TERRAFORM", []core.TaskID{"t-title", "t-body", "t-note"}) // case-insensitive
+	assertTaskSearch(t, repo, ctx, prj, "terraform apply", []core.TaskID{"t-title"})               // all terms
+	assertTaskSearch(t, repo, ctx, prj, "terraform kubectl", []core.TaskID{"t-body"})              // description vs notes
+	assertTaskSearch(t, repo, ctx, prj, "notes", []core.TaskID{"t-title", "t-note"})               // title vs notes
+	assertTaskSearch(t, repo, ctx, prj, "kubernetes", nil)                                         // other project
+	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1", Statuses: []core.TaskStatus{todo}}, "terraform", []core.TaskID{"t-title", "t-note"})
+	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1", Kind: &milestone}, "terraform", []core.TaskID{"t-note"})
+	backendRepo := "backend"
+	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1", Repo: &backendRepo}, "terraform", []core.TaskID{"t-title"})
+	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1", Labels: []string{"groomed"}}, "terraform", []core.TaskID{"t-body"})
+
+	// Empty query returns everything in scope, ordered by title then id.
+	assertTaskSearch(t, repo, ctx, prj, "", []core.TaskID{"t-body", "t-title", "t-note"})
+
+	// Repeating a query is deterministic.
+	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TaskID{"t-title", "t-body", "t-note"})
+
+	// Updates reindex the title, description, and notes.
+	updated := &core.Task{ID: "t-title", ProjectID: "prj-1", Repo: "backend", Kind: core.KindTask, Title: "Rust notes", Description: "cargo build", Status: core.StatusTodo, Notes: []core.Note{{ID: "note-x", Body: "reindexprobe note"}}}
+	if err := repo.Update(ctx, updated); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TaskID{"t-body", "t-note"})
+	assertTaskSearch(t, repo, ctx, prj, "cargo", []core.TaskID{"t-title"})
+	assertTaskSearch(t, repo, ctx, prj, "reindexprobe", []core.TaskID{"t-title"})
+
+	// Deletes unindex.
+	if err := repo.Delete(ctx, "t-body"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TaskID{"t-note"})
+}
+
+func assertTaskSearch(t *testing.T, repo store.TaskRepo, ctx context.Context, filter store.TaskFilter, query string, want []core.TaskID) {
+	t.Helper()
+	hits, err := repo.Search(ctx, filter, query)
+	if err != nil {
+		t.Fatalf("Search(%q) error = %v", query, err)
+	}
+	if len(hits) != len(want) {
+		t.Fatalf("Search(%q) = %v, want %v", query, taskHitIDs(hits), want)
+	}
+	for i, id := range want {
+		if hits[i].Task.ID != id {
+			t.Fatalf("Search(%q) = %v, want %v", query, taskHitIDs(hits), want)
+		}
+	}
+}
+
+func taskHitIDs(hits []store.TaskSearchHit) []core.TaskID {
+	out := make([]core.TaskID, 0, len(hits))
+	for _, hit := range hits {
+		out = append(out, hit.Task.ID)
+	}
+	return out
 }
 
 func testArtifactSearch(t *testing.T, be store.Backend) {

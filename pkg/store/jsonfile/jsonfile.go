@@ -237,6 +237,26 @@ func matchesTask(task core.Task, filter store.TaskFilter) bool {
 	return store.MatchLabels(task, filter.Labels)
 }
 
+func (r *taskRepo) Search(_ context.Context, filter store.TaskFilter, query string) ([]store.TaskSearchHit, error) {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	terms := store.LexicalTerms(query)
+	hits := make([]store.TaskSearchHit, 0)
+	for _, task := range r.backend.state.Tasks {
+		if !matchesTask(task, filter) {
+			continue
+		}
+		score, matched := store.LexicalTaskScore(&task, terms)
+		if !matched {
+			continue
+		}
+		cloned := clone.Task(task)
+		hits = append(hits, store.TaskSearchHit{Task: &cloned, Score: score})
+	}
+	store.SortTaskSearchHits(hits)
+	return hits, nil
+}
+
 func (r *taskRepo) Update(_ context.Context, task *core.Task) error {
 	r.backend.mu.Lock()
 	defer r.backend.mu.Unlock()

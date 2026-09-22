@@ -30,11 +30,70 @@ type RerankService struct {
 
 func NewRerankService(j judge.Judge) *RerankService { return &RerankService{judge: j} }
 
+// rerankCandidate is the field set the reranker needs from any hit. Artifacts and
+// tasks both map onto it, so the two share one judge request and ordering.
+type rerankCandidate struct {
+	id    string
+	title string
+	brief string
+	body  string
+}
+
 // Rerank orders candidates by how well they answer query. Candidates must arrive in
 // fast-search order; only the top rerankShortlistLimit are reranked. It returns an
 // empty slice when no candidate answers the query, the input order when the judge is
 // unsure, and judge.ErrUnavailable when no judge is configured.
 func (s *RerankService) Rerank(ctx context.Context, query string, candidates []*core.Artifact) ([]*core.Artifact, error) {
+	inputs := make([]rerankCandidate, len(candidates))
+	byID := make(map[string]*core.Artifact, len(candidates))
+	for i, candidate := range candidates {
+		inputs[i] = rerankCandidate{
+			id:    string(candidate.ID),
+			title: candidate.Title,
+			brief: candidate.Brief,
+			body:  candidate.Body,
+		}
+		byID[string(candidate.ID)] = candidate
+	}
+	ordered, err := s.rerank(ctx, query, inputs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*core.Artifact, 0, len(ordered))
+	for _, candidate := range ordered {
+		out = append(out, byID[candidate.id])
+	}
+	return out, nil
+}
+
+// RerankTasks orders task candidates by how well they answer query, with the same
+// two-stage contract as Rerank: it only reorders the shortlist the store returned.
+func (s *RerankService) RerankTasks(ctx context.Context, query string, candidates []*core.Task) ([]*core.Task, error) {
+	inputs := make([]rerankCandidate, len(candidates))
+	byID := make(map[string]*core.Task, len(candidates))
+	for i, candidate := range candidates {
+		inputs[i] = rerankCandidate{
+			id:    string(candidate.ID),
+			title: candidate.Title,
+			body:  candidate.Description,
+		}
+		byID[string(candidate.ID)] = candidate
+	}
+	ordered, err := s.rerank(ctx, query, inputs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*core.Task, 0, len(ordered))
+	for _, candidate := range ordered {
+		out = append(out, byID[candidate.id])
+	}
+	return out, nil
+}
+
+// rerank runs the shared two-stage rerank over candidates and returns them in the
+// judge's order. It returns an empty slice when no candidate answers the query, the
+// input order when the judge is unsure, and judge.ErrUnavailable with no judge.
+func (s *RerankService) rerank(ctx context.Context, query string, candidates []rerankCandidate) ([]rerankCandidate, error) {
 	if len(candidates) == 0 {
 		return candidates, nil
 	}
@@ -46,7 +105,7 @@ func (s *RerankService) Rerank(ctx context.Context, query string, candidates []*
 	}
 	criteria := make(map[string]any, len(candidates))
 	for _, candidate := range candidates {
-		criteria[string(candidate.ID)] = nil
+		criteria[candidate.id] = nil
 	}
 	response, err := s.judge.Ask(ctx, judge.Request{
 		State: rerankState(query, candidates),
@@ -61,36 +120,36 @@ func (s *RerankService) Rerank(ctx context.Context, query string, candidates []*
 		return nil, err
 	}
 	if response.Answers["exists"].Probability < rerankExistsFloor {
-		return []*core.Artifact{}, nil
+		return []rerankCandidate{}, nil
 	}
 	which := response.Answers["which"]
 	if which.Confidence < rerankMinConfidence {
 		return candidates, nil
 	}
-	ordered := append([]*core.Artifact(nil), candidates...)
+	ordered := append([]rerankCandidate(nil), candidates...)
 	sort.SliceStable(ordered, func(i, j int) bool {
-		return which.Probabilities[string(ordered[i].ID)] > which.Probabilities[string(ordered[j].ID)]
+		return which.Probabilities[ordered[i].id] > which.Probabilities[ordered[j].id]
 	})
 	return ordered, nil
 }
 
 // rerankState tags each candidate with its id so the Choice options are the ids, and
 // the answer is always a real candidate.
-func rerankState(query string, candidates []*core.Artifact) string {
+func rerankState(query string, candidates []rerankCandidate) string {
 	var builder strings.Builder
 	builder.WriteString("QUERY: ")
 	builder.WriteString(query)
 	builder.WriteString("\n\nCANDIDATES:\n")
 	for _, candidate := range candidates {
-		builder.WriteString(string(candidate.ID))
+		builder.WriteString(candidate.id)
 		builder.WriteString(" | ")
-		builder.WriteString(candidate.Title)
-		if brief := collapse(candidate.Brief); brief != "" {
+		builder.WriteString(candidate.title)
+		if brief := collapse(candidate.brief); brief != "" {
 			builder.WriteString("\n    ")
 			builder.WriteString(brief)
 		}
 		builder.WriteString("\n    ")
-		builder.WriteString(collapse(candidate.Body))
+		builder.WriteString(collapse(candidate.body))
 		builder.WriteString("\n")
 	}
 	return builder.String()

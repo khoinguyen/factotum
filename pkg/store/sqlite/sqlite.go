@@ -70,7 +70,7 @@ const backupRetention = 5
 
 // currentSchemaVersion is the schema version this binary writes. It is a var so
 // tests can exercise pending and failing migrations.
-var currentSchemaVersion = 3
+var currentSchemaVersion = 4
 
 // nowFunc is overridable in tests so backup names are deterministic.
 var nowFunc = time.Now
@@ -85,6 +85,7 @@ var migrations = []migration{
 	{version: 1, apply: migrateV1},
 	{version: 2, apply: migrateV2},
 	{version: 3, apply: migrateV3},
+	{version: 4, apply: migrateV4},
 }
 
 // migrateV1 creates the base schema and the pre-release additive columns.
@@ -187,6 +188,50 @@ func migrateV3(ctx context.Context, tx *sql.Tx) error {
 	for _, item := range entries {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO artifacts_fts(rowid, title, brief, body) VALUES (?, ?, ?, ?)", item.rowid, item.title, item.brief, item.body); err != nil {
 			return fmt.Errorf("index artifact: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateV4 adds the FTS5 index over task titles, descriptions, and note bodies
+// and backfills it from existing rows.
+func migrateV4(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, "CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(title, description, notes)"); err != nil {
+		return fmt.Errorf("tasks_fts: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT rowid, data FROM tasks")
+	if err != nil {
+		return fmt.Errorf("read tasks: %w", err)
+	}
+	type entry struct {
+		rowid int64
+		title string
+		body  string
+		notes string
+	}
+	var entries []entry
+	for rows.Next() {
+		var rowid int64
+		var data string
+		if err := rows.Scan(&rowid, &data); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		var task core.Task
+		if err := json.Unmarshal([]byte(data), &task); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("decode task: %w", err)
+		}
+		entries = append(entries, entry{rowid: rowid, title: task.Title, body: task.Description, notes: notesText(&task)})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	_ = rows.Close()
+	for _, item := range entries {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO tasks_fts(rowid, title, description, notes) VALUES (?, ?, ?, ?)", item.rowid, item.title, item.body, item.notes); err != nil {
+			return fmt.Errorf("index task: %w", err)
 		}
 	}
 	return nil
@@ -451,13 +496,20 @@ func (r *taskRepo) Create(ctx context.Context, task *core.Task) error {
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx,
-		"INSERT INTO tasks (id, project_id, repo, kind, status, data) VALUES (?, ?, ?, ?, ?, ?)",
-		string(task.ID), string(task.ProjectID), task.Repo, string(task.Kind), string(task.Status), data)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("begin task create: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO tasks (id, project_id, repo, kind, status, data) VALUES (?, ?, ?, ?, ?, ?)",
+		string(task.ID), string(task.ProjectID), task.Repo, string(task.Kind), string(task.Status), data); err != nil {
 		return fmt.Errorf("insert task: %w", err)
 	}
-	return nil
+	if err := indexTask(ctx, tx, task); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *taskRepo) Get(ctx context.Context, id core.TaskID) (*core.Task, error) {
@@ -476,8 +528,9 @@ func (r *taskRepo) Get(ctx context.Context, id core.TaskID) (*core.Task, error) 
 	return &task, nil
 }
 
-func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.Task, error) {
-	query := "SELECT data FROM tasks"
+// taskFilterConditions builds the WHERE conditions for a task filter. Labels
+// are a JSON array column, so they are applied in Go via store.MatchLabels.
+func taskFilterConditions(filter store.TaskFilter) ([]string, []any) {
 	var conditions []string
 	var args []any
 	if filter.ProjectID != "" {
@@ -498,6 +551,12 @@ func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.T
 		conditions = append(conditions, "kind = ?")
 		args = append(args, string(*filter.Kind))
 	}
+	return conditions, args
+}
+
+func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.Task, error) {
+	query := "SELECT data FROM tasks"
+	conditions, args := taskFilterConditions(filter)
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -526,6 +585,62 @@ func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.T
 	return out, rows.Err()
 }
 
+func (r *taskRepo) Search(ctx context.Context, filter store.TaskFilter, query string) ([]store.TaskSearchHit, error) {
+	terms := store.LexicalTerms(query)
+	conditions, args := taskFilterConditions(filter)
+
+	statement := "SELECT t.data FROM tasks t"
+	queryArgs := args
+	hasWhere := false
+	if len(terms) > 0 {
+		// FTS5 matches token prefixes; every term must appear (implicit AND).
+		statement = "SELECT t.data, bm25(tasks_fts, 10.0, 5.0, 1.0) AS rank FROM tasks_fts JOIN tasks t ON t.rowid = tasks_fts.rowid WHERE tasks_fts MATCH ?"
+		queryArgs = append([]any{ftsQuery(terms)}, args...)
+		hasWhere = true
+	}
+	if len(conditions) > 0 {
+		if hasWhere {
+			statement += " AND " + strings.Join(conditions, " AND ")
+		} else {
+			statement += " WHERE " + strings.Join(conditions, " AND ")
+		}
+	}
+	statement += " ORDER BY t.id"
+
+	rows, err := r.db.QueryContext(ctx, statement, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("search tasks: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	hits := make([]store.TaskSearchHit, 0)
+	for rows.Next() {
+		var data string
+		score := 0.0
+		if len(terms) > 0 {
+			var rank float64
+			if err := rows.Scan(&data, &rank); err != nil {
+				return nil, err
+			}
+			score = -rank
+		} else if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var task core.Task
+		if err := json.Unmarshal([]byte(data), &task); err != nil {
+			return nil, fmt.Errorf("decode task: %w", err)
+		}
+		if !store.MatchLabels(task, filter.Labels) {
+			continue
+		}
+		hits = append(hits, store.TaskSearchHit{Task: &task, Score: score})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	store.SortTaskSearchHits(hits)
+	return hits, nil
+}
+
 func (r *taskRepo) Update(ctx context.Context, task *core.Task) error {
 	exists, err := rowExists(ctx, r.db, "SELECT 1 FROM tasks WHERE id = ?", string(task.ID))
 	if err != nil {
@@ -538,13 +653,20 @@ func (r *taskRepo) Update(ctx context.Context, task *core.Task) error {
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx,
-		"UPDATE tasks SET project_id = ?, repo = ?, kind = ?, status = ?, data = ? WHERE id = ?",
-		string(task.ProjectID), task.Repo, string(task.Kind), string(task.Status), data, string(task.ID))
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("begin task update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE tasks SET project_id = ?, repo = ?, kind = ?, status = ?, data = ? WHERE id = ?",
+		string(task.ProjectID), task.Repo, string(task.Kind), string(task.Status), data, string(task.ID)); err != nil {
 		return fmt.Errorf("update task: %w", err)
 	}
-	return nil
+	if err := indexTask(ctx, tx, task); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *taskRepo) UpdateExpected(ctx context.Context, task *core.Task, expected time.Time) error {
@@ -578,22 +700,57 @@ func (r *taskRepo) UpdateExpected(ctx context.Context, task *core.Task, expected
 		string(task.ProjectID), task.Repo, string(task.Kind), string(task.Status), encoded, string(task.ID)); err != nil {
 		return fmt.Errorf("update task: %w", err)
 	}
+	if err := indexTask(ctx, tx, task); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (r *taskRepo) Delete(ctx context.Context, id core.TaskID) error {
-	result, err := r.db.ExecContext(ctx, "DELETE FROM tasks WHERE id = ?", string(id))
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("delete task: %w", err)
+		return fmt.Errorf("begin task delete: %w", err)
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
+	defer func() { _ = tx.Rollback() }()
+	var rowid int64
+	err = tx.QueryRowContext(ctx, "SELECT rowid FROM tasks WHERE id = ?", string(id)).Scan(&rowid)
+	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: task %s", core.ErrNotFound, id)
 	}
+	if err != nil {
+		return fmt.Errorf("find task: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE id = ?", string(id)); err != nil {
+		return fmt.Errorf("delete task: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM tasks_fts WHERE rowid = ?", rowid); err != nil {
+		return fmt.Errorf("unindex task: %w", err)
+	}
+	return tx.Commit()
+}
+
+// indexTask (re)writes the task's row in the FTS index.
+func indexTask(ctx context.Context, tx *sql.Tx, task *core.Task) error {
+	var rowid int64
+	if err := tx.QueryRowContext(ctx, "SELECT rowid FROM tasks WHERE id = ?", string(task.ID)).Scan(&rowid); err != nil {
+		return fmt.Errorf("task rowid: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM tasks_fts WHERE rowid = ?", rowid); err != nil {
+		return fmt.Errorf("unindex task: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO tasks_fts(rowid, title, description, notes) VALUES (?, ?, ?, ?)", rowid, task.Title, task.Description, notesText(task)); err != nil {
+		return fmt.Errorf("index task: %w", err)
+	}
 	return nil
+}
+
+// notesText joins the task's note bodies for the FTS notes column.
+func notesText(task *core.Task) string {
+	parts := make([]string, 0, len(task.Notes))
+	for _, note := range task.Notes {
+		parts = append(parts, note.Body)
+	}
+	return strings.Join(parts, "\n")
 }
 
 type actorRepo struct{ db *sql.DB }

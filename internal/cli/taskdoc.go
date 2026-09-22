@@ -136,6 +136,42 @@ func taskDocFrom(task *core.Task) taskDoc {
 	return doc
 }
 
+// taskListEntry is the stable, snake_case shape of one `task list` row. Its
+// keys are a deliberate subset of taskDoc's, so a single parser handles both
+// `task get` and `task list`.
+type taskListEntry struct {
+	ID        string    `json:"id" yaml:"id"`
+	ProjectID string    `json:"project_id" yaml:"project_id"`
+	Repo      string    `json:"repo" yaml:"repo"`
+	Kind      string    `json:"kind" yaml:"kind"`
+	Title     string    `json:"title" yaml:"title"`
+	Status    string    `json:"status" yaml:"status"`
+	Priority  int       `json:"priority" yaml:"priority"`
+	Labels    []string  `json:"labels" yaml:"labels"`
+	Assignee  string    `json:"assignee,omitempty" yaml:"assignee,omitempty"`
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" yaml:"updated_at"`
+}
+
+func taskListEntryFrom(task *core.Task) taskListEntry {
+	entry := taskListEntry{
+		ID:        string(task.ID),
+		ProjectID: string(task.ProjectID),
+		Repo:      task.Repo,
+		Kind:      string(task.Kind),
+		Title:     task.Title,
+		Status:    string(task.Status),
+		Priority:  task.Priority,
+		Labels:    append([]string{}, task.Labels...),
+		CreatedAt: task.CreatedAt,
+		UpdatedAt: task.UpdatedAt,
+	}
+	if task.AssigneeID != nil {
+		entry.Assignee = string(*task.AssigneeID)
+	}
+	return entry
+}
+
 func snoozeDocFrom(snooze core.Snooze) *snoozeDoc {
 	doc := &snoozeDoc{Indefinite: snooze.Indefinite}
 	if snooze.Until != nil {

@@ -75,6 +75,7 @@ Memory is a first-class, searchable artifact for durable agent knowledge:
 ```sh
 ft memory create -p <project> -t "Title" --brief "when to load me" -b "What to remember"
 ft memory list -p <project>
+ft memory context -p <project>       # briefs of all memory: when to load which
 ft memory search "<query>" -p <project>
 ft memory get <memory>
 ft memory update <memory> [-t "Title"] [--brief "..."] [-b "Content" | -f file] [--task <task>]

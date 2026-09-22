@@ -9,6 +9,67 @@ import (
 	"testing"
 )
 
+func TestMemoryContextListsBriefs(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "work"))
+	r.run("memory", "create", "-p", projectID, "-t", "Deploy notes", "--brief", "load before deploys", "-b", "SECRET BODY", "--task", taskID)
+	r.run("memory", "create", "-p", projectID, "-t", "Other", "--brief", "when relevant")
+
+	out := r.run("memory", "context", "-p", projectID)
+	for _, want := range []string{"Deploy notes", "load before deploys", "Other", "when relevant", taskID} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("memory context missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "SECRET BODY") {
+		t.Fatalf("memory context should not inline bodies:\n%s", out)
+	}
+}
+
+func TestMemoryContextJSON(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "work"))
+	memoryID := firstField(t, r.run("memory", "create", "-p", projectID, "-t", "Deploy notes", "--brief", "load before deploys", "--task", taskID))
+
+	out := r.run("memory", "context", "-p", projectID, "-o", "json")
+	var entries []struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+		Brief string `json:"brief"`
+		Task  string `json:"task_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+		t.Fatalf("memory context json: %v\n%s", err, out)
+	}
+	if len(entries) != 1 || entries[0].ID != memoryID || entries[0].Title != "Deploy notes" || entries[0].Brief != "load before deploys" || entries[0].Task != taskID {
+		t.Fatalf("memory context json = %+v", entries)
+	}
+}
+
+func TestMemoryContextScopesProject(t *testing.T) {
+	r := newRunner(t)
+	first := firstField(t, r.run("project", "create", "First"))
+	second := firstField(t, r.run("project", "create", "Second"))
+	r.run("memory", "create", "-p", first, "-t", "in-first")
+	r.run("memory", "create", "-p", second, "-t", "in-second")
+
+	out := r.run("memory", "context", "-p", first)
+	if !strings.Contains(out, "in-first") || strings.Contains(out, "in-second") {
+		t.Fatalf("memory context did not scope to the project:\n%s", out)
+	}
+}
+
+func TestMemoryContextEmpty(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	out := r.run("memory", "context", "-p", projectID)
+	if strings.Contains(out, "art-") {
+		t.Fatalf("empty project should list no memory:\n%s", out)
+	}
+}
+
 func TestMemoryBriefRoundTrip(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

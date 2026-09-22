@@ -145,6 +145,14 @@ func memorySearchHints(artifacts []*core.Artifact, projectID string) []hint {
 	return append(hints, memoryListHints(projectID)...)
 }
 
+func memoryContextHints(entries []memoryContextEntry) []hint {
+	var hints []hint
+	if len(entries) > 0 {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft memory get %s", entries[0].ID), About: "read one in full"})
+	}
+	return append(hints, hint{Command: `ft memory search "<query>"`, About: "find memory by keyword"})
+}
+
 func memoryGetHints(artifact *core.Artifact) []hint {
 	var hints []hint
 	if artifact.TaskID != nil {

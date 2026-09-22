@@ -47,6 +47,15 @@ type Deps struct {
 	// UserConfigPath is the machine-scoped config path this invocation loaded,
 	// so a command can resolve another project's store from the same file.
 	UserConfigPath string
+	// ProjectConfigPath is the project-scoped config path this invocation loaded,
+	// so `ft init` writes the pin to the same file it would read.
+	ProjectConfigPath string
+	// Prompt, when set, replaces the terminal prompter for `ft init`. Tests inject
+	// a scripted session; the default reads from stdin and writes prompts to stderr.
+	Prompt Prompter
+	// GitDetect, when set, replaces the git probe for `ft init`. Tests inject a fake
+	// repository; nil runs the real git command.
+	GitDetect func(dir string) (gitRepo, bool)
 	// Full disables output bounding for one invocation (--full).
 	Full bool
 	// IsTerminal reports whether a writer is attached to a terminal. It defaults

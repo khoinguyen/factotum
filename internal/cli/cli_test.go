@@ -35,6 +35,8 @@ type runner struct {
 	agent       agent.Agent
 	getenv      func(string) string
 	isTerminal  func(io.Writer) bool
+	prompt      Prompter
+	gitDetect   func(string) (gitRepo, bool)
 	doctorProbe doctor.Prober
 	fixRunner   func(context.Context, []string, io.Writer) error
 	// feedbackFactory, when set, registers a fake feedback sink transport under
@@ -62,6 +64,8 @@ func (r *runner) setup(deps *Deps) []string {
 	deps.EmbedderOverride = r.embedder
 	deps.VectorsOverride = r.vectors
 	deps.AgentOverride = r.agent
+	deps.Prompt = r.prompt
+	deps.GitDetect = r.gitDetect
 	deps.DoctorProbe = r.doctorProbe
 	deps.DoctorFixRunner = r.fixRunner
 	if r.isTerminal != nil {

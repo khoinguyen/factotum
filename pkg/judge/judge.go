@@ -12,17 +12,21 @@ import (
 // Callers fall back to their deterministic path.
 var ErrUnavailable = errors.New("judge unavailable")
 
-// Kind is the type of a question.
+// Kind is the type of a question. These are the judge's own primitives; a provider
+// maps them to its wire types (for example TypeSafe's noul/choice/score).
 type Kind string
 
 const (
-	KindNoul   Kind = "noul"
+	// KindYesNo asks for the probability that a condition holds.
+	KindYesNo Kind = "yes_no"
+	// KindChoice selects one option from a set, with a probability for each.
 	KindChoice Kind = "choice"
-	KindScore  Kind = "score"
+	// KindRating places the answer on an ordered scale.
+	KindRating Kind = "rating"
 )
 
 // Question is one typed question about the state. Instructions and Criteria accept a
-// string, object, or array, matching the TypeSafe API.
+// string, object, or array.
 type Question struct {
 	Kind         Kind
 	Instructions any
@@ -35,13 +39,17 @@ type Request struct {
 	Questions map[string]Question
 }
 
-// Answer is one typed answer. Only the field matching the question kind is set.
+// Answer is one typed answer. Only the fields matching the question kind are set.
 type Answer struct {
-	Choice        string
+	Choice string
+	// Probabilities is the distribution over a Choice's options.
 	Probabilities map[string]float64
-	Noul          float64
-	Score         float64
-	Confidence    float64
+	// Probability is the yes/no result of a KindYesNo question.
+	Probability float64
+	// Rating is the position on the scale of a KindRating question.
+	Rating float64
+	// Confidence summarizes how concentrated the answer distribution is.
+	Confidence float64
 }
 
 // Response carries the answers and the model and token metadata.

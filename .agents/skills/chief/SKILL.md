@@ -110,6 +110,7 @@ resolve your own refs once and pass them explicitly.
 - A task with an open product decision.
 - A builder/reviewer disagreement that survives three rounds.
 - **A verdict that flags a real path as unverified** — a new dependency, service, or model that was
-  only ever exercised through fakes. File the follow-up test task, but **escalate to Khoi before
-  merging**; do not merge on fakes alone.
+  only ever exercised through fakes. **File (or confirm) the follow-up test task, then escalate to
+  Khoi before merging.** Never merge on fakes alone, and never rely on Khoi to spot it — the chief and
+  reviewer act in the same session, before merge.
 - Anything the follow-up tasks cannot absorb. Record it and raise it when Khoi is present.

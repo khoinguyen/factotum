@@ -27,6 +27,27 @@ func TestMemoryContextListsBriefs(t *testing.T) {
 	}
 }
 
+func TestMemoryContextEntryGolden(t *testing.T) {
+	got, err := json.Marshal(memoryContextEntry{ID: "art-1", Title: "Deploy notes", Brief: "load before deploys", Task: "t-1"})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	want := `{"id":"art-1","title":"Deploy notes","brief":"load before deploys","task_id":"t-1"}`
+	if string(got) != want {
+		t.Fatalf("memoryContextEntry golden mismatch:\n got %s\nwant %s", got, want)
+	}
+
+	// brief is always present; task_id is only set when attached.
+	got, err = json.Marshal(memoryContextEntry{ID: "art-2", Title: "No brief"})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	want = `{"id":"art-2","title":"No brief","brief":""}`
+	if string(got) != want {
+		t.Fatalf("memoryContextEntry golden mismatch:\n got %s\nwant %s", got, want)
+	}
+}
+
 func TestMemoryContextJSON(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

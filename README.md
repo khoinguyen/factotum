@@ -150,6 +150,36 @@ query returns everything in scope. On SQLite this is an FTS5 index with bm25
 ranking; the memory and JSON backends apply the same rules, so every backend
 returns the same order. No network or embeddings are involved.
 
+### Vector recall (optional `[embed]`)
+
+Configuring the machine-scoped `[embed]` table adds vector recall on top of the lexical
+search above, so `ft memory search` also finds paraphrases that share no tokens. The
+recommended model is `nomic-embed-text` served by a local Ollama — small, fast, and no
+API key:
+
+```toml
+[embed]
+provider = "ollama"
+endpoint = "http://127.0.0.1:11434"
+model = "nomic-embed-text"
+```
+
+The same selection is available through the environment, without editing a file:
+`FACTOTUM_EMBED_PROVIDER`, `FACTOTUM_EMBED_ENDPOINT`, `FACTOTUM_EMBED_MODEL` (plus
+`FACTOTUM_EMBED_COMMAND`). Providers are `ollama` and `openai` (any OpenAI-compatible
+endpoint, including OpenAI itself), and `command` for a one-shot stdio embedder.
+
+Alternatives: `mxbai-embed-large`, or `bge-m3` when multilingual recall matters, both
+local via Ollama; `text-embedding-3-small` against an OpenAI-compatible endpoint
+(`provider = "openai"`, with `api_key`). Only models whose name contains `nomic` get
+model-specific query/document prefixes (`search_query:` / `search_document:`,
+`pkg/embed/embed.go`); every other model is embedded unprefixed.
+
+Two limits to know before switching models: dimensions are fixed per index, and a change
+of model is detected as a mismatch, so run `ft memory reindex` to re-embed the whole
+index. Writes stay best-effort — a memory is created even when the embedder is down, and
+its skipped vector is backfilled by the next edit or `ft memory reindex`.
+
 ## Soak gates
 
 A release is not trustworthy the moment it ships; you usually want a soak period

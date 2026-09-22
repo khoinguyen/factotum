@@ -13,6 +13,9 @@ coverage.out
 /.factotum/*
 !/.factotum/config.toml
 
+# Local environment (may hold secrets, e.g. TYPESAFE_API_KEY)
+.envrc
+
 # Editors / OS
 .DS_Store
 .idea/

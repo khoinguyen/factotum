@@ -268,6 +268,28 @@ ft task create -p factotum -t "Short imperative title" -r factotum \
 - Use `-r <repo>` when the work belongs to one repository of the project.
 - Update the graph in the same session as the code: new tasks/milestones, statuses, notes.
 
+**Store durable learnings as `ft memory`.** Write down what the next session — human or agent —
+would otherwise have to rediscover: a decision and its rationale, a gotcha, a map of an unfamiliar
+area. A memory is two fields you author yourself: a `brief` (one line saying what it is and when to
+load it) and the full `body`. `ft` stores both verbatim and never generates them.
+
+```sh
+ft memory list -p factotum                  # what is already known
+ft memory search "<query>" -p factotum      # find the relevant memory before acting
+ft memory context -p factotum               # briefs of all memory: when to load which
+ft memory create -p factotum -t "Title" \
+  --brief "when this applies" -b "Full content and rationale"
+ft memory get <memory>                      # read one back in full
+ft memory update <memory> --brief "..." -b "..."   # correct or extend it in place
+ft memory delete <memory>                   # drop what is obsolete
+```
+
+- Search memory before starting unfamiliar work; load a body only when its brief applies.
+- `ft memory create`/`update` advise when an entry supersedes or is strongly related to existing
+  memory. Resolve it in the same session — `update` or `delete` the older entry — so the corpus
+  never carries two entries saying the same thing.
+- Attach task-specific memory with `--task <task>`; `ft task context <task>` surfaces it.
+
 ## Configuration
 
 Two scopes, merged `env > project file > user file > defaults`:

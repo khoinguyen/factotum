@@ -10,6 +10,7 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/judge"
 	"github.com/khoinguyen/factotum/pkg/store/builtins"
 )
 
@@ -20,6 +21,7 @@ type runner struct {
 	userPath    string
 	lastOut     string
 	lastErr     string
+	judge       judge.Judge
 }
 
 func newRunner(t *testing.T) *runner {
@@ -45,6 +47,7 @@ func (r *runner) runSplit(args ...string) (string, string) {
 	r.t.Helper()
 	var stdout, stderr bytes.Buffer
 	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &stdout, &stderr, nil)
+	deps.JudgeOverride = r.judge
 	builtins.RegisterAll(deps.StoreFactories)
 
 	root := NewRoot(deps)

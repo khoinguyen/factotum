@@ -17,6 +17,7 @@ func (r *runner) runErr(args ...string) error {
 	r.t.Helper()
 	var out bytes.Buffer
 	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &out, &out, nil)
+	deps.JudgeOverride = r.judge
 	builtins.RegisterAll(deps.StoreFactories)
 	root := NewRoot(deps)
 	root.SetArgs(append([]string{

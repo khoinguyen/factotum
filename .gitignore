@@ -16,6 +16,32 @@ coverage.out
 # Local environment (may hold secrets, e.g. TYPESAFE_API_KEY)
 .envrc
 
+# Package-manager dependencies, caches, and build output. These can appear
+# inside committed .agents/skills, so the skill sources and skills-lock.json
+# are tracked while their installs are not.
+node_modules/
+.pnp.*
+.yarn/cache/
+.pnpm-store/
+bower_components/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+target/
+
+# Compiled / native artifacts (never commit built extensions)
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.a
+
 # Editors / OS
 .DS_Store
 .idea/

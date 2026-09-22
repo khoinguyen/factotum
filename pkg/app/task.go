@@ -339,6 +339,9 @@ func (s *TaskService) Snooze(ctx context.Context, id core.TaskID, snooze core.Sn
 				return nil, fmt.Errorf("%w: %s cannot snooze until %s because %s depends on it", core.ErrInvalid, id, *snooze.UntilTask, *snooze.UntilTask)
 			}
 		}
+		if err := s.rejectSnoozeCycle(ctx, task, *snooze.UntilTask); err != nil {
+			return nil, err
+		}
 	}
 	stored := snooze
 	if snooze.Until != nil {
@@ -384,6 +387,25 @@ func (s *TaskService) transitiveDependents(ctx context.Context, projectID core.P
 		return nil, err
 	}
 	return built.TransitiveDependents(id), nil
+}
+
+// rejectSnoozeCycle rejects a snooze whose until-task is itself (transitively)
+// snoozed until the snoozed task. That is a waits-for cycle with no dependency
+// edges, so the graph cycle detector and the dependency-based check miss it.
+func (s *TaskService) rejectSnoozeCycle(ctx context.Context, task *core.Task, untilTask core.TaskID) error {
+	seen := make(map[core.TaskID]bool)
+	for current := untilTask; current != "" && !seen[current]; {
+		if current == task.ID {
+			return fmt.Errorf("%w: %s cannot snooze until %s: it would create a snooze cycle", core.ErrInvalid, task.ID, untilTask)
+		}
+		seen[current] = true
+		next, err := s.backend.Tasks().Get(ctx, current)
+		if err != nil || next.Snooze == nil || next.Snooze.UntilTask == nil {
+			return nil
+		}
+		current = *next.Snooze.UntilTask
+	}
+	return nil
 }
 
 // Unsnooze removes a task's snooze.

@@ -1,14 +1,18 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/judge"
 	"github.com/khoinguyen/factotum/pkg/store"
 )
 
@@ -47,6 +51,55 @@ func requireMemory(artifact *core.Artifact) error {
 		return fmt.Errorf("%w: %s is a %s artifact, not memory", core.ErrInvalid, artifact.ID, artifact.Kind)
 	}
 	return nil
+}
+
+// memoryRelationShortlist bounds how many lexical neighbours are judged.
+const memoryRelationShortlist = 8
+
+// adviseMemoryRelation prints an advisory when a written memory supersedes or is
+// strongly related to an existing one, so the author can reconcile them. It is
+// best-effort: with no judge configured it prints nothing, and it never blocks
+// or mutates the write.
+func (d *Deps) adviseMemoryRelation(ctx context.Context, artifact *core.Artifact) {
+	query := strings.TrimSpace(artifact.Title + " " + artifact.Brief)
+	kind := core.ArtifactMemory
+	found, err := d.Artifacts.Search(ctx, store.ArtifactFilter{ProjectID: artifact.ProjectID, Kind: &kind}, query)
+	if err != nil {
+		return
+	}
+	shortlist := make([]*core.Artifact, 0, memoryRelationShortlist)
+	for _, candidate := range found {
+		if candidate.ID == artifact.ID {
+			continue
+		}
+		shortlist = append(shortlist, candidate)
+		if len(shortlist) == memoryRelationShortlist {
+			break
+		}
+	}
+	if len(shortlist) == 0 {
+		return
+	}
+	rel, err := app.NewMemoryRelationService(d.Judge).Check(ctx, artifact, shortlist)
+	if err != nil {
+		if !errors.Is(err, judge.ErrUnavailable) {
+			d.warnf("memory relation check failed (%v)", err)
+		}
+		return
+	}
+	if note := memoryRelationNote(rel); note != "" {
+		_, _ = fmt.Fprintln(d.Err, note)
+	}
+}
+
+// memoryRelationNote renders the advisory for a related or superseding memory,
+// or "" when there is nothing to advise.
+func memoryRelationNote(rel app.MemoryRelation) string {
+	if rel.Candidate == nil || rel.Action == "unrelated" {
+		return ""
+	}
+	return fmt.Sprintf("ft: note: this memory %s %s (%q, %.2f) - ft memory get %s",
+		rel.Action, rel.Candidate.ID, rel.Candidate.Title, rel.Confidence, rel.Candidate.ID)
 }
 
 func newMemoryCommand(deps *Deps) *cobra.Command {
@@ -88,11 +141,15 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(memoryDocFrom(artifact), func() {
+			if err := deps.emit(memoryDocFrom(artifact), func() {
 				deps.printFields(f("memory_id", artifact.ID), f("created", true), f("kind", artifact.Kind), f("title", artifact.Title), f("project", artifact.ProjectID))
 			},
 				hint{Command: fmt.Sprintf("ft memory get %s", artifact.ID), About: "read it back"},
-				hint{Command: fmt.Sprintf("ft memory list --project %s", artifact.ProjectID), About: "see all memory"})
+				hint{Command: fmt.Sprintf("ft memory list --project %s", artifact.ProjectID), About: "see all memory"}); err != nil {
+				return err
+			}
+			deps.adviseMemoryRelation(cmd.Context(), artifact)
+			return nil
 		},
 	}
 	create.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
@@ -240,9 +297,13 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(memoryDocFrom(updated), func() {
+			if err := deps.emit(memoryDocFrom(updated), func() {
 				deps.printFields(f("memory_id", updated.ID), f("updated", true), f("kind", updated.Kind), f("title", updated.Title), f("project", updated.ProjectID))
-			}, memoryGetHints(updated)...)
+			}, memoryGetHints(updated)...); err != nil {
+				return err
+			}
+			deps.adviseMemoryRelation(cmd.Context(), updated)
+			return nil
 		},
 	}
 	update.Flags().StringVarP(&updTitle, "title", "t", "", "new title")

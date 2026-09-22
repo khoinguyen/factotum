@@ -982,6 +982,42 @@ func TestTaskSnoozeRejectsDependentUntilTask(t *testing.T) {
 	}
 }
 
+func TestTaskSnoozeRejectsMutualCycle(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+
+	x, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "X"})
+	y, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "Y"})
+	if _, err := h.tasks.Snooze(ctx, x.ID, core.Snooze{UntilTask: &y.ID}); err != nil {
+		t.Fatalf("Snooze(X until Y) error = %v", err)
+	}
+	// Y until X would close a waits-for cycle with no dependency edge.
+	if _, err := h.tasks.Snooze(ctx, y.ID, core.Snooze{UntilTask: &x.ID}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Snooze(Y until X) error = %v, want ErrInvalid", err)
+	}
+
+	// Transitive waits-for cycle: P -> Q -> R -> P.
+	p, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "P"})
+	q, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "Q"})
+	r, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "R"})
+	if _, err := h.tasks.Snooze(ctx, p.ID, core.Snooze{UntilTask: &q.ID}); err != nil {
+		t.Fatalf("Snooze(P until Q) error = %v", err)
+	}
+	if _, err := h.tasks.Snooze(ctx, q.ID, core.Snooze{UntilTask: &r.ID}); err != nil {
+		t.Fatalf("Snooze(Q until R) error = %v", err)
+	}
+	if _, err := h.tasks.Snooze(ctx, r.ID, core.Snooze{UntilTask: &p.ID}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Snooze(R until P) error = %v, want ErrInvalid", err)
+	}
+
+	// Happy: an until-task outside the chain is fine.
+	d, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "D"})
+	if _, err := h.tasks.Snooze(ctx, x.ID, core.Snooze{UntilTask: &d.ID}); err != nil {
+		t.Fatalf("Snooze(X until D) error = %v, want nil", err)
+	}
+}
+
 func readyIDs(t *testing.T, h *harness, projectID core.ProjectID, now time.Time) []core.TaskID {
 	t.Helper()
 	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID, now)

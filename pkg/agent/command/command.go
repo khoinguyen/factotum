@@ -111,49 +111,65 @@ func sanitize(out []byte) []byte {
 	return []byte(planObject(text))
 }
 
-// planObject returns the first complete JSON object in text that carries a
-// "tasks" key — the shape the instruction demands — falling back to the first
-// complete object, then to text unchanged. Scanning for balanced objects, rather
-// than slicing first-{ to last-}, keeps prose braces ("use {templates}") out and
-// stops trailing commentary from being swallowed; preferring a "tasks" object
-// keeps a stray earlier object from being decoded as an empty plan.
+// planObject returns the plan from text: the last top-level JSON object that
+// carries a "tasks" key, falling back to the first top-level object, then to
+// text unchanged. Scanning balanced objects rather than slicing first-{ to
+// last-} keeps prose braces ("use {templates}") out and stops trailing
+// commentary from being swallowed. Considering only top-level objects keeps a
+// nested "tasks" key from being mistaken for the plan, and preferring the last
+// one lets an agent echo the requested schema before its real answer.
 func planObject(text string) string {
-	fallback, found := text, false
-	for i := 0; i < len(text); i++ {
+	var first, plan string
+	for i := 0; i < len(text); {
 		if text[i] != '{' {
+			i++
 			continue
 		}
-		obj, ok := decodeObject(text[i:])
+		obj, size, ok := decodeObject(text[i:])
 		if !ok {
+			i++
 			continue
 		}
-		var probe struct {
-			Tasks json.RawMessage `json:"tasks"`
+		if first == "" {
+			first = obj
 		}
-		if json.Unmarshal([]byte(obj), &probe) == nil && probe.Tasks != nil {
-			return obj
+		if hasTasks(obj) {
+			plan = obj
 		}
-		if !found {
-			fallback, found = obj, true
-		}
+		i += size
 	}
-	return fallback
+	switch {
+	case plan != "":
+		return plan
+	case first != "":
+		return first
+	default:
+		return text
+	}
 }
 
-// decodeObject returns the complete JSON object at the start of text, or false
-// if text does not begin with one. json.Decoder stops at the object's closing
-// brace, so trailing prose cannot be swallowed, and prose braces like
-// "{templates}" are rejected because they are not valid JSON.
-func decodeObject(text string) (string, bool) {
+// hasTasks reports whether obj is a JSON object with a non-null "tasks" key.
+func hasTasks(obj string) bool {
+	var probe struct {
+		Tasks json.RawMessage `json:"tasks"`
+	}
+	return json.Unmarshal([]byte(obj), &probe) == nil && probe.Tasks != nil
+}
+
+// decodeObject returns the complete JSON object at the start of text and the
+// bytes it spans, or false if text does not begin with one. json.Decoder stops
+// at the object's closing brace, so trailing prose cannot be swallowed, and
+// prose braces like "{templates}" are rejected because they are not valid JSON.
+func decodeObject(text string) (string, int, bool) {
 	dec := json.NewDecoder(strings.NewReader(text))
 	var raw json.RawMessage
 	if err := dec.Decode(&raw); err != nil {
-		return "", false
+		return "", 0, false
 	}
 	if len(raw) == 0 || raw[0] != '{' {
-		return "", false
+		return "", 0, false
 	}
-	return string(raw), true
+	return string(raw), len(raw), true
 }
 
 func execRunner(ctx context.Context, command string, stdin []byte) ([]byte, error) {

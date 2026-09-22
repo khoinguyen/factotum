@@ -141,7 +141,7 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	if d.EmbedderOverride != nil {
 		d.Embedder = d.EmbedderOverride
 	} else {
-		d.Embedder = newEmbed(d.Getenv, cfg)
+		d.Embedder = d.newEmbed(cfg)
 	}
 	if d.VectorsOverride != nil {
 		d.Vectors = d.VectorsOverride
@@ -163,25 +163,42 @@ func (d *Deps) Close() error {
 	return nil
 }
 
-// newEmbed builds the embedder for the configured provider. An unknown provider or
-// a build error disables it, so callers fall back to lexical retrieval.
-func newEmbed(getenv func(string) string, cfg config.Config) embed.Embedder {
+// newEmbed builds the embedder for the configured provider. A configured provider
+// that cannot be used (unknown name, or command with no command) warns once and
+// disables vector recall, so the misconfiguration is visible instead of silent.
+func (d *Deps) newEmbed(cfg config.Config) embed.Embedder {
 	if cfg.Embed.Provider == "" {
 		return embed.Disabled{}
 	}
-	built, err := embed.New(cfg.Embed.Provider, getenv, cfg.Embed.Options)
-	if err != nil || built == nil {
+	built, err := embed.New(cfg.Embed.Provider, d.Getenv, cfg.Embed.Options)
+	if err != nil {
+		d.warnf("embed provider %q is unknown (%v); vector recall disabled", cfg.Embed.Provider, err)
+		return embed.Disabled{}
+	}
+	if !embedderUsable(built) {
+		d.warnf("embed provider %q is not usable (check endpoint/command); vector recall disabled", cfg.Embed.Provider)
 		return embed.Disabled{}
 	}
 	return built
 }
 
-// openVectors opens the vector side index when an embedding provider is configured.
-// The index is a SQLite file beside the store file; without a store path (the memory
-// backend) it is in-process and does not persist. With no provider the index is nil,
-// so vector recall stays off.
+// embedderUsable reports whether an embedder is configured and not the no-op
+// Disabled implementation.
+func embedderUsable(e embed.Embedder) bool {
+	if e == nil {
+		return false
+	}
+	_, disabled := e.(embed.Disabled)
+	return !disabled
+}
+
+// openVectors opens the vector side index when vector recall is usable: an embedder
+// is configured and a model is set. The index is a SQLite file beside the store
+// file; without a store path (the memory backend) it is in-process and does not
+// persist. Otherwise the index is nil, so vector recall stays off and no side-index
+// file is created.
 func (d *Deps) openVectors(cfg config.Config) vector.Index {
-	if cfg.Embed.Provider == "" {
+	if !embedderUsable(d.Embedder) || cfg.Embed.Options["model"] == "" {
 		return nil
 	}
 	path := cfg.Store.Options["path"]

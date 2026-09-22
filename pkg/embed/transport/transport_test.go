@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/embed"
 )
@@ -153,6 +154,42 @@ func TestCommandPropagatesRunnerError(t *testing.T) {
 	client := NewCommand("embed", "", runner.run)
 	if _, err := client.Embed(context.Background(), embed.InputQuery, []string{"x"}); err == nil {
 		t.Fatal("a runner error should propagate")
+	}
+}
+
+func TestFromOptionsFallsBackEndpointToCommand(t *testing.T) {
+	original := httpDoer
+	defer func() { httpDoer = original }()
+
+	// Endpoint reachable: it wins, the command is not run.
+	httpDoer = func(time.Duration) Doer { return &fakeDoer{body: `{"embeddings":[[9,9]]}`} }
+	e, err := fromOptions("ollama", map[string]string{"endpoint": "http://x", "model": "m", "command": "false"})
+	if err != nil {
+		t.Fatalf("fromOptions() error = %v", err)
+	}
+	vectors, err := e.Embed(context.Background(), embed.InputQuery, []string{"a"})
+	if err != nil || vectors[0][0] != 9 {
+		t.Fatalf("endpoint should win: vectors = %v, err = %v", vectors, err)
+	}
+
+	// Endpoint unreachable: the stdio command is used.
+	httpDoer = func(time.Duration) Doer { return &fakeDoer{err: errors.New("connection refused")} }
+	e, err = fromOptions("ollama", map[string]string{"endpoint": "http://x", "model": "m", "command": "echo '[[1,0]]'"})
+	if err != nil {
+		t.Fatalf("fromOptions() error = %v", err)
+	}
+	vectors, err = e.Embed(context.Background(), embed.InputQuery, []string{"a"})
+	if err != nil || vectors[0][0] != 1 {
+		t.Fatalf("command fallback: vectors = %v, err = %v", vectors, err)
+	}
+
+	// Endpoint only and unreachable: no stdio fallback, so it fails to lexical.
+	e, err = fromOptions("ollama", map[string]string{"endpoint": "http://x", "model": "m"})
+	if err != nil {
+		t.Fatalf("fromOptions() error = %v", err)
+	}
+	if _, err := e.Embed(context.Background(), embed.InputQuery, []string{"a"}); err == nil {
+		t.Fatal("an endpoint-only chain should fail when the endpoint is down")
 	}
 }
 

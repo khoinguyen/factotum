@@ -136,6 +136,15 @@ func (s *VectorRetriever) Upsert(ctx context.Context, artifact *core.Artifact) e
 	return s.index.Put(ctx, string(artifact.ID), s.model, vectors[0])
 }
 
+// Delete removes an artifact's vector, so a deleted memory leaves no orphan that a
+// later model change would misread as a mismatch. A missing vector is not an error.
+func (s *VectorRetriever) Delete(ctx context.Context, id core.ArtifactID) error {
+	if s == nil || s.index == nil {
+		return nil
+	}
+	return s.index.Delete(ctx, string(id))
+}
+
 // Reindex re-embeds every artifact, replacing the index contents for the configured
 // model. It is the backfill for vectors skipped while the embedder was down, and the
 // repair for a model change. It returns how many were stored before the first error.

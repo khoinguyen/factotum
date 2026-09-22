@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -37,6 +38,17 @@ type Config struct {
 	DefaultActor string
 	NoHints      bool
 	Store        Store
+	// Judge selects the judge provider; TypeSafe is the default. Provider settings,
+	// including the API key, live in the provider's own config table.
+	Judge Judge
+}
+
+// Judge selects the model-backed judge. Judge is the capability; a provider such as
+// TypeSafe is one implementation, and its settings live under a top-level table named
+// after the provider. Options is generic so a new provider needs no new field here.
+type Judge struct {
+	Provider string
+	Options  map[string]string
 }
 
 type Store struct {
@@ -56,6 +68,10 @@ type fileStore struct {
 	Options map[string]string `toml:"options"`
 }
 
+type judgeFile struct {
+	Provider string `toml:"provider"`
+}
+
 type projectEntry struct {
 	DBPath       string    `toml:"db_path"`
 	DefaultActor string    `toml:"default_actor"`
@@ -68,6 +84,7 @@ type userFile struct {
 	DefaultActor   string                  `toml:"default_actor"`
 	NoHints        *bool                   `toml:"no_hints"`
 	Store          fileStore               `toml:"store"`
+	Judge          judgeFile               `toml:"judge"`
 	Projects       map[string]projectEntry `toml:"projects"`
 }
 
@@ -76,15 +93,17 @@ type projectFile struct {
 	DefaultActor string    `toml:"default_actor"`
 	NoHints      *bool     `toml:"no_hints"`
 	Store        fileStore `toml:"store"`
+	Judge        judgeFile `toml:"judge"`
 }
 
-// Default returns the built-in configuration.
+// Default returns the built-in configuration. TypeSafe is the default judge provider.
 func Default() Config {
 	return Config{
 		Store: Store{
 			Backend: "memory",
 			Options: map[string]string{},
 		},
+		Judge: Judge{Provider: "typesafe", Options: map[string]string{}},
 	}
 }
 
@@ -109,6 +128,14 @@ func Load(in Input) (Config, error) {
 	cfg.Project = resolveProject(getenv, project.Project, user.DefaultProject)
 	entry := user.Projects[cfg.Project]
 	cfg.Store = resolveStore(cfg.Project, project.Store, entry, user.Store)
+	cfg.Judge.Provider = firstNonEmpty(project.Judge.Provider, user.Judge.Provider, Default().Judge.Provider)
+	// Provider settings are machine-scoped: they are read from the user file only.
+	// The environment still overrides them at the call site.
+	options, err := providerOptions(in.UserPath, cfg.Judge.Provider)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Judge.Options = options
 	cfg.DefaultActor = firstNonEmpty(project.DefaultActor, entry.DefaultActor, user.DefaultActor)
 	cfg.NoHints = boolAt(user.NoHints, false)
 	cfg.NoHints = boolAt(entry.NoHints, cfg.NoHints)
@@ -246,6 +273,44 @@ func applyStoreOptions(store *Store, raw string) {
 		}
 		store.Options[strings.TrimSpace(key)] = strings.TrimSpace(value)
 	}
+}
+
+// providerOptions reads the top-level table named after the provider (for example
+// [typesafe]) as a string map. The table is generic, so a new provider is a new table
+// and needs no change here.
+func providerOptions(path, provider string) (map[string]string, error) {
+	options := map[string]string{}
+	if path == "" || provider == "" {
+		return options, nil
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return options, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+	var raw map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	table, ok := raw[provider].(map[string]any)
+	if !ok {
+		return options, nil
+	}
+	for key, value := range table {
+		switch typed := value.(type) {
+		case string:
+			options[key] = typed
+		case int64:
+			options[key] = strconv.FormatInt(typed, 10)
+		case float64:
+			options[key] = strconv.FormatFloat(typed, 'g', -1, 64)
+		case bool:
+			options[key] = strconv.FormatBool(typed)
+		}
+	}
+	return options, nil
 }
 
 func firstNonEmpty(values ...string) string {

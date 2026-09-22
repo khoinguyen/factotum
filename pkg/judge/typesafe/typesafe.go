@@ -66,12 +66,28 @@ func New(cfg Config) *Client {
 }
 
 // ResolveAPIKey returns the environment key when set, otherwise the configured key,
-// so TYPESAFE_API_KEY wins over the machine config.
+// so TYPESAFE_API_KEY wins over the config table.
 func ResolveAPIKey(getenv func(string) string, configKey string) string {
 	if value := getenv("TYPESAFE_API_KEY"); value != "" {
 		return value
 	}
 	return configKey
+}
+
+func init() { judge.Register("typesafe", fromOptions) }
+
+// fromOptions builds the TypeSafe judge from its [typesafe] options, with the
+// TYPESAFE_* environment variables winning. With no key it returns Disabled.
+func fromOptions(getenv func(string) string, options map[string]string) (judge.Judge, error) {
+	key := ResolveAPIKey(getenv, options["secret_api_key"])
+	if key == "" {
+		return judge.Disabled{}, nil
+	}
+	return New(Config{
+		APIKey:  key,
+		Model:   firstNonEmpty(getenv("TYPESAFE_MODEL"), options["model"]),
+		BaseURL: firstNonEmpty(getenv("TYPESAFE_BASE_URL"), options["base_url"]),
+	}), nil
 }
 
 type wireQuestion struct {

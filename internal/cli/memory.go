@@ -106,10 +106,21 @@ func (d *Deps) warnVector(err error) {
 	}
 	d.vectorWarned = true
 	if errors.Is(err, app.ErrModelMismatch) {
-		d.warnf("vector index model mismatch (%v); using lexical order. Run `ft memory reindex`", err)
+		d.warnf("%v; using lexical order. Run `ft memory reindex`", err)
 		return
 	}
 	d.warnf("vector retrieval unavailable (%v); using lexical order", err)
+}
+
+// forgetMemoryVector removes a deleted memory's vector best-effort, so the side
+// index keeps no orphan that a later model change would misread as a mismatch.
+func (d *Deps) forgetMemoryVector(ctx context.Context, id core.ArtifactID) {
+	if d.Retriever == nil {
+		return
+	}
+	if err := d.Retriever.Delete(ctx, id); err != nil {
+		d.warnf("memory vector not removed (%v)", err)
+	}
 }
 
 // adviseMemoryRelation prints an advisory when a written memory supersedes or is
@@ -435,6 +446,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			if err := deps.Artifacts.Delete(cmd.Context(), artifact.ID); err != nil {
 				return err
 			}
+			deps.forgetMemoryVector(cmd.Context(), artifact.ID)
 			return deps.emit(memoryDocFrom(artifact), func() {
 				deps.printFields(f("memory_id", artifact.ID), f("deleted", true), f("kind", artifact.Kind), f("title", artifact.Title), f("project", artifact.ProjectID))
 			}, hint{Command: fmt.Sprintf("ft memory list --project %s", artifact.ProjectID), About: "see the remaining memory"})
@@ -477,7 +489,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 		Short: "Re-embed the project's memory into the vector index",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if deps.Retriever == nil || !deps.Retriever.Enabled() {
-				return usageError(cmd, "no embedding provider configured; set [embed] provider or FACTOTUM_EMBED_PROVIDER")
+				return usageError(cmd, "no usable embedding provider configured; set [embed] provider or FACTOTUM_EMBED_PROVIDER")
 			}
 			project := deps.resolveProject(reindexProject)
 			if err := requireProject(cmd, project); err != nil {

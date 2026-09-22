@@ -46,7 +46,7 @@ func fromOptions(protocol string, options map[string]string) (embed.Embedder, er
 	timeout := parseTimeout(options["timeout"])
 	var chain []embed.Embedder
 	if protocol != "command" && endpoint != "" {
-		chain = append(chain, NewHTTP(protocol, endpoint, model, options["api_key"], nil, timeout))
+		chain = append(chain, NewHTTP(protocol, endpoint, model, options["api_key"], httpDoer(timeout), timeout))
 	}
 	if command != "" {
 		chain = append(chain, NewCommand(command, model, nil))
@@ -55,6 +55,15 @@ func fromOptions(protocol string, options map[string]string) (embed.Embedder, er
 		return embed.Disabled{}, nil
 	}
 	return embed.Chain(chain...), nil
+}
+
+// httpDoer builds the HTTP transport. It is a var so tests inject a fake and never
+// open a socket.
+var httpDoer = func(timeout time.Duration) Doer {
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	return &http.Client{Timeout: timeout}
 }
 
 func parseTimeout(value string) time.Duration {

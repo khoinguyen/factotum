@@ -135,6 +135,22 @@ func TestVectorRetrieverUpsertEmbedsDocumentText(t *testing.T) {
 	}
 }
 
+func TestVectorRetrieverDeleteRemovesVector(t *testing.T) {
+	ctx := context.Background()
+	index := vector.NewMemory()
+	retriever := NewVectorRetriever(&stubEmbedder{vectors: [][]float32{{1, 0}}}, index, "m")
+	if err := retriever.Upsert(ctx, memoryArtifact("a", "A", "brief")); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	if err := retriever.Delete(ctx, "a"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	hits, _ := index.Search(ctx, "m", []float32{1, 0}, 10)
+	if len(hits) != 0 {
+		t.Fatalf("Delete() left %d vectors", len(hits))
+	}
+}
+
 func TestVectorRetrieverReindexEmbedsAll(t *testing.T) {
 	ctx := context.Background()
 	index := vector.NewMemory()

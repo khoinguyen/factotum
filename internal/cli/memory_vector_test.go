@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/pkg/embed"
 	"github.com/khoinguyen/factotum/pkg/vector"
 )
@@ -146,5 +150,69 @@ func TestMemorySearchIsLexicalWithoutProvider(t *testing.T) {
 	_, stderr := r.runSplit("memory", "search", "terraform", "-p", projectID)
 	if strings.Contains(stderr, "warning") {
 		t.Fatalf("no provider should mean no vector warning:\n%s", stderr)
+	}
+}
+
+func TestMemoryDeleteRemovesVectorSoReindexRepairsMismatch(t *testing.T) {
+	r := vectorRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	terraform := firstField(t, r.run("memory", "create", "-p", projectID, "-t", "Terraform notes", "--brief", "infrastructure versioning"))
+	r.run("memory", "create", "-p", projectID, "-t", "Kubernetes notes", "--brief", "cluster runbook")
+
+	// Deleting a memory must remove its vector, or the orphan keeps the index on the
+	// old model and reindex can never repair the mismatch.
+	if out := r.run("memory", "delete", terraform); !strings.Contains(out, "deleted: true") {
+		t.Fatalf("delete output:\n%s", out)
+	}
+	r.embedModel = "other-model"
+	r.run("memory", "reindex", "-p", projectID)
+
+	search, stderr := r.runSplit("memory", "search", "provisioning", "-p", projectID)
+	if strings.Contains(stderr, "mismatch") {
+		t.Fatalf("reindex should have cleared the orphaned model:\n%s", stderr)
+	}
+	if strings.Contains(search, "Terraform notes") {
+		t.Fatalf("a deleted memory was returned:\n%s", search)
+	}
+}
+
+func TestMemorySearchWarnsOnMisconfiguredProvider(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		want     string
+	}{
+		{"command with no command", "command", "not usable"},
+		{"unknown provider", "does-not-exist", "unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRunner(t)
+			projectID := firstField(t, r.run("project", "create", "Acme"))
+			body := "[embed]\nprovider = \"" + tt.provider + "\"\nmodel = \"m\"\n"
+			if err := os.WriteFile(r.userPath, []byte(body), 0o600); err != nil {
+				t.Fatalf("write user config: %v", err)
+			}
+			_, stderr := r.runSplit("memory", "search", "terraform", "-p", projectID)
+			if !strings.Contains(stderr, tt.want) {
+				t.Fatalf("misconfigured provider should warn %q:\n%s", tt.want, stderr)
+			}
+		})
+	}
+}
+
+func TestOpenVectorsSkipsWhenModelEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "db.json")
+	d := &Deps{Err: io.Discard, Embedder: &keywordEmbedder{}}
+	cfg := config.Config{
+		Embed: config.Embed{Provider: "command", Options: map[string]string{}},
+		Store: config.Store{Backend: "jsonfile", Options: map[string]string{"path": path}},
+	}
+	if index := d.openVectors(cfg); index != nil {
+		t.Fatal("openVectors should be nil with no model")
+	}
+	if _, err := os.Stat(path + ".vectors.db"); !os.IsNotExist(err) {
+		t.Fatalf("openVectors created a side index with no model: err = %v", err)
 	}
 }

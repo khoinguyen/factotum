@@ -220,6 +220,35 @@ an existing database predates the binary, the file is backed up first to
 changed, so a failed migration leaves the original intact. A database written by
 a newer binary is rejected with a clear error rather than modified.
 
+## Performance
+
+Two tiers, both exposed as `mise` tasks:
+
+- `mise run bench` — in-process hot-path benchmarks (`go test -bench ./pkg/...`), including direct
+  store `List`/`Search`/event-list micro-benchmarks and jsonfile write amplification. The budgets
+  live in `pkg/app/bench_test.go`; CI runs the smoke tier (`TestHotPathBudgetSmoke`).
+- `mise run perf` — the end-to-end scale harness (`cmd/ftscale`). It seeds synthetic datasets at
+  1k/10k/50k/100k tasks (plus 1k/10k artifacts and events) in a throwaway store per backend, runs
+  each hot command as a real subprocess (so process startup is included; the memory backend, which
+  cannot cross a process boundary, is measured in-process), and reports p50/p95 and output bytes per
+  backend and scale. Results append to `.perf/results.jsonl`, so the next run shows the delta. This
+  is a manual/nightly target, not CI: the heavy graph render is superlinear and the 100k tier takes
+  tens of minutes.
+
+Budgets (p95, warm): hot path (task next/get/set/start/done/claim) < 100ms at <=10k and < 250ms at
+50k; heavier (list, render, search, context) < 250ms at <=10k and < 500ms at 50k; point ops
+(get/set by id) < 25ms at any scale. Every result over budget prints `OVER` and is listed at the
+end of a run; `-strict` makes the command exit non-zero. jsonfile is capped at 1k tasks
+(`perf.JSONFileSeedCap`) because it rewrites its whole document on every write and seeds in O(n^2)
+(see t-ewr3xidxtk), while its write cost grows linearly with state size.
+
+```sh
+mise run perf                                                # full matrix -> .perf/results.jsonl
+mise run perf-quick                                          # 1k tasks, all backends
+go run ./cmd/ftscale -backends sqlite -tasks 1000,10000 -iterations 3
+go run ./cmd/ftscale -strict -tasks 1000                     # exit non-zero on a budget breach
+```
+
 ## Design
 
 - **Hexagonal architecture.** A pure domain core (`pkg/core`) surrounded by ports and adapters.

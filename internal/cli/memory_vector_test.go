@@ -201,6 +201,55 @@ func TestMemorySearchWarnsOnMisconfiguredProvider(t *testing.T) {
 	}
 }
 
+func TestMisconfiguredProviderDoesNotWarnOnUnrelatedCommand(t *testing.T) {
+	r := newRunner(t)
+	body := "[embed]\nprovider = \"command\"\nmodel = \"m\"\n"
+	if err := os.WriteFile(r.userPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+	_, stderr := r.runSplit("version")
+	if strings.Contains(stderr, "warning") {
+		t.Fatalf("a misconfigured provider must not warn on an unrelated command:\n%s", stderr)
+	}
+}
+
+func TestMemoryModelMismatchIsScopedToProject(t *testing.T) {
+	r := vectorRunner(t)
+	alpha := firstField(t, r.run("project", "create", "Alpha"))
+	beta := firstField(t, r.run("project", "create", "Beta"))
+
+	r.run("memory", "create", "-p", alpha, "-t", "Terraform notes", "--brief", "infrastructure versioning")
+	r.embedModel = "other-model"
+	r.run("memory", "create", "-p", beta, "-t", "Terraform notes", "--brief", "infrastructure versioning")
+
+	// Beta's vector is on other-model, Alpha's on test-model. Searching Alpha must
+	// not report a mismatch caused by another project's vectors.
+	r.embedModel = "test-model"
+	if _, stderr := r.runSplit("memory", "search", "provisioning", "-p", alpha); strings.Contains(stderr, "mismatch") {
+		t.Fatalf("another project's model must not trigger a mismatch:\n%s", stderr)
+	}
+}
+
+func TestMemoryReindexAlignsWithPerProjectMismatch(t *testing.T) {
+	r := vectorRunner(t)
+	alpha := firstField(t, r.run("project", "create", "Alpha"))
+	beta := firstField(t, r.run("project", "create", "Beta"))
+	r.run("memory", "create", "-p", alpha, "-t", "Terraform notes", "--brief", "infrastructure versioning")
+	r.run("memory", "create", "-p", beta, "-t", "Terraform notes", "--brief", "infrastructure versioning")
+
+	// Change the model and reindex only Alpha: Alpha matches the configured model
+	// again, while Beta is still stale and must keep reporting the mismatch.
+	r.embedModel = "other-model"
+	r.run("memory", "reindex", "-p", alpha)
+
+	if _, stderr := r.runSplit("memory", "search", "provisioning", "-p", alpha); strings.Contains(stderr, "mismatch") {
+		t.Fatalf("reindex should clear the mismatch for its project:\n%s", stderr)
+	}
+	if _, stderr := r.runSplit("memory", "search", "provisioning", "-p", beta); !strings.Contains(stderr, "mismatch") {
+		t.Fatalf("a stale project should still report the mismatch:\n%s", stderr)
+	}
+}
+
 func TestOpenVectorsSkipsWhenModelEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "db.json")

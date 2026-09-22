@@ -91,6 +91,11 @@ type Deps struct {
 
 	vectorCloser io.Closer
 	vectorWarned bool
+	// embedErr records a misconfigured embedding provider. It is surfaced at the
+	// first vector operation, not on every command, so unrelated commands stay
+	// quiet while a vector command still names the misconfiguration.
+	embedErr    error
+	embedWarned bool
 	// When resolves natural-language date phrases. Nil until Attach, and its judge is
 	// Disabled without a key, so the deterministic formats still work.
 	When *app.WhenService
@@ -236,22 +241,34 @@ func (d *Deps) FlushOutput() error {
 }
 
 // newEmbed builds the embedder for the configured provider. A configured provider
-// that cannot be used (unknown name, or command with no command) warns once and
-// disables vector recall, so the misconfiguration is visible instead of silent.
+// that cannot be used (unknown name, or command with no command) disables vector
+// recall and records the reason, so warnEmbedMisconfig can surface it at the point
+// of use instead of on every command.
 func (d *Deps) newEmbed(cfg config.Config) embed.Embedder {
 	if cfg.Embed.Provider == "" {
 		return embed.Disabled{}
 	}
 	built, err := embed.New(cfg.Embed.Provider, d.Getenv, cfg.Embed.Options)
 	if err != nil {
-		d.warnf("embed provider %q is unknown (%v); vector recall disabled", cfg.Embed.Provider, err)
+		d.embedErr = fmt.Errorf("embed provider %q is unknown (%w); vector recall disabled", cfg.Embed.Provider, err)
 		return embed.Disabled{}
 	}
 	if !embedderUsable(built) {
-		d.warnf("embed provider %q is not usable (check endpoint/command); vector recall disabled", cfg.Embed.Provider)
+		d.embedErr = fmt.Errorf("embed provider %q is not usable (check endpoint/command); vector recall disabled", cfg.Embed.Provider)
 		return embed.Disabled{}
 	}
 	return built
+}
+
+// warnEmbedMisconfig reports a misconfigured embedding provider once, at the first
+// vector operation. An unrelated command (ft version, ft task list) never touches
+// the vector path, so it stays quiet.
+func (d *Deps) warnEmbedMisconfig() {
+	if d.embedErr == nil || d.embedWarned {
+		return
+	}
+	d.embedWarned = true
+	d.warnf("%v", d.embedErr)
 }
 
 // embedderUsable reports whether an embedder is configured and not the no-op

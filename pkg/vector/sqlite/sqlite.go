@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 
@@ -96,8 +97,16 @@ func (i *Index) Search(ctx context.Context, model string, query []float32, limit
 	return vector.Rank(hits, limit), nil
 }
 
-func (i *Index) Models(ctx context.Context) ([]string, error) {
-	rows, err := i.db.QueryContext(ctx, "SELECT DISTINCT model FROM vectors ORDER BY model")
+func (i *Index) Models(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		args[index] = id
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	rows, err := i.db.QueryContext(ctx, "SELECT DISTINCT model FROM vectors WHERE id IN ("+placeholders+") ORDER BY model", args...)
 	if err != nil {
 		return nil, fmt.Errorf("list models: %w", err)
 	}

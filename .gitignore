@@ -8,6 +8,9 @@
 *.test
 coverage.out
 
+# Scale-harness history (local, machine-specific timings)
+/.perf/
+
 # Local factotum state (databases, reports). The project config is committed;
 # machine-specific paths belong in ~/.factotum/config.toml.
 /.factotum/*

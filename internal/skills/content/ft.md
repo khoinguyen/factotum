@@ -10,13 +10,16 @@ the shortest path to using it well as an agent.
 ft task next                    # the highest-ranked ready task (uses the default project)
 ft task next --for <actor>      # what a specific human or agent should pick up
 ft task next -n 5               # a shortlist
+ft task next --explain          # why tasks are excluded: blocked, snoozed, deps, not_before
 ft task get <task>              # full detail; its Next: block names the follow-up command
 ft graph render --project <p>   # the whole DAG as text
 ```
 
 `ft task next` ranks ready tasks by what unblocks the most work, proximity to a
 milestone, the `--toward` target, and priority. Use it instead of scanning the
-list by hand.
+list by hand. When a task is missing from the ranking, `ft task next --explain`
+lists each excluded task with its reason, and `ft task get <task>` prints a
+`not ready because:` line for the same reason.
 
 ## Move work through its lifecycle
 

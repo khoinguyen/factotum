@@ -457,16 +457,7 @@ func (s *TaskService) Unsnooze(ctx context.Context, id core.TaskID) (*core.Task,
 
 // SnoozeDescription renders a snooze condition for humans.
 func SnoozeDescription(snooze core.Snooze) string {
-	switch {
-	case snooze.Indefinite:
-		return "indefinitely"
-	case snooze.Until != nil:
-		return "until " + snooze.Until.UTC().Format(time.RFC3339)
-	case snooze.UntilTask != nil:
-		return "until " + string(*snooze.UntilTask)
-	default:
-		return ""
-	}
+	return snooze.Describe()
 }
 
 func (s *TaskService) SetWaitingOn(ctx context.Context, id core.TaskID, actorIDs []core.ActorID) (*core.Task, error) {

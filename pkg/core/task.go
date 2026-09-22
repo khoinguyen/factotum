@@ -129,6 +129,20 @@ func (s Snooze) Validate() error {
 	return nil
 }
 
+// Describe renders a snooze condition for humans.
+func (s Snooze) Describe() string {
+	switch {
+	case s.Indefinite:
+		return "indefinitely"
+	case s.Until != nil:
+		return "until " + s.Until.UTC().Format(time.RFC3339)
+	case s.UntilTask != nil:
+		return "until " + string(*s.UntilTask)
+	default:
+		return ""
+	}
+}
+
 type Task struct {
 	ID          TaskID
 	ProjectID   ProjectID

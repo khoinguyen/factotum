@@ -5,6 +5,7 @@ package graph
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -112,6 +113,63 @@ func (g *Graph) ExternalDeps() []core.TaskID {
 	return out
 }
 
+// ReasonCode is the stable, machine-readable cause a task is excluded from the
+// ready set.
+type ReasonCode string
+
+const (
+	ReasonDepUnresolved ReasonCode = "dep_unresolved"
+	ReasonBlocked       ReasonCode = "blocked"
+	ReasonInProgress    ReasonCode = "in_progress"
+	ReasonSnoozed       ReasonCode = "snoozed"
+	ReasonNotBefore     ReasonCode = "not_before"
+)
+
+// NotReadyReason pairs a stable code with a human-readable detail.
+type NotReadyReason struct {
+	Code   ReasonCode
+	Detail string
+}
+
+// Readiness reports whether a task is startable and, when it is not, the single
+// reason it is excluded, chosen by a fixed precedence:
+// dep_unresolved > blocked > in_progress > snoozed > not_before. A task that
+// resolves is complete, not waiting, so it is not startable and carries no
+// reason. ReadySet is derived from this, so the reason and the ready decision
+// cannot disagree.
+func (g *Graph) Readiness(id core.TaskID) (bool, *NotReadyReason) {
+	t, ok := g.tasks[id]
+	if !ok {
+		return false, nil
+	}
+	if t.Resolves(g.policy) {
+		return false, nil
+	}
+	if reason := g.notReadyReason(t); reason != nil {
+		return false, reason
+	}
+	return true, nil
+}
+
+func (g *Graph) notReadyReason(t core.Task) *NotReadyReason {
+	if unresolved := g.unresolvedDeps(t); len(unresolved) > 0 {
+		return &NotReadyReason{Code: ReasonDepUnresolved, Detail: joinIDs(unresolved)}
+	}
+	switch t.Status {
+	case core.StatusBlocked:
+		return &NotReadyReason{Code: ReasonBlocked}
+	case core.StatusInProgress:
+		return &NotReadyReason{Code: ReasonInProgress}
+	}
+	if g.snoozeActive(t) {
+		return &NotReadyReason{Code: ReasonSnoozed, Detail: t.Snooze.Describe()}
+	}
+	if !g.now.IsZero() && !t.ReadyAt(g.now) {
+		return &NotReadyReason{Code: ReasonNotBefore, Detail: t.NotBefore.UTC().Format(time.RFC3339)}
+	}
+	return nil
+}
+
 // ReadySet returns the startable tasks: unresolved tasks whose known
 // dependencies all resolve under the policy. Tasks that are blocked or already
 // in progress are not startable, so they are excluded. A dependency that is
@@ -119,19 +177,22 @@ func (g *Graph) ExternalDeps() []core.TaskID {
 func (g *Graph) ReadySet() []core.TaskID {
 	out := make([]core.TaskID, 0, len(g.ids))
 	for _, id := range g.ids {
-		t := g.tasks[id]
-		if t.Resolves(g.policy) || t.Status == core.StatusBlocked || t.Status == core.StatusInProgress {
-			continue
-		}
-		if !g.now.IsZero() && !t.ReadyAt(g.now) {
-			continue
-		}
-		if g.snoozeActive(t) {
-			continue
-		}
-		if g.depsResolved(t) {
+		if ready, _ := g.Readiness(id); ready {
 			out = append(out, id)
 		}
+	}
+	return out
+}
+
+// unresolvedDeps returns the dependency ids that keep a task out of the ready
+// set: unknown to the graph, or not resolved under the policy.
+func (g *Graph) unresolvedDeps(t core.Task) []core.TaskID {
+	var out []core.TaskID
+	for _, d := range g.deps[t.ID] {
+		if dep, ok := g.tasks[d]; ok && dep.Resolves(g.policy) {
+			continue
+		}
+		out = append(out, d)
 	}
 	return out
 }
@@ -159,17 +220,12 @@ func (g *Graph) snoozeActive(t core.Task) bool {
 	return false
 }
 
-func (g *Graph) depsResolved(t core.Task) bool {
-	for _, d := range g.deps[t.ID] {
-		dep, ok := g.tasks[d]
-		if !ok {
-			return false
-		}
-		if !dep.Resolves(g.policy) {
-			return false
-		}
+func joinIDs(ids []core.TaskID) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, string(id))
 	}
-	return true
+	return strings.Join(parts, ", ")
 }
 
 func (g *Graph) ReadyByActor(actors map[core.ActorID]core.Actor) ReadyBucket {

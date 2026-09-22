@@ -21,6 +21,18 @@ type nextEntry struct {
 	Labels  []string `json:"labels" yaml:"labels"`
 }
 
+// notReadyEntry is the lossless structured shape of `task next --explain`: one
+// task excluded from the ready set and the stable reason it is excluded by.
+type notReadyEntry struct {
+	TaskID     string `json:"task_id" yaml:"task_id"`
+	Title      string `json:"title" yaml:"title"`
+	Status     string `json:"status" yaml:"status"`
+	ReasonCode string `json:"reason_code" yaml:"reason_code"`
+	Detail     string `json:"detail" yaml:"detail"`
+	Project    string `json:"project" yaml:"project"`
+	Repo       string `json:"repo" yaml:"repo"`
+}
+
 // applyResult is one entry of `task apply` output.
 type applyResult struct {
 	TaskID  string `json:"task_id" yaml:"task_id"`

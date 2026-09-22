@@ -40,6 +40,13 @@ type snoozeDoc struct {
 	Indefinite bool       `json:"indefinite,omitempty" yaml:"indefinite,omitempty"`
 }
 
+// notReadyDoc is the read-only readiness diagnostic carried by `task get`:
+// the stable code a task is excluded from the ready set by, and its detail.
+type notReadyDoc struct {
+	ReasonCode string `json:"reason_code" yaml:"reason_code"`
+	Detail     string `json:"detail" yaml:"detail"`
+}
+
 // taskDoc is the stable document exchanged by `task get -o json|yaml` and
 // `task apply -f`. Pointer fields distinguish an omitted field (leave
 // unchanged, or ignore for read-only fields) from an explicit value.
@@ -60,8 +67,10 @@ type taskDoc struct {
 	Notes       []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
 	NotBefore   *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
 	Snooze      *snoozeDoc `json:"snooze,omitempty" yaml:"snooze,omitempty"`
-	CreatedAt   *time.Time `json:"created_at,omitempty" yaml:"created_at,omitempty"`
-	UpdatedAt   *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+	// NotReady is read-only: it is derived from the graph and ignored on apply.
+	NotReady  *notReadyDoc `json:"not_ready,omitempty" yaml:"not_ready,omitempty"`
+	CreatedAt *time.Time   `json:"created_at,omitempty" yaml:"created_at,omitempty"`
+	UpdatedAt *time.Time   `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 }
 
 // taskDocFrom renders a task as the round-trippable document. Relation fields

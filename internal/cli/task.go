@@ -16,6 +16,7 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/graph"
 	"github.com/khoinguyen/factotum/pkg/judge"
 	"github.com/khoinguyen/factotum/pkg/rank"
 	"github.com/khoinguyen/factotum/pkg/store"
@@ -219,7 +220,7 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			dependents := dependentsOf(cmd.Context(), deps, task)
+			dependents, reason := taskGraphFacts(cmd.Context(), deps, task)
 			doc := taskDocFrom(task)
 			if len(dependents) > 0 {
 				ids := make([]string, 0, len(dependents))
@@ -227,6 +228,9 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 					ids = append(ids, string(id))
 				}
 				doc.Dependents = &ids
+			}
+			if reason != nil {
+				doc.NotReady = &notReadyDoc{ReasonCode: string(reason.Code), Detail: reason.Detail}
 			}
 			if fields != "" {
 				requested := parseFieldList(fields)
@@ -281,6 +285,9 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 						ids = append(ids, string(dependent))
 					}
 					deps.printf("unblocks: %s\n", strings.Join(ids, ", "))
+				}
+				if reason != nil {
+					deps.printf("not ready because: %s\n", reasonLabel(*reason))
 				}
 				if task.Description != "" {
 					deps.printf("\n=== Description ===\n%s\n", wrapText(task.Description, textWidth()))
@@ -508,7 +515,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 	var projectID, forRef, repo, toward, rankerName string
 	var labels []string
 	var limit int
-	var all bool
+	var all, explain bool
 
 	cmd := &cobra.Command{
 		Use:   "next",
@@ -532,6 +539,9 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 			}
 			if err != nil {
 				return err
+			}
+			if explain {
+				return emitNotReady(deps, snapshot)
 			}
 
 			candidates := unionIDs(snapshot.Ready.Agent, snapshot.Ready.Human)
@@ -603,7 +613,41 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&toward, "toward", "", "prefer tasks on the path to this task")
 	cmd.Flags().StringVar(&rankerName, "rank", "composite", "ranker: composite, unblock, milestone, or toward")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 0, "maximum number of tasks (0 means all)")
+	cmd.Flags().BoolVar(&explain, "explain", false, "list tasks excluded from the ready set with the reason, instead of ranking")
 	return cmd
+}
+
+// emitNotReady lists every pending task excluded from the ready set with the
+// single reason it is excluded, in a stable order. Resolved tasks are omitted:
+// they are complete, not waiting.
+func emitNotReady(deps *Deps, snapshot *app.Snapshot) error {
+	entries := make([]notReadyEntry, 0)
+	for _, id := range snapshot.Graph.IDs() {
+		_, reason := snapshot.Graph.Readiness(id)
+		if reason == nil {
+			continue
+		}
+		task, ok := snapshot.Graph.Task(id)
+		if !ok {
+			continue
+		}
+		entries = append(entries, notReadyEntry{
+			TaskID:     string(id),
+			Title:      task.Title,
+			Status:     string(task.Status),
+			ReasonCode: string(reason.Code),
+			Detail:     reason.Detail,
+			Project:    string(task.ProjectID),
+			Repo:       task.Repo,
+		})
+	}
+	return deps.emit(entries, func() {
+		rows := make([][]string, 0, len(entries))
+		for _, entry := range entries {
+			rows = append(rows, []string{entry.TaskID, entry.ReasonCode, entry.Detail, entry.Title, entry.Project, deps.repoValue(entry.Repo)})
+		}
+		deps.printTable([]string{"TASK", "REASON", "DETAIL", "TITLE", "PROJECT", "REPO"}, rows)
+	})
 }
 
 func newTaskClaimCommand(deps *Deps) *cobra.Command {
@@ -1214,15 +1258,24 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 	return cmd
 }
 
-// dependentsOf returns the tasks that directly depend on task, best-effort: a
-// graph build failure (e.g. an unrelated cycle) yields none rather than failing
-// the read.
-func dependentsOf(ctx context.Context, deps *Deps, task *core.Task) []core.TaskID {
+// taskGraphFacts returns a task's direct dependents and the reason it is
+// excluded from the ready set, from one snapshot load. Both are best-effort: a
+// graph build failure yields none rather than failing the read.
+func taskGraphFacts(ctx context.Context, deps *Deps, task *core.Task) ([]core.TaskID, *graph.NotReadyReason) {
 	snapshot, err := app.LoadSnapshot(ctx, deps.Backend, task.ProjectID, deps.Clock.Now())
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	return snapshot.Graph.Dependents(task.ID)
+	_, reason := snapshot.Graph.Readiness(task.ID)
+	return snapshot.Graph.Dependents(task.ID), reason
+}
+
+// reasonLabel renders a not-ready reason as `code` or `code: detail`.
+func reasonLabel(reason graph.NotReadyReason) string {
+	if reason.Detail == "" {
+		return string(reason.Code)
+	}
+	return fmt.Sprintf("%s: %s", reason.Code, reason.Detail)
 }
 
 // taskFields is the canonical single-result field set for a task: identity, an

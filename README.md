@@ -20,11 +20,14 @@ and who is waiting on whom.
 mise install
 mise run ci
 
-# Build the CLI (binary: ft)
-go build -o ft ./cmd/factotum
+# Build the CLI (binary: bin/ft)
+mise run build
+
+# Install it to ~/.local/bin/ft (explicit; build never touches the installed CLI)
+mise run install
 
 # Use the in-memory backend, or pick jsonfile / sqlite
-./ft --store sqlite --store-opt path=.factotum/factotum.db project create "Acme"
+./bin/ft --store sqlite --store-opt path=.factotum/factotum.db project create "Acme"
 ```
 
 ## Concepts

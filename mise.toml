@@ -30,8 +30,20 @@ description = "Run tests and print total coverage"
 run = "go test -race -covermode=atomic -coverprofile=coverage.out ./... && go tool cover -func=coverage.out"
 
 [tasks.build]
-description = "Build the ft CLI"
-run = "go build -o ft ./cmd/factotum"
+description = "Build the ft CLI to ./bin/ft (never the installed binary)"
+run = """
+mkdir -p bin
+version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+go build -ldflags "-X github.com/khoinguyen/factotum/pkg/version.Version=$version" -o bin/ft ./cmd/factotum
+"""
+
+[tasks.install]
+description = "Install the ft CLI to ~/.local/bin/ft (explicit; build does not do this)"
+run = """
+mkdir -p "$HOME/.local/bin"
+version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+go build -ldflags "-X github.com/khoinguyen/factotum/pkg/version.Version=$version" -o "$HOME/.local/bin/ft" ./cmd/factotum
+"""
 
 [tasks.hooks]
 description = "Install the git pre-commit hook"

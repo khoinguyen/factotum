@@ -120,11 +120,17 @@ Never claim a unit is done because the code "looks right". Run the tests.
 | `mise run lint` | Run golangci-lint. |
 | `mise run test` | `go test -race ./...`. |
 | `mise run cover` | Tests with a coverage profile. |
-| `mise run build` | Build the CLI. |
+| `mise run build` | Build the CLI to `./bin/ft` (never the installed binary). |
+| `mise run install` | Install the CLI to `~/.local/bin/ft` (explicit; build does not). |
 | `mise run hooks` | Install the git pre-commit hook. |
 | `mise run ci` | `fmt-check`, `lint`, `test`, `cover`, `build`. |
 
 Run `mise run ci` before considering any task complete.
+
+`mise run build` writes `./bin/ft` only; it never touches `~/.local/bin/ft`, so switching branches no
+longer changes the installed CLI. To update the installed CLI, run `mise run install` deliberately.
+Both stamp the git SHA into `ft version` (`git describe --tags --always --dirty`), so an installed
+binary is identifiable.
 
 ## Architecture
 

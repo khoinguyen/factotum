@@ -132,41 +132,41 @@ func dimensionQuestions() map[string]judge.Question {
 	questions["scope_bounded"] = judge.Question{
 		Kind:         judge.KindYesNo,
 		Instructions: "Is the task's scope bounded: does it state what is out of scope and where the boundary lies?",
-		Criteria: []string{
-			"true: an engineer can tell what is in scope and what is out",
-			"false: the boundary is vague, missing, or open-ended",
+		Criteria: map[string]any{
+			"true":  "An engineer can tell what is in scope and what is out.",
+			"false": "The boundary is vague, missing, or open-ended.",
 		},
 	}
 	questions["acceptance_verifiable"] = judge.Question{
 		Kind:         judge.KindYesNo,
 		Instructions: "Does the task state acceptance criteria that an engineer can verify without asking the author?",
-		Criteria: []string{
-			"true: the criteria are concrete and testable",
-			"false: they are absent, partial, or not testable",
+		Criteria: map[string]any{
+			"true":  "The criteria are concrete and testable.",
+			"false": "They are absent, partial, or not testable.",
 		},
 	}
 	questions["decisions_author"] = judge.Question{
 		Kind:         judge.KindYesNo,
 		Instructions: "Has the author made the decisions that are theirs to make, leaving only ordinary implementation choices to the implementer?",
-		Criteria: []string{
-			"true: scope, approach, and acceptance are decided by the author",
-			"false: a product decision, approach, or threshold is still open",
+		Criteria: map[string]any{
+			"true":  "Scope, approach, and acceptance are decided by the author.",
+			"false": "A product decision, approach, or threshold is still open.",
 		},
 	}
 	questions["dependencies_named"] = judge.Question{
 		Kind:         judge.KindYesNo,
 		Instructions: "Are the task's prerequisites and foundational dependencies named?",
-		Criteria: []string{
-			"true: every prerequisite and foundational dependency is declared",
-			"false: a prerequisite is unstated or a foundational dependency is undeclared",
+		Criteria: map[string]any{
+			"true":  "Every prerequisite and foundational dependency is declared.",
+			"false": "A prerequisite is unstated or a foundational dependency is undeclared.",
 		},
 	}
 	questions[holisticName] = judge.Question{
 		Kind:         judge.KindYesNo,
 		Instructions: "Could an engineer implement and verify this task autonomously from the spec alone?",
-		Criteria: []string{
-			"true: yes, with only ordinary implementation choices to make",
-			"false: no, something must be decided or clarified first",
+		Criteria: map[string]any{
+			"true":  "Yes, with only ordinary implementation choices to make.",
+			"false": "No, something must be decided or clarified first.",
 		},
 	}
 	return questions
@@ -177,11 +177,12 @@ func dimensionQuestions() map[string]judge.Question {
 func followUpQuestions(below []string) map[string]judge.Question {
 	questions := make(map[string]judge.Question, len(below))
 	for _, name := range below {
-		options := make([]string, 0, len(subAspects[name])+1)
+		// TypeSafe wants a choice's criteria as a dict of option -> description.
+		options := make(map[string]any, len(subAspects[name])+1)
 		for _, candidate := range subAspects[name] {
-			options = append(options, candidate.label)
+			options[candidate.label] = nil
 		}
-		options = append(options, "none")
+		options["none"] = nil
 		questions["gap::"+name] = judge.Question{
 			Kind:         judge.KindChoice,
 			Instructions: fmt.Sprintf("Which concrete gap, if any, keeps %s from ready?", name),
@@ -224,16 +225,30 @@ func decide(spec check.Spec, response judge.Response) check.Result {
 }
 
 // confidence is the least confident dimension answer, so one shaky judgment
-// lowers the reported confidence.
+// lowers the reported confidence. A noul answer carries no confidence of its own
+// (only its probability), so it is derived from the probability.
 func confidence(response judge.Response) float64 {
 	least := 1.0
 	for _, name := range dimensionNames {
-		value := response.Answers[name].Confidence
+		answer := response.Answers[name]
+		value := answer.Confidence
+		if value == 0 {
+			value = certainty(answer.Probability)
+		}
 		if value < least {
 			least = value
 		}
 	}
 	return least
+}
+
+// certainty maps a yes/no probability to a 0-1 confidence: 0 at p=0.5 (a coin
+// flip) and 1 at the extremes.
+func certainty(probability float64) float64 {
+	if probability < 0.5 {
+		return 1 - 2*probability
+	}
+	return 2*probability - 1
 }
 
 // findings turns the follow-up choices into owned gaps. A gap exists when the

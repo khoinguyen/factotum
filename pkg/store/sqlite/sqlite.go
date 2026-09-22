@@ -281,7 +281,7 @@ func (b *Backend) Migrate(ctx context.Context) error {
 		return err
 	}
 	if version > currentSchemaVersion {
-		return fmt.Errorf("%w: database schema version %d is newer than this binary supports (%d)", core.ErrInvalid, version, currentSchemaVersion)
+		return fmt.Errorf("%w: database schema version %d is newer than this binary supports (%d); update ft (`mise run install`) or use the newer branch binary that wrote the database", core.ErrInvalid, version, currentSchemaVersion)
 	}
 	if version == currentSchemaVersion {
 		return nil

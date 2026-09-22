@@ -148,6 +148,10 @@ model is detected and reported; run `ft memory reindex` after changing it.
   envelope `{truncated, full_output_path, preview}`. On a terminal, output is
   never bounded.
 - Never edit a database by hand: go through `ft`.
+- A branch build can forward-migrate the shared database. If `ft` reports a schema version newer
+  than it supports, update the installed binary (`mise run install`) or use the newer branch binary;
+  never point a non-installed branch binary at the real project DB — exercise CLI changes against a
+  throwaway store (`--store jsonfile --store-opt path=$(mktemp -d)/db.json`) or a temp config.
 - `ft task set <id> field=value ...` updates fields, including
   `not_before=YYYY-MM-DD` (or `+7d`) to defer a task and `not_before=` to clear
   it.

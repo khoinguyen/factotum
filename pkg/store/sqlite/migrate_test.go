@@ -180,8 +180,18 @@ func TestMigrateRejectsNewerVersion(t *testing.T) {
 	_ = raw.Close()
 
 	_, err := Open(context.Background(), sqliteConfig(path))
-	if err == nil || !strings.Contains(err.Error(), "newer") {
-		t.Fatalf("Open() error = %v, want a newer-version rejection", err)
+	if err == nil {
+		t.Fatal("Open() error = nil, want a newer-version rejection")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"newer than this binary supports",
+		fmt.Sprintf("(%d)", currentSchemaVersion),
+		"mise run install",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("Open() error = %q, want it to contain %q", msg, want)
+		}
 	}
 }
 

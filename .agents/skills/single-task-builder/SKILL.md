@@ -49,6 +49,11 @@ blocker to the chief (see Channel) and stop your turn. The **chief** files any f
 - `ft task get <task-id>` is the spec. Run `ft task start <task-id>` and `ft task assign <task-id> --actor claude`.
 - Build test-first: RED, implement, GREEN, then `mise run ci`. Update the embedded skill when the CLI
   surface changes.
+- **Never point a non-installed branch binary at the real project DB.** A branch build can
+  forward-migrate the shared database to a newer schema, which then breaks the installed `ft`. Run
+  every branch-binary invocation against a throwaway store
+  (`--store jsonfile --store-opt path=$(mktemp -d)/db.json`) or a temp config; reserve the real DB
+  for the installed binary.
 - Open a right-scoped PR: imperative subject; body with Intention, Fit, Exercise transcript (throwaway
   store), Risks, Reviewer focus, Tests, Relaxed tests, Breaking change; end with `Refs <task-id>`.
 - If the core behavior depends on a real external dependency (a model, network/API, service), make it

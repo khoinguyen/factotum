@@ -71,7 +71,17 @@ resolve your own refs once and pass them explicitly.
    - an agent-fixable follow-up → `ft task create` (link it), carry on;
    - a product decision or something for Khoi → note it and **escalate to Khoi** the next time he
      speaks; do not guess.
-8. **Clean up and repeat.** Close the builder/reviewer surfaces, then back to step 1.
+8. **Retire the pair and clean up.** After a merge:
+   - kill the two agent sessions: `cmux close-surface --surface <builder-ref>` and the same for the
+     reviewer (their panes collapse; your chief pane stays);
+   - remove their worktrees: `git worktree remove --force /tmp/ft-<t> /tmp/review-<t>`, then
+     `git worktree prune`, and delete the local branch `git branch -D ft/<t>-<short-brief>` (the merge
+     already deleted the remote branch).
+9. **Next task gets a fresh pair.** Back to step 1: `git switch main && git pull`, create a new
+   worktree, and spawn new `builder-<t2>`/`reviewer-<t2>` in the same right-column layout. **Never
+   reuse a subagent across tasks** — a fresh context is the point.
+   If a PR was left open (escalated to Khoi), leave its worktree and surface in place and continue;
+   do not delete work you have handed to Khoi.
 
 ## Keep your own context small
 

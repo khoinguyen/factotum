@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/agent"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/doctor"
 	"github.com/khoinguyen/factotum/pkg/embed"
 	"github.com/khoinguyen/factotum/pkg/judge"
 	"github.com/khoinguyen/factotum/pkg/store/builtins"
@@ -32,6 +34,8 @@ type runner struct {
 	agent       agent.Agent
 	getenv      func(string) string
 	isTerminal  func(io.Writer) bool
+	doctorProbe doctor.Prober
+	fixRunner   func(context.Context, string, io.Writer) error
 }
 
 func newRunner(t *testing.T) *runner {
@@ -54,6 +58,8 @@ func (r *runner) setup(deps *Deps) []string {
 	deps.EmbedderOverride = r.embedder
 	deps.VectorsOverride = r.vectors
 	deps.AgentOverride = r.agent
+	deps.DoctorProbe = r.doctorProbe
+	deps.DoctorFixRunner = r.fixRunner
 	if r.isTerminal != nil {
 		deps.IsTerminal = r.isTerminal
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/check"
 	checkbuiltins "github.com/khoinguyen/factotum/pkg/check/builtins"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/doctor"
 	"github.com/khoinguyen/factotum/pkg/embed"
 	_ "github.com/khoinguyen/factotum/pkg/embed/transport" // register the embedding providers
 	"github.com/khoinguyen/factotum/pkg/judge"
@@ -93,6 +94,14 @@ type Deps struct {
 	// Retriever adds semantic candidates to memory search when the embedder and side
 	// index are both configured.
 	Retriever *app.VectorRetriever
+
+	// DoctorProbe, when set, replaces the real endpoint/command prober so tests can
+	// diagnose a subsystem without touching the network or the PATH. Nil uses the
+	// transport prober.
+	DoctorProbe doctor.Prober
+	// DoctorFixRunner, when set, runs a `ft doctor --fix` shell command in tests
+	// instead of sh -c.
+	DoctorFixRunner func(ctx context.Context, command string, out io.Writer) error
 
 	vectorCloser io.Closer
 	vectorWarned bool

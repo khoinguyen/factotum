@@ -86,6 +86,33 @@ func TestBreakdownExtractsJSONFromProse(t *testing.T) {
 	}
 }
 
+func TestSanitizeExtractsThePlanObject(t *testing.T) {
+	const plan = `{"tasks":[{"title":"One"}]}`
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain object", plan, plan},
+		{"prose around", "Here is the plan: " + plan + ". Done.", plan},
+		{"prose braces before", "Use {templates} for layout. Plan: " + plan, plan},
+		{"prose braces after", plan + " then {done}", plan},
+		{"braces inside a string", `{"tasks":[{"title":"One","description":"a {b} c"}]}`,
+			`{"tasks":[{"title":"One","description":"a {b} c"}]}`},
+		{"code fence", "```json\n" + plan + "\n```", plan},
+		{"braces around a code fence", "Here {x}:\n```json\n" + plan + "\n```\nend {y}", plan},
+		{"stray object before the plan", `Schema {"a":1}. Plan: ` + plan, plan},
+		{"no object at all", "no json here", "no json here"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := string(sanitize([]byte(tc.in))); got != tc.want {
+				t.Fatalf("sanitize(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProviderAppliesConfiguredTimeout(t *testing.T) {
 	built, err := agent.New("command", emptyEnv, map[string]string{"command": "agent", "timeout": "5s"})
 	if err != nil {

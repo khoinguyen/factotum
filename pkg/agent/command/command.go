@@ -94,8 +94,8 @@ func instruction(req agent.Request) string {
 }
 
 // sanitize tolerates the common agent habit of wrapping JSON in prose or a
-// markdown code fence: it takes the fenced body when present, then narrows to the
-// outermost JSON object so surrounding commentary does not break decoding.
+// markdown code fence: it takes the fenced body when present, then picks the
+// plan object from it so surrounding commentary does not break decoding.
 func sanitize(out []byte) []byte {
 	text := strings.TrimSpace(string(out))
 	if start := strings.Index(text, "```"); start >= 0 {
@@ -108,12 +108,52 @@ func sanitize(out []byte) []byte {
 		}
 		text = strings.TrimSpace(text)
 	}
-	if start := strings.IndexByte(text, '{'); start >= 0 {
-		if end := strings.LastIndexByte(text, '}'); end > start {
-			text = text[start : end+1]
+	return []byte(planObject(text))
+}
+
+// planObject returns the first complete JSON object in text that carries a
+// "tasks" key — the shape the instruction demands — falling back to the first
+// complete object, then to text unchanged. Scanning for balanced objects, rather
+// than slicing first-{ to last-}, keeps prose braces ("use {templates}") out and
+// stops trailing commentary from being swallowed; preferring a "tasks" object
+// keeps a stray earlier object from being decoded as an empty plan.
+func planObject(text string) string {
+	fallback, found := text, false
+	for i := 0; i < len(text); i++ {
+		if text[i] != '{' {
+			continue
+		}
+		obj, ok := decodeObject(text[i:])
+		if !ok {
+			continue
+		}
+		var probe struct {
+			Tasks json.RawMessage `json:"tasks"`
+		}
+		if json.Unmarshal([]byte(obj), &probe) == nil && probe.Tasks != nil {
+			return obj
+		}
+		if !found {
+			fallback, found = obj, true
 		}
 	}
-	return []byte(text)
+	return fallback
+}
+
+// decodeObject returns the complete JSON object at the start of text, or false
+// if text does not begin with one. json.Decoder stops at the object's closing
+// brace, so trailing prose cannot be swallowed, and prose braces like
+// "{templates}" are rejected because they are not valid JSON.
+func decodeObject(text string) (string, bool) {
+	dec := json.NewDecoder(strings.NewReader(text))
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return "", false
+	}
+	if len(raw) == 0 || raw[0] != '{' {
+		return "", false
+	}
+	return string(raw), true
 }
 
 func execRunner(ctx context.Context, command string, stdin []byte) ([]byte, error) {

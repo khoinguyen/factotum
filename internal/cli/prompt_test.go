@@ -186,6 +186,53 @@ func TestPromptUnknownProviderIsConfigError(t *testing.T) {
 	}
 }
 
+// TestPromptErrorExitCodes pins the process exit codes a caller may branch on,
+// so a change in error wrapping cannot silently move them.
+func TestPromptErrorExitCodes(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, r *runner)
+		want  int
+	}{
+		{
+			name: "invalid plan does not partially apply",
+			setup: func(t *testing.T, r *runner) {
+				planAgent(t, r, agent.Task{Title: "Good"}, agent.Task{Kind: "epic", Title: "Bad"})
+			},
+			want: 5,
+		},
+		{
+			name: "unknown provider is an internal error",
+			setup: func(t *testing.T, r *runner) {
+				if err := os.WriteFile(r.userPath, []byte("[agent]\nprovider = \"bogus\"\n"), 0o600); err != nil {
+					t.Fatalf("write user config: %v", err)
+				}
+			},
+			want: 1,
+		},
+		{
+			name:  "no agent configured is a usage error",
+			setup: func(t *testing.T, r *runner) {},
+			want:  2,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			projectID := firstField(t, r.run("project", "create", "Acme"))
+			tc.setup(t, r)
+
+			_, _, err := executePrompt(t, r, "prompt", "--yes", "--project", projectID, "build", "login")
+			if err == nil {
+				t.Fatal("Execute() error = nil, want an error")
+			}
+			if got := ExitCode(err); got != tc.want {
+				t.Fatalf("ExitCode(%v) = %d, want %d", err, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPromptEmptyPlanIsNoted(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

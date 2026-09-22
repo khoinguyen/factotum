@@ -47,6 +47,16 @@ Never trust the PR body or "CI green" alone. Reproduce it:
 6. Check the PR body is current: the Exercise transcript re-run, `Relaxed tests` and `Breaking
    change?` matching the code as it is now.
 
+**Fakes are not evidence.** If the change's core behavior is exercised only through fakes/stubs and
+the real dependency is never run — a real embedding model, a network/API, an external service, a real
+migration, a subprocess — do **not** return a plain approve. Lead your findings with what was not run,
+and either:
+- run it for real when that is feasible locally (start the provider, run the command); or
+- return **approved — real path unverified**, which the chief must **escalate to Khoi before merge**.
+A follow-up test ticket is good hygiene, but it does not make an unverified real path silently
+mergeable. Merging a real-unverified core path without escalating is the failure this rule exists to
+prevent.
+
 ## Findings
 
 - Number every finding with a severity (MEDIUM / LOW / INFO) and the concrete fix.

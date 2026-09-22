@@ -42,6 +42,9 @@ back to the chief when the task is finished. Khoi, the human owner, may also spe
   surface changes.
 - Open a right-scoped PR: imperative subject; body with Intention, Fit, Exercise transcript (throwaway
   store), Risks, Reviewer focus, Tests, Relaxed tests, Breaking change; end with `Refs <task-id>`.
+- If the core behavior depends on a real external dependency (a model, network/API, service), make it
+  runnable and state in the PR body **what you ran for real vs with fakes**. If you could not run it
+  for real, say so plainly — the review must know, so it can escalate rather than approve on fakes.
 
 ## Hand-off
 

@@ -34,9 +34,10 @@ back to the chief when the task is finished. Khoi, the human owner, may also spe
 
 ## The task
 
-- The chief gives you the task id and the branch `ft/<task-id>-<short-brief>`. `ft task get <task-id>`
-  is the spec.
-- Create the branch **first**, then `ft task start <task-id>` and `ft task assign <task-id> --actor claude`.
+- The chief gives you the task id, your **worktree path** (your working directory), and the branch
+  `ft/<task-id>-<short-brief>` — already created. **Do not create or switch branches**; commit in the
+  worktree you were given.
+- `ft task get <task-id>` is the spec. Run `ft task start <task-id>` and `ft task assign <task-id> --actor claude`.
 - Build test-first: RED, implement, GREEN, then `mise run ci`. Update the embedded skill when the CLI
   surface changes.
 - Open a right-scoped PR: imperative subject; body with Intention, Fit, Exercise transcript (throwaway
@@ -60,8 +61,9 @@ is the chief's call.
 
 ## Git discipline
 
-- `main` is protected: create the branch before the first commit. Accidentally committed to `main`?
-  `git switch -c <branch>` keeps the commit, then `git branch -f main origin/main`.
+- You work in your own worktree on the branch the chief created. Never commit to `main`. If you find
+  yourself on `main` by accident: `git switch -c <branch>` keeps the commit, then
+  `git branch -f main origin/main`.
 - SSH push fails? `gh auth setup-git` and
   `git config --local url."https://github.com/".insteadOf "git@github.com:"`.
 

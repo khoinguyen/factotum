@@ -45,6 +45,19 @@ type Config struct {
 	// empty provider means Disabled: retrieval stays lexical. Options are generic so
 	// a new provider needs no new field here.
 	Embed Embed
+	// Agent selects the provider that breaks a free-form prompt into tasks. The
+	// default (command) runs a configured agent CLI; with no command it is
+	// Disabled, so `ft prompt` reports that no agent is configured. Options are
+	// generic so a new provider needs no new field here.
+	Agent Agent
+}
+
+// Agent configures the inference provider behind `ft prompt`. Agent is the
+// capability; a provider such as command is one implementation, and its settings
+// live under the [agent] table.
+type Agent struct {
+	Provider string
+	Options  map[string]string
 }
 
 // Embed configures the optional embedding provider. It is the capability; a
@@ -117,6 +130,7 @@ func Default() Config {
 		},
 		Judge: Judge{Provider: "typesafe", Options: map[string]string{}},
 		Embed: Embed{Options: map[string]string{}},
+		Agent: Agent{Provider: "command", Options: map[string]string{}},
 	}
 }
 
@@ -156,6 +170,13 @@ func Load(in Input) (Config, error) {
 	cfg.Embed.Options = embedOptions
 	cfg.Embed.Provider = strings.TrimSpace(embedOptions["provider"])
 	applyEmbedEnv(&cfg.Embed, getenv)
+	agentOptions, err := providerOptions(in.UserPath, "agent")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Agent.Options = agentOptions
+	cfg.Agent.Provider = firstNonEmpty(strings.TrimSpace(agentOptions["provider"]), Default().Agent.Provider)
+	applyAgentEnv(&cfg.Agent, getenv)
 	cfg.DefaultActor = firstNonEmpty(project.DefaultActor, entry.DefaultActor, user.DefaultActor)
 	cfg.NoHints = boolAt(user.NoHints, false)
 	cfg.NoHints = boolAt(entry.NoHints, cfg.NoHints)
@@ -293,6 +314,20 @@ func applyEmbedEnv(embed *Embed, getenv func(string) string) {
 		if value := getenv(env); value != "" {
 			embed.Options[key] = value
 		}
+	}
+}
+
+// applyAgentEnv overlays the FACTOTUM_AGENT_* environment variables on the [agent]
+// table, so an agent CLI can be selected without editing a config file.
+func applyAgentEnv(agent *Agent, getenv func(string) string) {
+	if agent.Options == nil {
+		agent.Options = map[string]string{}
+	}
+	if provider := getenv("FACTOTUM_AGENT_PROVIDER"); provider != "" {
+		agent.Provider = provider
+	}
+	if command := getenv("FACTOTUM_AGENT_COMMAND"); command != "" {
+		agent.Options["command"] = command
 	}
 }
 

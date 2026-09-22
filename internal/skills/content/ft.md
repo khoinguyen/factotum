@@ -154,6 +154,25 @@ best-effort - a memory is created even when the embedder is down, and the skippe
 vector is backfilled by the next edit or `ft memory reindex`. A change of embedding
 model is detected and reported; run `ft memory reindex` after changing it.
 
+## Diagnose the optional subsystems
+
+```sh
+ft doctor                    # is the embedder/judge configured, reachable, usable?
+ft doctor -o json            # the same report for an agent to parse
+ft doctor -p <project>       # include the project's memory vector index check
+ft doctor --fix              # apply the recommended fixes (asks on a terminal)
+ft doctor --strict           # exit non-zero on warnings too
+```
+
+`ft doctor` reports each check as `ok`/`warn`/`fail` with the observed state and a
+concrete recommendation: a provider that is configured but unknown, an endpoint that
+does not answer, a model the endpoint does not serve (`ollama pull <model>`), a
+stdio command not on `PATH`, a vector index left on an old model (`ft memory
+reindex`), or a judge without a key. It is read-only unless `--fix` is given; on a
+terminal without `--fix` it asks before applying anything, and it never starts a
+server or downloads a model on its own. The exit code is non-zero when any check
+fails, so a script can gate on it.
+
 ## Conventions that matter
 
 - `-p/--project` falls back to the configured default (`project` in

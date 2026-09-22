@@ -21,6 +21,7 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 	factories := map[string]CommandFactory{
 		"actor":     newActorCommand,
 		"doc":       newDocCommand,
+		"doctor":    newDoctorCommand,
 		"event":     newEventCommand,
 		"graph":     newGraphCommand,
 		"memory":    newMemoryCommand,

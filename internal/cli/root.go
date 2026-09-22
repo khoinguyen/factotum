@@ -26,6 +26,7 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 		"event":     newEventCommand,
 		"feedback":  newFeedbackCommand,
 		"graph":     newGraphCommand,
+		"init":      newInitCommand,
 		"memory":    newMemoryCommand,
 		"milestone": newMilestoneCommand,
 		"project":   newProjectCommand,
@@ -92,6 +93,7 @@ func NewRoot(deps *Deps) *cobra.Command {
 				return err
 			}
 			deps.UserConfigPath = userPath
+			deps.ProjectConfigPath = projectPath
 			if storeBackend != "" {
 				cfg.Store.Backend = storeBackend
 			}

@@ -22,6 +22,15 @@ type memoryEntry struct {
 	Task    string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
 }
 
+// memoryContextEntry is one line of the project briefing `ft memory context`
+// emits: enough to decide what to load, never the body.
+type memoryContextEntry struct {
+	ID    string `json:"id" yaml:"id"`
+	Title string `json:"title" yaml:"title"`
+	Brief string `json:"brief,omitempty" yaml:"brief,omitempty"`
+	Task  string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+}
+
 func memoryEntryFrom(artifact *core.Artifact) memoryEntry {
 	entry := memoryEntry{ID: string(artifact.ID), Title: artifact.Title, Brief: artifact.Brief, Project: string(artifact.ProjectID)}
 	if artifact.TaskID != nil {
@@ -262,6 +271,36 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(create, list, search, get, update, del)
+	var ctxProject string
+	contextCmd := &cobra.Command{
+		Use:   "context",
+		Short: "Brief the project's memory for agent triage",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			project := deps.resolveProject(ctxProject)
+			kind := core.ArtifactMemory
+			artifacts, err := deps.Artifacts.List(cmd.Context(), store.ArtifactFilter{ProjectID: project, Kind: &kind})
+			if err != nil {
+				return err
+			}
+			entries := make([]memoryContextEntry, 0, len(artifacts))
+			for _, artifact := range artifacts {
+				entry := memoryContextEntry{ID: string(artifact.ID), Title: artifact.Title, Brief: artifact.Brief}
+				if artifact.TaskID != nil {
+					entry.Task = string(*artifact.TaskID)
+				}
+				entries = append(entries, entry)
+			}
+			return deps.emit(entries, func() {
+				rows := make([][]string, 0, len(entries))
+				for _, entry := range entries {
+					rows = append(rows, []string{entry.ID, entry.Title, entry.Brief, entry.Task})
+				}
+				deps.printTable([]string{"ID", "TITLE", "BRIEF", "TASK"}, rows)
+			}, memoryContextHints(entries)...)
+		},
+	}
+	contextCmd.Flags().StringVarP(&ctxProject, "project", "p", "", "filter by project id")
+
+	cmd.AddCommand(create, list, search, get, update, del, contextCmd)
 	return cmd
 }

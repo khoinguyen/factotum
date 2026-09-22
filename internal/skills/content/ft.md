@@ -19,7 +19,8 @@ repository, it offers to register the current directory as a project; with
 `-p/--project` it registers directly, deriving the project id and name from the
 git remote (else the directory name) unless a name is given. Registration writes
 a `[projects.<id>]` entry with a `db_path` (default `~/.factotum/<id>.db`, sqlite)
-to the machine config, pins `project = "<id>"` in `.factotum/config.toml`, and
+to the machine config, pins `project = "<id>"` in the current directory's
+`.factotum/config.toml`, and
 creates the project in its store. Without a terminal there are no prompts: `ft
 init` only creates the machine config (and hints at `ft init -p`), while `ft init
 -p` registers using the derived defaults. `-u` and `-p` are mutually exclusive.

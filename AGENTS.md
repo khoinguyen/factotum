@@ -325,6 +325,30 @@ Workflow:
 Never commit `ft`, `coverage.out`, or `*.db`; `.factotum/config.toml` is intentionally
 committable. Do not amend a merged commit, and never force-push a shared branch.
 
+### Working a stack (branch guard)
+
+A stack moves under you: layers merge while others are still under review, which is normal. A
+cascade also changes which branch you are on. Re-check state before acting instead of assuming it.
+
+- **Assert the branch before you edit.** `git branch --show-current` must be the branch you intend.
+  Never infer the branch from context, and never suppress the output of `git switch`,
+  `git checkout`, or `git rebase`.
+- **A rebase or cascade leaves you on the last branch it rebased** — the top of the stack — not the
+  branch you meant to edit. Re-assert before the next edit.
+- **Move a feature commit with `git rebase --onto <newbase> <oldbase> <branch>`.** A bare
+  `git rebase <branch>` after a base was amended replays commits the base no longer shares.
+- **Read the real state of every PR before a stack operation.** `git fetch`, then
+  `gh pr list --state all` and `gh pr view <n> --json state,baseRefName,headRefName`. Assume some
+  layers have merged since you last looked, and that their head branches were deleted.
+- **Resync after a merge.** When a lower layer merges, its head branch is deleted and the PRs above
+  are retargeted (usually to `main`). Rebase each survivor onto its new base with `--onto`, re-check
+  its base (`gh pr view <n> --json baseRefName`), then push with `--force-with-lease`. A branch whose
+  PR already merged is gone on the remote; do not try to push it.
+- **Do not force a stack.** Independent PRs that all target `main` are not a stack. Re-link with
+  `gh stack link` bottom to top only when the chain actually holds.
+- `gh stack sync` needs the stack checked out locally; when it refuses, do the `--onto` rebases
+  explicitly and verify each base.
+
 ### PR body
 
 Concise and easy to digest: short phrases, no walls of text. Cover, in order:
@@ -342,5 +366,10 @@ Concise and easy to digest: short phrases, no walls of text. Cover, in order:
 - **Breaking change?** — yes/no; if yes, what callers must change.
 
 Reference the `ft` task in the body so the PR and the graph stay linked.
+
+**Keep the body current.** The body describes the branch as it is now. When a commit changes
+behavior, flags, or output — including changes made in response to review feedback — update the body
+in the same push and re-run the Exercise transcript. A body that still describes superseded behavior
+is a review hazard.
 
 

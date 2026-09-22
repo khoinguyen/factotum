@@ -15,6 +15,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/doctor"
 	"github.com/khoinguyen/factotum/pkg/embed"
+	"github.com/khoinguyen/factotum/pkg/feedback"
 	"github.com/khoinguyen/factotum/pkg/judge"
 	"github.com/khoinguyen/factotum/pkg/store/builtins"
 	"github.com/khoinguyen/factotum/pkg/vector"
@@ -36,6 +37,9 @@ type runner struct {
 	isTerminal  func(io.Writer) bool
 	doctorProbe doctor.Prober
 	fixRunner   func(context.Context, []string, io.Writer) error
+	// feedbackFactory, when set, registers a fake feedback sink transport under
+	// the name "fake" so a test can prove the command is transport-agnostic.
+	feedbackFactory feedback.Factory
 }
 
 func newRunner(t *testing.T) *runner {
@@ -70,6 +74,11 @@ func (r *runner) setup(deps *Deps) []string {
 		}
 	}
 	builtins.RegisterAll(deps.StoreFactories)
+	if r.feedbackFactory != nil {
+		if err := deps.FeedbackTransports.Register("fake", r.feedbackFactory); err != nil {
+			r.t.Fatalf("register feedback transport: %v", err)
+		}
+	}
 	return []string{
 		"--store", "jsonfile", "--store-opt", "path=" + r.path,
 		"--config", r.projectPath, "--user-config", r.userPath,

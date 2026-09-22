@@ -68,9 +68,12 @@ type taskDoc struct {
 	NotBefore   *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
 	Snooze      *snoozeDoc `json:"snooze,omitempty" yaml:"snooze,omitempty"`
 	// NotReady is read-only: it is derived from the graph and ignored on apply.
-	NotReady  *notReadyDoc `json:"not_ready,omitempty" yaml:"not_ready,omitempty"`
-	CreatedAt *time.Time   `json:"created_at,omitempty" yaml:"created_at,omitempty"`
-	UpdatedAt *time.Time   `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+	NotReady *notReadyDoc `json:"not_ready,omitempty" yaml:"not_ready,omitempty"`
+	// Checks is read-only: cached check results, populated only by `task get`
+	// and ignored on apply.
+	Checks    []checkResultDoc `json:"checks,omitempty" yaml:"checks,omitempty"`
+	CreatedAt *time.Time       `json:"created_at,omitempty" yaml:"created_at,omitempty"`
+	UpdatedAt *time.Time       `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 }
 
 // taskDocFrom renders a task as the round-trippable document. Relation fields
@@ -150,7 +153,7 @@ func snoozeDocFrom(snooze core.Snooze) *snoozeDoc {
 var taskDocFieldNames = []string{
 	"id", "project_id", "repo", "kind", "title", "description", "status",
 	"priority", "labels", "assignee", "deps", "dependents", "waiting_on",
-	"notes", "not_before", "created_at", "updated_at",
+	"notes", "checks", "not_before", "created_at", "updated_at",
 }
 
 // taskDocValues renders a task document as selectable key/value pairs. Keys
@@ -198,6 +201,9 @@ func taskDocValues(doc taskDoc) map[string]any {
 	}
 	if len(doc.Notes) > 0 {
 		out["notes"] = doc.Notes
+	}
+	if doc.Checks != nil {
+		out["checks"] = doc.Checks
 	}
 	if doc.NotBefore != nil {
 		out["not_before"] = *doc.NotBefore

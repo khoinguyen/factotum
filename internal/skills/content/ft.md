@@ -47,6 +47,27 @@ ft task unsnooze <task>
 A snoozed task leaves ranking until its condition passes (a date or task
 condition clears itself; indefinite waits for `unsnooze`).
 
+## Gauge whether a task is ready
+
+```sh
+ft task check <task>                           # run every advisory check, cache the result
+ft task check <task> --check grooming --force  # one check, recompute
+ft task get <task>                             # shows the cached checks: block (no network)
+ft task get <task> --fields checks             # just the checks block
+ft task decide <task> --ready --reason "why"   # record a human decision
+ft task decide <task> --clear                  # restore the judge verdict
+```
+
+Checks are advisory, never a gate, and `ft task check` is a read verb whose only
+write is its derived cache. The first check, `grooming`, judges the task's
+**body** (title, kind, and description) and reports `ready`, `needs_grooming`
+(only agent-owned findings, each a concrete body edit), or `needs_human` (a
+decision only the author can make - escalate, do not edit the body).
+
+The body is the spec; notes are history. A note never changes a verdict, so fold
+a decision into the body to make it count. Recording a human override requires a
+human actor; it stops agents re-grooming, and editing the body makes it stale.
+
 ## Record what you learn and file new work
 
 ```sh

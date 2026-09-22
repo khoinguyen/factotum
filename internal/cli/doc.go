@@ -12,6 +12,20 @@ import (
 	"github.com/khoinguyen/factotum/pkg/store"
 )
 
+// visibleArtifacts drops derived task-check cache entries: they are state the
+// check framework owns, not documents, so `ft doc list` and `ft doc search` do
+// not surface them.
+func visibleArtifacts(artifacts []*core.Artifact) []*core.Artifact {
+	out := make([]*core.Artifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if artifact.Kind == core.ArtifactTaskCheck {
+			continue
+		}
+		out = append(out, artifact)
+	}
+	return out
+}
+
 func newDocCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "doc", Short: "Manage specs, docs, and memory"}
 
@@ -26,6 +40,9 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			project := deps.resolveProject(projectID)
 			if err := requireProject(cmd, project); err != nil {
 				return err
+			}
+			if core.ArtifactKind(kind) == core.ArtifactTaskCheck {
+				return usageError(cmd, "%q is an internal kind; run `ft task check` instead", kind)
 			}
 			content := body
 			if path != "" {
@@ -81,6 +98,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			artifacts = visibleArtifacts(artifacts)
 			docs := make([]artifactDoc, 0, len(artifacts))
 			for _, artifact := range artifacts {
 				doc := artifactDocFrom(artifact)
@@ -111,6 +129,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			artifacts = visibleArtifacts(artifacts)
 			artifacts = deps.maybeRerank(cmd, args[0], artifacts, searchNoRerank)
 			docs := make([]artifactDoc, 0, len(artifacts))
 			for _, artifact := range artifacts {

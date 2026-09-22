@@ -13,6 +13,8 @@ import (
 	"github.com/khoinguyen/factotum/pkg/agent"
 	_ "github.com/khoinguyen/factotum/pkg/agent/command" // register the default provider
 	"github.com/khoinguyen/factotum/pkg/app"
+	"github.com/khoinguyen/factotum/pkg/check"
+	checkbuiltins "github.com/khoinguyen/factotum/pkg/check/builtins"
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/embed"
 	_ "github.com/khoinguyen/factotum/pkg/embed/transport" // register the embedding providers
@@ -52,12 +54,15 @@ type Deps struct {
 	StoreFactories *registry.Registry[store.Factory]
 	Rankers        *registry.Registry[rank.Ranker]
 	Renderers      *registry.Registry[render.Renderer]
+	Checks         *registry.Registry[check.Check]
 	Commands       *registry.Registry[CommandFactory]
 
 	Projects  *app.ProjectService
 	Tasks     *app.TaskService
 	Actors    *app.ActorService
 	Artifacts *app.ArtifactService
+	// TaskChecks runs advisory checks and caches their results.
+	TaskChecks *app.CheckService
 
 	// Judge is the model-backed judgment port. It is Disabled when no API key is
 	// configured, so every judge-backed feature falls back to its deterministic path.
@@ -185,10 +190,13 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	d.Rerank = app.NewRerankService(d.Judge)
 	d.Duplicate = app.NewDuplicateService(d.Judge)
 	d.Reference = app.NewReferenceService(d.Judge)
+	d.Checks = check.NewRegistry()
+	checkbuiltins.RegisterAll(d.Checks, d.Judge)
 	d.Projects = app.NewProjectService(backend, d.Clock, d.IDs)
 	d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
 	d.Actors = app.NewActorService(backend, d.Clock, d.IDs)
 	d.Artifacts = app.NewArtifactService(backend, d.Clock, d.IDs)
+	d.TaskChecks = app.NewCheckService(backend, d.Clock, d.IDs, d.Checks)
 	if d.EmbedderOverride != nil {
 		d.Embedder = d.EmbedderOverride
 	} else {

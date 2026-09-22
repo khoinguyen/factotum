@@ -988,8 +988,11 @@ func (r *artifactRepo) Search(ctx context.Context, filter store.ArtifactFilter, 
 	queryArgs := args
 	hasWhere := false
 	if len(terms) > 0 {
-		// FTS5 matches token prefixes; every term must appear (implicit AND).
-		statement = "SELECT a.data, bm25(artifacts_fts, 10.0, 5.0, 1.0) AS rank FROM artifacts_fts JOIN artifacts a ON a.rowid = artifacts_fts.rowid WHERE artifacts_fts MATCH ?"
+		// FTS5 selects the candidate set (every term must appear as a prefix).
+		// The shared LexicalScore orders it, so sqlite ranks exactly like the
+		// scan backends and bm25's term-frequency factor cannot promote a
+		// repeated brief/body hit over a single title hit.
+		statement = "SELECT a.data FROM artifacts_fts JOIN artifacts a ON a.rowid = artifacts_fts.rowid WHERE artifacts_fts MATCH ?"
 		queryArgs = append([]any{ftsQuery(terms)}, args...)
 		hasWhere = true
 	}
@@ -1010,19 +1013,16 @@ func (r *artifactRepo) Search(ctx context.Context, filter store.ArtifactFilter, 
 	hits := make([]store.SearchHit, 0)
 	for rows.Next() {
 		var data string
-		score := 0.0
-		if len(terms) > 0 {
-			var rank float64
-			if err := rows.Scan(&data, &rank); err != nil {
-				return nil, err
-			}
-			score = -rank
-		} else if err := rows.Scan(&data); err != nil {
+		if err := rows.Scan(&data); err != nil {
 			return nil, err
 		}
 		artifact, err := decodeArtifact(data)
 		if err != nil {
 			return nil, err
+		}
+		score, matched := store.LexicalScore(artifact, terms)
+		if !matched {
+			continue
 		}
 		hits = append(hits, store.SearchHit{Artifact: artifact, Score: score})
 	}

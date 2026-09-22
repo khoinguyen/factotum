@@ -476,6 +476,21 @@ func testArtifactSearch(t *testing.T, be store.Backend) {
 		t.Fatalf("Delete() error = %v", err)
 	}
 	assertSearch(t, repo, ctx, prj, "terraform", nil)
+
+	// Term frequency must not let a repeated body or brief hit outrank a single
+	// title hit: ranking is the shared LexicalScore, not raw bm25.
+	tfPrj := store.ArtifactFilter{ProjectID: "prj-tf"}
+	tfArtifacts := []*core.Artifact{
+		{ID: "art-tf-title", ProjectID: "prj-tf", Kind: core.ArtifactMemory, Title: "beta"},
+		{ID: "art-tf-brief", ProjectID: "prj-tf", Kind: core.ArtifactMemory, Title: "unrelated tf brief", Brief: "beta beta beta beta beta beta beta beta beta beta"},
+		{ID: "art-tf-body", ProjectID: "prj-tf", Kind: core.ArtifactMemory, Title: "unrelated tf body", Body: "beta beta beta beta beta beta beta beta beta beta beta beta beta beta beta beta beta beta beta beta"},
+	}
+	for _, artifact := range tfArtifacts {
+		if err := repo.Create(ctx, artifact); err != nil {
+			t.Fatalf("Create(%s) error = %v", artifact.ID, err)
+		}
+	}
+	assertSearch(t, repo, ctx, tfPrj, "beta", []core.ArtifactID{"art-tf-title", "art-tf-brief", "art-tf-body"})
 }
 
 func assertSearch(t *testing.T, repo store.ArtifactRepo, ctx context.Context, filter store.ArtifactFilter, query string, want []core.ArtifactID) {

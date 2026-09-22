@@ -947,6 +947,41 @@ func TestTaskSnoozeRejectsBadCondition(t *testing.T) {
 	}
 }
 
+func TestTaskSnoozeRejectsDependentUntilTask(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	a, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "A"})
+	b, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "B"})
+	c, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "C"})
+	if _, err := h.tasks.AddDep(ctx, b.ID, a.ID); err != nil { // B depends on A
+		t.Fatalf("AddDep(B, A) error = %v", err)
+	}
+	if _, err := h.tasks.AddDep(ctx, c.ID, b.ID); err != nil { // C depends on B
+		t.Fatalf("AddDep(C, B) error = %v", err)
+	}
+
+	// B depends on A: snoozing A until B would deadlock.
+	if _, err := h.tasks.Snooze(ctx, a.ID, core.Snooze{UntilTask: &b.ID}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Snooze(A until direct dependent B) error = %v, want ErrInvalid", err)
+	}
+	// C transitively depends on A: same deadlock.
+	if _, err := h.tasks.Snooze(ctx, a.ID, core.Snooze{UntilTask: &c.ID}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Snooze(A until transitive dependent C) error = %v, want ErrInvalid", err)
+	}
+
+	// Independent task: allowed.
+	independent, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "independent"})
+	if _, err := h.tasks.Snooze(ctx, a.ID, core.Snooze{UntilTask: &independent.ID}); err != nil {
+		t.Fatalf("Snooze(until independent) error = %v, want nil", err)
+	}
+
+	// Upstream task (B depends on A, snooze B until A): allowed.
+	if _, err := h.tasks.Snooze(ctx, b.ID, core.Snooze{UntilTask: &a.ID}); err != nil {
+		t.Fatalf("Snooze(until upstream) error = %v, want nil", err)
+	}
+}
+
 func readyIDs(t *testing.T, h *harness, projectID core.ProjectID, now time.Time) []core.TaskID {
 	t.Helper()
 	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID, now)

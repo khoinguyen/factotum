@@ -1,6 +1,7 @@
 # Built binaries
 /ft
 /factotum
+/bin/
 /dist/
 
 # Test and coverage artifacts

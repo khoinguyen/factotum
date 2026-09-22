@@ -149,7 +149,11 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(tasks, func() {
+			entries := make([]taskListEntry, 0, len(tasks))
+			for _, task := range tasks {
+				entries = append(entries, taskListEntryFrom(task))
+			}
+			return deps.emit(entries, func() {
 				rows := make([][]string, 0, len(tasks))
 				for _, task := range tasks {
 					rows = append(rows, []string{string(task.ID), string(task.Kind), task.Title, string(task.Status), string(task.ProjectID), deps.repoValue(task.Repo)})

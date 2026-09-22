@@ -47,7 +47,7 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 func NewRoot(deps *Deps) *cobra.Command {
 	var configPath, userConfigPath, storeBackend, actorRef, output string
 	var storeOpts []string
-	var noHints bool
+	var noHints, full bool
 
 	root := &cobra.Command{
 		Use:           "ft",
@@ -95,6 +95,10 @@ func NewRoot(deps *Deps) *cobra.Command {
 			default:
 				return fmt.Errorf("unknown output format %q, want text, json, or yaml", output)
 			}
+			deps.Full = full
+			if err := deps.beginBounding(); err != nil {
+				return err
+			}
 			if noHints {
 				cfg.NoHints = true
 			}
@@ -121,6 +125,9 @@ func NewRoot(deps *Deps) *cobra.Command {
 			return nil
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
+			if err := deps.FlushOutput(); err != nil {
+				return err
+			}
 			return deps.Close()
 		},
 	}
@@ -132,6 +139,7 @@ func NewRoot(deps *Deps) *cobra.Command {
 	root.PersistentFlags().StringVar(&actorRef, "actor", "", "actor attributed to mutations (id or name)")
 	root.PersistentFlags().StringVarP(&output, "output", "o", "text", "output format: text, json, or yaml")
 	root.PersistentFlags().BoolVar(&noHints, "no-hints", false, "suppress next-step command suggestions")
+	root.PersistentFlags().BoolVar(&full, "full", false, "print full output, even when it is large")
 
 	root.AddCommand(&cobra.Command{
 		Use:   "version",

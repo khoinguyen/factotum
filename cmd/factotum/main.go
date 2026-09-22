@@ -24,6 +24,11 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	root.SetErr(stderr)
 
 	err := root.Execute()
+	// The success path flushes and closes in PersistentPostRunE; on the error
+	// path neither ran, so flush any buffered stdout here.
+	if ferr := deps.FlushOutput(); ferr != nil && err == nil {
+		err = ferr
+	}
 	if deps.Backend != nil {
 		_ = deps.Backend.Close()
 	}

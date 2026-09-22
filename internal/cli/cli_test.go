@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +30,8 @@ type runner struct {
 	vectors     vector.Index
 	embedModel  string
 	agent       agent.Agent
+	getenv      func(string) string
+	isTerminal  func(io.Writer) bool
 }
 
 func newRunner(t *testing.T) *runner {
@@ -51,6 +54,9 @@ func (r *runner) setup(deps *Deps) []string {
 	deps.EmbedderOverride = r.embedder
 	deps.VectorsOverride = r.vectors
 	deps.AgentOverride = r.agent
+	if r.isTerminal != nil {
+		deps.IsTerminal = r.isTerminal
+	}
 	if r.embedModel != "" {
 		body := "[embed]\nmodel = \"" + r.embedModel + "\"\n"
 		if err := os.WriteFile(r.userPath, []byte(body), 0o600); err != nil {
@@ -75,7 +81,7 @@ func (r *runner) run(args ...string) string {
 func (r *runner) runSplit(args ...string) (string, string) {
 	r.t.Helper()
 	var stdout, stderr bytes.Buffer
-	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &stdout, &stderr, nil)
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &stdout, &stderr, r.getenv)
 	base := r.setup(deps)
 
 	root := NewRoot(deps)

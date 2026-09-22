@@ -12,7 +12,7 @@ func TestDisabledReturnsErrUnavailable(t *testing.T) {
 	var j judge.Judge = judge.Disabled{}
 	_, err := j.Ask(context.Background(), judge.Request{
 		State:     "anything",
-		Questions: map[string]judge.Question{"q": {Kind: judge.KindNoul, Instructions: "?"}},
+		Questions: map[string]judge.Question{"q": {Kind: judge.KindYesNo, Instructions: "?"}},
 	})
 	if !errors.Is(err, judge.ErrUnavailable) {
 		t.Fatalf("Ask() error = %v, want ErrUnavailable", err)
@@ -21,9 +21,9 @@ func TestDisabledReturnsErrUnavailable(t *testing.T) {
 
 func TestQuestionKinds(t *testing.T) {
 	cases := map[judge.Kind]string{
-		judge.KindNoul:   "noul",
+		judge.KindYesNo:  "yes_no",
 		judge.KindChoice: "choice",
-		judge.KindScore:  "score",
+		judge.KindRating: "rating",
 	}
 	for kind, want := range cases {
 		if string(kind) != want {

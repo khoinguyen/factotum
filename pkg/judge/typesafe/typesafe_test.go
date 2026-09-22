@@ -29,9 +29,9 @@ func testRequest() judge.Request {
 	return judge.Request{
 		State: "the state",
 		Questions: map[string]judge.Question{
-			"q":    {Kind: judge.KindNoul, Instructions: "ready?"},
+			"q":    {Kind: judge.KindYesNo, Instructions: "ready?"},
 			"pick": {Kind: judge.KindChoice, Instructions: "which?", Criteria: map[string]any{"c0": nil, "c1": nil}},
-			"band": {Kind: judge.KindScore, Instructions: "how much?", Criteria: []string{"low", "high"}},
+			"band": {Kind: judge.KindRating, Instructions: "how much?", Criteria: []string{"low", "high"}},
 		},
 	}
 }
@@ -75,13 +75,13 @@ func TestAskSendsTypedRequestAndParsesResponse(t *testing.T) {
 		t.Error("pick.criteria missing, want it sent for a choice")
 	}
 
-	if got := resp.Answers["q"].Noul; got != 0.77 {
-		t.Errorf("q.Noul = %v, want 0.77", got)
+	if got := resp.Answers["q"].Probability; got != 0.77 {
+		t.Errorf("q.Probability = %v, want 0.77", got)
 	}
 	if got := resp.Answers["pick"].Choice; got != "c1" {
 		t.Errorf("pick.Choice = %q, want c1", got)
 	}
-	if got := resp.Answers["band"].Score; got != 1.5 {
+	if got := resp.Answers["band"].Rating; got != 1.5 {
 		t.Errorf("band.Score = %v, want 1.5", got)
 	}
 	if resp.InputTokens != 42 || resp.OutputTokens != 7 {

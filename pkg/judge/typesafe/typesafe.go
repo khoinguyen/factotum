@@ -129,7 +129,7 @@ func (c *Client) Ask(ctx context.Context, req judge.Request) (judge.Response, er
 		Questions: make(map[string]wireQuestion, len(req.Questions))}
 	for id, question := range req.Questions {
 		payload.Questions[id] = wireQuestion{
-			Type: string(question.Kind), Instructions: question.Instructions, Criteria: question.Criteria,
+			Type: wireKind(question.Kind), Instructions: question.Instructions, Criteria: question.Criteria,
 		}
 	}
 	body, err := json.Marshal(payload)
@@ -191,10 +191,22 @@ func (c *Client) do(ctx context.Context, body []byte) (judge.Response, bool, err
 	for id, answer := range wire.Answers {
 		out.Answers[id] = judge.Answer{
 			Choice: answer.Choice, Probabilities: answer.Probabilities,
-			Noul: answer.Noul, Score: answer.Score, Confidence: answer.Confidence,
+			Probability: answer.Noul, Rating: answer.Score, Confidence: answer.Confidence,
 		}
 	}
 	return out, false, nil
+}
+
+// wireKind maps a judge primitive to the TypeSafe wire type.
+func wireKind(kind judge.Kind) string {
+	switch kind {
+	case judge.KindYesNo:
+		return "noul"
+	case judge.KindRating:
+		return "score"
+	default:
+		return string(kind)
+	}
 }
 
 func sleep(ctx context.Context, d time.Duration) error {

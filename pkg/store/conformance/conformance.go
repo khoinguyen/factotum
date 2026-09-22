@@ -318,6 +318,8 @@ func testTaskDependents(t *testing.T, be store.Backend) {
 	assertTaskIDs(t, repo, ctx, scoped("c"), nil)
 	// Without a project scope the filter spans projects.
 	assertTaskIDs(t, repo, ctx, store.TaskFilter{DependsOn: depPtr("a")}, []core.TaskID{"b", "c", "d"})
+	// Search composes with the reverse-edge filter.
+	assertTaskSearch(t, repo, ctx, scoped("a"), "b", []core.TaskID{"b"})
 
 	// Updating a task's deps reindexes its outgoing edges.
 	cleared := &core.Task{ID: "c", ProjectID: "prj-1", Kind: core.KindTask, Title: "c", Status: core.StatusTodo}

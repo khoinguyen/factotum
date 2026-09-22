@@ -76,6 +76,53 @@ func (s *ArtifactService) List(ctx context.Context, filter store.ArtifactFilter)
 	return s.backend.Artifacts().List(ctx, filter)
 }
 
+// ArtifactPatch is a partial update to an artifact. A nil field is left
+// unchanged; ClearTask detaches the artifact from its task.
+type ArtifactPatch struct {
+	Title     *string
+	Body      *string
+	TaskID    *core.TaskID
+	ClearTask bool
+}
+
+func (s *ArtifactService) Update(ctx context.Context, id core.ArtifactID, patch ArtifactPatch) (*core.Artifact, error) {
+	artifact, err := s.backend.Artifacts().Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if patch.Title != nil {
+		artifact.Title = *patch.Title
+	}
+	if patch.Body != nil {
+		artifact.Body = *patch.Body
+	}
+	if patch.ClearTask {
+		artifact.TaskID = nil
+	} else if patch.TaskID != nil {
+		if _, err := s.backend.Tasks().Get(ctx, *patch.TaskID); err != nil {
+			return nil, fmt.Errorf("artifact task: %w", err)
+		}
+		taskID := *patch.TaskID
+		artifact.TaskID = &taskID
+	}
+	artifact.UpdatedAt = s.clock.Now()
+	if err := artifact.Validate(); err != nil {
+		return nil, err
+	}
+	if err := s.backend.Artifacts().Update(ctx, artifact); err != nil {
+		return nil, err
+	}
+	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
+		ProjectID: artifact.ProjectID,
+		TaskID:    artifact.TaskID,
+		Kind:      core.EventArtifactUpdated,
+		Summary:   fmt.Sprintf("updated %s artifact %q", artifact.Kind, artifact.Title),
+	}); err != nil {
+		return nil, err
+	}
+	return artifact, nil
+}
+
 // Search returns the artifacts in filter scope whose title or body matches the
 // query, ranked by relevance by the storage backend. An empty query returns
 // everything in scope. The order is deterministic.

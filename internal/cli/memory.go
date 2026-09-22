@@ -59,6 +59,15 @@ func memoryDocFrom(artifact *core.Artifact) memoryDoc {
 	return doc
 }
 
+// requireMemory rejects an artifact of another kind, so the memory verbs never
+// touch specs or docs.
+func requireMemory(artifact *core.Artifact) error {
+	if artifact.Kind != core.ArtifactMemory {
+		return fmt.Errorf("%w: %s is a %s artifact, not memory", core.ErrInvalid, artifact.ID, artifact.Kind)
+	}
+	return nil
+}
+
 func newMemoryCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "memory", Short: "Manage agent memory artifacts"}
 
@@ -175,8 +184,8 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if artifact.Kind != core.ArtifactMemory {
-				return fmt.Errorf("%w: %s is a %s artifact, not memory", core.ErrInvalid, artifact.ID, artifact.Kind)
+			if err := requireMemory(artifact); err != nil {
+				return err
 			}
 			return deps.emit(memoryDocFrom(artifact), func() {
 				deps.printf("(memory) %s: %s\n", artifact.ID, artifact.Title)
@@ -199,6 +208,80 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(create, list, search, get)
+	var updTitle, updBody, updFile, updTask string
+	update := &cobra.Command{
+		Use:   "update <memory>",
+		Short: "Update a memory artifact",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			artifact, err := deps.Artifacts.Get(cmd.Context(), core.ArtifactID(args[0]))
+			if err != nil {
+				return err
+			}
+			if err := requireMemory(artifact); err != nil {
+				return err
+			}
+			patch := app.ArtifactPatch{}
+			if cmd.Flags().Changed("title") {
+				patch.Title = &updTitle
+			}
+			switch {
+			case cmd.Flags().Changed("file"):
+				data, err := os.ReadFile(updFile)
+				if err != nil {
+					return fmt.Errorf("read %s: %w", updFile, err)
+				}
+				content := string(data)
+				patch.Body = &content
+			case cmd.Flags().Changed("body"):
+				patch.Body = &updBody
+			}
+			if cmd.Flags().Changed("task") {
+				if updTask == "" {
+					patch.ClearTask = true
+				} else {
+					taskID := core.TaskID(updTask)
+					patch.TaskID = &taskID
+				}
+			}
+			if patch.Title == nil && patch.Body == nil && patch.TaskID == nil && !patch.ClearTask {
+				return usageError(cmd, "nothing to update; pass --title, --body/--file, or --task")
+			}
+			updated, err := deps.Artifacts.Update(cmd.Context(), artifact.ID, patch)
+			if err != nil {
+				return err
+			}
+			return deps.emit(memoryDocFrom(updated), func() {
+				deps.printFields(f("memory_id", updated.ID), f("updated", true), f("kind", updated.Kind), f("title", updated.Title), f("project", updated.ProjectID))
+			}, memoryGetHints(updated)...)
+		},
+	}
+	update.Flags().StringVarP(&updTitle, "title", "t", "", "new title")
+	update.Flags().StringVarP(&updBody, "body", "b", "", "new inline content")
+	update.Flags().StringVarP(&updFile, "file", "f", "", "read new content from a file")
+	update.Flags().StringVar(&updTask, "task", "", "attach to a task (empty string detaches)")
+
+	del := &cobra.Command{
+		Use:   "delete <memory>",
+		Short: "Delete a memory artifact",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			artifact, err := deps.Artifacts.Get(cmd.Context(), core.ArtifactID(args[0]))
+			if err != nil {
+				return err
+			}
+			if err := requireMemory(artifact); err != nil {
+				return err
+			}
+			if err := deps.Artifacts.Delete(cmd.Context(), artifact.ID); err != nil {
+				return err
+			}
+			return deps.emit(memoryDocFrom(artifact), func() {
+				deps.printFields(f("memory_id", artifact.ID), f("deleted", true), f("kind", artifact.Kind), f("title", artifact.Title), f("project", artifact.ProjectID))
+			}, hint{Command: fmt.Sprintf("ft memory list --project %s", artifact.ProjectID), About: "see the remaining memory"})
+		},
+	}
+
+	cmd.AddCommand(create, list, search, get, update, del)
 	return cmd
 }

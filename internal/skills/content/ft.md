@@ -76,7 +76,13 @@ ft memory create -p <project> -t "Title" -b "What to remember"
 ft memory list -p <project>
 ft memory search "<query>" -p <project>
 ft memory get <memory>
+ft memory update <memory> [-t "Title"] [-b "Content" | -f file] [--task <task>]
+ft memory delete <memory>
 ```
+
+`ft memory update` patches in place; `--task <task>` attaches the memory to a
+task and `--task ""` detaches it. Only memory artifacts are accepted: the verbs
+reject specs and docs.
 
 ## Conventions that matter
 

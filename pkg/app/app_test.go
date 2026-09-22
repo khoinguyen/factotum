@@ -16,6 +16,11 @@ type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
 
+// stepClock is a fixed clock whose time the test can advance between calls.
+type stepClock struct{ t time.Time }
+
+func (c *stepClock) Now() time.Time { return c.t }
+
 type seqIDs struct{ counts map[string]int }
 
 func (s *seqIDs) NewID(prefix string) string {
@@ -36,8 +41,12 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessWithClock(t, fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+}
+
+func newHarnessWithClock(t *testing.T, clock Clock) *harness {
+	t.Helper()
 	backend := memory.New()
-	clock := fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	ids := &seqIDs{}
 	t.Cleanup(func() { _ = backend.Close() })
 	return &harness{
@@ -384,6 +393,98 @@ func TestArtifactSearchFiltersByKind(t *testing.T) {
 	}
 	if len(found) != 1 || found[0].Title != "terraform memory" {
 		t.Fatalf("Search() = %v, want only the memory artifact", found)
+	}
+}
+
+func TestArtifactUpdate(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := &stepClock{t: base}
+	h := newHarnessWithClock(t, clock)
+	ctx := context.Background()
+	project := h.newProject(t)
+
+	artifact, err := h.artifacts.Add(ctx, ArtifactInput{ProjectID: project.ID, Kind: core.ArtifactMemory, Title: "old", Body: "before"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	clock.t = base.Add(time.Hour)
+	title, body := "new", "after"
+	updated, err := h.artifacts.Update(ctx, artifact.ID, ArtifactPatch{Title: &title, Body: &body})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if updated.Title != "new" || updated.Body != "after" {
+		t.Fatalf("Update() = %+v, want new title and body", updated)
+	}
+	if !updated.UpdatedAt.After(updated.CreatedAt) {
+		t.Fatalf("Update() UpdatedAt = %v, want after CreatedAt %v", updated.UpdatedAt, updated.CreatedAt)
+	}
+
+	stored, err := h.artifacts.Get(ctx, artifact.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if stored.Title != "new" || stored.Body != "after" {
+		t.Fatalf("Get() = %+v, want the update persisted", stored)
+	}
+
+	events, err := h.backend.Events().List(ctx, store.EventFilter{ProjectID: project.ID, Kinds: []core.EventKind{core.EventArtifactUpdated}})
+	if err != nil {
+		t.Fatalf("Events().List() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("artifact.updated events = %d, want 1", len(events))
+	}
+}
+
+func TestArtifactUpdateTaskLink(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "work"})
+	if err != nil {
+		t.Fatalf("Task Add() error = %v", err)
+	}
+	artifact, err := h.artifacts.Add(ctx, ArtifactInput{ProjectID: project.ID, Kind: core.ArtifactMemory, Title: "note", Body: "x"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	attached, err := h.artifacts.Update(ctx, artifact.ID, ArtifactPatch{TaskID: &task.ID})
+	if err != nil {
+		t.Fatalf("Update(attach) error = %v", err)
+	}
+	if attached.TaskID == nil || *attached.TaskID != task.ID {
+		t.Fatalf("Update(attach) TaskID = %v, want %s", attached.TaskID, task.ID)
+	}
+
+	detached, err := h.artifacts.Update(ctx, artifact.ID, ArtifactPatch{ClearTask: true})
+	if err != nil {
+		t.Fatalf("Update(detach) error = %v", err)
+	}
+	if detached.TaskID != nil {
+		t.Fatalf("Update(detach) TaskID = %v, want nil", detached.TaskID)
+	}
+}
+
+func TestArtifactUpdateErrors(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	title := "x"
+
+	if _, err := h.artifacts.Update(ctx, "art-missing", ArtifactPatch{Title: &title}); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("Update(missing) error = %v, want ErrNotFound", err)
+	}
+
+	artifact, err := h.artifacts.Add(ctx, ArtifactInput{ProjectID: project.ID, Kind: core.ArtifactMemory, Title: "note"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	missingTask := core.TaskID("t-missing")
+	if _, err := h.artifacts.Update(ctx, artifact.ID, ArtifactPatch{TaskID: &missingTask}); err == nil {
+		t.Fatal("Update(unknown task) error = nil, want a task lookup error")
 	}
 }
 

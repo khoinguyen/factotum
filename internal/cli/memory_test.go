@@ -2,6 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -153,5 +156,121 @@ func TestMemoryGetJSONIncludesBodyAndTimestamps(t *testing.T) {
 	}
 	if doc.ID != memoryID || doc.Title != "recall" || doc.Body != "remember this" || doc.CreatedAt == "" || doc.UpdatedAt == "" {
 		t.Fatalf("memory get json = %+v", doc)
+	}
+}
+
+func TestMemoryUpdate(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	memoryID := firstField(t, r.run("memory", "create", "--project", projectID, "--title", "old", "--body", "before"))
+
+	out := r.run("memory", "update", memoryID, "--title", "new", "--body", "after")
+	if !strings.Contains(out, "updated: true") || !strings.Contains(out, "title: new") {
+		t.Fatalf("memory update output:\n%s", out)
+	}
+
+	get := r.run("memory", "get", memoryID)
+	if !strings.Contains(get, "(memory) "+memoryID+": new") || !strings.Contains(get, "after") {
+		t.Fatalf("memory update not persisted:\n%s", get)
+	}
+}
+
+func TestMemoryUpdateJSON(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	memoryID := firstField(t, r.run("memory", "create", "--project", projectID, "--title", "old", "--body", "before"))
+
+	out := r.run("memory", "update", memoryID, "--title", "renamed", "-o", "json")
+	var doc struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("memory update json: %v\n%s", err, out)
+	}
+	if doc.ID != memoryID || doc.Title != "renamed" || doc.Body != "before" {
+		t.Fatalf("memory update json = %+v", doc)
+	}
+}
+
+func TestMemoryUpdateFromFile(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	memoryID := firstField(t, r.run("memory", "create", "--project", projectID, "--title", "old"))
+
+	path := filepath.Join(t.TempDir(), "body.txt")
+	if err := os.WriteFile(path, []byte("from a file"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	r.run("memory", "update", memoryID, "--file", path)
+
+	get := r.run("memory", "get", memoryID)
+	if !strings.Contains(get, "from a file") {
+		t.Fatalf("memory update --file not persisted:\n%s", get)
+	}
+}
+
+func TestMemoryUpdateTaskLink(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "work"))
+	memoryID := firstField(t, r.run("memory", "create", "--project", projectID, "--title", "note"))
+
+	r.run("memory", "update", memoryID, "--task", taskID)
+	if get := r.run("memory", "get", memoryID); !strings.Contains(get, "task: "+taskID) {
+		t.Fatalf("memory update --task did not attach:\n%s", get)
+	}
+
+	r.run("memory", "update", memoryID, "--task", "")
+	if get := r.run("memory", "get", memoryID); strings.Contains(get, "task: ") {
+		t.Fatalf("memory update --task \"\" did not detach:\n%s", get)
+	}
+}
+
+func TestMemoryUpdateRequiresChange(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	memoryID := firstField(t, r.run("memory", "create", "--project", projectID, "--title", "note"))
+
+	if err := r.runErr("memory", "update", memoryID); !errors.Is(err, ErrUsage) {
+		t.Fatalf("memory update with no flags error = %v, want ErrUsage", err)
+	}
+}
+
+func TestMemoryUpdateRejectsOtherKinds(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	docID := firstField(t, r.run("doc", "create", "--project", projectID, "--kind", "doc", "--title", "a doc"))
+
+	if err := r.runErr("memory", "update", docID, "--title", "renamed"); err == nil {
+		t.Fatal("memory update on a doc artifact error = nil, want rejection")
+	}
+}
+
+func TestMemoryDelete(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	memoryID := firstField(t, r.run("memory", "create", "--project", projectID, "--title", "note"))
+
+	out := r.run("memory", "delete", memoryID)
+	if !strings.Contains(out, "deleted: true") {
+		t.Fatalf("memory delete output:\n%s", out)
+	}
+	if err := r.runErr("memory", "get", memoryID); err == nil {
+		t.Fatal("memory get after delete error = nil, want not found")
+	}
+}
+
+func TestMemoryDeleteRejectsOtherKinds(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	docID := firstField(t, r.run("doc", "create", "--project", projectID, "--kind", "doc", "--title", "a doc"))
+
+	if err := r.runErr("memory", "delete", docID); err == nil {
+		t.Fatal("memory delete on a doc artifact error = nil, want rejection")
+	}
+	if out := r.run("doc", "list", "--project", projectID); !strings.Contains(out, docID) {
+		t.Fatalf("memory delete removed a non-memory artifact:\n%s", out)
 	}
 }

@@ -52,10 +52,13 @@ the real dependency is never run — a real embedding model, a network/API, an e
 migration, a subprocess — do **not** return a plain approve. Lead your findings with what was not run,
 and either:
 - run it for real when that is feasible locally (start the provider, run the command); or
-- return **approved — real path unverified**, which the chief must **escalate to Khoi before merge**.
-A follow-up test ticket is good hygiene, but it does not make an unverified real path silently
-mergeable. Merging a real-unverified core path without escalating is the failure this rule exists to
-prevent.
+- return **approved — real path unverified**, **file the follow-up test task yourself**
+  (`ft task create`, linked to this task and PR) naming it in the verdict, and the chief must
+  **escalate to Khoi before merge**.
+
+A follow-up ticket is not optional and not Khoi's to file: you or the chief create it in the same
+session. Do not approve-and-merge a real-unverified core path silently — that is the failure this rule
+exists to prevent.
 
 ## Findings
 

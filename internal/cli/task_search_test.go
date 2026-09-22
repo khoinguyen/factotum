@@ -53,6 +53,24 @@ func TestTaskSearchRanksTitleBodyNotes(t *testing.T) {
 	}
 }
 
+func TestTaskSearchExcludesSystemNotes(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	task := firstField(t, r.run("task", "create", "-p", projectID, "-t", "unrelated", "-b", "nothing here"))
+	r.run("task", "note", "create", task, "-b", "sysprobe triage noise", "--system")
+
+	out := r.run("task", "search", "sysprobe", "-p", projectID, "-o", "json")
+	if got := searchIDs(t, out); len(got) != 0 {
+		t.Fatalf("task search = %v, want no hits for a system note", got)
+	}
+
+	// The generated note stays on the task; only search skips it.
+	out = r.run("task", "get", task, "-o", "json")
+	if !strings.Contains(out, "sysprobe triage noise") {
+		t.Fatalf("task get should retain the system note:\n%s", out)
+	}
+}
+
 func TestTaskSearchFiltersByProjectAndStatus(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

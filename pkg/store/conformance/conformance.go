@@ -300,6 +300,10 @@ func testTaskSearch(t *testing.T, be store.Backend) {
 		{ID: "t-body", ProjectID: "prj-1", Kind: core.KindTask, Title: "run scripts", Description: "terraform then kubectl", Status: core.StatusInProgress, Labels: []string{"groomed"}},
 		{ID: "t-note", ProjectID: "prj-1", Kind: core.KindMilestone, Title: "unrelated", Description: "nothing here", Status: core.StatusTodo, Notes: []core.Note{{ID: "note-1", Body: "terraform in the notes"}}},
 		{ID: "t-other", ProjectID: "prj-2", Kind: core.KindTask, Title: "Kubernetes notes", Description: "cluster upgrade", Status: core.StatusTodo},
+		{ID: "t-sysnote", ProjectID: "prj-4", Kind: core.KindTask, Title: "quiet", Description: "nothing here", Status: core.StatusTodo, Notes: []core.Note{
+			{ID: "note-sys", Body: "sysprobe only in the generated note", System: true},
+			{ID: "note-human", Body: "humanprobe in a real note"},
+		}},
 	}
 	for _, task := range tasks {
 		if err := repo.Create(ctx, task); err != nil {
@@ -338,6 +342,41 @@ func testTaskSearch(t *testing.T, be store.Backend) {
 	backendRepo := "backend"
 	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1", Repo: &backendRepo}, "terraform", []core.TaskID{"t-title"})
 	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1", Labels: []string{"groomed"}}, "terraform", []core.TaskID{"t-body"})
+
+	// System notes are not indexed: a term that only appears in a generated note
+	// finds nothing, while a real note on the same task still matches. The note
+	// itself is retained for display.
+	sysPrj := store.TaskFilter{ProjectID: "prj-4"}
+	assertTaskSearch(t, repo, ctx, sysPrj, "sysprobe", nil)
+	assertTaskSearch(t, repo, ctx, sysPrj, "humanprobe", []core.TaskID{"t-sysnote"})
+	stored, err := repo.Get(ctx, "t-sysnote")
+	if err != nil {
+		t.Fatalf("Get(t-sysnote) error = %v", err)
+	}
+	if len(stored.Notes) != 2 {
+		t.Fatalf("t-sysnote notes = %d, want 2", len(stored.Notes))
+	}
+	var hasSystem, hasHuman bool
+	for _, note := range stored.Notes {
+		if note.System {
+			hasSystem = true
+		} else {
+			hasHuman = true
+		}
+	}
+	if !hasSystem || !hasHuman {
+		t.Fatalf("t-sysnote system/human markers = %v/%v, want both", hasSystem, hasHuman)
+	}
+
+	// Unmarking reindexes the note, so an update makes it searchable again.
+	unmarked := &core.Task{ID: "t-sysnote", ProjectID: "prj-4", Kind: core.KindTask, Title: "quiet", Description: "nothing here", Status: core.StatusTodo, Notes: []core.Note{
+		{ID: "note-sys", Body: "sysprobe only in the generated note"},
+		{ID: "note-human", Body: "humanprobe in a real note"},
+	}}
+	if err := repo.Update(ctx, unmarked); err != nil {
+		t.Fatalf("Update(t-sysnote) error = %v", err)
+	}
+	assertTaskSearch(t, repo, ctx, sysPrj, "sysprobe", []core.TaskID{"t-sysnote"})
 
 	// Empty query returns everything in scope, ordered by title then id.
 	assertTaskSearch(t, repo, ctx, prj, "", []core.TaskID{"t-body", "t-title", "t-note"})

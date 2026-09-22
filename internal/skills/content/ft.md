@@ -48,6 +48,7 @@ condition clears itself; indefinite waits for `unsnooze`).
 
 ```sh
 ft task note create <task> -b "Decision: ..." --link issue=https://...
+ft task note create <task> -b "Triaged by agent: ..." --system  # generated note; hidden from search
 ft task create -p <project> -t "Short imperative title" -r <repo> \
   --body "Context and acceptance criteria." --dep <blocking-task>
 ```
@@ -90,8 +91,10 @@ ft memory get <memory>          # read one memory back
 ```
 
 `ft task search` ranks a title match above a description match above a note match,
-with deterministic ties. When a judge is configured it then reranks the shortlist by
-meaning; `--no-rerank` keeps the lexical order, and a search never fails because the
+with deterministic ties. Notes created with `--system` (generated triage or
+reassignment messages) are kept on the task but excluded from search indexing.
+When a judge is configured it then reranks the shortlist by meaning;
+`--no-rerank` keeps the lexical order, and a search never fails because the
 judge is absent or slow.
 
 ## Memory

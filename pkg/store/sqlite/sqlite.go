@@ -744,10 +744,14 @@ func indexTask(ctx context.Context, tx *sql.Tx, task *core.Task) error {
 	return nil
 }
 
-// notesText joins the task's note bodies for the FTS notes column.
+// notesText joins the task's note bodies for the FTS notes column, skipping
+// system-generated notes so they cannot pollute search recall.
 func notesText(task *core.Task) string {
 	parts := make([]string, 0, len(task.Notes))
 	for _, note := range task.Notes {
+		if note.System {
+			continue
+		}
 		parts = append(parts, note.Body)
 	}
 	return strings.Join(parts, "\n")

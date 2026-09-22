@@ -504,6 +504,17 @@ func TestAddNote(t *testing.T) {
 	if len(updated.Notes) != 1 || updated.Notes[0].Body != "need Khoi's call" {
 		t.Fatalf("Notes = %v, want one note", updated.Notes)
 	}
+	if updated.Notes[0].System {
+		t.Fatalf("System = true, want false for a human note")
+	}
+
+	updated, err = h.tasks.AddNote(ctx, task.ID, NoteInput{Body: "triaged by agent", System: true})
+	if err != nil {
+		t.Fatalf("AddNote(system) error = %v", err)
+	}
+	if len(updated.Notes) != 2 || !updated.Notes[1].System {
+		t.Fatalf("System note = %v, want the second note marked System", updated.Notes)
+	}
 }
 
 func TestSlug(t *testing.T) {

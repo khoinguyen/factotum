@@ -81,8 +81,8 @@ func hasTokenPrefix(tokens []string, prefix string) bool {
 
 // LexicalTaskScore scores a task against pre-split terms. Every term must match
 // a title, description, or note token by prefix; a title match weighs more than
-// a description match, which weighs more than a note match. It reports whether
-// the task matched all terms.
+// a description match, which weighs more than a note match. System notes are not
+// scored. It reports whether the task matched all terms.
 func LexicalTaskScore(task *core.Task, terms []string) (float64, bool) {
 	if len(terms) == 0 {
 		return 0, true
@@ -91,6 +91,9 @@ func LexicalTaskScore(task *core.Task, terms []string) (float64, bool) {
 	bodyTokens := LexicalTerms(task.Description)
 	var noteTokens []string
 	for _, note := range task.Notes {
+		if note.System {
+			continue
+		}
 		noteTokens = append(noteTokens, LexicalTerms(note.Body)...)
 	}
 	score := 0.0

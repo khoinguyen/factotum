@@ -85,7 +85,8 @@ resolve your own refs once and pass them explicitly.
    - a product decision or something for Khoi → note it and **escalate to Khoi** the next time he
      speaks; do not guess.
    When you file one or more follow-ups for a PR, **record them on that PR** in a single concise
-   comment: how many, and each task id plus a one-line brief — so the PR shows what was deferred.
+   comment: a count line, then **one bullet per follow-up** (`- <task-id> - <one-line brief>`) — so
+   the PR shows what was deferred.
 8. **Retire the pair and clean up.** After a merge:
    - kill the two agent sessions: `cmux close-surface --surface <builder-ref>` and the same for the
      reviewer (their panes collapse; your chief pane stays);

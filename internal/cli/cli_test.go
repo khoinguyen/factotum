@@ -10,8 +10,10 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/embed"
 	"github.com/khoinguyen/factotum/pkg/judge"
 	"github.com/khoinguyen/factotum/pkg/store/builtins"
+	"github.com/khoinguyen/factotum/pkg/vector"
 )
 
 type runner struct {
@@ -22,6 +24,9 @@ type runner struct {
 	lastOut     string
 	lastErr     string
 	judge       judge.Judge
+	embedder    embed.Embedder
+	vectors     vector.Index
+	embedModel  string
 }
 
 func newRunner(t *testing.T) *runner {
@@ -32,6 +37,27 @@ func newRunner(t *testing.T) *runner {
 		path:        filepath.Join(dir, "factotum.json"),
 		projectPath: filepath.Join(dir, "project-config.toml"),
 		userPath:    filepath.Join(dir, "user-config.toml"),
+	}
+}
+
+// setup injects the runner's fakes and returns the base args every run shares.
+// When embedModel is set it writes an [embed] table to the user config, so the
+// retriever is enabled with that model without a real provider.
+func (r *runner) setup(deps *Deps) []string {
+	r.t.Helper()
+	deps.JudgeOverride = r.judge
+	deps.EmbedderOverride = r.embedder
+	deps.VectorsOverride = r.vectors
+	if r.embedModel != "" {
+		body := "[embed]\nmodel = \"" + r.embedModel + "\"\n"
+		if err := os.WriteFile(r.userPath, []byte(body), 0o600); err != nil {
+			r.t.Fatalf("write user config: %v", err)
+		}
+	}
+	builtins.RegisterAll(deps.StoreFactories)
+	return []string{
+		"--store", "jsonfile", "--store-opt", "path=" + r.path,
+		"--config", r.projectPath, "--user-config", r.userPath,
 	}
 }
 
@@ -47,14 +73,10 @@ func (r *runner) runSplit(args ...string) (string, string) {
 	r.t.Helper()
 	var stdout, stderr bytes.Buffer
 	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &stdout, &stderr, nil)
-	deps.JudgeOverride = r.judge
-	builtins.RegisterAll(deps.StoreFactories)
+	base := r.setup(deps)
 
 	root := NewRoot(deps)
-	root.SetArgs(append([]string{
-		"--store", "jsonfile", "--store-opt", "path=" + r.path,
-		"--config", r.projectPath, "--user-config", r.userPath,
-	}, args...))
+	root.SetArgs(append(append([]string{}, base...), args...))
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	if err := root.Execute(); err != nil && !errors.Is(err, ErrUsage) {

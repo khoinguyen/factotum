@@ -80,6 +80,7 @@ ft memory search "<query>" -p <project>
 ft memory get <memory>
 ft memory update <memory> [-t "Title"] [--brief "..."] [-b "Content" | -f file] [--task <task>]
 ft memory delete <memory>
+ft memory reindex -p <project>       # re-embed all memory (requires [embed])
 ```
 
 A memory carries three things, all authored by the agent: a `title`, a one-line
@@ -92,6 +93,13 @@ strongly related to existing memory - reconcile it in the same session.
 `ft memory update` patches in place; `--task <task>` attaches the memory to a
 task and `--task ""` detaches it. Only memory artifacts are accepted: the verbs
 reject specs and docs.
+
+Memory search is lexical by default. Configuring an embedding provider (the
+machine-scoped `[embed]` table, or `FACTOTUM_EMBED_PROVIDER`) adds vector recall:
+`ft memory search` then also finds paraphrases that share no tokens. Writes stay
+best-effort - a memory is created even when the embedder is down, and the skipped
+vector is backfilled by the next edit or `ft memory reindex`. A change of embedding
+model is detected and reported; run `ft memory reindex` after changing it.
 
 ## Conventions that matter
 

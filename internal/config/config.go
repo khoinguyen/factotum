@@ -41,6 +41,18 @@ type Config struct {
 	// Judge selects the judge provider; TypeSafe is the default. Provider settings,
 	// including the API key, live in the provider's own config table.
 	Judge Judge
+	// Embed selects the optional embedding provider for vector memory recall. An
+	// empty provider means Disabled: retrieval stays lexical. Options are generic so
+	// a new provider needs no new field here.
+	Embed Embed
+}
+
+// Embed configures the optional embedding provider. It is the capability; a
+// provider such as ollama is one implementation, and its settings live under the
+// [embed] table. An empty Provider disables vector recall.
+type Embed struct {
+	Provider string
+	Options  map[string]string
 }
 
 // Judge selects the model-backed judge. Judge is the capability; a provider such as
@@ -104,6 +116,7 @@ func Default() Config {
 			Options: map[string]string{},
 		},
 		Judge: Judge{Provider: "typesafe", Options: map[string]string{}},
+		Embed: Embed{Options: map[string]string{}},
 	}
 }
 
@@ -136,6 +149,13 @@ func Load(in Input) (Config, error) {
 		return Config{}, err
 	}
 	cfg.Judge.Options = options
+	embedOptions, err := providerOptions(in.UserPath, "embed")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Embed.Options = embedOptions
+	cfg.Embed.Provider = strings.TrimSpace(embedOptions["provider"])
+	applyEmbedEnv(&cfg.Embed, getenv)
 	cfg.DefaultActor = firstNonEmpty(project.DefaultActor, entry.DefaultActor, user.DefaultActor)
 	cfg.NoHints = boolAt(user.NoHints, false)
 	cfg.NoHints = boolAt(entry.NoHints, cfg.NoHints)
@@ -253,6 +273,27 @@ func decode(path string, target any) error {
 		return fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return nil
+}
+
+// applyEmbedEnv overlays the FACTOTUM_EMBED_* environment variables on the [embed]
+// table, so an embedding provider can be selected without editing a config file.
+func applyEmbedEnv(embed *Embed, getenv func(string) string) {
+	if embed.Options == nil {
+		embed.Options = map[string]string{}
+	}
+	if provider := getenv("FACTOTUM_EMBED_PROVIDER"); provider != "" {
+		embed.Provider = provider
+	}
+	overrides := map[string]string{
+		"FACTOTUM_EMBED_ENDPOINT": "endpoint",
+		"FACTOTUM_EMBED_MODEL":    "model",
+		"FACTOTUM_EMBED_COMMAND":  "command",
+	}
+	for env, key := range overrides {
+		if value := getenv(env); value != "" {
+			embed.Options[key] = value
+		}
+	}
 }
 
 func applyStoreOptions(store *Store, raw string) {

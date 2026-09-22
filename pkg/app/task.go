@@ -40,7 +40,7 @@ func (s *TaskService) Add(ctx context.Context, in TaskInput) (*core.Task, error)
 	if err != nil {
 		return nil, fmt.Errorf("task project: %w", err)
 	}
-	if err := checkRepo(project, in.Repo); err != nil {
+	if err := CheckRepo(project, in.Repo); err != nil {
 		return nil, err
 	}
 	kind := in.Kind
@@ -165,7 +165,7 @@ func (s *TaskService) Set(ctx context.Context, id core.TaskID, set TaskSet) (*co
 		if err != nil {
 			return nil, err
 		}
-		if err := checkRepo(project, *set.Repo); err != nil {
+		if err := CheckRepo(project, *set.Repo); err != nil {
 			return nil, err
 		}
 		task.Repo = *set.Repo
@@ -604,7 +604,8 @@ func (s *TaskService) Delete(ctx context.Context, id core.TaskID) error {
 	})
 }
 
-func checkRepo(project *core.Project, repo string) error {
+// CheckRepo reports whether repo belongs to project. An empty repo is always valid.
+func CheckRepo(project *core.Project, repo string) error {
 	if repo == "" {
 		return nil
 	}

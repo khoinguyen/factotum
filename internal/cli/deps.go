@@ -63,6 +63,9 @@ type Deps struct {
 	// AgentOverride, when set, replaces the configured agent. Tests inject a fake
 	// here so prompt-backed command paths run without a network.
 	AgentOverride agent.Agent
+	// agentErr records a misconfigured agent provider, so `ft prompt` can name the
+	// bad provider instead of claiming none is configured.
+	agentErr error
 	// Embedder is the optional embedding port. It is Disabled when no provider is
 	// configured, so vector recall is off by default and memory search stays lexical.
 	Embedder embed.Embedder
@@ -133,17 +136,20 @@ func newJudge(getenv func(string) string, cfg config.Config) judge.Judge {
 // newAgent builds the inference agent for the configured provider. The default
 // (command) provider needs a configured agent CLI; with none it is Disabled, so
 // `ft prompt` reports that no agent is configured. An unknown provider or a build
-// error also disables it.
-func newAgent(getenv func(string) string, cfg config.Config) agent.Agent {
+// error is returned so the command can name the misconfiguration.
+func newAgent(getenv func(string) string, cfg config.Config) (agent.Agent, error) {
 	provider := cfg.Agent.Provider
 	if provider == "" {
 		provider = "command"
 	}
 	built, err := agent.New(provider, getenv, cfg.Agent.Options)
-	if err != nil || built == nil {
-		return agent.Disabled{}
+	if err != nil {
+		return agent.Disabled{}, err
 	}
-	return built
+	if built == nil {
+		return agent.Disabled{}, nil
+	}
+	return built, nil
 }
 
 func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
@@ -156,8 +162,9 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	}
 	if d.AgentOverride != nil {
 		d.Agent = d.AgentOverride
+		d.agentErr = nil
 	} else {
-		d.Agent = newAgent(d.Getenv, cfg)
+		d.Agent, d.agentErr = newAgent(d.Getenv, cfg)
 	}
 	d.When = app.NewWhenService(d.Judge)
 	d.Intent = app.NewIntentService(d.Judge)

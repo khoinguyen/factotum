@@ -20,7 +20,9 @@ You run unattended (`--auto`); there is **no human at your keyboard**. Never lea
 waiting for input — an interactive question or prompt stalls the whole loop until someone notices.
 When unsure, make the most reasonable call, record the assumption (the PR comment or verdict), and
 carry on. If a genuine decision needs a human, do **not** open a prompt: report the blocker to the
-chief (see Report to the chief) and stop your turn.
+chief (see Report to the chief) and stop your turn. The **chief** files any follow-up task; you
+report, you do not file — the one exception is the real-path-unverified test task in "Fakes are not
+evidence" below, which you file yourself.
 
 ## Identity and channel
 

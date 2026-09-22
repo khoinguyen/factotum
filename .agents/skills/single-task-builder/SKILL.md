@@ -20,7 +20,8 @@ You run unattended (`--auto`); there is **no human at your keyboard**. Never lea
 waiting for input — an interactive question or prompt stalls the whole loop until someone notices.
 When unsure, make the most reasonable call, record the assumption (a `ft` note, the commit or PR
 body), and carry on. If a genuine decision needs a human, do **not** open a prompt: report the
-blocker to the chief (see Channel) and stop your turn.
+blocker to the chief (see Channel) and stop your turn. The **chief** files any follow-up task
+(`ft task create`, linked); you report, you do not file.
 
 ## Channel
 

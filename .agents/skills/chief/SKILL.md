@@ -80,7 +80,7 @@ resolve your own refs once and pass them explicitly.
    check — the reviewer did the deep verification. Then `gh pr merge <n> --rebase --delete-branch`,
    sync `main`, and `ft task done <t>`.
 7. **Triage any escalation.** A subagent may escalate: a follow-up worth doing, a disagreement, or a
-   product decision. Decide:
+   product decision. **You file the follow-up tasks; subagents only report.** Decide:
    - an agent-fixable follow-up → `ft task create` (link it), carry on;
    - a product decision or something for Khoi → note it and **escalate to Khoi** the next time he
      speaks; do not guess.

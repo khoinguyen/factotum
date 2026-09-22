@@ -29,6 +29,42 @@ func TestSkillReferenceTokensIncludeCommandsFlagsAndProse(t *testing.T) {
 	}
 }
 
+func TestSkillReferenceTokensSkipFlagValues(t *testing.T) {
+	root := skillDriftRoot(t)
+	body := "Run ft --output json task next to get JSON, then ft --store jsonfile skill list now.\n"
+	got := skillReferenceTokens(root, body)
+	for _, want := range []string{"--output", "task", "next", "--store", "skill", "list"} {
+		if !containsToken(got, want) {
+			t.Fatalf("skillReferenceTokens() = %v, want %q", got, want)
+		}
+	}
+	for _, unwanted := range []string{"json", "jsonfile"} {
+		if containsToken(got, unwanted) {
+			t.Fatalf("skillReferenceTokens() = %v, must not include the flag value %q", got, unwanted)
+		}
+	}
+}
+
+func TestProseCommandLinesFindEveryFT(t *testing.T) {
+	lines := proseCommandLines("Run ft task next then ft task frobnicate to continue.\n")
+	if len(lines) != 2 || !strings.Contains(lines[1], "frobnicate") {
+		t.Fatalf("proseCommandLines() = %v, want both ft invocations", lines)
+	}
+	root := skillDriftRoot(t)
+	if !containsToken(skillReferenceTokens(root, "Run ft task next then ft task frobnicate to continue.\n"), "frobnicate") {
+		t.Fatalf("skillReferenceTokens() missed the second prose invocation")
+	}
+}
+
+func TestStaleSkillReferencesSkipGlobalFlagValue(t *testing.T) {
+	root := skillDriftRoot(t)
+	body := "```sh\nft --output json task next\n```\n"
+	stale := staleSkillReferences(root, body)
+	if len(stale) != 0 {
+		t.Fatalf("stale = %v, want no finding for a global flag's value", stale)
+	}
+}
+
 func TestCommandInventoryListsCommandsAndFlags(t *testing.T) {
 	inv := commandInventory(skillDriftRoot(t))
 	for _, want := range []string{"ft task", "ft task next", "ft skill lint"} {

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/khoinguyen/factotum/pkg/app"
+	"github.com/khoinguyen/factotum/pkg/check"
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/graph"
 	"github.com/khoinguyen/factotum/pkg/judge"
@@ -30,6 +31,8 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 		newTaskListCommand(deps),
 		newTaskSearchCommand(deps),
 		newTaskGetCommand(deps),
+		newTaskCheckCommand(deps),
+		newTaskDecideCommand(deps),
 		newTaskContextCommand(deps),
 		newTaskUpdateCommand(deps),
 		newTaskSetCommand(deps),
@@ -222,6 +225,17 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 			}
 			dependents, reason := taskGraphFacts(cmd.Context(), deps, task)
 			doc := taskDocFrom(task)
+			var checks []check.Result
+			if deps.TaskChecks != nil {
+				results, err := deps.TaskChecks.Cached(cmd.Context(), task.ID, nil)
+				if err != nil {
+					return err
+				}
+				checks = results
+				for _, result := range results {
+					doc.Checks = append(doc.Checks, checkResultDocFrom(result))
+				}
+			}
 			if len(dependents) > 0 {
 				ids := make([]string, 0, len(dependents))
 				for _, id := range dependents {
@@ -289,6 +303,7 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 				if reason != nil {
 					deps.printf("not ready because: %s\n", reasonLabel(*reason))
 				}
+				deps.printChecksBlock(checks, actors)
 				if task.Description != "" {
 					deps.printf("\n=== Description ===\n%s\n", wrapText(task.Description, textWidth()))
 				}
@@ -497,6 +512,11 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			deps.printFields(f("task_id", task.ID), f("noted", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
+			if deps.TaskChecks != nil {
+				if results, err := deps.TaskChecks.Cached(cmd.Context(), task.ID, nil); err == nil {
+					deps.noteVerdictHint(results)
+				}
+			}
 			hints := []hint{{Command: fmt.Sprintf("ft task get %s", task.ID), About: "review the note"}}
 			hints = append(hints, deps.referenceHints(cmd.Context(), task, body)...)
 			deps.suggest(hints...)

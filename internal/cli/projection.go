@@ -60,6 +60,8 @@ func formatFieldValue(value any) string {
 		return typed.UTC().Format(time.RFC3339)
 	case []string:
 		return strings.Join(typed, ", ")
+	case []checkResultDoc:
+		return summarizeChecks(typed)
 	default:
 		return fmt.Sprintf("%v", value)
 	}

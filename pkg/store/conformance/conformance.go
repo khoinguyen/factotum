@@ -307,6 +307,20 @@ func testTaskSearch(t *testing.T, be store.Backend) {
 		}
 	}
 
+	// Repetition must not promote a lower-ranked column: a single title hit still
+	// outranks many description hits, and a description hit outranks many note hits.
+	repeats := []*core.Task{
+		{ID: "t-rtitle", ProjectID: "prj-3", Kind: core.KindTask, Title: "delta", Description: "x", Status: core.StatusTodo},
+		{ID: "t-rbody", ProjectID: "prj-3", Kind: core.KindTask, Title: "gamma", Description: "delta delta delta delta", Status: core.StatusTodo},
+		{ID: "t-rnote", ProjectID: "prj-3", Kind: core.KindTask, Title: "epsilon", Description: "x", Status: core.StatusTodo, Notes: []core.Note{{ID: "note-r", Body: "delta delta delta delta delta"}}},
+	}
+	for _, task := range repeats {
+		if err := repo.Create(ctx, task); err != nil {
+			t.Fatalf("Create(%s) error = %v", task.ID, err)
+		}
+	}
+	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-3"}, "delta", []core.TaskID{"t-rtitle", "t-rbody", "t-rnote"})
+
 	prj := store.TaskFilter{ProjectID: "prj-1"}
 	milestone := core.KindMilestone
 	todo := core.StatusTodo

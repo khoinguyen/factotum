@@ -99,6 +99,23 @@ func TestTaskSearchFallsBackWithoutJudge(t *testing.T) {
 	}
 }
 
+func TestTaskSearchEmptyQueryKeepsAllWithJudge(t *testing.T) {
+	r := newRunner(t)
+	// A judge that claims nothing answers must not hide an empty-query listing.
+	r.judge = fake.New(map[string]judge.Answer{
+		"which":  {Confidence: 0},
+		"exists": {Probability: 0},
+	})
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	first := firstField(t, r.run("task", "create", "-p", projectID, "--id", "t-a", "-t", "Terraform notes"))
+	second := firstField(t, r.run("task", "create", "-p", projectID, "--id", "t-b", "-t", "Terraform scripts"))
+
+	out := r.run("task", "search", "", "-p", projectID, "-o", "json")
+	if got := searchIDs(t, out); !equalIDs(got, []string{first, second}) {
+		t.Fatalf("task search empty query with a judge = %v, want [%s %s]", got, first, second)
+	}
+}
+
 func TestTaskSearchRequiresQuery(t *testing.T) {
 	r := newRunner(t)
 	_, stderr := r.runSplit("task", "search")

@@ -69,6 +69,9 @@ func TestTaskSearchExcludesSystemNotes(t *testing.T) {
 	if !strings.Contains(out, "sysprobe triage noise") {
 		t.Fatalf("task get should retain the system note:\n%s", out)
 	}
+	if !strings.Contains(out, `"system": true`) {
+		t.Fatalf("task get should expose the system marker:\n%s", out)
+	}
 }
 
 func TestTaskSearchFiltersByProjectAndStatus(t *testing.T) {

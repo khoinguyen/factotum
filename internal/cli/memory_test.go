@@ -9,6 +9,58 @@ import (
 	"testing"
 )
 
+func TestMemoryBriefRoundTrip(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	memoryID := firstField(t, r.run("memory", "create", "--project", projectID, "--title", "recall", "--brief", "when to load me", "--body", "remember this"))
+
+	get := r.run("memory", "get", memoryID)
+	if !strings.Contains(get, "brief: when to load me") {
+		t.Fatalf("memory get missing brief:\n%s", get)
+	}
+
+	out := r.run("memory", "get", memoryID, "-o", "json")
+	var doc struct {
+		Brief string `json:"brief"`
+		Body  string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("memory get json: %v\n%s", err, out)
+	}
+	if doc.Brief != "when to load me" || doc.Body != "remember this" {
+		t.Fatalf("memory get json = %+v", doc)
+	}
+
+	listOut := r.run("memory", "list", "--project", projectID, "-o", "json")
+	var entries []struct {
+		Brief string `json:"brief"`
+	}
+	if err := json.Unmarshal([]byte(listOut), &entries); err != nil {
+		t.Fatalf("memory list json: %v\n%s", err, listOut)
+	}
+	if len(entries) != 1 || entries[0].Brief != "when to load me" {
+		t.Fatalf("memory list json = %+v, want the brief", entries)
+	}
+}
+
+func TestMemoryUpdateBrief(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	memoryID := firstField(t, r.run("memory", "create", "--project", projectID, "--title", "recall"))
+
+	r.run("memory", "update", memoryID, "--brief", "new brief")
+	out := r.run("memory", "get", memoryID, "-o", "json")
+	var doc struct {
+		Brief string `json:"brief"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("memory get json: %v\n%s", err, out)
+	}
+	if doc.Brief != "new brief" {
+		t.Fatalf("memory update --brief = %q, want new brief", doc.Brief)
+	}
+}
+
 func TestMemoryCreateListGet(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

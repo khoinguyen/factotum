@@ -17,6 +17,7 @@ import (
 type memoryEntry struct {
 	ID      string `json:"id" yaml:"id"`
 	Title   string `json:"title" yaml:"title"`
+	Brief   string `json:"brief,omitempty" yaml:"brief,omitempty"`
 	Project string `json:"project" yaml:"project"`
 	Task    string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
 }
@@ -27,6 +28,7 @@ type memoryDoc struct {
 	ProjectID string    `json:"project_id" yaml:"project_id"`
 	TaskID    string    `json:"task_id,omitempty" yaml:"task_id,omitempty"`
 	Title     string    `json:"title" yaml:"title"`
+	Brief     string    `json:"brief,omitempty" yaml:"brief,omitempty"`
 	Body      string    `json:"body,omitempty" yaml:"body,omitempty"`
 	Links     []linkDoc `json:"links,omitempty" yaml:"links,omitempty"`
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
@@ -34,7 +36,7 @@ type memoryDoc struct {
 }
 
 func memoryEntryFrom(artifact *core.Artifact) memoryEntry {
-	entry := memoryEntry{ID: string(artifact.ID), Title: artifact.Title, Project: string(artifact.ProjectID)}
+	entry := memoryEntry{ID: string(artifact.ID), Title: artifact.Title, Brief: artifact.Brief, Project: string(artifact.ProjectID)}
 	if artifact.TaskID != nil {
 		entry.Task = string(*artifact.TaskID)
 	}
@@ -46,6 +48,7 @@ func memoryDocFrom(artifact *core.Artifact) memoryDoc {
 		ID:        string(artifact.ID),
 		ProjectID: string(artifact.ProjectID),
 		Title:     artifact.Title,
+		Brief:     artifact.Brief,
 		Body:      artifact.Body,
 		CreatedAt: artifact.CreatedAt,
 		UpdatedAt: artifact.UpdatedAt,
@@ -71,7 +74,7 @@ func requireMemory(artifact *core.Artifact) error {
 func newMemoryCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "memory", Short: "Manage agent memory artifacts"}
 
-	var projectID, title, body, path, taskID string
+	var projectID, title, brief, body, path, taskID string
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create a memory artifact",
@@ -95,6 +98,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 				ProjectID: project,
 				Kind:      core.ArtifactMemory,
 				Title:     title,
+				Brief:     brief,
 				Body:      content,
 				Path:      path,
 			}
@@ -115,6 +119,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 	}
 	create.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
 	create.Flags().StringVarP(&title, "title", "t", "", "memory title (required)")
+	create.Flags().StringVar(&brief, "brief", "", "one-line brief: what this memory is and when to load it")
 	create.Flags().StringVarP(&body, "body", "b", "", "inline content")
 	create.Flags().StringVarP(&path, "file", "f", "", "read content from a file")
 	create.Flags().StringVar(&taskID, "task", "", "attach to a task")
@@ -137,9 +142,9 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			return deps.emit(entries, func() {
 				rows := make([][]string, 0, len(entries))
 				for _, entry := range entries {
-					rows = append(rows, []string{entry.ID, entry.Title, entry.Project})
+					rows = append(rows, []string{entry.ID, entry.Title, entry.Brief, entry.Project})
 				}
-				deps.printTable([]string{"ID", "TITLE", "PROJECT"}, rows)
+				deps.printTable([]string{"ID", "TITLE", "BRIEF", "PROJECT"}, rows)
 			}, memoryListHints(string(project))...)
 		},
 	}
@@ -166,9 +171,9 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			return deps.emit(entries, func() {
 				rows := make([][]string, 0, len(entries))
 				for _, entry := range entries {
-					rows = append(rows, []string{entry.ID, entry.Title, entry.Project})
+					rows = append(rows, []string{entry.ID, entry.Title, entry.Brief, entry.Project})
 				}
-				deps.printTable([]string{"ID", "TITLE", "PROJECT"}, rows)
+				deps.printTable([]string{"ID", "TITLE", "BRIEF", "PROJECT"}, rows)
 			}, memorySearchHints(artifacts, string(project))...)
 		},
 	}
@@ -190,6 +195,9 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			return deps.emit(memoryDocFrom(artifact), func() {
 				deps.printf("(memory) %s: %s\n", artifact.ID, artifact.Title)
 				deps.printf("project: %s\n", artifact.ProjectID)
+				if artifact.Brief != "" {
+					deps.printf("brief: %s\n", artifact.Brief)
+				}
 				if artifact.TaskID != nil {
 					deps.printf("task: %s\n", *artifact.TaskID)
 				}
@@ -208,7 +216,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	var updTitle, updBody, updFile, updTask string
+	var updTitle, updBrief, updBody, updFile, updTask string
 	update := &cobra.Command{
 		Use:   "update <memory>",
 		Short: "Update a memory artifact",
@@ -224,6 +232,9 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			patch := app.ArtifactPatch{}
 			if cmd.Flags().Changed("title") {
 				patch.Title = &updTitle
+			}
+			if cmd.Flags().Changed("brief") {
+				patch.Brief = &updBrief
 			}
 			switch {
 			case cmd.Flags().Changed("file"):
@@ -244,8 +255,8 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 					patch.TaskID = &taskID
 				}
 			}
-			if patch.Title == nil && patch.Body == nil && patch.TaskID == nil && !patch.ClearTask {
-				return usageError(cmd, "nothing to update; pass --title, --body/--file, or --task")
+			if patch.Title == nil && patch.Brief == nil && patch.Body == nil && patch.TaskID == nil && !patch.ClearTask {
+				return usageError(cmd, "nothing to update; pass --title, --brief, --body/--file, or --task")
 			}
 			updated, err := deps.Artifacts.Update(cmd.Context(), artifact.ID, patch)
 			if err != nil {
@@ -257,6 +268,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	update.Flags().StringVarP(&updTitle, "title", "t", "", "new title")
+	update.Flags().StringVar(&updBrief, "brief", "", "new one-line brief")
 	update.Flags().StringVarP(&updBody, "body", "b", "", "new inline content")
 	update.Flags().StringVarP(&updFile, "file", "f", "", "read new content from a file")
 	update.Flags().StringVar(&updTask, "task", "", "attach to a task (empty string detaches)")

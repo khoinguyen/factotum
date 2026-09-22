@@ -29,6 +29,7 @@ type Artifact struct {
 	TaskID    *TaskID
 	Kind      ArtifactKind
 	Title     string
+	Brief     string
 	Body      string
 	Path      string
 	Links     []Link

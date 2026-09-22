@@ -23,6 +23,7 @@ type ArtifactInput struct {
 	TaskID    *core.TaskID
 	Kind      core.ArtifactKind
 	Title     string
+	Brief     string
 	Body      string
 	Path      string
 	Links     []core.Link
@@ -45,6 +46,7 @@ func (s *ArtifactService) Add(ctx context.Context, in ArtifactInput) (*core.Arti
 		TaskID:    in.TaskID,
 		Kind:      in.Kind,
 		Title:     in.Title,
+		Brief:     in.Brief,
 		Body:      in.Body,
 		Path:      in.Path,
 		Links:     in.Links,
@@ -80,6 +82,7 @@ func (s *ArtifactService) List(ctx context.Context, filter store.ArtifactFilter)
 // unchanged; ClearTask detaches the artifact from its task.
 type ArtifactPatch struct {
 	Title     *string
+	Brief     *string
 	Body      *string
 	TaskID    *core.TaskID
 	ClearTask bool
@@ -92,6 +95,9 @@ func (s *ArtifactService) Update(ctx context.Context, id core.ArtifactID, patch 
 	}
 	if patch.Title != nil {
 		artifact.Title = *patch.Title
+	}
+	if patch.Brief != nil {
+		artifact.Brief = *patch.Brief
 	}
 	if patch.Body != nil {
 		artifact.Body = *patch.Body

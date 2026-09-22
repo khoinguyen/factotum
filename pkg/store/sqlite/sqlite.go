@@ -69,7 +69,7 @@ const backupRetention = 5
 
 // currentSchemaVersion is the schema version this binary writes. It is a var so
 // tests can exercise pending and failing migrations.
-var currentSchemaVersion = 2
+var currentSchemaVersion = 3
 
 // nowFunc is overridable in tests so backup names are deterministic.
 var nowFunc = time.Now
@@ -83,6 +83,7 @@ type migration struct {
 var migrations = []migration{
 	{version: 1, apply: migrateV1},
 	{version: 2, apply: migrateV2},
+	{version: 3, apply: migrateV3},
 }
 
 // migrateV1 creates the base schema and the pre-release additive columns.
@@ -137,6 +138,53 @@ func migrateV2(ctx context.Context, tx *sql.Tx) error {
 	_ = rows.Close()
 	for _, item := range entries {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO artifacts_fts(rowid, title, body) VALUES (?, ?, ?)", item.rowid, item.title, item.body); err != nil {
+			return fmt.Errorf("index artifact: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateV3 rebuilds the artifact FTS index with the brief column. FTS5 tables
+// cannot add a column, so it drops and recreates the index and backfills it.
+func migrateV3(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS artifacts_fts"); err != nil {
+		return fmt.Errorf("drop artifacts_fts: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "CREATE VIRTUAL TABLE artifacts_fts USING fts5(title, brief, body)"); err != nil {
+		return fmt.Errorf("artifacts_fts: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT rowid, data FROM artifacts")
+	if err != nil {
+		return fmt.Errorf("read artifacts: %w", err)
+	}
+	type entry struct {
+		rowid int64
+		title string
+		brief string
+		body  string
+	}
+	var entries []entry
+	for rows.Next() {
+		var rowid int64
+		var data string
+		if err := rows.Scan(&rowid, &data); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		artifact, err := decodeArtifact(data)
+		if err != nil {
+			_ = rows.Close()
+			return err
+		}
+		entries = append(entries, entry{rowid: rowid, title: artifact.Title, brief: artifact.Brief, body: artifact.Body})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	_ = rows.Close()
+	for _, item := range entries {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO artifacts_fts(rowid, title, brief, body) VALUES (?, ?, ?, ?)", item.rowid, item.title, item.brief, item.body); err != nil {
 			return fmt.Errorf("index artifact: %w", err)
 		}
 	}
@@ -698,7 +746,7 @@ func indexArtifact(ctx context.Context, tx *sql.Tx, artifact *core.Artifact) err
 	if _, err := tx.ExecContext(ctx, "DELETE FROM artifacts_fts WHERE rowid = ?", rowid); err != nil {
 		return fmt.Errorf("unindex artifact: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO artifacts_fts(rowid, title, body) VALUES (?, ?, ?)", rowid, artifact.Title, artifact.Body); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO artifacts_fts(rowid, title, brief, body) VALUES (?, ?, ?, ?)", rowid, artifact.Title, artifact.Brief, artifact.Body); err != nil {
 		return fmt.Errorf("index artifact: %w", err)
 	}
 	return nil
@@ -779,7 +827,7 @@ func (r *artifactRepo) Search(ctx context.Context, filter store.ArtifactFilter, 
 	hasWhere := false
 	if len(terms) > 0 {
 		// FTS5 matches token prefixes; every term must appear (implicit AND).
-		statement = "SELECT a.data, bm25(artifacts_fts, 10.0, 1.0) AS rank FROM artifacts_fts JOIN artifacts a ON a.rowid = artifacts_fts.rowid WHERE artifacts_fts MATCH ?"
+		statement = "SELECT a.data, bm25(artifacts_fts, 10.0, 5.0, 1.0) AS rank FROM artifacts_fts JOIN artifacts a ON a.rowid = artifacts_fts.rowid WHERE artifacts_fts MATCH ?"
 		queryArgs = append([]any{ftsQuery(terms)}, args...)
 		hasWhere = true
 	}

@@ -26,7 +26,7 @@ type contextNote struct {
 type contextArtifact struct {
 	ID    string `json:"id" yaml:"id"`
 	Title string `json:"title" yaml:"title"`
-	Body  string `json:"body,omitempty" yaml:"body,omitempty"`
+	Brief string `json:"brief,omitempty" yaml:"brief,omitempty"`
 }
 
 type contextEvent struct {
@@ -81,7 +81,7 @@ func newTaskContextCommand(deps *Deps) *cobra.Command {
 					return err
 				}
 				for _, artifact := range artifacts {
-					ctx.Memory = append(ctx.Memory, contextArtifact{ID: string(artifact.ID), Title: artifact.Title, Body: artifact.Body})
+					ctx.Memory = append(ctx.Memory, contextArtifact{ID: string(artifact.ID), Title: artifact.Title, Brief: artifact.Brief})
 				}
 			}
 			if selected["events"] {
@@ -146,7 +146,11 @@ func printContext(deps *Deps, ctx taskContext) {
 	if len(ctx.Memory) > 0 {
 		deps.printf("memory:\n")
 		for _, memory := range ctx.Memory {
-			deps.printf("  %s: %s\n", memory.ID, memory.Title)
+			if memory.Brief != "" {
+				deps.printf("  %s: %s - %s\n", memory.ID, memory.Title, memory.Brief)
+			} else {
+				deps.printf("  %s: %s\n", memory.ID, memory.Title)
+			}
 		}
 	}
 	if len(ctx.Events) > 0 {

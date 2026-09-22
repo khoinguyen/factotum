@@ -28,6 +28,21 @@ func TestTaskContextBundlesEverything(t *testing.T) {
 	}
 }
 
+func TestTaskContextShowsMemoryBriefNotBody(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "main"))
+	r.run("memory", "create", "-p", projectID, "-t", "Memory one", "--brief", "load me when testing", "-b", "SECRET BODY", "--task", taskID)
+
+	out := r.run("task", "context", taskID)
+	if !strings.Contains(out, "load me when testing") {
+		t.Fatalf("task context should show the memory brief:\n%s", out)
+	}
+	if strings.Contains(out, "SECRET BODY") {
+		t.Fatalf("task context should not inline the memory body:\n%s", out)
+	}
+}
+
 func TestTaskContextFieldSelection(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

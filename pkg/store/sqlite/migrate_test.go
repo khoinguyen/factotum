@@ -304,6 +304,71 @@ func TestMigrateV2ToV3RebuildsArtifactIndex(t *testing.T) {
 	}
 }
 
+func TestMigrateV3ToV4BackfillsTaskIndex(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.db")
+
+	// Build a v3 database: the base schema plus the artifact FTS index, with one
+	// task inserted but no task FTS index yet.
+	raw := openRaw(t, path)
+	tx, err := raw.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	for _, step := range migrations {
+		if step.version > 3 {
+			break
+		}
+		if err := step.apply(ctx, tx); err != nil {
+			t.Fatalf("apply v%d: %v", step.version, err)
+		}
+	}
+	data, err := encode(&core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "Terraform notes", Description: "apply in devops", Status: core.StatusTodo})
+	if err != nil {
+		t.Fatalf("encode task: %v", err)
+	}
+	if _, err := tx.Exec(
+		"INSERT INTO tasks (id, project_id, repo, kind, status, data) VALUES (?, ?, ?, ?, ?, ?)",
+		"t-1", "prj-1", nil, string(core.KindTask), string(core.StatusTodo), data,
+	); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 3"); err != nil {
+		t.Fatalf("stamp v3: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	// Reopen: the v4 migration must build and backfill the task index.
+	backend, err := Open(ctx, sqliteConfig(path))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	if got := userVersion(t, path); got != currentSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", got, currentSchemaVersion)
+	}
+	hits, err := backend.Tasks().Search(ctx, store.TaskFilter{ProjectID: "prj-1"}, "terraform")
+	if err != nil {
+		t.Fatalf("Search(terraform) error = %v", err)
+	}
+	if len(hits) != 1 || hits[0].Task.ID != "t-1" {
+		t.Fatalf("Search(terraform) after v4 = %v, want [t-1]", taskHitIDs(hits))
+	}
+}
+
+func taskHitIDs(hits []store.TaskSearchHit) []core.TaskID {
+	out := make([]core.TaskID, 0, len(hits))
+	for _, hit := range hits {
+		out = append(out, hit.Task.ID)
+	}
+	return out
+}
+
 func hitIDs(hits []store.SearchHit) []core.ArtifactID {
 	out := make([]core.ArtifactID, 0, len(hits))
 	for _, hit := range hits {

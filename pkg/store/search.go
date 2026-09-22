@@ -14,6 +14,12 @@ type SearchHit struct {
 	Score    float64
 }
 
+// TaskSearchHit is one ranked task search result.
+type TaskSearchHit struct {
+	Task  *core.Task
+	Score float64
+}
+
 // LexicalTerms splits a query into lowercase alphanumeric terms. Query terms
 // are separated by any non-alphanumeric run, so "infra-as-code" yields
 // ["infra","as","code"]. An empty result means "match everything".
@@ -73,19 +79,67 @@ func hasTokenPrefix(tokens []string, prefix string) bool {
 	return false
 }
 
+// LexicalTaskScore scores a task against pre-split terms. Every term must match
+// a title, description, or note token by prefix; a title match weighs more than
+// a description match, which weighs more than a note match. It reports whether
+// the task matched all terms.
+func LexicalTaskScore(task *core.Task, terms []string) (float64, bool) {
+	if len(terms) == 0 {
+		return 0, true
+	}
+	titleTokens := LexicalTerms(task.Title)
+	bodyTokens := LexicalTerms(task.Description)
+	var noteTokens []string
+	for _, note := range task.Notes {
+		noteTokens = append(noteTokens, LexicalTerms(note.Body)...)
+	}
+	score := 0.0
+	for _, term := range terms {
+		switch {
+		case hasTokenPrefix(titleTokens, term):
+			score += 3
+		case hasTokenPrefix(bodyTokens, term):
+			score += 2
+		case hasTokenPrefix(noteTokens, term):
+			score++
+		default:
+			return 0, false
+		}
+	}
+	return score, true
+}
+
 // SortSearchHits orders hits by score (descending), then title and id
 // (ascending), so every backend produces the same deterministic order.
 func SortSearchHits(hits []SearchHit) {
+	sortHits(hits,
+		func(hit SearchHit) float64 { return hit.Score },
+		func(hit SearchHit) string { return hit.Artifact.Title },
+		func(hit SearchHit) string { return string(hit.Artifact.ID) })
+}
+
+// SortTaskSearchHits orders task hits by score (descending), then title and id
+// (ascending), so every backend produces the same deterministic order.
+func SortTaskSearchHits(hits []TaskSearchHit) {
+	sortHits(hits,
+		func(hit TaskSearchHit) float64 { return hit.Score },
+		func(hit TaskSearchHit) string { return hit.Task.Title },
+		func(hit TaskSearchHit) string { return string(hit.Task.ID) })
+}
+
+// sortHits applies the shared search order: score descending, then title and id
+// ascending. It is generic so artifact and task hits share one comparator.
+func sortHits[T any](hits []T, score func(T) float64, title func(T) string, id func(T) string) {
 	sort.SliceStable(hits, func(i, j int) bool {
-		if hits[i].Score != hits[j].Score {
-			return hits[i].Score > hits[j].Score
+		if score(hits[i]) != score(hits[j]) {
+			return score(hits[i]) > score(hits[j])
 		}
-		left := strings.ToLower(hits[i].Artifact.Title)
-		right := strings.ToLower(hits[j].Artifact.Title)
+		left := strings.ToLower(title(hits[i]))
+		right := strings.ToLower(title(hits[j]))
 		if left != right {
 			return left < right
 		}
-		return hits[i].Artifact.ID < hits[j].Artifact.ID
+		return id(hits[i]) < id(hits[j])
 	})
 }
 

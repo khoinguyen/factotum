@@ -67,6 +67,10 @@ type TaskRepo interface {
 	// caller that read a document reject a stale write atomically.
 	UpdateExpected(ctx context.Context, task *core.Task, expected time.Time) error
 	Delete(ctx context.Context, id core.TaskID) error
+	// Search returns tasks in filter scope whose title, description, or notes
+	// match the query, ranked by relevance. An empty query matches everything in
+	// scope.
+	Search(ctx context.Context, filter TaskFilter, query string) ([]TaskSearchHit, error)
 }
 
 type ActorRepo interface {

@@ -93,6 +93,21 @@ func (s *TaskService) List(ctx context.Context, filter store.TaskFilter) ([]*cor
 	return s.backend.Tasks().List(ctx, filter)
 }
 
+// Search returns the tasks in filter scope whose title, description, or notes
+// match the query, in the store's relevance order. An empty query matches
+// everything in scope.
+func (s *TaskService) Search(ctx context.Context, filter store.TaskFilter, query string) ([]*core.Task, error) {
+	hits, err := s.backend.Tasks().Search(ctx, filter, query)
+	if err != nil {
+		return nil, err
+	}
+	tasks := make([]*core.Task, 0, len(hits))
+	for _, hit := range hits {
+		tasks = append(tasks, hit.Task)
+	}
+	return tasks, nil
+}
+
 type TaskUpdate struct {
 	Kind        *core.TaskKind
 	Repo        *string

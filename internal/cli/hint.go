@@ -234,6 +234,17 @@ func taskListHints(tasks []*core.Task, projectID string) []hint {
 	return hints
 }
 
+func taskSearchHints(tasks []*core.Task, projectID string) []hint {
+	var hints []hint
+	if len(tasks) > 0 {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft task get %s", tasks[0].ID), About: "inspect the top match"})
+	}
+	if projectID != "" {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft task list --project %s", projectID), About: "browse all tasks"})
+	}
+	return hints
+}
+
 func taskNextHints(projectID string, top *core.Task) []hint {
 	if top == nil {
 		if projectID == "" {

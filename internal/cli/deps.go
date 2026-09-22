@@ -326,3 +326,20 @@ func (d *Deps) maybeRerank(cmd *cobra.Command, query string, artifacts []*core.A
 	}
 	return artifacts
 }
+
+// maybeRerankTasks reorders a lexical task shortlist by meaning when a judge is
+// configured and rerank is not disabled. Like maybeRerank, it never fails a
+// search: it falls back to lexical order and warns on a real failure.
+func (d *Deps) maybeRerankTasks(cmd *cobra.Command, query string, tasks []*core.Task, disabled bool) []*core.Task {
+	if disabled || len(tasks) < 2 || d.Rerank == nil {
+		return tasks
+	}
+	ordered, err := d.Rerank.RerankTasks(cmd.Context(), query, tasks)
+	if err == nil {
+		return ordered
+	}
+	if !errors.Is(err, judge.ErrUnavailable) {
+		_, _ = fmt.Fprintf(d.Err, "ft: warning: rerank unavailable (%v); using lexical order\n", err)
+	}
+	return tasks
+}

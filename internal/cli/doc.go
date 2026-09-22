@@ -14,7 +14,7 @@ import (
 func newDocCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "doc", Short: "Manage specs, docs, and memory"}
 
-	var projectID, kind, title, body, path, taskID string
+	var projectID, kind, title, brief, body, path, taskID string
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create an artifact (spec, doc, or memory)",
@@ -38,6 +38,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 				ProjectID: project,
 				Kind:      core.ArtifactKind(kind),
 				Title:     title,
+				Brief:     brief,
 				Body:      content,
 				Path:      path,
 			}
@@ -59,6 +60,7 @@ func newDocCommand(deps *Deps) *cobra.Command {
 	create.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
 	create.Flags().StringVarP(&kind, "kind", "k", string(core.ArtifactDoc), "artifact kind: spec, doc, or memory")
 	create.Flags().StringVarP(&title, "title", "t", "", "artifact title (required)")
+	create.Flags().StringVar(&brief, "brief", "", "one-line brief (what it is and when to load it)")
 	create.Flags().StringVarP(&body, "body", "b", "", "inline content")
 	create.Flags().StringVarP(&path, "file", "f", "", "read content from a file")
 	create.Flags().StringVar(&taskID, "task", "", "attach to a task")

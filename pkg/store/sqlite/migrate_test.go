@@ -225,6 +225,93 @@ func TestMigrateFailingStepRollsBack(t *testing.T) {
 	}
 }
 
+func TestMigrateV2ToV3RebuildsArtifactIndex(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.db")
+
+	// Build a v2 database: the base schema plus the two-column artifact FTS
+	// index, with one artifact indexed the old (title, body) way.
+	raw := openRaw(t, path)
+	tx, err := raw.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	for _, step := range migrations {
+		if step.version > 2 {
+			break
+		}
+		if err := step.apply(ctx, tx); err != nil {
+			t.Fatalf("apply v%d: %v", step.version, err)
+		}
+	}
+	data, err := encode(&core.Artifact{ID: "art-1", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "Terraform notes", Body: "apply in devops"})
+	if err != nil {
+		t.Fatalf("encode artifact: %v", err)
+	}
+	res, err := tx.Exec(
+		"INSERT INTO artifacts (id, project_id, task_id, kind, data) VALUES (?, ?, ?, ?, ?)",
+		"art-1", "prj-1", nil, string(core.ArtifactMemory), data,
+	)
+	if err != nil {
+		t.Fatalf("insert artifact: %v", err)
+	}
+	rowid, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+	if _, err := tx.Exec("INSERT INTO artifacts_fts(rowid, title, body) VALUES (?, ?, ?)", rowid, "Terraform notes", "apply in devops"); err != nil {
+		t.Fatalf("index old artifact: %v", err)
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 2"); err != nil {
+		t.Fatalf("stamp v2: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	// Reopen: the v3 migration must rebuild the index with the brief column.
+	backend, err := Open(ctx, sqliteConfig(path))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	if got := userVersion(t, path); got != currentSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", got, currentSchemaVersion)
+	}
+
+	// The pre-existing title/body stay searchable after the rebuild.
+	hits, err := backend.Artifacts().Search(ctx, store.ArtifactFilter{ProjectID: "prj-1"}, "terraform")
+	if err != nil {
+		t.Fatalf("Search(terraform) error = %v", err)
+	}
+	if len(hits) != 1 || hits[0].Artifact.ID != "art-1" {
+		t.Fatalf("Search(terraform) after v3 = %v, want [art-1]", hitIDs(hits))
+	}
+
+	// The rebuilt index has a brief column and indexes new briefs.
+	if err := backend.Artifacts().Create(ctx, &core.Artifact{ID: "art-2", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "unrelated", Brief: "widget guide", Body: "other"}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	hits, err = backend.Artifacts().Search(ctx, store.ArtifactFilter{ProjectID: "prj-1"}, "widget")
+	if err != nil {
+		t.Fatalf("Search(widget) error = %v", err)
+	}
+	if len(hits) != 1 || hits[0].Artifact.ID != "art-2" {
+		t.Fatalf("Search(widget) after v3 = %v, want [art-2]", hitIDs(hits))
+	}
+}
+
+func hitIDs(hits []store.SearchHit) []core.ArtifactID {
+	out := make([]core.ArtifactID, 0, len(hits))
+	for _, hit := range hits {
+		out = append(out, hit.Artifact.ID)
+	}
+	return out
+}
+
 func itoa(value int) string {
 	if value == 0 {
 		return "0"

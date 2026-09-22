@@ -328,12 +328,13 @@ func testArtifactSearch(t *testing.T, be store.Backend) {
 	assertSearch(t, repo, ctx, prj, "terraform", []core.ArtifactID{"art-t", "art-b"})
 
 	// Updates reindex.
-	updated := &core.Artifact{ID: "art-t", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "Rust notes", Body: "cargo build"}
+	updated := &core.Artifact{ID: "art-t", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "Rust notes", Brief: "reindexprobe brief", Body: "cargo build"}
 	if err := repo.Update(ctx, updated); err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
 	assertSearch(t, repo, ctx, prj, "terraform", []core.ArtifactID{"art-b"})
 	assertSearch(t, repo, ctx, prj, "cargo", []core.ArtifactID{"art-t"})
+	assertSearch(t, repo, ctx, prj, "reindexprobe", []core.ArtifactID{"art-t"}) // Update re-indexes the brief
 
 	// Deletes unindex.
 	if err := repo.Delete(ctx, "art-b"); err != nil {
@@ -399,6 +400,11 @@ func testArtifact(t *testing.T, be store.Backend) {
 	}
 	if len(byProject) != 2 {
 		t.Fatalf("List(project) len = %d, want 2", len(byProject))
+	}
+	for _, artifact := range byProject {
+		if artifact.ID == "art-2" && artifact.Brief != "remember briefly" {
+			t.Fatalf("List(project) art-2 Brief = %q, want the stored brief", artifact.Brief)
+		}
 	}
 
 	byTask, err := repo.List(ctx, store.ArtifactFilter{TaskID: &taskID})

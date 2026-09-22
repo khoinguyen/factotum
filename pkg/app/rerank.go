@@ -82,16 +82,25 @@ func rerankState(query string, candidates []*core.Artifact) string {
 	builder.WriteString(query)
 	builder.WriteString("\n\nCANDIDATES:\n")
 	for _, candidate := range candidates {
-		body := strings.Join(strings.Fields(candidate.Body), " ")
-		if len(body) > 280 {
-			body = body[:280]
-		}
 		builder.WriteString(string(candidate.ID))
 		builder.WriteString(" | ")
 		builder.WriteString(candidate.Title)
+		if brief := collapse(candidate.Brief); brief != "" {
+			builder.WriteString("\n    ")
+			builder.WriteString(brief)
+		}
 		builder.WriteString("\n    ")
-		builder.WriteString(body)
+		builder.WriteString(collapse(candidate.Body))
 		builder.WriteString("\n")
 	}
 	return builder.String()
+}
+
+// collapse flattens whitespace and bounds a field so the state stays small.
+func collapse(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > 280 {
+		text = text[:280]
+	}
+	return text
 }

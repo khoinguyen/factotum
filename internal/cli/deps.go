@@ -40,6 +40,14 @@ type Deps struct {
 	ActorRef     string
 	OutputFormat string
 	NoHints      bool
+	// Full disables output bounding for one invocation (--full).
+	Full bool
+	// IsTerminal reports whether a writer is attached to a terminal. It defaults
+	// to a real isatty check; tests override it to simulate a human session.
+	IsTerminal func(io.Writer) bool
+
+	// output is the buffer that replaced stdout while bounding is active.
+	output *boundedOutput
 
 	StoreFactories *registry.Registry[store.Factory]
 	Rankers        *registry.Registry[rank.Ranker]
@@ -106,6 +114,7 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 		Out:            out,
 		Err:            errOut,
 		Getenv:         getenv,
+		IsTerminal:     isTerminalWriter,
 		Judge:          newJudge(getenv, config.Config{}),
 		Agent:          agent.Disabled{},
 		Embedder:       embed.Disabled{},
@@ -198,6 +207,32 @@ func (d *Deps) Close() error {
 		return d.Backend.Close()
 	}
 	return nil
+}
+
+// beginBounding wraps stdout in a bounded buffer when the output policy says so.
+// Interactive sessions and --full/FACTOTUM_MAX_OUTPUT opt-outs leave stdout
+// untouched, so their output stays byte-identical.
+func (d *Deps) beginBounding() error {
+	interactive := d.IsTerminal != nil && (d.IsTerminal(d.Out) || d.IsTerminal(d.Err))
+	limit, bound, err := outputPolicy(d.Full, d.Getenv("FACTOTUM_MAX_OUTPUT"), interactive)
+	if err != nil {
+		return err
+	}
+	if !bound {
+		return nil
+	}
+	d.output = newBoundedOutput(d.Out, d.OutputFormat, limit)
+	d.Out = d.output
+	return nil
+}
+
+// FlushOutput writes buffered stdout, truncating it when it exceeds the limit.
+// It is idempotent, so both the success and error paths may call it.
+func (d *Deps) FlushOutput() error {
+	if d.output == nil {
+		return nil
+	}
+	return d.output.Flush()
 }
 
 // newEmbed builds the embedder for the configured provider. A configured provider

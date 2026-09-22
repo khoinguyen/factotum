@@ -129,6 +129,13 @@ model is detected and reported; run `ft memory reindex` after changing it.
   all.
 - `-o json|yaml` is the machine-readable interface. Text output is yaml-like
   `key: value` lines for single results and tables for lists.
+- Large output is bounded so it cannot flood an agent's context. When stdout is
+  not a terminal and output exceeds 32 KiB or 400 lines, `ft` prints the first
+  60 and last 20 lines and names the temp file that held the full text. Pass
+  `--full` to print everything; `FACTOTUM_MAX_OUTPUT=<bytes>` sets a different
+  limit and `FACTOTUM_MAX_OUTPUT=unlimited` disables the bound. `-o json|yaml`
+  becomes an envelope `{truncated, full_output_path, preview}`. On a terminal,
+  output is never bounded.
 - Never edit a database by hand: go through `ft`.
 - `ft task set <id> field=value ...` updates fields, including
   `not_before=YYYY-MM-DD` (or `+7d`) to defer a task and `not_before=` to clear

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	isatty "github.com/mattn/go-isatty"
@@ -75,7 +76,16 @@ func (d *Deps) hyperlink(url, text string) string {
 }
 
 func (d *Deps) terminal() bool {
-	file, ok := d.Out.(*os.File)
+	if d.IsTerminal == nil {
+		return false
+	}
+	return d.IsTerminal(d.Out)
+}
+
+// isTerminalWriter reports whether a writer is a terminal. Non-file writers
+// (buffers, pipes in tests) are not.
+func isTerminalWriter(w io.Writer) bool {
+	file, ok := w.(*os.File)
 	if !ok {
 		return false
 	}

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -400,7 +401,13 @@ func (s *TaskService) rejectSnoozeCycle(ctx context.Context, task *core.Task, un
 		}
 		seen[current] = true
 		next, err := s.backend.Tasks().Get(ctx, current)
-		if err != nil || next.Snooze == nil || next.Snooze.UntilTask == nil {
+		if errors.Is(err, core.ErrNotFound) {
+			return nil // a dangling UntilTask ends the chain
+		}
+		if err != nil {
+			return err
+		}
+		if next.Snooze == nil || next.Snooze.UntilTask == nil {
 			return nil
 		}
 		current = *next.Snooze.UntilTask

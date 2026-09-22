@@ -1018,6 +1018,27 @@ func TestTaskSnoozeRejectsMutualCycle(t *testing.T) {
 	}
 }
 
+func TestTaskSnoozeAllowsDanglingChain(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+
+	x, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "X"})
+	e, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "E"})
+	if _, err := h.tasks.Snooze(ctx, x.ID, core.Snooze{UntilTask: &e.ID}); err != nil {
+		t.Fatalf("Snooze(X until E) error = %v", err)
+	}
+	if err := h.tasks.Delete(ctx, e.ID); err != nil {
+		t.Fatalf("Delete(E) error = %v", err)
+	}
+
+	// X's UntilTask now dangles; a snooze whose chain hits it must be allowed.
+	f, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "F"})
+	if _, err := h.tasks.Snooze(ctx, f.ID, core.Snooze{UntilTask: &x.ID}); err != nil {
+		t.Fatalf("Snooze(F until X) with a dangling chain error = %v, want nil", err)
+	}
+}
+
 func readyIDs(t *testing.T, h *harness, projectID core.ProjectID, now time.Time) []core.TaskID {
 	t.Helper()
 	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID, now)

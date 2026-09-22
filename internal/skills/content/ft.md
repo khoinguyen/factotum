@@ -56,6 +56,26 @@ A bug, TODO, missing test, or follow-up spotted while working is a task: create
 it and link it (a note, or `--dep`). Update the graph in the same session as the
 code.
 
+## Break a prompt into tasks
+
+```sh
+ft prompt -p <project> break this feature into tasks   # preview the plan
+ft prompt -p <project> -y break this feature into tasks # create the proposed tasks
+```
+
+`ft prompt` hands the words to the configured agent CLI and prints the tasks it
+proposes, in the `ft task apply` document shape. Nothing is created until `-y`.
+The agent CLI comes from the machine-scoped `[agent]` table,
+`FACTOTUM_AGENT_COMMAND`, or the `--agent-command` flag (which wins for one
+invocation):
+
+```toml
+[agent]
+command = "my-agent-cli"   # reads the instruction on stdin, prints JSON on stdout
+```
+
+Without a configured agent, `ft prompt` reports a clear error.
+
 ## Find things
 
 ```sh

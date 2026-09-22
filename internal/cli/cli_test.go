@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/khoinguyen/factotum/pkg/agent"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/embed"
@@ -27,6 +28,7 @@ type runner struct {
 	embedder    embed.Embedder
 	vectors     vector.Index
 	embedModel  string
+	agent       agent.Agent
 }
 
 func newRunner(t *testing.T) *runner {
@@ -48,6 +50,7 @@ func (r *runner) setup(deps *Deps) []string {
 	deps.JudgeOverride = r.judge
 	deps.EmbedderOverride = r.embedder
 	deps.VectorsOverride = r.vectors
+	deps.AgentOverride = r.agent
 	if r.embedModel != "" {
 		body := "[embed]\nmodel = \"" + r.embedModel + "\"\n"
 		if err := os.WriteFile(r.userPath, []byte(body), 0o600); err != nil {

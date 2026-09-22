@@ -26,6 +26,7 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 		"memory":    newMemoryCommand,
 		"milestone": newMilestoneCommand,
 		"project":   newProjectCommand,
+		"prompt":    newPromptCommand,
 		"skill":     newSkillCommand,
 		"task":      newTaskCommand,
 		"start":     statusShortcut("start", core.StatusInProgress, "Mark a task in progress"),

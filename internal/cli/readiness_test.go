@@ -140,3 +140,79 @@ func TestTaskNextExplainRejectsProjectWithAll(t *testing.T) {
 		t.Fatal("expected --all with --project to fail")
 	}
 }
+
+func TestTaskNextExplainHonorsLabelFilter(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	tagged := firstField(t, r.run("task", "create", "-p", projectID, "-t", "tagged", "--label", "ops"))
+	plain := firstField(t, r.run("task", "create", "-p", projectID, "-t", "plain"))
+	r.run("task", "block", tagged)
+	r.run("task", "block", plain)
+
+	out := r.run("task", "next", "-p", projectID, "--explain", "--label", "ops")
+	if !strings.Contains(out, tagged) {
+		t.Fatalf("explain --label kept no tagged task:\n%s", out)
+	}
+	if strings.Contains(out, plain) {
+		t.Fatalf("explain --label leaked an unlabeled task:\n%s", out)
+	}
+}
+
+func TestTaskNextExplainHonorsRepoFilter(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("project", "repo", "create", projectID, "backend")
+	inRepo := firstField(t, r.run("task", "create", "-p", projectID, "-t", "in-repo", "--repo", "backend"))
+	other := firstField(t, r.run("task", "create", "-p", projectID, "-t", "other"))
+	r.run("task", "block", inRepo)
+	r.run("task", "block", other)
+
+	out := r.run("task", "next", "-p", projectID, "--explain", "--repo", "backend")
+	if !strings.Contains(out, inRepo) {
+		t.Fatalf("explain --repo kept no matching task:\n%s", out)
+	}
+	if strings.Contains(out, other) {
+		t.Fatalf("explain --repo leaked a task from another repo:\n%s", out)
+	}
+}
+
+func TestTaskNextExplainHonorsActorFilter(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("actor", "create", "--kind", "agent", "claude")
+	r.run("actor", "create", "--kind", "agent", "other")
+	mine := firstField(t, r.run("task", "create", "-p", projectID, "-t", "mine"))
+	r.run("task", "assign", mine, "--actor", "claude")
+	theirs := firstField(t, r.run("task", "create", "-p", projectID, "-t", "theirs"))
+	r.run("task", "assign", theirs, "--actor", "other")
+	r.run("task", "block", mine)
+	r.run("task", "block", theirs)
+
+	out := r.run("task", "next", "-p", projectID, "--explain", "--for", "claude")
+	if !strings.Contains(out, mine) {
+		t.Fatalf("explain --for kept no task for the actor:\n%s", out)
+	}
+	if strings.Contains(out, theirs) {
+		t.Fatalf("explain --for leaked a task assigned to another actor:\n%s", out)
+	}
+}
+
+func TestTaskNextExplainHonorsLimitInJSON(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	for _, title := range []string{"a", "b", "c"} {
+		id := firstField(t, r.run("task", "create", "-p", projectID, "-t", title))
+		r.run("task", "block", id)
+	}
+
+	out := r.run("task", "next", "-p", projectID, "--explain", "-n", "1", "-o", "json")
+	var entries []struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+		t.Fatalf("task next --explain json: %v\n%s", err, out)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %+v, want the limit to keep exactly one", entries)
+	}
+}

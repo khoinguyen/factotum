@@ -153,7 +153,7 @@ func snoozeDocFrom(snooze core.Snooze) *snoozeDoc {
 var taskDocFieldNames = []string{
 	"id", "project_id", "repo", "kind", "title", "description", "status",
 	"priority", "labels", "assignee", "deps", "dependents", "waiting_on",
-	"notes", "checks", "not_before", "created_at", "updated_at",
+	"notes", "checks", "not_ready", "not_before", "created_at", "updated_at",
 }
 
 // taskDocValues renders a task document as selectable key/value pairs. Keys
@@ -204,6 +204,9 @@ func taskDocValues(doc taskDoc) map[string]any {
 	}
 	if doc.Checks != nil {
 		out["checks"] = doc.Checks
+	}
+	if doc.NotReady != nil {
+		out["not_ready"] = *doc.NotReady
 	}
 	if doc.NotBefore != nil {
 		out["not_before"] = *doc.NotBefore

@@ -561,7 +561,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			if explain {
-				return emitNotReady(deps, snapshot)
+				return emitNotReady(cmd, deps, snapshot, notReadyFilter{forRef: forRef, labels: labels, repo: repo, limit: limit})
 			}
 
 			candidates := unionIDs(snapshot.Ready.Agent, snapshot.Ready.Human)
@@ -637,18 +637,41 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 	return cmd
 }
 
+// notReadyFilter narrows the excluded tasks `task next --explain` reports. Its
+// fields mirror the ready-path filters, so both interpret --for/--label/--repo
+// the same way.
+type notReadyFilter struct {
+	forRef string
+	labels []string
+	repo   string
+	limit  int
+}
+
 // emitNotReady lists every pending task excluded from the ready set with the
-// single reason it is excluded, in a stable order. Resolved tasks are omitted:
-// they are complete, not waiting.
-func emitNotReady(deps *Deps, snapshot *app.Snapshot) error {
-	entries := make([]notReadyEntry, 0)
-	for _, id := range snapshot.Graph.IDs() {
+// single reason it is excluded, in a stable order, after applying filter.
+// Resolved tasks are omitted: they are complete, not waiting.
+func emitNotReady(cmd *cobra.Command, deps *Deps, snapshot *app.Snapshot, filter notReadyFilter) error {
+	ids := snapshot.Graph.IDs()
+	if filter.forRef != "" {
+		actor, err := deps.Actors.Resolve(cmd.Context(), filter.forRef)
+		if err != nil {
+			return err
+		}
+		ids = filterByActor(snapshot, ids, actor)
+	}
+	ids = filterByLabels(snapshot, ids, filter.labels)
+
+	entries := make([]notReadyEntry, 0, len(ids))
+	for _, id := range ids {
 		_, reason := snapshot.Graph.Readiness(id)
 		if reason == nil {
 			continue
 		}
 		task, ok := snapshot.Graph.Task(id)
 		if !ok {
+			continue
+		}
+		if filter.repo != "" && task.Repo != filter.repo {
 			continue
 		}
 		entries = append(entries, notReadyEntry{
@@ -660,6 +683,9 @@ func emitNotReady(deps *Deps, snapshot *app.Snapshot) error {
 			Project:    string(task.ProjectID),
 			Repo:       task.Repo,
 		})
+	}
+	if filter.limit > 0 && len(entries) > filter.limit {
+		entries = entries[:filter.limit]
 	}
 	return deps.emit(entries, func() {
 		rows := make([][]string, 0, len(entries))

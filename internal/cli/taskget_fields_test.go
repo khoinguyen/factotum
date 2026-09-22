@@ -49,6 +49,42 @@ func TestTaskGetFieldsRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestTaskGetFieldsProjectsNotReadyJSON(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	blocker := firstField(t, r.run("task", "create", "-p", projectID, "-t", "blocker"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "work", "--dep", blocker))
+
+	out := r.run("task", "get", taskID, "--fields", "not_ready", "-o", "json")
+	var projected map[string]struct {
+		ReasonCode string `json:"reason_code"`
+		Detail     string `json:"detail"`
+	}
+	if err := json.Unmarshal([]byte(out), &projected); err != nil {
+		t.Fatalf("task get --fields not_ready json: %v\n%s", err, out)
+	}
+	got, ok := projected["not_ready"]
+	if !ok {
+		t.Fatalf("projection missing not_ready:\n%s", out)
+	}
+	if got.ReasonCode != "dep_unresolved" || got.Detail != blocker {
+		t.Fatalf("not_ready = %+v, want dep_unresolved/%s", got, blocker)
+	}
+}
+
+func TestTaskGetFieldsProjectsNotReadyText(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	blocker := firstField(t, r.run("task", "create", "-p", projectID, "-t", "blocker"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "work", "--dep", blocker))
+
+	out := r.run("task", "get", taskID, "--fields", "not_ready")
+	want := "not_ready: dep_unresolved: " + blocker
+	if !strings.Contains(out, want) {
+		t.Fatalf("projection missing %q:\n%s", want, out)
+	}
+}
+
 func TestTaskGetWithoutFieldsIsUnchanged(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

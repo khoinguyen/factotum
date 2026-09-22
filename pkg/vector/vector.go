@@ -25,8 +25,10 @@ type Index interface {
 	Put(ctx context.Context, id, model string, vec []float32) error
 	Delete(ctx context.Context, id string) error
 	Search(ctx context.Context, model string, query []float32, limit int) ([]Hit, error)
-	// Models returns the distinct embedding models present, sorted.
-	Models(ctx context.Context) ([]string, error)
+	// Models returns the distinct embedding models present for the given item ids,
+	// sorted. Scoping by id lets a caller check the model of one project's vectors
+	// rather than the whole side index.
+	Models(ctx context.Context, ids []string) ([]string, error)
 }
 
 // Cosine returns the cosine similarity of a and b. Mismatched lengths or a zero
@@ -96,12 +98,18 @@ func (m *Memory) Search(_ context.Context, model string, query []float32, limit 
 	return Rank(hits, limit), nil
 }
 
-func (m *Memory) Models(_ context.Context) ([]string, error) {
+func (m *Memory) Models(_ context.Context, ids []string) ([]string, error) {
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	seen := map[string]bool{}
-	for _, item := range m.items {
-		seen[item.model] = true
+	for id, item := range m.items {
+		if want[id] {
+			seen[item.model] = true
+		}
 	}
 	return sortedKeys(seen), nil
 }

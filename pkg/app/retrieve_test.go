@@ -114,6 +114,23 @@ func TestVectorRetrieverRejectsModelMismatch(t *testing.T) {
 	}
 }
 
+func TestVectorRetrieverModelMismatchIsScopedToUniverse(t *testing.T) {
+	ctx := context.Background()
+	index := vector.NewMemory()
+	// "out" is outside the search universe (another project); "in" is in scope.
+	_ = index.Put(ctx, "out", "other-model", []float32{1, 0})
+	_ = index.Put(ctx, "in", "m", []float32{1, 0})
+
+	retriever := NewVectorRetriever(&stubEmbedder{vectors: [][]float32{{1, 0}}}, index, "m")
+	got, err := retriever.Retrieve(ctx, "query", []*core.Artifact{memoryArtifact("in", "In", "")}, 10)
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v, want nil: an out-of-scope model is not a mismatch", err)
+	}
+	if len(got) != 1 || got[0].ID != "in" {
+		t.Fatalf("Retrieve() = %v, want in", ids(got))
+	}
+}
+
 func TestVectorRetrieverUpsertEmbedsDocumentText(t *testing.T) {
 	ctx := context.Background()
 	index := vector.NewMemory()

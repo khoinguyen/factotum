@@ -76,7 +76,7 @@ func TestSQLiteModelFilterAndReplace(t *testing.T) {
 	if stale, _ := index.Search(ctx, "model-a", []float32{1, 0}, 10); len(stale) != 0 {
 		t.Fatalf("replaced vector still searchable under its old model: %+v", stale)
 	}
-	models, err := index.Models(ctx)
+	models, err := index.Models(ctx, []string{"x"})
 	if err != nil {
 		t.Fatalf("Models() error = %v", err)
 	}
@@ -90,6 +90,24 @@ func TestSQLiteModelFilterAndReplace(t *testing.T) {
 	hits, _ = index.Search(ctx, "model-b", []float32{0, 1}, 10)
 	if len(hits) != 0 {
 		t.Fatalf("Delete() left %d hits", len(hits))
+	}
+}
+
+func TestSQLiteModelsScopesToIds(t *testing.T) {
+	ctx := context.Background()
+	index := openIndex(t, filepath.Join(t.TempDir(), "vectors.db"))
+	_ = index.Put(ctx, "a", "model-a", []float32{1, 0})
+	_ = index.Put(ctx, "b", "model-b", []float32{1, 0})
+
+	models, err := index.Models(ctx, []string{"a"})
+	if err != nil {
+		t.Fatalf("Models() error = %v", err)
+	}
+	if len(models) != 1 || models[0] != "model-a" {
+		t.Fatalf("Models(a) = %v, want only model-a", models)
+	}
+	if models, _ := index.Models(ctx, nil); len(models) != 0 {
+		t.Fatalf("Models(nil) = %v, want none", models)
 	}
 }
 

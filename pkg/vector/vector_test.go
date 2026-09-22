@@ -70,12 +70,33 @@ func TestMemoryModels(t *testing.T) {
 	_ = index.Put(ctx, "b", "model-b", []float32{1, 0})
 	_ = index.Put(ctx, "c", "model-a", []float32{0, 1})
 
-	models, err := index.Models(ctx)
+	models, err := index.Models(ctx, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("Models() error = %v", err)
 	}
 	if len(models) != 2 || models[0] != "model-a" || models[1] != "model-b" {
 		t.Fatalf("Models() = %v, want sorted model-a, model-b", models)
+	}
+}
+
+func TestMemoryModelsScopesToIds(t *testing.T) {
+	ctx := context.Background()
+	index := vector.NewMemory()
+	_ = index.Put(ctx, "a", "model-a", []float32{1, 0})
+	_ = index.Put(ctx, "b", "model-b", []float32{1, 0})
+
+	models, err := index.Models(ctx, []string{"a"})
+	if err != nil {
+		t.Fatalf("Models() error = %v", err)
+	}
+	if len(models) != 1 || models[0] != "model-a" {
+		t.Fatalf("Models(a) = %v, want only model-a", models)
+	}
+	if models, _ := index.Models(ctx, []string{"missing"}); len(models) != 0 {
+		t.Fatalf("Models(missing) = %v, want none", models)
+	}
+	if models, _ := index.Models(ctx, nil); len(models) != 0 {
+		t.Fatalf("Models(nil) = %v, want none", models)
 	}
 }
 

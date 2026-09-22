@@ -92,7 +92,7 @@ func (s *VectorRetriever) Retrieve(ctx context.Context, query string, universe [
 	if !s.Enabled() {
 		return nil, embed.ErrUnavailable
 	}
-	if err := s.checkModel(ctx); err != nil {
+	if err := s.checkModel(ctx, universe); err != nil {
 		return nil, err
 	}
 	vectors, err := s.embedder.Embed(ctx, embed.InputQuery, []string{query})
@@ -162,8 +162,18 @@ func (s *VectorRetriever) Reindex(ctx context.Context, artifacts []*core.Artifac
 	return count, nil
 }
 
-func (s *VectorRetriever) checkModel(ctx context.Context) error {
-	models, err := s.index.Models(ctx)
+// checkModel compares the configured model against the models of the vectors for
+// the artifacts in scope, not the whole side index: the index is shared by every
+// project on the store, but a mismatch is only meaningful for the project being
+// searched (and repaired by reindexing that project).
+func (s *VectorRetriever) checkModel(ctx context.Context, universe []*core.Artifact) error {
+	ids := make([]string, 0, len(universe))
+	for _, artifact := range universe {
+		if artifact != nil {
+			ids = append(ids, string(artifact.ID))
+		}
+	}
+	models, err := s.index.Models(ctx, ids)
 	if err != nil {
 		return err
 	}
@@ -173,5 +183,5 @@ func (s *VectorRetriever) checkModel(ctx context.Context) error {
 	if len(models) == 1 && models[0] == s.model {
 		return nil
 	}
-	return fmt.Errorf("%w: index has %v, configured %s", ErrModelMismatch, models, s.model)
+	return fmt.Errorf("%w: vectors use %v, configured %s", ErrModelMismatch, models, s.model)
 }

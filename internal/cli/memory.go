@@ -66,6 +66,7 @@ const memoryVectorLimit = 25
 // the embedder is down: the vector is skipped and backfilled on the next edit or by
 // `ft memory reindex`. With no provider (Disabled) it is a no-op.
 func (d *Deps) embedMemory(ctx context.Context, artifact *core.Artifact) {
+	d.warnEmbedMisconfig()
 	if d.Retriever == nil || !d.Retriever.Enabled() {
 		return
 	}
@@ -81,6 +82,7 @@ func (d *Deps) embedMemory(ctx context.Context, artifact *core.Artifact) {
 // rank fusion. Vector failure never fails a search: it warns once and keeps lexical
 // order, because the lexical path is always the baseline.
 func (d *Deps) vectorCandidates(ctx context.Context, project core.ProjectID, query string, lexical []*core.Artifact) []*core.Artifact {
+	d.warnEmbedMisconfig()
 	if d.Retriever == nil || !d.Retriever.Enabled() {
 		return lexical
 	}
@@ -488,6 +490,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 		Use:   "reindex",
 		Short: "Re-embed the project's memory into the vector index",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			deps.warnEmbedMisconfig()
 			if deps.Retriever == nil || !deps.Retriever.Enabled() {
 				return usageError(cmd, "no usable embedding provider configured; set [embed] provider or FACTOTUM_EMBED_PROVIDER")
 			}

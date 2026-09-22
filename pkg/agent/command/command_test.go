@@ -102,6 +102,10 @@ func TestSanitizeExtractsThePlanObject(t *testing.T) {
 		{"code fence", "```json\n" + plan + "\n```", plan},
 		{"braces around a code fence", "Here {x}:\n```json\n" + plan + "\n```\nend {y}", plan},
 		{"stray object before the plan", `Schema {"a":1}. Plan: ` + plan, plan},
+		{"tasks object before the plan", `Schema {"tasks":[{"title":"Placeholder"}]} Plan: ` + plan, plan},
+		{"empty tasks object before the plan", `cfg {"tasks":[]} plan: ` + plan, plan},
+		{"nested tasks key is not the plan", `{"tasks":[{"title":"One","meta":{"tasks":[]}}]}`,
+			`{"tasks":[{"title":"One","meta":{"tasks":[]}}]}`},
 		{"no object at all", "no json here", "no json here"},
 	}
 	for _, tc := range cases {

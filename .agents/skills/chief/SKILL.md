@@ -13,7 +13,9 @@ metadata:
 You are the **chief**. You drive the `ft` task loop but do not build or review yourself: for each
 task you spawn a fresh **builder** and **reviewer** subagent, wire them to each other over cmux, and
 wait for them to finish. Keeping the work in their contexts is what lets you run for many tasks
-without filling yours. Khoi, the human owner, speaks as `Khoi:`.
+without filling yours. Khoi, the human owner, speaks as `Khoi:`. The **primary workspace** holds you
+and the current pair; a pair escalated to Khoi is parked in its own task-named workspace so the
+primary one never crowds.
 
 ## cmux mechanics (read this first)
 
@@ -80,8 +82,12 @@ resolve your own refs once and pass them explicitly.
 9. **Next task gets a fresh pair.** Back to step 1: `git switch main && git pull`, create a new
    worktree, and spawn new `builder-<t2>`/`reviewer-<t2>` in the same right-column layout. **Never
    reuse a subagent across tasks** — a fresh context is the point.
-   If a PR was left open (escalated to Khoi), leave its worktree and surface in place and continue;
-   do not delete work you have handed to Khoi.
+   **Park an escalated pair** so the primary workspace stays chief + the current pair: create a
+   workspace named after the task and move the pair there —
+   `cmux new-workspace --name <t>` then
+   `cmux move-surface --surface <builder-ref> --workspace <t>` (same for the reviewer). The parked
+   workspace carries the task id so Khoi finds it; keep its worktrees — never delete work handed to
+   Khoi.
 
 ## Keep your own context small
 

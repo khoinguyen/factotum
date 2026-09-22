@@ -16,19 +16,21 @@ import (
 	"github.com/khoinguyen/factotum/pkg/store/sqlite"
 )
 
-// Hot-path latency budgets, warm p95 (from t-g4g3ezi6iu):
+// Hot-path latency budgets, warm (from t-g4g3ezi6iu):
 //
 //	hot path  (task next/get/set/start/done/claim, memory get, doc get) < 100ms @<=10k, <250ms @50k
 //	heavier   (task list, graph render, search, task context, --all)   < 250ms @<=10k, <500ms @50k
 //	point ops (get/set by id)                                           < 25ms at any scale
 //
-// TestHotPathBudgetSmoke enforces a generous multiple of the @10k hot-path
-// budget so an order-of-magnitude regression fails CI without flaking on a
-// noisy machine. Benchmark results are the finer-grained signal; run them with
-// `mise run bench`.
+// The Go benchmarks report mean ns/op; per-run p50/p95 and bytes-of-output
+// reporting (plus the 50k/100k tiers and process-startup-inclusive timing) land
+// in t-perf-scale. TestHotPathBudgetSmoke is the CI tier: it drives the `task
+// next` path (load + graph + readiness + rank) at 10k and fails at smokeHeadroom
+// times the @10k budget, so an order-of-magnitude regression fails while
+// ordinary CI noise does not. Seed time is not asserted.
 const (
 	hotPathBudget10k = 100 * time.Millisecond
-	smokeCeiling     = 30 * hotPathBudget10k
+	smokeHeadroom    = 5
 )
 
 func openBenchBackend(tb testing.TB, name string) store.Backend {
@@ -159,19 +161,43 @@ func BenchmarkCompositeRank(b *testing.B) {
 	}
 }
 
-// TestHotPathBudgetSmoke is the CI tier: it seeds 10k tasks and fails only on an
-// order-of-magnitude regression, not on ordinary machine noise.
+// TestHotPathBudgetSmoke is the CI tier: it drives the full `task next` path
+// (load + graph + readiness + rank) and fails at smokeHeadroom times the @10k
+// budget. CI runs under -race, which inflates the sqlite driver far more than
+// the in-memory backend, so sqlite is exercised at a smaller scale to keep its
+// absolute time under a ceiling tight enough to catch a constant-factor
+// regression. Seed time is not asserted.
 func TestHotPathBudgetSmoke(t *testing.T) {
 	ctx := context.Background()
-	be := memory.New()
-	t.Cleanup(func() { _ = be.Close() })
-	projectID := seedTasks(t, be, 10000)
-
-	start := time.Now()
-	if _, err := LoadSnapshot(ctx, be, projectID, time.Unix(0, 0).UTC()); err != nil {
-		t.Fatalf("LoadSnapshot() error = %v", err)
+	now := time.Unix(0, 0).UTC()
+	ranker, err := rank.Default()
+	if err != nil {
+		t.Fatalf("rank.Default() error = %v", err)
 	}
-	if elapsed := time.Since(start); elapsed > smokeCeiling {
-		t.Fatalf("LoadSnapshot at 10k tasks took %v, over the %v smoke ceiling (hot-path budget %v)", elapsed, smokeCeiling, hotPathBudget10k)
+	ceiling := time.Duration(smokeHeadroom) * hotPathBudget10k
+	cases := []struct {
+		backend string
+		tasks   int
+	}{
+		{"memory", 10000},
+		{"sqlite", 2000},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%s/%d", tc.backend, tc.tasks), func(t *testing.T) {
+			be := openBenchBackend(t, tc.backend)
+			projectID := seedTasks(t, be, tc.tasks)
+
+			start := time.Now()
+			snapshot, err := LoadSnapshot(ctx, be, projectID, now)
+			if err != nil {
+				t.Fatalf("LoadSnapshot() error = %v", err)
+			}
+			if _, err := ranker.Rank(ctx, rank.Request{Graph: snapshot.Graph, Tasks: snapshot.Tasks, Candidates: snapshot.Graph.ReadySet()}); err != nil {
+				t.Fatalf("Rank() error = %v", err)
+			}
+			if elapsed := time.Since(start); elapsed > ceiling {
+				t.Fatalf("task next path at %d (%s) took %v, over the %v ceiling (budget %v)", tc.tasks, tc.backend, elapsed, ceiling, hotPathBudget10k)
+			}
+		})
 	}
 }

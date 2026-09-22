@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -194,14 +195,18 @@ func (d *Deps) resolveProject(flag string) core.ProjectID {
 	return core.ProjectID(d.Config.Project)
 }
 
-// printTable writes a space-aligned table (header + rows) using tab stops.
+// printTable writes a space-aligned table (header + rows) using tab stops. The
+// output is buffered because tabwriter writes once per cell: without it a large
+// table turns into hundreds of thousands of small writes, one syscall each.
 func (d *Deps) printTable(header []string, rows [][]string) {
-	writer := tabwriter.NewWriter(d.Out, 0, 4, 2, ' ', 0)
+	buffered := bufio.NewWriter(d.Out)
+	writer := tabwriter.NewWriter(buffered, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(writer, strings.Join(header, "\t"))
 	for _, row := range rows {
 		_, _ = fmt.Fprintln(writer, strings.Join(row, "\t"))
 	}
 	_ = writer.Flush()
+	_ = buffered.Flush()
 }
 
 func (d *Deps) printJSON(value any) error {

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -50,11 +51,11 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(artifact, func() {
+			return deps.emit(artifactDocFrom(artifact), func() {
 				deps.printFields(f("doc_id", artifact.ID), f("created", true), f("kind", artifact.Kind), f("title", artifact.Title), f("project", artifact.ProjectID))
 			},
 				hint{Command: fmt.Sprintf("ft doc list --project %s", artifact.ProjectID), About: "see all artifacts"},
-				hint{Command: `ft doc search "<query>"`, About: "search titles and bodies"})
+				hint{Command: `ft doc search "<query>"`, About: "search titles, briefs, and bodies"})
 		},
 	}
 	create.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
@@ -80,7 +81,13 @@ func newDocCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(artifacts, func() {
+			docs := make([]artifactDoc, 0, len(artifacts))
+			for _, artifact := range artifacts {
+				doc := artifactDocFrom(artifact)
+				doc.Body = "" // the list stays lightweight; bodies load via ft doc get
+				docs = append(docs, doc)
+			}
+			return deps.emit(docs, func() {
 				rows := make([][]string, 0, len(artifacts))
 				for _, artifact := range artifacts {
 					rows = append(rows, []string{string(artifact.ID), string(artifact.Kind), artifact.Title, string(artifact.ProjectID)})
@@ -117,6 +124,42 @@ func newDocCommand(deps *Deps) *cobra.Command {
 	search.Flags().StringVarP(&searchProject, "project", "p", "", "filter by project id")
 	search.Flags().BoolVar(&searchNoRerank, "no-rerank", false, "keep lexical order instead of reranking by meaning")
 
-	cmd.AddCommand(create, list, search)
+	get := &cobra.Command{
+		Use:   "get <artifact>",
+		Short: "Get an artifact (spec, doc, or memory)",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			artifact, err := deps.Artifacts.Get(cmd.Context(), core.ArtifactID(args[0]))
+			if err != nil {
+				return err
+			}
+			return deps.emit(artifactDocFrom(artifact), func() {
+				deps.printf("(%s) %s: %s\n", artifact.Kind, artifact.ID, artifact.Title)
+				if artifact.Brief != "" {
+					deps.printf("brief: %s\n", artifact.Brief)
+				}
+				deps.printf("project: %s\n", artifact.ProjectID)
+				if artifact.TaskID != nil {
+					deps.printf("task: %s\n", *artifact.TaskID)
+				}
+				deps.printf("created_at: %s\n", artifact.CreatedAt.UTC().Format(time.RFC3339))
+				deps.printf("updated_at: %s\n", artifact.UpdatedAt.UTC().Format(time.RFC3339))
+				if artifact.Path != "" {
+					deps.printf("path: %s\n", artifact.Path)
+				}
+				if artifact.Body != "" {
+					deps.printf("\n=== Body ===\n%s\n", artifact.Body)
+				}
+				if len(artifact.Links) > 0 {
+					deps.printf("\n=== Links ===\n")
+					for _, link := range artifact.Links {
+						deps.printf("[%s] %s\n", link.Kind, link.URL)
+					}
+				}
+			}, docGetHints(artifact)...)
+		},
+	}
+
+	cmd.AddCommand(create, list, search, get)
 	return cmd
 }

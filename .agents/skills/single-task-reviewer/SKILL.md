@@ -53,7 +53,9 @@ Never trust the PR body or "CI green" alone. Reproduce it:
    remove it yourself.
 2. `mise run ci` (fmt-check, lint, race tests, cover, build).
 3. Run the PR's Exercise transcript yourself against a throwaway store
-   (`--store jsonfile --store-opt path=$(mktemp -d)/db.json`).
+   (`--store jsonfile --store-opt path=$(mktemp -d)/db.json`) or a temp config — **never the real
+   project DB**. A non-installed branch binary can forward-migrate the shared database to a newer
+   schema and break the installed `ft`; reserve the real DB for the installed binary.
 4. Probe the stated reviewer focus and the edge cases the tests miss. Try to break it.
 5. If any test was relaxed, skipped, or weakened, say so **loudly**. The diff is the source of truth.
 6. Check the PR body is current: the Exercise transcript re-run, `Relaxed tests` and `Breaking

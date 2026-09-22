@@ -3,12 +3,15 @@ package render
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/graph"
+	"github.com/khoinguyen/factotum/pkg/rank"
 )
 
 func task(id string, status core.TaskStatus, deps ...string) *core.Task {
@@ -208,5 +211,79 @@ func TestSummaryRenderIsCompact(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("summary missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// scaleView builds the synthetic scale fixture used by the agent-render budget
+// test and benchmark: n todo tasks where every tenth depends on its predecessor,
+// matching the end-to-end harness. Almost every task is ready at once, so the
+// agent renderer must derive the whole graph rather than a bounded neighborhood.
+func scaleView(tb testing.TB, n int) View {
+	tb.Helper()
+	policy := core.DefaultResolutionPolicy()
+	values := make([]core.Task, n)
+	for i := range values {
+		values[i] = core.Task{
+			ID: core.TaskID(fmt.Sprintf("t-%06d", i)), ProjectID: "prj-1", Kind: core.KindTask,
+			Title: fmt.Sprintf("task %d", i), Status: core.StatusTodo, Priority: i % 5,
+		}
+		if i > 0 && i%10 == 0 {
+			values[i].Deps = []core.TaskID{values[i-1].ID}
+		}
+	}
+	ptrs := make([]*core.Task, len(values))
+	for i := range values {
+		ptrs[i] = &values[i]
+	}
+	built, err := graph.New(values, policy)
+	if err != nil {
+		tb.Fatalf("graph.New() error = %v", err)
+	}
+	ranker, err := rank.Default()
+	if err != nil {
+		tb.Fatalf("rank.Default() error = %v", err)
+	}
+	return View{
+		Project: &core.Project{ID: "prj-1", Name: "Scale", Policy: policy},
+		Tasks:   ptrs,
+		Graph:   built,
+		Ready:   built.ReadyByActor(nil),
+		Ranker:  ranker,
+		Now:     time.Unix(0, 0).UTC(),
+	}
+}
+
+// TestAgentRenderBudgetSmoke fails when the agent render path regresses past the
+// heavy budget at 10k tasks. It mirrors pkg/app's budget smoke: a generous
+// multiple of the @10k budget so an order-of-magnitude regression (such as the
+// superlinear graph traversal this test was added for, t-lvlqecjqgm) fails while
+// ordinary CI noise does not.
+func TestAgentRenderBudgetSmoke(t *testing.T) {
+	const (
+		heavyBudget   = 250 * time.Millisecond
+		smokeHeadroom = 5
+	)
+	view := scaleView(t, 10000)
+	start := time.Now()
+	if err := (Agent{}).Render(context.Background(), io.Discard, view); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	ceiling := smokeHeadroom * heavyBudget
+	if elapsed := time.Since(start); elapsed > ceiling {
+		t.Fatalf("agent render at 10000 took %v, over the %v ceiling (budget %v)", elapsed, ceiling, heavyBudget)
+	}
+}
+
+func BenchmarkAgentRender(b *testing.B) {
+	for _, n := range []int{1000, 10000, 50000} {
+		b.Run(fmt.Sprintf("%d", n), func(b *testing.B) {
+			view := scaleView(b, n)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := (Agent{}).Render(context.Background(), io.Discard, view); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

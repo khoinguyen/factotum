@@ -2,6 +2,7 @@ package graph
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -348,6 +349,78 @@ func TestTopoSort(t *testing.T) {
 	}
 	if pos["a"] >= pos["b"] || pos["b"] >= pos["c"] {
 		t.Fatalf("TopoSort() = %v, violates dependencies", order)
+	}
+}
+
+// TestTopoSortIsLexicographicallyMinimal pins the ordering contract: among the
+// tasks whose dependencies are all already emitted, TopoSort always emits the
+// smallest id next, including when a dependency unlocks an id smaller than ids
+// still waiting. The heap-backed implementation must reproduce this exactly.
+func TestTopoSortIsLexicographicallyMinimal(t *testing.T) {
+	g := mustGraph(t,
+		task("a", core.KindTask, core.StatusTodo, "x"),
+		task("w", core.KindTask, core.StatusTodo),
+		task("x", core.KindTask, core.StatusTodo, "w"),
+		task("z", core.KindTask, core.StatusTodo),
+	)
+	order, err := g.TopoSort()
+	if err != nil {
+		t.Fatalf("TopoSort() error = %v", err)
+	}
+	want := []core.TaskID{"w", "x", "a", "z"}
+	if !equalIDs(order, want) {
+		t.Fatalf("TopoSort() = %v, want %v", order, want)
+	}
+}
+
+// TestTopoSortWideGraphBudget guards against the quadratic queue rescan that
+// made graph render --format agent superlinear (t-lvlqecjqgm): the old
+// implementation sorted the whole remaining queue on every pop, which is
+// O(V^2 log V) when most tasks are ready at once. A wide graph is the worst
+// case. The ceiling sits far above the O((V+E) log V) cost and far below the
+// old quadratic cost at this scale; see BenchmarkTopoSort.
+func TestTopoSortWideGraphBudget(t *testing.T) {
+	const (
+		n       = 20000
+		ceiling = 250 * time.Millisecond
+	)
+	tasks := make([]core.Task, n)
+	for i := range tasks {
+		tasks[i] = task(fmt.Sprintf("t-%06d", i), core.KindTask, core.StatusTodo)
+	}
+	g := mustGraph(t, tasks...)
+
+	start := time.Now()
+	order, err := g.TopoSort()
+	if err != nil {
+		t.Fatalf("TopoSort() error = %v", err)
+	}
+	if len(order) != n {
+		t.Fatalf("TopoSort() = %d nodes, want %d", len(order), n)
+	}
+	if elapsed := time.Since(start); elapsed > ceiling {
+		t.Fatalf("TopoSort() on %d tasks took %v, over the %v ceiling", n, elapsed, ceiling)
+	}
+}
+
+func BenchmarkTopoSort(b *testing.B) {
+	for _, n := range []int{1000, 10000, 50000} {
+		b.Run(fmt.Sprintf("%d", n), func(b *testing.B) {
+			tasks := make([]core.Task, n)
+			for i := range tasks {
+				tasks[i] = task(fmt.Sprintf("t-%06d", i), core.KindTask, core.StatusTodo)
+			}
+			g, err := New(tasks, core.DefaultResolutionPolicy())
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := g.TopoSort(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

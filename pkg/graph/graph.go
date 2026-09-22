@@ -3,6 +3,7 @@
 package graph
 
 import (
+	"container/heap"
 	"fmt"
 	"sort"
 	"strings"
@@ -295,7 +296,8 @@ func (g *Graph) Cycles() [][]core.TaskID {
 }
 
 // TopoSort returns a deterministic topological order of the graph's tasks,
-// or core.ErrCycle when the graph contains a cycle.
+// or core.ErrCycle when the graph contains a cycle. Among the tasks whose
+// dependencies are all already emitted, it always emits the smallest id next.
 func (g *Graph) TopoSort() ([]core.TaskID, error) {
 	indeg := make(map[core.TaskID]int, len(g.ids))
 	for _, id := range g.ids {
@@ -306,23 +308,22 @@ func (g *Graph) TopoSort() ([]core.TaskID, error) {
 		}
 	}
 
-	queue := make([]core.TaskID, 0, len(g.ids))
+	queue := &taskHeap{}
+	heap.Init(queue)
 	for _, id := range g.ids {
 		if indeg[id] == 0 {
-			queue = append(queue, id)
+			heap.Push(queue, id)
 		}
 	}
 
 	out := make([]core.TaskID, 0, len(g.ids))
-	for len(queue) > 0 {
-		sort.Slice(queue, func(i, j int) bool { return queue[i] < queue[j] })
-		id := queue[0]
-		queue = queue[1:]
+	for queue.Len() > 0 {
+		id := heap.Pop(queue).(core.TaskID)
 		out = append(out, id)
 		for _, dep := range g.dependents[id] {
 			indeg[dep]--
 			if indeg[dep] == 0 {
-				queue = append(queue, dep)
+				heap.Push(queue, dep)
 			}
 		}
 	}
@@ -331,6 +332,22 @@ func (g *Graph) TopoSort() ([]core.TaskID, error) {
 		return nil, fmt.Errorf("%w: %d tasks unresolved", core.ErrCycle, len(g.ids)-len(out))
 	}
 	return out, nil
+}
+
+// taskHeap is a min-heap of task ids, so TopoSort always emits the smallest
+// ready id next without re-scanning the whole frontier on every step.
+type taskHeap []core.TaskID
+
+func (h taskHeap) Len() int           { return len(h) }
+func (h taskHeap) Less(i, j int) bool { return h[i] < h[j] }
+func (h taskHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *taskHeap) Push(x any)        { *h = append(*h, x.(core.TaskID)) }
+func (h *taskHeap) Pop() any {
+	old := *h
+	n := len(old)
+	id := old[n-1]
+	*h = old[:n-1]
+	return id
 }
 
 // Waves returns the unlock wave of every task: the longest chain of

@@ -16,15 +16,21 @@ the fixes, and report the verdict to the chief. Khoi, the human owner, may also 
 
 ## Identity and channel
 
+- Your shell does **not** inherit `CMUX_*`, so pass explicit refs to every cmux command
+  (`--workspace <ws>`, `--surface <ref>`, `--pane <ref>`); a bare command fails with `not_found`. Get
+  your own refs from `cmux identify --id-format both`. Enumerate with `cmux tree --all` or
+  `cmux list-pane-surfaces` (there is no `list-surfaces`).
 - Prefix every message with `From reviewer-<task-id>, regarding PR #N: ...`. The builder writes
   `From builder-<task-id>: ...`.
-- The chief gives you the task id and the builder's name (`builder-<task-id>`); he is a peer agent
-  in another cmux surface. Find him with `cmux tree --all` or
-  `cmux find-window --content builder-<task-id>`.
-- Deliver with `cmux set-buffer --name <n> "<text>"`, `cmux paste-buffer --name <n> --surface <ref>`,
-  then `cmux send-key --surface <ref> enter`. Keep messages under ~2 KB; longer text goes in a temp
-  file whose path you send.
+- The chief gives you the task id and the builder's name (`builder-<task-id>`); he is a peer agent in
+  another cmux surface. Find him with `cmux find-window --content builder-<task-id>`.
+- Deliver with `cmux set-buffer --name <n> "<one line>"`, `cmux paste-buffer --name <n> --surface <ref>`,
+  then `cmux send-key --surface <ref> enter`. **Flatten the text to a single line first** — an embedded
+  newline submits early, so a multi-line paste arrives as several messages. Keep messages small;
+  longer text goes in a temp file whose path you send.
 - **After sending, read the screen once to confirm receipt, then stop and wait.** Do not poll.
+- Reporting to the chief wakes it: you paste into the `chief` surface and press Enter, and that input
+  starts its next turn.
 
 ## Verify before you judge
 

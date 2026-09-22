@@ -300,9 +300,12 @@ func testTaskDependents(t *testing.T, be store.Backend) {
 
 	tasks := []*core.Task{
 		{ID: "a", ProjectID: "prj-1", Kind: core.KindTask, Title: "a", Status: core.StatusTodo},
-		{ID: "b", ProjectID: "prj-1", Kind: core.KindTask, Title: "b", Status: core.StatusTodo, Deps: []core.TaskID{"a"}},
-		{ID: "c", ProjectID: "prj-1", Kind: core.KindTask, Title: "c", Status: core.StatusTodo, Deps: []core.TaskID{"a", "b"}},
+		{ID: "b", ProjectID: "prj-1", Kind: core.KindTask, Title: "b", Description: "tune retries", Status: core.StatusTodo, Deps: []core.TaskID{"a"}},
+		{ID: "c", ProjectID: "prj-1", Kind: core.KindTask, Title: "c", Description: "tune retries", Status: core.StatusTodo, Deps: []core.TaskID{"a", "b"}},
 		{ID: "d", ProjectID: "prj-2", Kind: core.KindTask, Title: "d", Status: core.StatusTodo, Deps: []core.TaskID{"a"}},
+		// e matches the search probe but is not a dependent of a, so the
+		// reverse-edge filter must exclude it.
+		{ID: "e", ProjectID: "prj-1", Kind: core.KindTask, Title: "e", Description: "tune retries", Status: core.StatusTodo},
 	}
 	for _, task := range tasks {
 		if err := repo.Create(ctx, task); err != nil {
@@ -318,8 +321,11 @@ func testTaskDependents(t *testing.T, be store.Backend) {
 	assertTaskIDs(t, repo, ctx, scoped("c"), nil)
 	// Without a project scope the filter spans projects.
 	assertTaskIDs(t, repo, ctx, store.TaskFilter{DependsOn: depPtr("a")}, []core.TaskID{"b", "c", "d"})
-	// Search composes with the reverse-edge filter.
-	assertTaskSearch(t, repo, ctx, scoped("a"), "b", []core.TaskID{"b"})
+	// Search composes with the reverse-edge filter: e matches the probe but does
+	// not depend on a, so the scoped search must drop it. Without the filter the
+	// same query would return b, c, and e.
+	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1"}, "retries", []core.TaskID{"b", "c", "e"})
+	assertTaskSearch(t, repo, ctx, scoped("a"), "retries", []core.TaskID{"b", "c"})
 
 	// Updating a task's deps reindexes its outgoing edges.
 	cleared := &core.Task{ID: "c", ProjectID: "prj-1", Kind: core.KindTask, Title: "c", Status: core.StatusTodo}

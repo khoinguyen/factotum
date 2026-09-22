@@ -12,11 +12,14 @@ const (
 	ArtifactSpec   ArtifactKind = "spec"
 	ArtifactDoc    ArtifactKind = "doc"
 	ArtifactMemory ArtifactKind = "memory"
+	// ArtifactTaskCheck is the derived cache for advisory task checks: one
+	// artifact per check run, or a human decision override.
+	ArtifactTaskCheck ArtifactKind = "task_check"
 )
 
 func (k ArtifactKind) Valid() bool {
 	switch k {
-	case ArtifactSpec, ArtifactDoc, ArtifactMemory:
+	case ArtifactSpec, ArtifactDoc, ArtifactMemory, ArtifactTaskCheck:
 		return true
 	default:
 		return false

@@ -20,11 +20,18 @@ func NewProjectService(backend store.Backend, clock Clock, ids IDGen) *ProjectSe
 }
 
 func (s *ProjectService) Create(ctx context.Context, name, description string, repos []core.Repository) (*core.Project, error) {
-	now := s.clock.Now()
 	id := core.ProjectID(Slug(name))
 	if id == "" {
 		id = core.ProjectID(s.ids.NewID("prj"))
 	}
+	return s.CreateWithID(ctx, id, name, description, repos)
+}
+
+// CreateWithID creates a project with an explicit id, unlike Create which slugs
+// the name into one. It is for a caller that already knows the id (for example a
+// project named in the machine config) and must not have it reshaped.
+func (s *ProjectService) CreateWithID(ctx context.Context, id core.ProjectID, name, description string, repos []core.Repository) (*core.Project, error) {
+	now := s.clock.Now()
 	project := &core.Project{
 		ID:          id,
 		Name:        name,

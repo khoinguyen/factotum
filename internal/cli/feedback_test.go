@@ -241,6 +241,22 @@ func TestFeedbackCreateSurfacesSendFailure(t *testing.T) {
 	}
 }
 
+func TestFeedbackCreateAcceptsLeadingBlankLine(t *testing.T) {
+	r := newRunner(t)
+	sink := filepath.Join(t.TempDir(), "factotum.json")
+	writeFeedbackConfig(t, r, map[string]string{"factotum": sink})
+
+	out := r.run("feedback", "create", "-b", "\nreal bug starts on line two")
+
+	if !strings.HasPrefix(firstField(t, out), "t-") {
+		t.Fatalf("feedback create did not print a task id:\n%s", out)
+	}
+	task := singleStoredTask(t, sink)
+	if task.Title != "real bug starts on line two" {
+		t.Fatalf("stored title = %q, want the first non-blank line", task.Title)
+	}
+}
+
 func TestFeedbackCreateRejectsEmptyBody(t *testing.T) {
 	r := newRunner(t)
 	sink := filepath.Join(t.TempDir(), "factotum.json")

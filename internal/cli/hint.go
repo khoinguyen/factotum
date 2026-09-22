@@ -109,7 +109,7 @@ func docListHints(projectID string) []hint {
 	if projectID != "" {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft doc create --project %s --title \"...\"", projectID), About: "add a spec, doc, or memory"})
 	}
-	return append(hints, hint{Command: `ft doc search "<query>"`, About: "search titles and bodies"})
+	return append(hints, hint{Command: `ft doc search "<query>"`, About: "search titles, briefs, and bodies"})
 }
 
 func docSearchHints(projectID string) []hint {

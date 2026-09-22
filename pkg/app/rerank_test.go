@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -65,6 +66,24 @@ func TestRerankUnavailable(t *testing.T) {
 		[]*core.Artifact{rerankArtifact("a-1", "first")})
 	if !errors.Is(err, judge.ErrUnavailable) {
 		t.Fatalf("Rerank() error = %v, want judge.ErrUnavailable", err)
+	}
+}
+
+func TestRerankStateIncludesBrief(t *testing.T) {
+	candidates := []*core.Artifact{{ID: "a-1", Title: "a", Brief: "widget brief", Body: "unrelated text"}}
+	f := fake.New(map[string]judge.Answer{
+		"which":  {Choice: "a-1", Probabilities: map[string]float64{"a-1": 1}, Confidence: 0.9},
+		"exists": {Probability: 0.9},
+	})
+	if _, err := NewRerankService(f).Rerank(context.Background(), "widget", candidates); err != nil {
+		t.Fatalf("Rerank() error = %v", err)
+	}
+	state, ok := f.Requests()[0].State.(string)
+	if !ok {
+		t.Fatalf("state = %T, want string", f.Requests()[0].State)
+	}
+	if !strings.Contains(state, "widget brief") {
+		t.Fatalf("rerank state omits the brief:\n%s", state)
 	}
 }
 

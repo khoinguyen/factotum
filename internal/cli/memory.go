@@ -194,10 +194,10 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			}
 			return deps.emit(memoryDocFrom(artifact), func() {
 				deps.printf("(memory) %s: %s\n", artifact.ID, artifact.Title)
-				deps.printf("project: %s\n", artifact.ProjectID)
 				if artifact.Brief != "" {
 					deps.printf("brief: %s\n", artifact.Brief)
 				}
+				deps.printf("project: %s\n", artifact.ProjectID)
 				if artifact.TaskID != nil {
 					deps.printf("task: %s\n", *artifact.TaskID)
 				}

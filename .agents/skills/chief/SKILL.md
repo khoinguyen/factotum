@@ -15,29 +15,46 @@ task you spawn a fresh **builder** and **reviewer** subagent, wire them to each 
 wait for them to finish. Keeping the work in their contexts is what lets you run for many tasks
 without filling yours. Khoi, the human owner, speaks as `Khoi:`.
 
+## cmux mechanics (read this first)
+
+The shell your commands run in **does not inherit `CMUX_*`**, so any cmux command that defaults to
+"the current surface/pane/workspace" fails with `not_found`. Never rely on the caller context:
+resolve your own refs once and pass them explicitly.
+
+- Resolve your refs: `cmux identify --id-format both` → window / workspace / pane / surface. Keep them.
+- Pass them to every command: `--workspace <ws>`, `--surface <ref>`, and `--pane <ref>` where it takes one.
+- Enumerate with `cmux tree --all`, `cmux list-pane-surfaces`, `cmux list-workspaces`. There is **no**
+  `cmux list-surfaces`.
+- Deliver a message: `cmux set-buffer --name <n> "<one line>"`, then
+  `cmux paste-buffer --name <n> --surface <ref>`, then `cmux send-key --surface <ref> enter`.
+  **Flatten the text to a single line first** — an embedded newline submits early, so a multi-line
+  paste arrives as several messages. Longer content goes in a temp file whose path you send.
+- Waking: pasting text into a surface and sending Enter delivers it as input, which starts a new turn
+  in that agent's session. So a subagent "reporting to the chief" is simply it pasting into your
+  `chief` surface; you wake on your next turn. You wake them the same way.
+
 ## The loop
 
 1. **Pick the next task.** `ft task next` ranks ready work (or follow Khoi's named task). Skip any
    task that carries an open human decision — surface it to Khoi instead of building it.
-2. **Prepare names.** For task `<t>` and a two-to-four-word brief: workspace/session names are
-   `builder-<t>` and `reviewer-<t>`, and the branch is `ft/<t>-<short-brief>`.
-3. **Lay out the workspace.** The chief, builder, and reviewer all run in **one workspace**: the
-   chief in the left pane (full height), the builder top-right, the reviewer bottom-right. Name your
-   own pane first so your subagents can find you: `cmux rename-tab chief`. Then, from the chief's
-   pane:
-   - `cmux new-split right --command '<agent> "load the single-task-builder skill; you are builder-<t>"'`
+2. **Prepare names.** For task `<t>` and a two-to-four-word brief: the branch is
+   `ft/<t>-<short-brief>`, and the pair is named `builder-<t>` and `reviewer-<t>`.
+3. **Lay out the workspace.** One workspace: chief left (full height), builder top-right, reviewer
+   bottom-right. Name your own pane first so your subagents can find you:
+   `cmux rename-tab --surface <chief-surface> chief`. Then, passing refs:
+   - `cmux new-split right --workspace <ws> --surface <chief-surface> --command 'opencode --prompt "load the single-task-builder skill; you are builder-<t>" --auto'`
      — builder in the new right pane.
-   - `cmux new-split down --surface <builder-ref> --command '<agent> "load the single-task-reviewer skill; you are reviewer-<t>"'`
+   - `cmux new-split down --workspace <ws> --surface <builder-ref> --command 'opencode --prompt "load the single-task-reviewer skill; you are reviewer-<t>" --auto'`
      — reviewer stacked below the builder, leaving the chief full-height on the left.
-   Name the new surfaces `builder-<t>` and `reviewer-<t>` (`cmux rename-tab --surface <ref> <name>`) so
-   each can find the other. The left/right/top/bottom shape is the point: the chief can watch both
-   panes without switching anything.
-4. **Wire them.** Tell each the other's name, the task, and how to reach the chief (you). Your pane is
-   named `chief`; give them that name and your surface ref.
+   - Name them: `cmux rename-tab --surface <builder-ref> builder-<t>` and the same for the reviewer.
+   - Agent: **opencode**. Its positional arg is a project path, not a prompt, so pass the kickoff via
+     `--prompt`; `--auto` runs it unattended.
+4. **Wire them**, each message a single line, with explicit refs. Tell each the other's name, the task,
+   and how to reach the chief. Your pane is named `chief`; give them that name and your surface ref.
    - to the builder: the task id, the branch `ft/<t>-<short-brief>`, that `reviewer-<t>` will review
-     the PR, and that the chief is `chief` (find it with `cmux find-window --content chief`).
+     the PR, and that the chief is `chief` (find it with `cmux find-window --content chief`, or use the
+     ref you give them).
    - to the reviewer: the task id, that `builder-<t>` will send the hand-off, and the same chief note.
-   Deliver with `cmux set-buffer` + `cmux paste-buffer --surface <ref>` + `cmux send-key --surface <ref> enter`.
 5. **Wait.** They run the build → hand-off → triage → verdict loop between themselves. Do not read
    their diffs. Wait for the builder (or reviewer) to report back to you.
 6. **Briefly check.** Confirm: PR approved, `mise run ci` green, task status. That is the whole
@@ -48,7 +65,7 @@ without filling yours. Khoi, the human owner, speaks as `Khoi:`.
    - an agent-fixable follow-up → `ft task create` (link it), carry on;
    - a product decision or something for Khoi → note it and **escalate to Khoi** the next time he
      speaks; do not guess.
-8. **Clean up and repeat.** Close the builder/reviewer sessions, then back to step 1.
+8. **Clean up and repeat.** Close the builder/reviewer surfaces, then back to step 1.
 
 ## Keep your own context small
 

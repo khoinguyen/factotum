@@ -18,8 +18,9 @@ the fixes, and report the verdict to the chief. Khoi, the human owner, may also 
 
 - Prefix every message with `From reviewer-<task-id>, regarding PR #N: ...`. The builder writes
   `From builder-<task-id>: ...`.
-- The builder is a peer agent in another cmux surface; the chief tells you his name. Find him with
-  `cmux tree --all` or `cmux find-window --content builder-<task-id>`.
+- The chief gives you the task id and the builder's name (`builder-<task-id>`); he is a peer agent
+  in another cmux surface. Find him with `cmux tree --all` or
+  `cmux find-window --content builder-<task-id>`.
 - Deliver with `cmux set-buffer --name <n> "<text>"`, `cmux paste-buffer --name <n> --surface <ref>`,
   then `cmux send-key --surface <ref> enter`. Keep messages under ~2 KB; longer text goes in a temp
   file whose path you send.
@@ -29,7 +30,9 @@ the fixes, and report the verdict to the chief. Khoi, the human owner, may also 
 
 Never trust the PR body or "CI green" alone. Reproduce it:
 
-1. `git fetch`, check out his branch, confirm the base is current `main`.
+1. `git fetch`; confirm the base is current `main`. Review in your own detached worktree so you never
+   switch the builder's checkout: `git worktree add --detach /tmp/review-<task-id> origin/<branch>`;
+   remove it when done.
 2. `mise run ci` (fmt-check, lint, race tests, cover, build).
 3. Run the PR's Exercise transcript yourself against a throwaway store
    (`--store jsonfile --store-opt path=$(mktemp -d)/db.json`).
@@ -52,15 +55,16 @@ Never trust the PR body or "CI green" alone. Reproduce it:
 - On re-review, verify each fix at the new commit: read the diff, re-run `mise run ci`, re-exercise.
 - When he pushes back, evaluate critically and accept only if it is logically right. If he is right,
   say so plainly; if not, say why with evidence.
-- Once aligned, post the verdict to the PR (`gh pr comment <n> --body-file <file>`): commit reviewed,
-  what you verified, findings resolved, residual watch items. Approve when green.
+- Once aligned, post the verdict to the PR (`gh pr comment <n> --body-file <file>`): the commit
+  reviewed, what you verified, findings resolved, residual watch items. **Do not merge** — the chief
+  merges.
 
 ## Report to the chief and stop
 
-Report the verdict to the chief: task id, PR number, approved or not, residual watch items. Then
-stop and wait.
-- **Escalation:** if after three rounds you and the builder cannot align, tell the chief; leave the
-  PR open for Khoi.
+Report to the chief: task id, PR number, the commit you reviewed, approved or not, and residual
+watch items (include the PR comment link). Then stop and wait.
+- **Escalation:** if after three rounds you and the builder cannot align, tell the chief, post your
+  verdict and the builder's disagreement on the PR, and leave it open for Khoi.
 
 ## Reviewer techniques that work
 

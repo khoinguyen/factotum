@@ -1305,15 +1305,15 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 }
 
 // taskGraphFacts returns a task's direct dependents and the reason it is
-// excluded from the ready set, from one snapshot load. Both are best-effort: a
-// graph build failure yields none rather than failing the read.
+// excluded from the ready set, from a bounded dependency-neighborhood read.
+// Both are best-effort: a read failure yields none rather than failing the
+// command.
 func taskGraphFacts(ctx context.Context, deps *Deps, task *core.Task) ([]core.TaskID, *graph.NotReadyReason) {
-	snapshot, err := app.LoadSnapshot(ctx, deps.Backend, task.ProjectID, deps.Clock.Now())
+	dependents, reason, err := app.TaskGraphFacts(ctx, deps.Backend, task, deps.Clock.Now())
 	if err != nil {
 		return nil, nil
 	}
-	_, reason := snapshot.Graph.Readiness(task.ID)
-	return snapshot.Graph.Dependents(task.ID), reason
+	return dependents, reason
 }
 
 // reasonLabel renders a not-ready reason as `code` or `code: detail`.

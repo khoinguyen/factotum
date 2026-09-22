@@ -127,6 +127,33 @@ func BenchmarkLoadSnapshot(b *testing.B) {
 	}
 }
 
+// BenchmarkTaskGraphFacts measures the bounded neighborhood read that backs
+// `task get`. Unlike LoadSnapshot it must not grow with the number of tasks, so
+// the per-op cost should stay flat across scales.
+func BenchmarkTaskGraphFacts(b *testing.B) {
+	scales := map[string][]int{"memory": {1000, 10000, 50000}, "sqlite": {1000, 10000, 50000}, "jsonfile": {1000}}
+	ctx := context.Background()
+	now := time.Unix(0, 0).UTC()
+	for _, name := range []string{"memory", "sqlite", "jsonfile"} {
+		for _, n := range scales[name] {
+			b.Run(fmt.Sprintf("%s/%d", name, n), func(b *testing.B) {
+				be := openBenchBackend(b, name)
+				seedTasks(b, be, n)
+				target, err := be.Tasks().Get(ctx, core.TaskID(fmt.Sprintf("t-%06d", n/2)))
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if _, _, err := TaskGraphFacts(ctx, be, target, now); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
 func BenchmarkGraphBuild(b *testing.B) {
 	tasks := syntheticTasks(10000)
 	b.ResetTimer()

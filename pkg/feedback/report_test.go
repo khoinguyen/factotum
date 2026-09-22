@@ -121,3 +121,28 @@ func TestSanitizeKeepsOrdinaryProse(t *testing.T) {
 		t.Fatalf("Sanitize() = %q, want ordinary prose unchanged", got.Message)
 	}
 }
+
+func TestSanitizeKeepsLongOrdinaryRuns(t *testing.T) {
+	cases := map[string]string{
+		"long word":       strings.Repeat("a", 40),
+		"hyphenated":      "this-is-a-very-long-descriptive-slug-without-digits",
+		"underscore name": "a_descriptive_identifier_that_is_definitely_not_a_secret",
+	}
+	for name, run := range cases {
+		report := Report{Message: "not a secret: " + run}
+		if got := report.Sanitize("").Message; got != report.Message {
+			t.Errorf("Sanitize(%s) = %q, want the ordinary run unchanged", name, got)
+		}
+	}
+}
+
+func TestSanitizeNormalizesHomeTrailingSlash(t *testing.T) {
+	report := Report{Message: "config at /home/khoi/.factotum/config.toml leaked"}
+	got := report.Sanitize("/home/khoi/").Message
+	if strings.Contains(got, "/home/khoi") {
+		t.Fatalf("Sanitize() left the home path: %q", got)
+	}
+	if !strings.Contains(got, "$HOME/.factotum/config.toml") {
+		t.Fatalf("Sanitize() = %q, want the path under $HOME", got)
+	}
+}

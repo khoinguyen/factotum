@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/agent"
 )
@@ -24,7 +25,18 @@ func provider(_ func(string) string, options map[string]string) (agent.Agent, er
 	if command == "" {
 		return agent.Disabled{}, nil
 	}
-	return NewCommand(command, nil), nil
+	return &Command{command: command, timeout: parseTimeout(options["timeout"]), run: execRunner}, nil
+}
+
+// parseTimeout reads the optional deadline for one breakdown. An empty or
+// invalid value means no deadline, so a configured timeout is never silently
+// replaced by a surprise default.
+func parseTimeout(value string) time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
 }
 
 // Runner executes a one-shot command with stdin and returns stdout. It is a var
@@ -34,6 +46,7 @@ type Runner func(ctx context.Context, command string, stdin []byte) ([]byte, err
 // Command breaks a prompt into a plan by running a one-shot agent CLI.
 type Command struct {
 	command string
+	timeout time.Duration
 	run     Runner
 }
 
@@ -46,6 +59,11 @@ func NewCommand(command string, run Runner) *Command {
 }
 
 func (c *Command) Breakdown(ctx context.Context, req agent.Request) (agent.Plan, error) {
+	if c.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		defer cancel()
+	}
 	out, err := c.run(ctx, c.command, []byte(instruction(req)))
 	if err != nil {
 		return agent.Plan{}, err
@@ -76,22 +94,26 @@ func instruction(req agent.Request) string {
 }
 
 // sanitize tolerates the common agent habit of wrapping JSON in prose or a
-// markdown code fence: it extracts the fenced body when present and otherwise
-// returns the trimmed output.
+// markdown code fence: it takes the fenced body when present, then narrows to the
+// outermost JSON object so surrounding commentary does not break decoding.
 func sanitize(out []byte) []byte {
 	text := strings.TrimSpace(string(out))
-	start := strings.Index(text, "```")
-	if start < 0 {
-		return []byte(text)
+	if start := strings.Index(text, "```"); start >= 0 {
+		text = text[start+3:]
+		if newline := strings.IndexByte(text, '\n'); newline >= 0 {
+			text = text[newline+1:]
+		}
+		if end := strings.LastIndex(text, "```"); end >= 0 {
+			text = text[:end]
+		}
+		text = strings.TrimSpace(text)
 	}
-	text = text[start+3:]
-	if newline := strings.IndexByte(text, '\n'); newline >= 0 {
-		text = text[newline+1:]
+	if start := strings.IndexByte(text, '{'); start >= 0 {
+		if end := strings.LastIndexByte(text, '}'); end > start {
+			text = text[start : end+1]
+		}
 	}
-	if end := strings.LastIndex(text, "```"); end >= 0 {
-		text = text[:end]
-	}
-	return []byte(strings.TrimSpace(text))
+	return []byte(text)
 }
 
 func execRunner(ctx context.Context, command string, stdin []byte) ([]byte, error) {

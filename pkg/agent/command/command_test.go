@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/agent"
 )
@@ -69,6 +70,43 @@ func TestBreakdownStripsCodeFence(t *testing.T) {
 	}
 	if len(plan.Tasks) != 1 || plan.Tasks[0].Title != "One" {
 		t.Fatalf("plan = %+v, want the fenced task", plan)
+	}
+}
+
+func TestBreakdownExtractsJSONFromProse(t *testing.T) {
+	run := func(context.Context, string, []byte) ([]byte, error) {
+		return []byte(`Here is the plan: {"tasks":[{"title":"One"}]}. Done.`), nil
+	}
+	plan, err := NewCommand("agent", run).Breakdown(context.Background(), agent.Request{Prompt: "x"})
+	if err != nil {
+		t.Fatalf("Breakdown() error = %v", err)
+	}
+	if len(plan.Tasks) != 1 || plan.Tasks[0].Title != "One" {
+		t.Fatalf("plan = %+v, want the JSON embedded in prose", plan)
+	}
+}
+
+func TestProviderAppliesConfiguredTimeout(t *testing.T) {
+	built, err := agent.New("command", emptyEnv, map[string]string{"command": "agent", "timeout": "5s"})
+	if err != nil {
+		t.Fatalf("New(\"command\") error = %v", err)
+	}
+	client, ok := built.(*Command)
+	if !ok {
+		t.Fatalf("New(\"command\") = %T, want *Command", built)
+	}
+	if client.timeout != 5*time.Second {
+		t.Fatalf("timeout = %v, want 5s", client.timeout)
+	}
+}
+
+func TestProviderWithoutTimeoutHasNoDeadline(t *testing.T) {
+	built, err := agent.New("command", emptyEnv, map[string]string{"command": "agent"})
+	if err != nil {
+		t.Fatalf("New(\"command\") error = %v", err)
+	}
+	if client := built.(*Command); client.timeout != 0 {
+		t.Fatalf("timeout = %v, want none", client.timeout)
 	}
 }
 

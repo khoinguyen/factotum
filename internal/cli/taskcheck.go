@@ -108,17 +108,32 @@ func checkHeadline(result check.Result, decidedBy string) string {
 	}
 }
 
-// summarizeChecks renders the `checks` projection value on one line.
+// summarizeChecks renders the `checks` projection value on one line. It mirrors
+// checkHeadline, minus actor-name resolution.
 func summarizeChecks(docs []checkResultDoc) string {
 	parts := make([]string, 0, len(docs))
 	for _, doc := range docs {
-		verdict := doc.Verdict
-		if !doc.Checked {
-			verdict = "not checked"
-		}
-		parts = append(parts, fmt.Sprintf("%s: %s", doc.Check, verdict))
+		parts = append(parts, fmt.Sprintf("%s: %s", doc.Check, checkDocHeadline(doc)))
 	}
 	return strings.Join(parts, "; ")
+}
+
+func checkDocHeadline(doc checkResultDoc) string {
+	switch {
+	case !doc.Checked:
+		return "not checked"
+	case doc.Stale && doc.Override:
+		return "stale human decision - the spec changed; re-check"
+	case doc.Stale:
+		return "stale - the spec changed; re-check"
+	case doc.Override:
+		if doc.DecidedBy != "" {
+			return fmt.Sprintf("ready (decided by %s)", doc.DecidedBy)
+		}
+		return "ready (decided by human)"
+	default:
+		return doc.Verdict
+	}
 }
 
 // printCheckReport renders one check result in full.
@@ -216,15 +231,14 @@ func newTaskCheckCommand(deps *Deps) *cobra.Command {
 		Short: "Run advisory checks on a task and cache the results",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			results, err := deps.TaskChecks.Run(cmd.Context(), core.TaskID(args[0]), checkNames, force)
-			if err != nil {
-				return checkCommandError(cmd, err)
-			}
+			results, runErr := deps.TaskChecks.Run(cmd.Context(), core.TaskID(args[0]), checkNames, force)
 			docs := make([]checkResultDoc, 0, len(results))
 			for _, result := range results {
 				docs = append(docs, checkResultDocFrom(result))
 			}
-			return deps.emit(docs, func() {
+			// Report the checks that ran before surfacing a failure, so one
+			// failing check does not hide the others.
+			if err := deps.emit(docs, func() {
 				actors := deps.actorResolver(cmd.Context())
 				for i, result := range results {
 					if i > 0 {
@@ -232,7 +246,10 @@ func newTaskCheckCommand(deps *Deps) *cobra.Command {
 					}
 					deps.printCheckReport(result, actors)
 				}
-			})
+			}); err != nil {
+				return err
+			}
+			return checkCommandError(cmd, runErr)
 		},
 	}
 	cmd.Flags().StringArrayVar(&checkNames, "check", nil, "run only this check (repeatable; default all)")

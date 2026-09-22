@@ -285,6 +285,47 @@ func TestCheckClearRestoresJudgeVerdict(t *testing.T) {
 	}
 }
 
+func TestCheckClearRemovesEveryOverride(t *testing.T) {
+	stub := &stubCheck{name: "stub", version: "1", result: check.Result{Verdict: check.NeedsGrooming}}
+	f := newCheckFixture(t, stub)
+	ctx := context.Background()
+	if _, err := f.svc.Run(ctx, f.task.ID, nil, false); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if _, err := f.svc.Decide(ctx, f.task.ID, "stub", f.human(t), "first", false); err != nil {
+		t.Fatalf("Decide(first) error = %v", err)
+	}
+	if _, err := f.svc.Decide(ctx, f.task.ID, "stub", f.human(t), "second", false); err != nil {
+		t.Fatalf("Decide(second) error = %v", err)
+	}
+	if _, err := f.svc.Decide(ctx, f.task.ID, "stub", f.human(t), "", true); err != nil {
+		t.Fatalf("Decide(clear) error = %v", err)
+	}
+	cached, _ := f.svc.Cached(ctx, f.task.ID, nil)
+	if cached[0].Override {
+		t.Fatalf("an older decision resurfaced after clear: %+v", cached[0])
+	}
+	if cached[0].Verdict != check.NeedsGrooming {
+		t.Fatalf("clear did not restore the judge verdict: %+v", cached[0])
+	}
+}
+
+func TestCheckRunsOthersWhenOneFails(t *testing.T) {
+	failing := &stubCheck{name: "alpha", version: "1", err: judge.ErrUnavailable}
+	ok := &stubCheck{name: "beta", version: "1", result: check.Result{Verdict: check.Ready}}
+	f := newCheckFixture(t, failing)
+	if err := f.svc.checks.Register(ok.Name(), ok); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	results, err := f.svc.Run(context.Background(), f.task.ID, nil, false)
+	if !errors.Is(err, judge.ErrUnavailable) {
+		t.Fatalf("Run() error = %v, want the failing check's error", err)
+	}
+	if len(results) != 1 || results[0].Check != "beta" {
+		t.Fatalf("Run() = %+v, want the surviving check's result", results)
+	}
+}
+
 func TestCheckDecideRejectsNonHumanActor(t *testing.T) {
 	stub := &stubCheck{name: "stub", version: "1"}
 	f := newCheckFixture(t, stub)

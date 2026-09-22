@@ -166,6 +166,29 @@ func TestTaskDecideClearRestoresJudgeVerdict(t *testing.T) {
 	}
 }
 
+func TestTaskDecideClearRemovesEveryOverride(t *testing.T) {
+	r, _, taskID := checkRunner(t, readyJudge())
+	r.run("actor", "create", "--kind", "human", "Khoi")
+	r.run("--actor", "Khoi", "task", "decide", taskID, "--ready", "--reason", "first")
+	r.run("--actor", "Khoi", "task", "decide", taskID, "--ready", "--reason", "second")
+	r.run("--actor", "Khoi", "task", "decide", taskID, "--clear")
+	out := r.run("task", "get", taskID)
+	if strings.Contains(out, "decided by") {
+		t.Fatalf("an older decision resurfaced after clear:\n%s", out)
+	}
+}
+
+func TestTaskGetFieldsChecksShowsStale(t *testing.T) {
+	r, _, taskID := checkRunner(t, readyJudge())
+	r.run("actor", "create", "--kind", "human", "Khoi")
+	r.run("--actor", "Khoi", "task", "decide", taskID, "--ready", "--reason", "ok")
+	r.run("task", "update", taskID, "--body", "a changed body")
+	out := r.run("task", "get", taskID, "--fields", "checks")
+	if !strings.Contains(out, "stale") {
+		t.Fatalf("--fields checks hid the staleness:\n%s", out)
+	}
+}
+
 func TestTaskDecideOverrideGoesStaleWhenBodyChanges(t *testing.T) {
 	r, _, taskID := checkRunner(t, readyJudge())
 	r.run("actor", "create", "--kind", "human", "Khoi")

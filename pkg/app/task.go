@@ -568,6 +568,7 @@ type NoteInput struct {
 	Body   string
 	Links  []core.Link
 	Author *core.ActorID
+	System bool
 }
 
 func (s *TaskService) AddNote(ctx context.Context, id core.TaskID, in NoteInput) (*core.Task, error) {
@@ -580,6 +581,7 @@ func (s *TaskService) AddNote(ctx context.Context, id core.TaskID, in NoteInput)
 		Body:      in.Body,
 		Links:     in.Links,
 		CreatedAt: s.clock.Now(),
+		System:    in.System,
 	}
 	if in.Author != nil {
 		note.Author = *in.Author

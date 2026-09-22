@@ -77,6 +77,10 @@ type Note struct {
 	Body      string
 	Links     []Link
 	CreatedAt time.Time
+	// System marks a note ft generated (a triage or reassignment message) rather
+	// than one a human or agent wrote. System notes stay visible on the task but
+	// are excluded from search indexing as system noise.
+	System bool
 }
 
 func (n Note) Validate() error {

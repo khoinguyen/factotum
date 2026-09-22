@@ -62,6 +62,23 @@ func TestLexicalTaskScore(t *testing.T) {
 	}
 }
 
+func TestLexicalTaskScoreSkipsSystemNotes(t *testing.T) {
+	task := &core.Task{
+		Title:       "quiet",
+		Description: "nothing here",
+		Notes: []core.Note{
+			{ID: "n-system", Body: "sysprobe in a generated note", System: true},
+			{ID: "n-human", Body: "humanprobe in a real note"},
+		},
+	}
+	if score, matched := LexicalTaskScore(task, LexicalTerms("sysprobe")); matched || score != 0 {
+		t.Errorf("system note scored (%v, %v), want no match", score, matched)
+	}
+	if score, matched := LexicalTaskScore(task, LexicalTerms("humanprobe")); !matched || score != 1 {
+		t.Errorf("human note = (%v, %v), want (1, true)", score, matched)
+	}
+}
+
 func TestSortTaskSearchHits(t *testing.T) {
 	task := func(id, title string) *core.Task {
 		return &core.Task{ID: core.TaskID(id), Title: title}

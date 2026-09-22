@@ -466,6 +466,7 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "note", Short: "Manage task notes"}
 	var body string
 	var linkSpecs []string
+	var system bool
 
 	add := &cobra.Command{
 		Use:   "create <task>",
@@ -484,7 +485,7 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 				links = append(links, core.Link{Kind: core.LinkKind(kind), URL: url})
 			}
 			author := deps.currentActorID(cmd.Context())
-			task, err := deps.Tasks.AddNote(cmd.Context(), core.TaskID(args[0]), app.NoteInput{Body: body, Links: links, Author: author})
+			task, err := deps.Tasks.AddNote(cmd.Context(), core.TaskID(args[0]), app.NoteInput{Body: body, Links: links, Author: author, System: system})
 			if err != nil {
 				return err
 			}
@@ -497,6 +498,7 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 	}
 	add.Flags().StringVarP(&body, "body", "b", "", "note body (required)")
 	add.Flags().StringArrayVar(&linkSpecs, "link", nil, "link kind=url (repeatable)")
+	add.Flags().BoolVar(&system, "system", false, "mark the note as system-generated (excluded from search)")
 
 	cmd.AddCommand(add)
 	return cmd

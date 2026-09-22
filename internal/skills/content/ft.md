@@ -223,4 +223,6 @@ fails, so a script can gate on it.
 ft <command> --help
 ft skill list
 ft skill get <name>
+ft skill lint             # check the embedded skills against the live CLI (deterministic)
+ft skill lint --semantic  # also judge prose references (needs a TypeSafe key)
 ```

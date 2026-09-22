@@ -21,11 +21,16 @@ without filling yours. Khoi, the human owner, speaks as `Khoi:`.
    task that carries an open human decision — surface it to Khoi instead of building it.
 2. **Prepare names.** For task `<t>` and a two-to-four-word brief: workspace/session names are
    `builder-<t>` and `reviewer-<t>`, and the branch is `ft/<t>-<short-brief>`.
-3. **Spawn the pair.** Create two agent sessions via cmux, one builder and one reviewer, each loaded
-   with its skill (`single-task-builder`, `single-task-reviewer`):
-   - `cmux new-workspace --name builder-<t> --command '<agent> "load the single-task-builder skill; you are builder-<t>"'`
-   - `cmux new-workspace --name reviewer-<t> --command '<agent> "load the single-task-reviewer skill; you are reviewer-<t>"'`
-   (Use `new-surface --type agent-session --provider <p>` if you prefer a split over a workspace.)
+3. **Lay out the workspace.** The chief, builder, and reviewer all run in **one workspace**: the
+   chief in the left pane (full height), the builder top-right, the reviewer bottom-right. From the
+   chief's pane:
+   - `cmux new-split right --command '<agent> "load the single-task-builder skill; you are builder-<t>"'`
+     — builder in the new right pane.
+   - `cmux new-split down --surface <builder-ref> --command '<agent> "load the single-task-reviewer skill; you are reviewer-<t>"'`
+     — reviewer stacked below the builder, leaving the chief full-height on the left.
+   Name the surfaces `builder-<t>` and `reviewer-<t>` (`cmux rename-tab`) so each can find the other.
+   The left/right/top/bottom shape is the point: the chief can watch both panes without switching
+   anything.
 4. **Wire them.** Tell each the other's name and the task:
    - to the builder: the task id, the branch `ft/<t>-<short-brief>`, and that `reviewer-<t>` will
      review the PR.

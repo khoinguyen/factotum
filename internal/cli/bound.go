@@ -61,9 +61,9 @@ func outputPolicy(full bool, env string, interactive bool) (outputLimit, bool, e
 
 // boundedOutput buffers stdout until the command finishes, then either writes it
 // through unchanged or spills the full text to a temp file and prints a
-// head+tail window. The spill file is removed on normal exit, so the window and
-// --full are the durable interfaces; an interrupted process leaves the file for
-// the OS temp cleaner.
+// head+tail window. The spill file is left for the OS temp cleaner: the printed
+// path and the structured envelope's full_output_path stay readable. No repo- or
+// home-relative state is created.
 type boundedOutput struct {
 	real    io.Writer
 	format  string
@@ -90,10 +90,7 @@ func (b *boundedOutput) Flush() error {
 		return err
 	}
 
-	path, spillErr := spillOutput(data)
-	if spillErr == nil {
-		defer func() { _ = os.Remove(path) }()
-	}
+	path, _ := spillOutput(data)
 	window := truncateWindow(data, b.limit, path)
 
 	if b.format == "json" || b.format == "yaml" {
@@ -125,7 +122,8 @@ func (b *boundedOutput) writeEnvelope(window, path string) error {
 }
 
 // spillOutput writes the full text to a per-invocation temp file and returns its
-// path. The caller owns removing it.
+// path. The file is left in place for the OS temp cleaner so the caller can read
+// it after the process exits.
 func spillOutput(data []byte) (string, error) {
 	file, err := os.CreateTemp("", "ft-output-*")
 	if err != nil {

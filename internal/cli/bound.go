@@ -13,8 +13,7 @@ import (
 )
 
 // Output bounding thresholds: stdout over 32 KiB or 400 lines, whichever comes
-// first, is spilled and replaced by a head+tail window. See AGENTS.md and the
-// t-izpzph7luq task for the accepted decisions.
+// first, is spilled and replaced by a head+tail window.
 const (
 	maxOutputBytes  = 32 * 1024
 	maxOutputLines  = 400
@@ -31,6 +30,8 @@ type outputLimit struct {
 // outputPolicy decides whether stdout is bounded and at what limit. Precedence:
 // --full wins, then FACTOTUM_MAX_OUTPUT, then the interactive default (full),
 // then the built-in threshold. Interactive means any of stdout/stderr is a TTY.
+// FACTOTUM_MAX_OUTPUT is a byte budget only, so an explicit limit is not
+// second-guessed by the built-in line threshold.
 func outputPolicy(full bool, env string, interactive bool) (outputLimit, bool, error) {
 	if full {
 		return outputLimit{}, false, nil
@@ -50,7 +51,7 @@ func outputPolicy(full bool, env string, interactive bool) (outputLimit, bool, e
 		if n == 0 {
 			return outputLimit{}, false, nil
 		}
-		return outputLimit{Bytes: n, Lines: maxOutputLines}, true, nil
+		return outputLimit{Bytes: n}, true, nil
 	}
 	if interactive {
 		return outputLimit{}, false, nil

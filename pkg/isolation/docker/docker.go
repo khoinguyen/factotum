@@ -25,11 +25,19 @@
 //
 // Limits, stated honestly. Docker's CLI cannot confine a filesystem or network
 // after the fact, so Prepare and ApplyPolicy reject a non-empty Policy with
-// isolation.ErrUnsupported rather than pretending. An interactive TTY is
-// refused for the same reason. Credential values are never placed in container
-// metadata or in argv: an attached credential is injected per-exec through the
-// docker client's own environment (`docker exec --env KEY`), so it never
-// appears in `docker inspect` or a host process list.
+// isolation.ErrUnsupported rather than pretending, and an interactive TTY is
+// refused. Credential values are never placed in container metadata or in argv:
+// an attached credential is injected per-exec through the docker client's own
+// environment (`docker exec --env KEY`), so it never appears in `docker
+// inspect`. It is visible in the docker CLI process's environment to the same
+// user (`ps eww`) — the same exposure a direct host-process backend has, not a
+// wider one. The workload gets a writable HOME (DefaultHome, overridable
+// through Spec.Env), since a non-root uid with no passwd entry otherwise gets
+// HOME=/ and cannot write it. Two known limitations: a workspace path
+// containing a comma is not supported by `--mount`, and Download treats any
+// `docker cp` failure — a missing path or a daemon fault — as an omitted path,
+// honoring the port's "missing paths are omitted" contract at the cost of
+// hiding a daemon error.
 package docker
 
 import (
@@ -66,6 +74,11 @@ const (
 	// KeepAlive is the container's init process. It keeps the container alive
 	// between Exec calls; the harness itself runs through `docker exec`.
 	KeepAlive = "while :; do sleep 3600; done"
+	// DefaultHome is the writable HOME the workload gets when the spec sets
+	// none. A non-root uid with no passwd entry otherwise falls back to HOME=/
+	// and cannot write it; the OpenCode harness, for example, writes XDG state
+	// under HOME.
+	DefaultHome = "/tmp"
 	// DefaultReadyTimeout bounds how long Prepare waits for a container to
 	// report that it is running.
 	DefaultReadyTimeout = 30 * time.Second
@@ -221,6 +234,11 @@ func (b *Backend) Prepare(ctx context.Context, spec isolation.Spec) (isolation.H
 		owned:   owned,
 		env:     clone(spec.Env),
 		procs:   map[*execution]*runningProcess{},
+	}
+	// A non-root uid with no passwd entry gets HOME=/ and cannot write it; the
+	// harness needs a writable HOME. An explicit Spec.Env HOME wins.
+	if _, ok := env.env["HOME"]; !ok {
+		env.env["HOME"] = DefaultHome
 	}
 	for _, c := range spec.Credentials {
 		if err := b.attach(ctx, env, c); err != nil {

@@ -353,6 +353,40 @@ func TestPrepareHonorsEnvLabelsAndUser(t *testing.T) {
 	}
 }
 
+// TestPrepareProvidesWritableHome pins that the backend gives the workload a
+// writable HOME. The only shipped harness (OpenCode) writes XDG state under
+// HOME and documents that the backend must supply one; a non-root uid with no
+// passwd entry otherwise gets HOME=/ and fails with EACCES. The default is
+// /tmp, and an explicit Spec.Env HOME wins.
+func TestPrepareProvidesWritableHome(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		r := &fakeRunner{}
+		be := newBackend(r)
+		h := prepared(t, be, isolation.Spec{})
+		t.Cleanup(func() { _ = be.Delete(context.Background(), h) })
+
+		if _, err := be.Exec(context.Background(), h, isolation.Command{Argv: []string{"sh"}}); err != nil {
+			t.Fatalf("Exec() error = %v", err)
+		}
+		if got := r.started()[0].env["HOME"]; got != docker.DefaultHome {
+			t.Fatalf("HOME = %q, want the writable default %q", got, docker.DefaultHome)
+		}
+	})
+	t.Run("explicit wins", func(t *testing.T) {
+		r := &fakeRunner{}
+		be := newBackend(r)
+		h := prepared(t, be, isolation.Spec{Env: map[string]string{"HOME": "/custom"}})
+		t.Cleanup(func() { _ = be.Delete(context.Background(), h) })
+
+		if _, err := be.Exec(context.Background(), h, isolation.Command{Argv: []string{"sh"}}); err != nil {
+			t.Fatalf("Exec() error = %v", err)
+		}
+		if got := r.started()[0].env["HOME"]; got != "/custom" {
+			t.Fatalf("HOME = %q, want the explicit /custom", got)
+		}
+	})
+}
+
 // TestExecStreamsAndWaits pins that Exec runs `docker exec`, streams both
 // streams, injects env and workdir, and reports the remote exit code.
 func TestExecStreamsAndWaits(t *testing.T) {

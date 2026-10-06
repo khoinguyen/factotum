@@ -24,6 +24,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/harness/opencode"
 	"github.com/khoinguyen/factotum/pkg/isolation"
+	"github.com/khoinguyen/factotum/pkg/isolation/docker"
 	"github.com/khoinguyen/factotum/pkg/isolation/local"
 	"github.com/khoinguyen/factotum/pkg/isolation/openshell"
 	"github.com/khoinguyen/factotum/pkg/judge"
@@ -187,7 +188,8 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 // registered but only ever constructible with the configured opt-in, so it can
 // never run unsandboxed by default. The OpenShell backend is deny-by-default and
 // non-root; it needs a reachable gateway and the openshell CLI, and refuses a
-// run it cannot prepare.
+// run it cannot prepare. The docker backend runs a per-task container with only
+// the resolved workspace mounted; it needs the docker CLI and a daemon.
 func runBackends(getenv func(string) string) *registry.Registry[IsolationBackendFactory] {
 	reg := registry.New[IsolationBackendFactory]()
 	registerRunBackend(reg, local.Name, func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error) {
@@ -196,6 +198,9 @@ func runBackends(getenv func(string) string) *registry.Registry[IsolationBackend
 	registerRunBackend(reg, openshell.Name, func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error) {
 		warnMissingProjectPolicy(errOut, cfg.PolicyPath)
 		return openshell.New(openshellBackendOptions(cfg, getenv)), nil
+	})
+	registerRunBackend(reg, docker.Name, func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error) {
+		return docker.New(docker.Options{Credentials: envCredentialResolver{getenv: getenv}}), nil
 	})
 	return reg
 }
@@ -225,20 +230,22 @@ func openshellBackendOptions(cfg config.Run, getenv func(string) string) openshe
 }
 
 // envCredentialResolver resolves a harness credential to its secret value from
-// the host environment, keyed by the credential's EnvVar. The value is handed to
-// the gateway as provider material and is never written into the sandbox env,
-// where the backend substitutes a placeholder instead.
+// the host environment, keyed by the credential's EnvVar. It is shared by the
+// isolating backends: OpenShell hands the value to the gateway as provider
+// material (the sandbox sees a placeholder), and docker injects it per-exec
+// through the docker client's environment. Neither writes the value into a
+// container's stored environment.
 type envCredentialResolver struct {
 	getenv func(string) string
 }
 
 func (r envCredentialResolver) Resolve(_ context.Context, c isolation.Credential) (string, error) {
 	if r.getenv == nil {
-		return "", fmt.Errorf("openshell: no host environment to resolve credential %s", c.EnvVar)
+		return "", fmt.Errorf("run: no host environment to resolve credential %s", c.EnvVar)
 	}
 	value := r.getenv(c.EnvVar)
 	if value == "" {
-		return "", fmt.Errorf("openshell: credential %s is not set in the host environment", c.EnvVar)
+		return "", fmt.Errorf("run: credential %s is not set in the host environment", c.EnvVar)
 	}
 	return value, nil
 }

@@ -218,6 +218,66 @@ func TestTaskCheckReportsFindingsAndNotes(t *testing.T) {
 	}
 }
 
+func TestTaskCheckGatesContradictingRefinementAndEmitsDelta(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("task", "create", "-p", projectID, "-k", "idea",
+		"-t", "ship a --json flag", "-b", "ship a --json flag"))
+	taskID := firstField(t, r.run("task", "promote", ideaID))
+	r.run("task", "update", taskID, "--body", "remove the --json flag entirely")
+
+	r.judge = fake.New(map[string]judge.Answer{
+		"scope_bounded":          {Probability: 0.9, Confidence: 0.9},
+		"acceptance_verifiable":  {Probability: 0.9, Confidence: 0.9},
+		"decisions_author":       {Probability: 0.9, Confidence: 0.9},
+		"dependencies_named":     {Probability: 0.9, Confidence: 0.9},
+		"entailment_origin":      {Probability: 0.2, Confidence: 0.9},
+		"holistic":               {Probability: 0.5, Confidence: 0.9},
+		"gap::entailment_origin": {Choice: "contradicts origin", Confidence: 0.9},
+	})
+
+	out := r.run("task", "check", taskID)
+	for _, want := range []string{"needs_grooming", "entailment_origin", "contradicts origin", "delta", "remove the --json flag"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("check report missing %q:\n%s", want, out)
+		}
+	}
+
+	// The cached result is the audit artifact: it names the origin and carries
+	// the delta, and `task get` shows it without another judge call.
+	doc := r.run("task", "get", taskID)
+	for _, want := range []string{"entailment_origin", "contradicts origin", "origin: " + ideaID, "delta vs origin"} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("task get checks missing %q:\n%s", want, doc)
+		}
+	}
+}
+
+func TestTaskCheckJSONCarriesOriginAndDelta(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("task", "create", "-p", projectID, "-k", "idea",
+		"-t", "spark", "-b", "ship it"))
+	taskID := firstField(t, r.run("task", "promote", ideaID))
+	r.run("task", "update", taskID, "--body", "ship it well")
+
+	r.judge = readyJudge()
+	out := r.run("task", "check", taskID, "-o", "json")
+	var docs []checkResultDoc
+	if err := json.Unmarshal([]byte(out), &docs); err != nil {
+		t.Fatalf("check -o json: %v\n%s", err, out)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("want one result, got %d", len(docs))
+	}
+	if docs[0].OriginID != ideaID {
+		t.Fatalf("origin_id = %q, want %q", docs[0].OriginID, ideaID)
+	}
+	if docs[0].Delta == nil || len(docs[0].Delta.Added) == 0 {
+		t.Fatalf("delta = %+v, want the added refinement line", docs[0].Delta)
+	}
+}
+
 func TestNoteCreateHintsTheBodyIsTheSpec(t *testing.T) {
 	r, _, taskID := checkRunner(t, readyJudge())
 	// A judge that reports needs grooming: one below-threshold dimension with a

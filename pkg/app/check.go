@@ -52,7 +52,10 @@ func (s *CheckService) Run(ctx context.Context, taskID core.TaskID, names []stri
 	if err != nil {
 		return nil, err
 	}
-	spec := specFrom(task)
+	spec, err := s.specFor(ctx, task)
+	if err != nil {
+		return nil, err
+	}
 	results := make([]check.Result, 0, len(selected))
 	var errs []error
 	for _, c := range selected {
@@ -103,7 +106,10 @@ func (s *CheckService) Cached(ctx context.Context, taskID core.TaskID, names []s
 	if err != nil {
 		return nil, err
 	}
-	spec := specFrom(task)
+	spec, err := s.specFor(ctx, task)
+	if err != nil {
+		return nil, err
+	}
 	results := make([]check.Result, 0, len(selected))
 	for _, c := range selected {
 		cached, err := s.latest(ctx, task, c)
@@ -139,10 +145,14 @@ func (s *CheckService) Decide(ctx context.Context, taskID core.TaskID, checkName
 	if clear {
 		return s.clearDecision(ctx, task, c)
 	}
+	spec, err := s.specFor(ctx, task)
+	if err != nil {
+		return check.Result{}, err
+	}
 	result := check.Result{
 		Check:        c.Name(),
 		CheckVersion: c.Version(),
-		ContentHash:  specFrom(task).Hash(),
+		ContentHash:  spec.Hash(),
 		Verdict:      check.Ready,
 		Override:     true,
 		DecidedBy:    string(actor.ID),
@@ -308,6 +318,39 @@ func specFrom(task *core.Task) check.Spec {
 		Kind:  string(task.Kind),
 		Body:  task.Description,
 	}
+}
+
+// specFor builds the check spec for a task, resolving its origin when the task
+// was refined from an immutable capture. The origin is the task's first
+// dependency that is an idea: promotion writes exactly that edge.
+func (s *CheckService) specFor(ctx context.Context, task *core.Task) (check.Spec, error) {
+	spec := specFrom(task)
+	origin, err := s.origin(ctx, task)
+	if err != nil {
+		return spec, err
+	}
+	spec.Origin = origin
+	return spec, nil
+}
+
+// origin returns the immutable capture a task was refined from, or nil when it
+// has none. The first idea dependency wins; promotion creates one. A dangling
+// dependency is history, not an origin, so it is skipped rather than failing the
+// read: a read command must not break because a dependency was deleted.
+func (s *CheckService) origin(ctx context.Context, task *core.Task) (*check.Origin, error) {
+	for _, dep := range task.Deps {
+		depTask, err := s.backend.Tasks().Get(ctx, dep)
+		if errors.Is(err, core.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if depTask.Kind == core.KindIdea {
+			return &check.Origin{ID: string(depTask.ID), Title: depTask.Title, Body: depTask.Description}, nil
+		}
+	}
+	return nil, nil
 }
 
 // decorate adds the current note count, which is not part of the hash: notes are

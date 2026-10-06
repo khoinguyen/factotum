@@ -103,6 +103,15 @@ write is its derived cache. The first check, `grooming`, judges the task's
 (only agent-owned findings, each a concrete body edit), or `needs_human` (a
 decision only the author can make - escalate, do not edit the body).
 
+When a task was promoted from an idea, grooming also judges **entailment vs its
+origin**: the origin capture is immutable, so the refinement must contradict
+nothing and invent nothing the origin does not support. A contradiction is a
+specific `entailment_origin` finding, and the report (and the cached result) carry
+an auditable **delta** - the title change and the lines the refinement added or
+dropped. The delta is a record of what changed, never a silent rewrite; the check
+never edits the task. Editing the origin makes the verdict stale, so the audit
+trail tracks the origin it was judged against.
+
 The body is the spec; notes are history. A note never changes a verdict, so fold
 a decision into the body to make it count. Recording a human override requires a
 human actor; it stops agents re-grooming, and editing the body makes it stale.

@@ -108,6 +108,43 @@ func (s *TaskService) Search(ctx context.Context, filter store.TaskFilter, query
 	return tasks, nil
 }
 
+// Promote turns a captured idea into executable work: it creates a new task
+// carrying the idea's content, records the idea as the task's origin edge (a
+// dependency, which never blocks because ideas are resolved), and leaves the
+// idea untouched as history with a note naming the promoted task.
+func (s *TaskService) Promote(ctx context.Context, ideaID core.TaskID) (*core.Task, error) {
+	idea, err := s.backend.Tasks().Get(ctx, ideaID)
+	if err != nil {
+		return nil, err
+	}
+	if idea.Kind != core.KindIdea {
+		return nil, fmt.Errorf("%w: %s is not an idea", core.ErrInvalid, ideaID)
+	}
+	task, err := s.Add(ctx, TaskInput{
+		ProjectID:   idea.ProjectID,
+		Repo:        idea.Repo,
+		Kind:        core.KindTask,
+		Title:       idea.Title,
+		Description: idea.Description,
+		Priority:    idea.Priority,
+		Labels:      append([]string(nil), idea.Labels...),
+	})
+	if err != nil {
+		return nil, err
+	}
+	task, err = s.AddDep(ctx, task.ID, ideaID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.AddNote(ctx, ideaID, NoteInput{
+		Body:   fmt.Sprintf("Promoted to %s.", task.ID),
+		System: true,
+	}); err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
 type TaskUpdate struct {
 	Kind        *core.TaskKind
 	Repo        *string
@@ -253,6 +290,9 @@ func (s *TaskService) Assign(ctx context.Context, id core.TaskID, actorID *core.
 	if err != nil {
 		return nil, err
 	}
+	if actorID != nil && task.Kind == core.KindIdea {
+		return nil, fmt.Errorf("%w: idea %s is not assignable", core.ErrInvalid, id)
+	}
 	if actorID != nil {
 		if _, err := s.backend.Actors().Get(ctx, *actorID); err != nil {
 			return nil, fmt.Errorf("assignee: %w", err)
@@ -287,6 +327,9 @@ func (s *TaskService) Claim(ctx context.Context, id core.TaskID, actorID core.Ac
 	task, err := s.backend.Tasks().Get(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if task.Kind == core.KindIdea {
+		return nil, fmt.Errorf("%w: idea %s is not assignable", core.ErrInvalid, id)
 	}
 	if _, err := s.backend.Actors().Get(ctx, actorID); err != nil {
 		return nil, fmt.Errorf("assignee: %w", err)

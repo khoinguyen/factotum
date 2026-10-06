@@ -96,6 +96,10 @@ run = "spike/openshell/spike.sh"
 description = "Opt-in probe of the OpenShell Go SDK against the local gateway (mTLS wiring + Files transport status)"
 run = "spike/openshell/sdk_probe.sh"
 
+[tasks.test-openshell]
+description = "Opt-in live IsolationBackend conformance for the OpenShell backend (needs a local OpenShell gateway; creates and deletes its own sandboxes)"
+run = "FACTOTUM_OPENSHELL_TEST=1 go test -count=1 -run TestConformance -v ./pkg/isolation/openshell/"
+
 [tasks.build]
 description = "Build the ft CLI to ./bin/ft (never the installed binary)"
 run = """

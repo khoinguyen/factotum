@@ -315,6 +315,12 @@ ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt
 - The `local` backend is unsandboxed and refuses to run until explicitly opted in
   with `--allow-host` or `run.allow_host`; the opt-in is machine-scoped and is
   ignored from the committed project file.
+- The `openshell` backend runs the harness inside a non-root OpenShell sandbox
+  under the deny-by-default policy above. It needs the `openshell` CLI and a
+  reachable gateway; `ft run` creates the sandbox, uploads the workspace, runs
+  the harness, and deletes the sandbox and any providers it created when the run
+  ends. It never places a credential value in the sandbox: a configured
+  credential is attached as a provider placeholder.
 - A successful run moves the task to `ready_for_review` and records a note with the
   agent's output plus `task.run_started`/`task.run_finished` events. A failed run
   leaves the task's status untouched and records only a failure note and event, so

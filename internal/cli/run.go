@@ -61,7 +61,7 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			return deps.runTask(cmd, args[0], opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.backend, "backend", "", "isolation backend name (required; e.g. local)")
+	cmd.Flags().StringVar(&opts.backend, "backend", "", "isolation backend name (required; e.g. local, openshell)")
 	cmd.Flags().StringVar(&opts.harness, "harness", "", "harness name (required; e.g. opencode)")
 	cmd.Flags().StringVar(&opts.workspace, "workspace", "", "workspace root directory (default under the config dir)")
 	cmd.Flags().StringVar(&opts.model, "model", "", "model override passed to the harness")

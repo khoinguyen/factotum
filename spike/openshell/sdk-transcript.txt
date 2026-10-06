@@ -1,0 +1,14 @@
+=== create throwaway sandbox ftos-sdk-74390 ===
+
+Created sandbox: ftos-sdk-74390
+
+  [0.0s] Requesting compute...
+[0.0s] Sandbox allocated
+[0.0s] Pulling image ghcr.io/anomalyco/opencode:latest
+[0.0s] Image already present
+[0.3s] Starting sandbox Container created
+=== pin SDK 12cec59bf4c3 and build ===
+go: added github.com/NVIDIA/OpenShell/sdk/go v0.0.0-20261006040804-12cec59bf4c3
+=== run probe against ftos-sdk-74390 at localhost:17670 ===
+SDK Exec over mTLS -> uid=1000 gid=1000 groups=1000
+SDK Files.Download -> ErrTransportNotAvailable (no transport in this release)

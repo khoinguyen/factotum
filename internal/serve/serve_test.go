@@ -211,6 +211,34 @@ func TestSSEPushesUpdateOnStatusChange(t *testing.T) {
 	expectEvent(t, events, "update", 2*time.Second)
 }
 
+// TestSSEFansOutToManyClients proves the shared broker delivers one mutation to
+// every connected client, not just the first.
+func TestSSEFansOutToManyClients(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	task := f.addTask(t, project.ID, "Fix the widget")
+	ts := newTestServer(t, f, Options{Project: project.ID})
+
+	const clients = 3
+	streams := make([]<-chan string, clients)
+	for i := range streams {
+		resp, err := http.Get(ts.URL + "/events")
+		if err != nil {
+			t.Fatalf("Get(/events) error = %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		streams[i] = eventNames(resp.Body)
+		expectEvent(t, streams[i], "hello", 2*time.Second)
+	}
+
+	if _, err := f.tasks.SetStatus(context.Background(), task.ID, core.StatusReadyForReview); err != nil {
+		t.Fatalf("SetStatus() error = %v", err)
+	}
+	for _, stream := range streams {
+		expectEvent(t, stream, "update", 2*time.Second)
+	}
+}
+
 func TestPageProjectsReadinessAndRank(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
@@ -300,15 +328,33 @@ func TestNewRequiresBackend(t *testing.T) {
 
 // TestReasonChipWraps guards the mobile regression where a long, nowrap reason
 // chip (a task with several unresolved deps) overflowed a phone-width viewport
-// and was clipped by overflow-x:hidden. The chip must be allowed to wrap and
+// and was clipped by overflow-x:hidden. The served page must render the reason
+// into a .chip.reason element, and that rule must allow the chip to wrap and
 // break long dependency lists anywhere.
+//
+// The CSS is a static proxy for the visual fix: Go has no layout engine, so the
+// actual wrapping was verified out of band in headless Chrome. README.md in this
+// package records that check. This test fails if the rendered element loses its
+// reason class or the wrapping declarations are dropped.
 func TestReasonChipWraps(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
-	f.addTask(t, project.ID, "Fix the widget")
+	blocker := f.addTask(t, project.ID, "blocker task")
+	target := f.addTask(t, project.ID, "Fix the widget")
+	if _, err := f.tasks.AddDep(context.Background(), target.ID, blocker.ID); err != nil {
+		t.Fatalf("AddDep() error = %v", err)
+	}
 	ts := newTestServer(t, f, Options{Project: project.ID})
 
-	css := cssRule(getBody(t, ts.URL+"/"), ".chip.reason")
+	body := getBody(t, ts.URL+"/")
+	if !strings.Contains(body, `<span class="chip reason">`) {
+		t.Fatalf("dashboard does not render a reason chip:\n%s", body)
+	}
+	if !strings.Contains(body, string(blocker.ID)) {
+		t.Fatalf("rendered reason chip is missing blocker %s:\n%s", blocker.ID, body)
+	}
+
+	css := cssRule(body, ".chip.reason")
 	if css == "" {
 		t.Fatal("no .chip.reason rule found in the dashboard stylesheet")
 	}

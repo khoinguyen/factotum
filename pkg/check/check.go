@@ -3,10 +3,13 @@
 // the task. Checks are registered like rankers and renderers, so a new check is
 // a registration, not a new command.
 //
-// The judgment reads only the task's spec - title, kind, and body - and that read
-// set is exactly the set the content hash covers. Notes, labels, and deps are
-// history and context, deliberately outside the hash, so a comment never
-// invalidates a verdict and a check can never invalidate the result it produced.
+// The judgment reads only the task's spec - title, kind, body, and the immutable
+// origin capture when one exists - and that read set is exactly the set the
+// content hash covers. Notes, labels, and dependency edges are history and
+// context, deliberately outside the hash, so a comment never invalidates a
+// verdict and a check can never invalidate the result it produced. (The origin is
+// the exception: it is reached through a dependency edge but is judged content,
+// so its text is hashed.)
 package check
 
 import (
@@ -60,26 +63,60 @@ type Finding struct {
 	Edit      string `json:"edit" yaml:"edit"`
 }
 
-// Spec is exactly what a check reads: the task's spec fields. A check cannot see
-// notes, labels, or deps, so the read set equals the hash set.
+// Spec is exactly what a check reads: the task's spec fields plus, when one
+// exists, the immutable capture it was refined from. A check cannot see notes,
+// labels, or deps, so the read set equals the hash set.
 type Spec struct {
 	ID    string
 	Title string
 	Kind  string
 	Body  string
+	// Origin is the immutable capture this spec was refined from, when one
+	// exists. A nil Origin means there is nothing to be consistent with.
+	Origin *Origin
 }
 
-// Hash is the content hash over the spec fields (title, kind, body). The id is
-// immutable context and is excluded, so the hash changes precisely when the spec
-// changes.
+// Origin is the immutable capture a groomed task was refined from: the idea's
+// identity and text, carried so a check can judge entailment without touching
+// the store. It is a value, not a live task: a check never mutates the origin.
+type Origin struct {
+	ID    string
+	Title string
+	Body  string
+}
+
+// Hash is the content hash over the spec fields (title, kind, body) and the
+// origin's text when present. The task id is immutable context and is excluded;
+// the origin id is included, so the hash changes precisely when the judged
+// content - including the immutable origin - changes.
 func (s Spec) Hash() string {
 	h := sha256.New()
-	for _, part := range []string{s.Title, s.Kind, s.Body} {
+	parts := []string{s.Title, s.Kind, s.Body}
+	if s.Origin != nil {
+		parts = append(parts, s.Origin.ID, s.Origin.Title, s.Origin.Body)
+	}
+	for _, part := range parts {
 		h.Write([]byte(strconv.Itoa(len(part))))
 		h.Write([]byte(":"))
 		h.Write([]byte(part))
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// Delta is the auditable refinement difference between a groomed task and its
+// origin: the lines the task added and dropped, plus any title change. It is
+// computed deterministically from the two specs, never by a model, so it is
+// reproducible and reviewable. It records what changed; it never rewrites.
+type Delta struct {
+	TitleFrom string   `json:"title_from,omitempty" yaml:"title_from,omitempty"`
+	TitleTo   string   `json:"title_to,omitempty" yaml:"title_to,omitempty"`
+	Added     []string `json:"added,omitempty" yaml:"added,omitempty"`
+	Removed   []string `json:"removed,omitempty" yaml:"removed,omitempty"`
+}
+
+// Empty reports whether the task is textually identical to its origin.
+func (d Delta) Empty() bool {
+	return d.TitleFrom == d.TitleTo && len(d.Added) == 0 && len(d.Removed) == 0
 }
 
 // Result is one check's outcome. It is stored verbatim as the JSON body of a
@@ -94,7 +131,13 @@ type Result struct {
 	JudgeConfidence float64     `json:"judge_confidence,omitempty" yaml:"judge_confidence,omitempty"`
 	Dimensions      []Dimension `json:"dims,omitempty" yaml:"dims,omitempty"`
 	Findings        []Finding   `json:"findings,omitempty" yaml:"findings,omitempty"`
-	CheckedAt       time.Time   `json:"checked_at,omitempty" yaml:"checked_at,omitempty"`
+	// OriginID names the immutable capture this result was judged against, when
+	// one exists. It is the audit trail from a groomed task back to its origin.
+	OriginID string `json:"origin_id,omitempty" yaml:"origin_id,omitempty"`
+	// Delta is the auditable refinement difference from the origin, recorded
+	// alongside the verdict so a reviewer can see what the grooming changed.
+	Delta     *Delta    `json:"delta,omitempty" yaml:"delta,omitempty"`
+	CheckedAt time.Time `json:"checked_at,omitempty" yaml:"checked_at,omitempty"`
 	// NotesNotConsidered is the count of notes the judgment did not read. Notes
 	// are history, not spec, so they are excluded from the hash.
 	NotesNotConsidered int `json:"notes_not_considered,omitempty" yaml:"notes_not_considered,omitempty"`

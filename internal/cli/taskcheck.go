@@ -26,6 +26,8 @@ type checkResultDoc struct {
 	JudgeConfidence float64             `json:"judge_confidence,omitempty" yaml:"judge_confidence,omitempty"`
 	Dimensions      []checkDimensionDoc `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
 	Findings        []checkFindingDoc   `json:"findings,omitempty" yaml:"findings,omitempty"`
+	OriginID        string              `json:"origin_id,omitempty" yaml:"origin_id,omitempty"`
+	Delta           *check.Delta        `json:"delta,omitempty" yaml:"delta,omitempty"`
 	Stale           bool                `json:"stale,omitempty" yaml:"stale,omitempty"`
 	Override        bool                `json:"override,omitempty" yaml:"override,omitempty"`
 	DecidedBy       string              `json:"decided_by,omitempty" yaml:"decided_by,omitempty"`
@@ -56,6 +58,8 @@ func checkResultDocFrom(result check.Result) checkResultDoc {
 		Checked:            result.Checked,
 		Confidence:         result.Confidence,
 		JudgeConfidence:    result.JudgeConfidence,
+		OriginID:           result.OriginID,
+		Delta:              result.Delta,
 		Stale:              result.Stale,
 		Override:           result.Override,
 		DecidedBy:          result.DecidedBy,
@@ -157,8 +161,31 @@ func (d *Deps) printCheckReport(result check.Result, actors map[core.ActorID]cor
 			d.printf("    %s: %s\n", finding.Dimension, findingDetail(finding))
 		}
 	}
+	if result.OriginID != "" {
+		d.printf("  origin: %s\n", result.OriginID)
+	}
+	d.printDelta(result.Delta)
 	d.printCheckNotes(result)
 	d.printf("  %s\n", advisoryOr(result.Note))
+}
+
+// printDelta renders the auditable refinement difference from the origin, so a
+// reviewer sees exactly what the grooming added or changed. It is a record, not
+// a rewrite.
+func (d *Deps) printDelta(delta *check.Delta) {
+	if delta == nil || delta.Empty() {
+		return
+	}
+	d.printf("  delta vs origin:\n")
+	if delta.TitleFrom != "" || delta.TitleTo != "" {
+		d.printf("    title: %q -> %q\n", delta.TitleFrom, delta.TitleTo)
+	}
+	for _, line := range delta.Removed {
+		d.printf("    - %s\n", line)
+	}
+	for _, line := range delta.Added {
+		d.printf("    + %s\n", line)
+	}
 }
 
 // printChecksBlock renders the cached checks under a `checks:` header.
@@ -172,6 +199,10 @@ func (d *Deps) printChecksBlock(results []check.Result, actors map[core.ActorID]
 		for _, finding := range result.Findings {
 			d.printf("    %s: %s\n", finding.Dimension, findingDetail(finding))
 		}
+		if result.OriginID != "" {
+			d.printf("    origin: %s\n", result.OriginID)
+		}
+		d.printDelta(result.Delta)
 	}
 	for _, result := range results {
 		if result.Checked && !result.Override {

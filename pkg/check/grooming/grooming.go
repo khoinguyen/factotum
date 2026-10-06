@@ -8,6 +8,7 @@ package grooming
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/khoinguyen/factotum/pkg/check"
 	"github.com/khoinguyen/factotum/pkg/judge"
@@ -18,7 +19,7 @@ const Name = "grooming"
 
 // Version identifies the rubric. Bump it when the questions or the verdict rule
 // change, so cached results are invalidated.
-const Version = "1"
+const Version = "2"
 
 // Thresholds. A dimension at or above readyThreshold passes; a dimension below
 // floor is a real gap even when the follow-up cannot name it, which stops a very
@@ -30,12 +31,27 @@ const (
 
 const holisticName = "holistic"
 
-// dimensionNames is the fixed dimension order.
+// entailmentDimension is asked only when the spec carries an origin: it is the
+// consistency gate that keeps a refinement from silently drifting from the
+// immutable capture it came from.
+const entailmentDimension = "entailment_origin"
+
+// dimensionNames is the fixed dimension order for a task with no origin.
 var dimensionNames = []string{
 	"scope_bounded",
 	"acceptance_verifiable",
 	"decisions_author",
 	"dependencies_named",
+}
+
+// dimensionsFor is the gating dimension order for a spec. A task refined from an
+// origin adds the entailment dimension; an originless task is judged on spec
+// quality alone, so it never pays for a question that cannot apply.
+func dimensionsFor(spec check.Spec) []string {
+	if spec.Origin == nil {
+		return dimensionNames
+	}
+	return append(append([]string{}, dimensionNames...), entailmentDimension)
 }
 
 // aspect is one named sub-aspect of a dimension, with the owner who can close it
@@ -70,6 +86,13 @@ var subAspects = map[string][]aspect{
 		{"prerequisite unstated", check.OwnerAgent, "name the prerequisite work"},
 		{"not declared foundational", check.OwnerAgent, "declare the foundational dependency"},
 	},
+	// A contradiction is the groomer's to fix: the origin is immutable, so the
+	// task is aligned to it (or the divergence is recorded as a human decision).
+	entailmentDimension: {
+		{"contradicts origin", check.OwnerAgent, "align the task with its origin, or record the divergence as a decision"},
+		{"invents scope", check.OwnerAgent, "drop the invented scope or link a new origin"},
+		{"drops origin intent", check.OwnerAgent, "restore the intent the origin states"},
+	},
 }
 
 // Check is the judge-backed grooming check.
@@ -91,16 +114,17 @@ func (c *Check) Run(ctx context.Context, spec check.Spec) (check.Result, error) 
 	if c.judge == nil {
 		return check.Result{}, judge.ErrUnavailable
 	}
+	dims := dimensionsFor(spec)
 	dimensions, err := c.judge.Ask(ctx, judge.Request{
 		State:     state(spec),
-		Questions: dimensionQuestions(),
+		Questions: dimensionQuestions(dims),
 	})
 	if err != nil {
 		return check.Result{}, fmt.Errorf("grooming dimensions: %w", err)
 	}
 
-	below := belowThreshold(dimensions)
-	result := decide(spec, dimensions)
+	below := belowThreshold(dims, dimensions)
+	result := decide(spec, dims, dimensions)
 	if len(below) == 0 {
 		return result, nil
 	}
@@ -111,24 +135,30 @@ func (c *Check) Run(ctx context.Context, spec check.Spec) (check.Result, error) 
 	if err != nil {
 		return check.Result{}, fmt.Errorf("grooming follow-ups: %w", err)
 	}
-	result.Findings = findings(dimensions, followUps)
+	result.Findings = findings(dims, dimensions, followUps)
 	result.Verdict = verdict(result.Findings)
 	return result, nil
 }
 
-// state is the judge's view of the task: the spec fields only. The read set is
-// the hash set.
+// state is the judge's view of the task: the spec fields plus the origin when one
+// exists. The read set is the hash set.
 func state(spec check.Spec) map[string]string {
-	return map[string]string{
+	out := map[string]string{
 		"id":    spec.ID,
 		"title": spec.Title,
 		"kind":  spec.Kind,
 		"body":  spec.Body,
 	}
+	if spec.Origin != nil {
+		out["origin_id"] = spec.Origin.ID
+		out["origin_title"] = spec.Origin.Title
+		out["origin_body"] = spec.Origin.Body
+	}
+	return out
 }
 
-func dimensionQuestions() map[string]judge.Question {
-	questions := make(map[string]judge.Question, len(dimensionNames)+1)
+func dimensionQuestions(dims []string) map[string]judge.Question {
+	questions := make(map[string]judge.Question, len(dims)+1)
 	questions["scope_bounded"] = judge.Question{
 		Kind:         judge.KindYesNo,
 		Instructions: "Is the task's scope bounded: does it state what is out of scope and where the boundary lies?",
@@ -161,6 +191,16 @@ func dimensionQuestions() map[string]judge.Question {
 			"false": "A prerequisite is unstated or a foundational dependency is undeclared.",
 		},
 	}
+	if contains(dims, entailmentDimension) {
+		questions[entailmentDimension] = judge.Question{
+			Kind:         judge.KindYesNo,
+			Instructions: "Is every requirement in this task entailed by its origin capture - no contradiction, and nothing invented beyond what the origin states or clearly implies?",
+			Criteria: map[string]any{
+				"true":  "The task is a faithful refinement of the origin: it contradicts nothing and adds only detail the origin supports.",
+				"false": "It contradicts the origin, invents scope the origin does not support, or drops intent the origin states.",
+			},
+		}
+	}
 	questions[holisticName] = judge.Question{
 		Kind:         judge.KindYesNo,
 		Instructions: "Could an engineer implement and verify this task autonomously from the spec alone?",
@@ -192,9 +232,9 @@ func followUpQuestions(below []string) map[string]judge.Question {
 	return questions
 }
 
-func belowThreshold(response judge.Response) []string {
+func belowThreshold(dims []string, response judge.Response) []string {
 	var below []string
-	for _, name := range dimensionNames {
+	for _, name := range dims {
 		if response.Answers[name].Probability < readyThreshold {
 			below = append(below, name)
 		}
@@ -202,9 +242,11 @@ func belowThreshold(response judge.Response) []string {
 	return below
 }
 
-// decide builds the score-only part of the result: dimensions, confidence, and
-// the advisory holistic Noul. Findings are filled in only when follow-ups ran.
-func decide(spec check.Spec, response judge.Response) check.Result {
+// decide builds the score-only part of the result: dimensions, confidence, the
+// advisory holistic Noul, and - when there is an origin - the audit trail (the
+// origin id and the deterministic refinement delta). Findings are filled in only
+// when follow-ups ran.
+func decide(spec check.Spec, dims []string, response judge.Response) check.Result {
 	result := check.Result{
 		Check:           Name,
 		CheckVersion:    Version,
@@ -212,14 +254,18 @@ func decide(spec check.Spec, response judge.Response) check.Result {
 		ContentHash:     spec.Hash(),
 		Verdict:         check.Ready,
 		JudgeConfidence: response.Answers[holisticName].Probability,
-		Confidence:      confidence(response),
+		Confidence:      confidence(dims, response),
 		Note:            check.AdvisoryNote,
 	}
-	for _, name := range dimensionNames {
+	for _, name := range dims {
 		result.Dimensions = append(result.Dimensions, check.Dimension{
 			Name:  name,
 			Value: response.Answers[name].Probability,
 		})
+	}
+	if spec.Origin != nil {
+		result.OriginID = spec.Origin.ID
+		result.Delta = delta(spec.Origin, spec)
 	}
 	return result
 }
@@ -227,9 +273,9 @@ func decide(spec check.Spec, response judge.Response) check.Result {
 // confidence is the least confident dimension answer, so one shaky judgment
 // lowers the reported confidence. A noul answer carries no confidence of its own
 // (only its probability), so it is derived from the probability.
-func confidence(response judge.Response) float64 {
+func confidence(dims []string, response judge.Response) float64 {
 	least := 1.0
-	for _, name := range dimensionNames {
+	for _, name := range dims {
 		answer := response.Answers[name]
 		value := answer.Confidence
 		if value == 0 {
@@ -254,9 +300,9 @@ func certainty(probability float64) float64 {
 // findings turns the follow-up choices into owned gaps. A gap exists when the
 // follow-up names a sub-aspect, or when the dimension is below the floor even
 // though the model answered "none".
-func findings(dimensions, followUps judge.Response) []check.Finding {
+func findings(dims []string, dimensions, followUps judge.Response) []check.Finding {
 	var out []check.Finding
-	for _, name := range dimensionNames {
+	for _, name := range dims {
 		value := dimensions.Answers[name].Probability
 		if value >= readyThreshold {
 			continue
@@ -316,5 +362,85 @@ func unspecifiedEdit(dimension string) string {
 	if defaultOwner(dimension) == check.OwnerHuman {
 		return ""
 	}
+	if dimension == entailmentDimension {
+		return "align the task with its origin, or record the divergence as a decision"
+	}
 	return fmt.Sprintf("name and close the %s gap", dimension)
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+// delta is the deterministic refinement difference between the origin capture
+// and the groomed task: a title change plus the non-blank lines the task added
+// and dropped. It is code, not a model, so it is reproducible and auditable.
+func delta(origin *check.Origin, spec check.Spec) *check.Delta {
+	added, removed := diffLines(origin.Body, spec.Body)
+	out := &check.Delta{Added: added, Removed: removed}
+	if origin.Title != spec.Title {
+		out.TitleFrom = origin.Title
+		out.TitleTo = spec.Title
+	}
+	return out
+}
+
+// diffLines reports the lines present in to but not from (added) and in from but
+// not to (removed), preserving each side's order. Duplicate lines are counted, so
+// a repeated line is only a delta when its multiplicity changes. Blank lines are
+// ignored as noise.
+func diffLines(from, to string) (added, removed []string) {
+	fromLines := nonBlankLines(from)
+	toLines := nonBlankLines(to)
+	fromCount := countLines(fromLines)
+	toCount := countLines(toLines)
+	rem := remainder(fromCount, toCount)
+	add := remainder(toCount, fromCount)
+	for _, line := range fromLines {
+		if rem[line] > 0 {
+			removed = append(removed, line)
+			rem[line]--
+		}
+	}
+	for _, line := range toLines {
+		if add[line] > 0 {
+			added = append(added, line)
+			add[line]--
+		}
+	}
+	return added, removed
+}
+
+func nonBlankLines(body string) []string {
+	var lines []string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, strings.TrimSpace(line))
+		}
+	}
+	return lines
+}
+
+func countLines(lines []string) map[string]int {
+	counts := make(map[string]int, len(lines))
+	for _, line := range lines {
+		counts[line]++
+	}
+	return counts
+}
+
+// remainder is the per-line surplus of left over right.
+func remainder(left, right map[string]int) map[string]int {
+	out := make(map[string]int)
+	for line, count := range left {
+		if surplus := count - right[line]; surplus > 0 {
+			out[line] = surplus
+		}
+	}
+	return out
 }

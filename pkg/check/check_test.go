@@ -25,6 +25,20 @@ func TestSpecHashStableAndFieldSensitive(t *testing.T) {
 	}
 }
 
+func TestSpecHashIncludesOrigin(t *testing.T) {
+	base := Spec{ID: "t-1", Title: "title", Kind: "task", Body: "body"}
+	withOrigin := base
+	withOrigin.Origin = &Origin{ID: "t-i", Title: "spark", Body: "capture"}
+	if base.Hash() == withOrigin.Hash() {
+		t.Fatal("adding an origin must change the hash")
+	}
+	other := withOrigin
+	other.Origin = &Origin{ID: "t-i", Title: "spark", Body: "different"}
+	if withOrigin.Hash() == other.Hash() {
+		t.Fatal("an origin body change must change the hash")
+	}
+}
+
 func TestSpecHashIsUnambiguousAcrossFields(t *testing.T) {
 	// A naive concatenation would collide these; the length prefix must not.
 	left := Spec{Title: "ab", Kind: "", Body: "c"}
@@ -64,6 +78,8 @@ func TestResultRoundTripsThroughJSON(t *testing.T) {
 		JudgeConfidence: 0.6,
 		Dimensions:      []Dimension{{Name: "scope_bounded", Value: 0.5}},
 		Findings:        []Finding{{Dimension: "scope_bounded", Aspect: "boundary vague", Owner: OwnerAgent, Edit: "tighten"}},
+		OriginID:        "t-idea",
+		Delta:           &Delta{TitleFrom: "old", TitleTo: "new", Added: []string{"two"}, Removed: []string{"one"}},
 	}
 	data, err := in.Marshal()
 	if err != nil {
@@ -78,6 +94,9 @@ func TestResultRoundTripsThroughJSON(t *testing.T) {
 	}
 	if out.Findings[0].Owner != OwnerAgent || out.Findings[0].Edit != "tighten" {
 		t.Fatalf("finding not preserved: %+v", out.Findings[0])
+	}
+	if out.OriginID != "t-idea" || out.Delta == nil || len(out.Delta.Added) != 1 || len(out.Delta.Removed) != 1 {
+		t.Fatalf("origin/delta not preserved: %+v", out)
 	}
 }
 

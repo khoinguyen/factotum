@@ -21,6 +21,7 @@ type stubCheck struct {
 	result  check.Result
 	err     error
 	calls   int
+	spec    check.Spec
 }
 
 func (s *stubCheck) Name() string    { return s.name }
@@ -28,6 +29,7 @@ func (s *stubCheck) Version() string { return s.version }
 
 func (s *stubCheck) Run(_ context.Context, spec check.Spec) (check.Result, error) {
 	s.calls++
+	s.spec = spec
 	if s.err != nil {
 		return check.Result{}, s.err
 	}
@@ -440,6 +442,89 @@ func TestCheckJudgeUnavailablePropagates(t *testing.T) {
 	f := newCheckFixture(t, &stubCheck{name: "stub", version: "1", err: judge.ErrUnavailable})
 	if _, err := f.svc.Run(context.Background(), f.task.ID, nil, false); !errors.Is(err, judge.ErrUnavailable) {
 		t.Fatalf("Run() error = %v, want the check error", err)
+	}
+}
+
+func TestCheckResolvesOriginFromIdeaDependency(t *testing.T) {
+	stub := &stubCheck{name: "stub", version: "1"}
+	f := newCheckFixture(t, stub)
+	ctx := context.Background()
+	idea, err := f.tasks.Add(ctx, TaskInput{ProjectID: f.task.ProjectID, Kind: core.KindIdea, Title: "a spark", Description: "the origin body"})
+	if err != nil {
+		t.Fatalf("Add(idea) error = %v", err)
+	}
+	promoted, err := f.tasks.Promote(ctx, idea.ID)
+	if err != nil {
+		t.Fatalf("Promote() error = %v", err)
+	}
+
+	if _, err := f.svc.Run(ctx, promoted.ID, nil, false); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if stub.spec.Origin == nil {
+		t.Fatal("check did not receive the origin spec")
+	}
+	if stub.spec.Origin.ID != string(idea.ID) || stub.spec.Origin.Title != "a spark" || stub.spec.Origin.Body != "the origin body" {
+		t.Fatalf("origin spec = %+v, want the promoted idea", *stub.spec.Origin)
+	}
+
+	// The origin is immutable: running the check never touches it.
+	after, err := f.tasks.Get(ctx, idea.ID)
+	if err != nil {
+		t.Fatalf("Get(origin) error = %v", err)
+	}
+	if after.Kind != core.KindIdea || after.Title != "a spark" || after.Description != "the origin body" {
+		t.Fatalf("check mutated the origin: %+v", after)
+	}
+}
+
+func TestCheckSkipsDanglingOriginDependency(t *testing.T) {
+	stub := &stubCheck{name: "stub", version: "1"}
+	f := newCheckFixture(t, stub)
+	ctx := context.Background()
+	idea, err := f.tasks.Add(ctx, TaskInput{ProjectID: f.task.ProjectID, Kind: core.KindIdea, Title: "gone"})
+	if err != nil {
+		t.Fatalf("Add(idea) error = %v", err)
+	}
+	if _, err := f.tasks.AddDep(ctx, f.task.ID, idea.ID); err != nil {
+		t.Fatalf("AddDep() error = %v", err)
+	}
+	if err := f.tasks.Delete(ctx, idea.ID); err != nil {
+		t.Fatalf("Delete(idea) error = %v", err)
+	}
+	if _, err := f.svc.Run(ctx, f.task.ID, nil, false); err != nil {
+		t.Fatalf("Run() with a dangling dep error = %v, want success", err)
+	}
+	if stub.spec.Origin != nil {
+		t.Fatalf("a deleted dep must not be an origin: %+v", stub.spec.Origin)
+	}
+}
+
+func TestCheckOriginChangeInvalidatesCache(t *testing.T) {
+	stub := &stubCheck{name: "stub", version: "1"}
+	f := newCheckFixture(t, stub)
+	ctx := context.Background()
+	idea, err := f.tasks.Add(ctx, TaskInput{ProjectID: f.task.ProjectID, Kind: core.KindIdea, Title: "a spark", Description: "first"})
+	if err != nil {
+		t.Fatalf("Add(idea) error = %v", err)
+	}
+	promoted, err := f.tasks.Promote(ctx, idea.ID)
+	if err != nil {
+		t.Fatalf("Promote() error = %v", err)
+	}
+	if _, err := f.svc.Run(ctx, promoted.ID, nil, false); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	body := "edited origin"
+	if _, err := f.tasks.Set(ctx, idea.ID, TaskSet{Description: &body}); err != nil {
+		t.Fatalf("Set(origin) error = %v", err)
+	}
+	cached, err := f.svc.Cached(ctx, promoted.ID, nil)
+	if err != nil {
+		t.Fatalf("Cached() error = %v", err)
+	}
+	if !cached[0].Stale {
+		t.Fatalf("editing the origin did not invalidate the verdict: %+v", cached[0])
 	}
 }
 

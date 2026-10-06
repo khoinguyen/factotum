@@ -164,27 +164,28 @@ func (d *Deps) printCheckReport(result check.Result, actors map[core.ActorID]cor
 	if result.OriginID != "" {
 		d.printf("  origin: %s\n", result.OriginID)
 	}
-	d.printDelta(result.Delta)
+	d.printDelta(result.Delta, "  ")
 	d.printCheckNotes(result)
 	d.printf("  %s\n", advisoryOr(result.Note))
 }
 
-// printDelta renders the auditable refinement difference from the origin, so a
-// reviewer sees exactly what the grooming added or changed. It is a record, not
+// printDelta renders the auditable refinement difference from the origin at the
+// given indent, so it lines up with the block that calls it. It is a record, not
 // a rewrite.
-func (d *Deps) printDelta(delta *check.Delta) {
+func (d *Deps) printDelta(delta *check.Delta, indent string) {
 	if delta == nil || delta.Empty() {
 		return
 	}
-	d.printf("  delta vs origin:\n")
+	line := indent + "  "
+	d.printf("%sdelta vs origin:\n", indent)
 	if delta.TitleFrom != "" || delta.TitleTo != "" {
-		d.printf("    title: %q -> %q\n", delta.TitleFrom, delta.TitleTo)
+		d.printf("%stitle: %q -> %q\n", line, delta.TitleFrom, delta.TitleTo)
 	}
-	for _, line := range delta.Removed {
-		d.printf("    - %s\n", line)
+	for _, removed := range delta.Removed {
+		d.printf("%s- %s\n", line, removed)
 	}
-	for _, line := range delta.Added {
-		d.printf("    + %s\n", line)
+	for _, added := range delta.Added {
+		d.printf("%s+ %s\n", line, added)
 	}
 }
 
@@ -202,7 +203,7 @@ func (d *Deps) printChecksBlock(results []check.Result, actors map[core.ActorID]
 		if result.OriginID != "" {
 			d.printf("    origin: %s\n", result.OriginID)
 		}
-		d.printDelta(result.Delta)
+		d.printDelta(result.Delta, "    ")
 	}
 	for _, result := range results {
 		if result.Checked && !result.Override {

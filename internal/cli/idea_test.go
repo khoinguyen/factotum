@@ -86,7 +86,10 @@ func TestTaskKindMutationInvolvingIdeaRejected(t *testing.T) {
 	if strings.Contains(help, "task, milestone, or idea") {
 		t.Fatalf("update help must not advertise idea as an accepted value:\n%s", help)
 	}
-	if !strings.Contains(help, "ft task promote") {
-		t.Fatalf("update help should point at task promote for ideas:\n%s", help)
+	// Backticks would make pflag take the quoted word as the value placeholder,
+	// clobbering "string"; the help must stay plain text.
+	const wantHelp = "-k, --kind string         task kind: task or milestone; an idea is turned into a task with ft task promote"
+	if !strings.Contains(help, wantHelp) {
+		t.Fatalf("update help missing %q:\n%s", wantHelp, help)
 	}
 }

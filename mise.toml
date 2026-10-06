@@ -100,6 +100,10 @@ run = "spike/openshell/sdk_probe.sh"
 description = "Opt-in live IsolationBackend conformance for the OpenShell backend (needs a local OpenShell gateway; creates and deletes its own sandboxes)"
 run = "FACTOTUM_OPENSHELL_TEST=1 go test -count=1 -run TestConformance -v ./pkg/isolation/openshell/"
 
+[tasks.test-docker]
+description = "Opt-in live IsolationBackend conformance for the docker backend (needs a running docker daemon; creates and deletes its own containers)"
+run = "FACTOTUM_DOCKER_TEST=1 go test -count=1 -run TestConformance -v ./pkg/isolation/docker/"
+
 [tasks.build]
 description = "Build the ft CLI to ./bin/ft (never the installed binary)"
 run = """

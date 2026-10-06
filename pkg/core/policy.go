@@ -15,6 +15,11 @@ func DefaultResolutionPolicy() ResolutionPolicy {
 }
 
 func (p ResolutionPolicy) Resolves(kind TaskKind, status TaskStatus) bool {
+	// Non-executable kinds (ideas) are outside the execution graph: they never
+	// become ready, never block a dependent, and carry no resolution statuses.
+	if !kind.Executable() {
+		return true
+	}
 	allowed := p.TaskStatuses
 	if kind == KindMilestone {
 		allowed = p.MilestoneStatuses

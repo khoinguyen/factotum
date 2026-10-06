@@ -11,10 +11,29 @@ type TaskKind string
 const (
 	KindTask      TaskKind = "task"
 	KindMilestone TaskKind = "milestone"
+	// KindIdea is a non-executable capture: an unrefined thought recorded for
+	// later grooming. Ideas never appear in readiness or ranking, are not
+	// assignable, and are promoted into a task rather than executed in place.
+	KindIdea TaskKind = "idea"
 )
 
 func (k TaskKind) Valid() bool {
+	return k == KindTask || k == KindMilestone || k == KindIdea
+}
+
+// Executable reports whether a kind participates in execution: readiness,
+// ranking, and dependency resolution. Ideas are captures, not work.
+func (k TaskKind) Executable() bool {
 	return k == KindTask || k == KindMilestone
+}
+
+// AllowsStatus reports whether a kind may hold a status. Ideas are captures,
+// so only todo, done, and cancelled apply; other kinds accept any valid status.
+func (k TaskKind) AllowsStatus(s TaskStatus) bool {
+	if k == KindIdea {
+		return s == StatusTodo || s == StatusDone || s == StatusCancelled
+	}
+	return s.Valid()
 }
 
 type TaskStatus string
@@ -186,6 +205,12 @@ func (t Task) Validate() error {
 	if !t.Status.Valid() {
 		return fmt.Errorf("%w: unknown task status %q", ErrInvalid, t.Status)
 	}
+	if !t.Kind.AllowsStatus(t.Status) {
+		return fmt.Errorf("%w: kind %q does not allow status %q", ErrInvalid, t.Kind, t.Status)
+	}
+	if t.Kind == KindIdea && t.AssigneeID != nil {
+		return fmt.Errorf("%w: idea %s is not assignable", ErrInvalid, t.ID)
+	}
 
 	seen := make(map[TaskID]struct{}, len(t.Deps))
 	for _, dep := range t.Deps {
@@ -218,6 +243,10 @@ func (t Task) Validate() error {
 
 func (t Task) IsMilestone() bool {
 	return t.Kind == KindMilestone
+}
+
+func (t Task) IsIdea() bool {
+	return t.Kind == KindIdea
 }
 
 func (t Task) Resolves(policy ResolutionPolicy) bool {

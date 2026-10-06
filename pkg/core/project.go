@@ -30,6 +30,23 @@ type Project struct {
 	UpdatedAt   time.Time
 }
 
+// ReposForTask returns the repositories a task touches. A task names the repo
+// it works in with Task.Repo, resolved against the project's repo definitions;
+// naming a repo the project does not define is an error. A task that names no
+// repo spans the project and touches every one of its repos, in definition
+// order.
+func (p Project) ReposForTask(t Task) ([]Repository, error) {
+	if t.Repo == "" {
+		return append([]Repository(nil), p.Repos...), nil
+	}
+	for _, repo := range p.Repos {
+		if repo.Name == t.Repo {
+			return []Repository{repo}, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: repository %q is not part of project %s", ErrInvalid, t.Repo, p.ID)
+}
+
 func (p Project) Validate() error {
 	if p.ID == "" {
 		return fmt.Errorf("%w: project id is required", ErrInvalid)

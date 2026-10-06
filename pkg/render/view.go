@@ -53,6 +53,7 @@ const (
 	ClassReadyHuman Class = "ready-human"
 	ClassBlocked    Class = "blocked"
 	ClassCycle      Class = "cycle"
+	ClassCapture    Class = "capture"
 )
 
 type info struct {
@@ -141,6 +142,8 @@ func (v View) Classify(task core.Task) Class {
 	switch {
 	case derived.cycles[task.ID]:
 		return ClassCycle
+	case task.IsIdea():
+		return ClassCapture
 	case task.Status == core.StatusCancelled:
 		return ClassCancelled
 	case task.Status == core.StatusDone:

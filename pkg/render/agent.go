@@ -29,6 +29,8 @@ func (Agent) Render(_ context.Context, w io.Writer, view View) error {
 	writeReadyGroup(&b, "next agent:", ranked, derived.readyAgent, derived, view)
 	writeReadyGroup(&b, "next human:", ranked, derived.readyHuman, derived, view)
 
+	writeCaptureGroup(&b, derived)
+
 	b.WriteString("dep-blocked:\n")
 	for _, id := range derived.ids {
 		task := derived.tasks[id]
@@ -70,6 +72,23 @@ func writeReadyGroup(b *strings.Builder, header string, ranked []rank.Scored, me
 		task := derived.tasks[scored.TaskID]
 		fmt.Fprintf(b, "  - %s score=%.2f unblocks=%d wave=%d%s%s %s\n",
 			scored.TaskID, scored.Score, view.Graph.UnblockCount(scored.TaskID), derived.waves[scored.TaskID], repoTag(task.Repo), kindTag(task), task.Title)
+	}
+}
+
+// writeCaptureGroup lists the non-executable captures (ideas) separately from
+// the execution graph, so a reader can tell unrefined input from ready work.
+func writeCaptureGroup(b *strings.Builder, derived *info) {
+	var found bool
+	for _, id := range derived.ids {
+		task := derived.tasks[id]
+		if !task.IsIdea() {
+			continue
+		}
+		if !found {
+			b.WriteString("capture:\n")
+			found = true
+		}
+		fmt.Fprintf(b, "  - %s status=%s%s %s\n", id, task.Status, repoTag(task.Repo), task.Title)
 	}
 }
 

@@ -26,6 +26,7 @@ type runOptions struct {
 	model     string
 	args      []string
 	allowHost bool
+	refresh   bool
 	goal      string
 	maxTasks  int
 }
@@ -68,6 +69,7 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&opts.model, "model", "", "model override passed to the harness")
 	cmd.Flags().StringArrayVar(&opts.args, "arg", nil, "extra argument passed to the harness (repeatable)")
 	cmd.Flags().BoolVar(&opts.allowHost, "allow-host", false, "opt in to the unsandboxed local backend (dev-only)")
+	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "fetch and reset a reused workspace checkout to its upstream before running")
 	cmd.Flags().StringVar(&opts.goal, "goal", "", "drive the DAG loop toward this goal task or milestone")
 	cmd.Flags().IntVar(&opts.maxTasks, "max-tasks", 0, "stop the loop after this many task runs (0 = no budget)")
 	return cmd
@@ -80,6 +82,7 @@ type runSelection struct {
 	harness     harnesspkg.Harness
 	workspace   string
 	model       string
+	refresh     bool
 	args        []string
 }
 
@@ -105,6 +108,9 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 	}
 	if opts.allowHost {
 		cfg.AllowHost = true
+	}
+	if opts.refresh {
+		cfg.Refresh = true
 	}
 	cfg.PolicyPath = projectPolicyPath(d.ProjectConfigPath)
 
@@ -141,6 +147,7 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 		harness:     agentHarness,
 		workspace:   workspaceRoot,
 		model:       cfg.Model,
+		refresh:     cfg.Refresh,
 		args:        cfg.Args,
 	}, nil
 }
@@ -157,13 +164,14 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID string, opts runOptions) error
 	}
 
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).Run(cmd.Context(), app.RunInput{
-		TaskID:        task.ID,
-		Backend:       sel.backend,
-		Harness:       sel.harness,
-		WorkspaceRoot: sel.workspace,
-		Model:         sel.model,
-		Args:          sel.args,
-		Actor:         d.currentActorID(cmd.Context()),
+		TaskID:           task.ID,
+		Backend:          sel.backend,
+		Harness:          sel.harness,
+		WorkspaceRoot:    sel.workspace,
+		WorkspaceRefresh: sel.refresh,
+		Model:            sel.model,
+		Args:             sel.args,
+		Actor:            d.currentActorID(cmd.Context()),
 	})
 	if errors.Is(runErr, local.ErrNotOptedIn) {
 		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
@@ -196,13 +204,14 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 	svc := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs)
 	runner := func(ctx context.Context, taskID core.TaskID) (*app.RunOutcome, error) {
 		return svc.Run(ctx, app.RunInput{
-			TaskID:        taskID,
-			Backend:       sel.backend,
-			Harness:       sel.harness,
-			WorkspaceRoot: sel.workspace,
-			Model:         sel.model,
-			Args:          sel.args,
-			Actor:         d.currentActorID(ctx),
+			TaskID:           taskID,
+			Backend:          sel.backend,
+			Harness:          sel.harness,
+			WorkspaceRoot:    sel.workspace,
+			WorkspaceRefresh: sel.refresh,
+			Model:            sel.model,
+			Args:             sel.args,
+			Actor:            d.currentActorID(ctx),
 		})
 	}
 

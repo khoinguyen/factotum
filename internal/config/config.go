@@ -65,7 +65,11 @@ type Run struct {
 	Workspace string
 	Model     string
 	AllowHost bool
-	Args      []string
+	// Refresh fetches and hard-resets a reused workspace checkout to its
+	// upstream before a run. A reused checkout whose origin URL changed always
+	// fails.
+	Refresh bool
+	Args    []string
 	// Provider names the credential provider a harness may use (for example
 	// "openrouter"), and CredentialEnvVar is the variable the credential is
 	// read from on the host and must arrive under inside the sandbox. Both are
@@ -149,6 +153,7 @@ type runFile struct {
 	Workspace        string   `toml:"workspace"`
 	Model            string   `toml:"model"`
 	AllowHost        bool     `toml:"allow_host"`
+	Refresh          bool     `toml:"refresh"`
 	Args             []string `toml:"args"`
 	Provider         string   `toml:"provider"`
 	CredentialEnvVar string   `toml:"credential_env"`
@@ -224,6 +229,7 @@ func Load(in Input) (Config, error) {
 		Workspace:        expand(user.Run.Workspace, cfg.Project),
 		Model:            user.Run.Model,
 		AllowHost:        user.Run.AllowHost,
+		Refresh:          user.Run.Refresh,
 		Args:             append([]string(nil), user.Run.Args...),
 		Provider:         user.Run.Provider,
 		CredentialEnvVar: user.Run.CredentialEnvVar,
@@ -417,6 +423,9 @@ func applyRunEnv(run *Run, getenv func(string) string) {
 	}
 	if truthy(getenv("FACTOTUM_RUN_ALLOW_HOST")) {
 		run.AllowHost = true
+	}
+	if truthy(getenv("FACTOTUM_RUN_REFRESH")) {
+		run.Refresh = true
 	}
 	if provider := getenv("FACTOTUM_RUN_PROVIDER"); provider != "" {
 		run.Provider = provider

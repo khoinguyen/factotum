@@ -294,7 +294,9 @@ allow_hosts:
 ```
 
 Only `allow_hosts` is honored. Any other key is rejected, so a project can widen
-egress but never weaken the identity, filesystem, or credential defaults.
+egress but never weaken the identity, filesystem, or credential defaults. `ft run`
+loads this file for the selected run's project and applies it to the OpenShell
+sandbox, so the hosts a project names are the only ones the agent may reach.
 
 `ft run <task>` drives one task end-to-end: it resolves the task's repositories
 into a workspace, prepares the selected isolation backend, runs the selected
@@ -308,10 +310,16 @@ ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt
 
 - The backend and harness are selected explicitly, by flag or by the machine-scoped
   `[run]` table in `~/.factotum/config.toml` (`backend`, `harness`, `workspace`,
-  `model`, `args`, `allow_host`), or by `FACTOTUM_RUN_BACKEND`,
-  `FACTOTUM_RUN_HARNESS`, `FACTOTUM_RUN_WORKSPACE`, `FACTOTUM_RUN_MODEL`, and
-  `FACTOTUM_RUN_ALLOW_HOST`. There is no default backend: a run without one fails
-  rather than guessing.
+  `model`, `args`, `allow_host`, `provider`, `credential_env`), or by
+  `FACTOTUM_RUN_BACKEND`, `FACTOTUM_RUN_HARNESS`, `FACTOTUM_RUN_WORKSPACE`,
+  `FACTOTUM_RUN_MODEL`, `FACTOTUM_RUN_ALLOW_HOST`, `FACTOTUM_RUN_PROVIDER`, and
+  `FACTOTUM_RUN_CREDENTIAL_ENV`. There is no default backend: a run without one
+  fails rather than guessing.
+- `provider` and `credential_env` name the credential a harness may use and the
+  variable it arrives under (`provider = "openrouter"`,
+  `credential_env = "OPENROUTER_API_KEY"`). The value is read from the host
+  environment of the same name and handed to the isolating backend as provider
+  material; it is never placed in the sandbox env.
 - The `local` backend is unsandboxed and refuses to run until explicitly opted in
   with `--allow-host` or `run.allow_host`; the opt-in is machine-scoped and is
   ignored from the committed project file.

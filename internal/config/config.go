@@ -66,6 +66,16 @@ type Run struct {
 	Model     string
 	AllowHost bool
 	Args      []string
+	// Provider names the credential provider a harness may use (for example
+	// "openrouter"), and CredentialEnvVar is the variable the credential is
+	// read from on the host and must arrive under inside the sandbox. Both are
+	// machine-scoped, like the rest of this table.
+	Provider         string
+	CredentialEnvVar string
+	// PolicyPath is the resolved project OpenShell policy override
+	// (<projectRoot>/.factotum/openshell-policy.yaml). The launcher sets it
+	// from the loaded project config; it is never read from a config file.
+	PolicyPath string
 }
 
 // Agent configures the inference provider behind `ft prompt`. Agent is the
@@ -134,12 +144,14 @@ type userFile struct {
 // projectFile: a committed file must never select a backend or opt into the
 // unsandboxed host backend.
 type runFile struct {
-	Backend   string   `toml:"backend"`
-	Harness   string   `toml:"harness"`
-	Workspace string   `toml:"workspace"`
-	Model     string   `toml:"model"`
-	AllowHost bool     `toml:"allow_host"`
-	Args      []string `toml:"args"`
+	Backend          string   `toml:"backend"`
+	Harness          string   `toml:"harness"`
+	Workspace        string   `toml:"workspace"`
+	Model            string   `toml:"model"`
+	AllowHost        bool     `toml:"allow_host"`
+	Args             []string `toml:"args"`
+	Provider         string   `toml:"provider"`
+	CredentialEnvVar string   `toml:"credential_env"`
 }
 
 type projectFile struct {
@@ -207,12 +219,14 @@ func Load(in Input) (Config, error) {
 	cfg.Agent.Provider = firstNonEmpty(strings.TrimSpace(agentOptions["provider"]), Default().Agent.Provider)
 	applyAgentEnv(&cfg.Agent, getenv)
 	cfg.Run = Run{
-		Backend:   user.Run.Backend,
-		Harness:   user.Run.Harness,
-		Workspace: expand(user.Run.Workspace, cfg.Project),
-		Model:     user.Run.Model,
-		AllowHost: user.Run.AllowHost,
-		Args:      append([]string(nil), user.Run.Args...),
+		Backend:          user.Run.Backend,
+		Harness:          user.Run.Harness,
+		Workspace:        expand(user.Run.Workspace, cfg.Project),
+		Model:            user.Run.Model,
+		AllowHost:        user.Run.AllowHost,
+		Args:             append([]string(nil), user.Run.Args...),
+		Provider:         user.Run.Provider,
+		CredentialEnvVar: user.Run.CredentialEnvVar,
 	}
 	applyRunEnv(&cfg.Run, getenv)
 	cfg.DefaultActor = firstNonEmpty(project.DefaultActor, entry.DefaultActor, user.DefaultActor)
@@ -403,6 +417,12 @@ func applyRunEnv(run *Run, getenv func(string) string) {
 	}
 	if truthy(getenv("FACTOTUM_RUN_ALLOW_HOST")) {
 		run.AllowHost = true
+	}
+	if provider := getenv("FACTOTUM_RUN_PROVIDER"); provider != "" {
+		run.Provider = provider
+	}
+	if credEnv := getenv("FACTOTUM_RUN_CREDENTIAL_ENV"); credEnv != "" {
+		run.CredentialEnvVar = credEnv
 	}
 }
 

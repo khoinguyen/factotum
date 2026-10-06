@@ -15,6 +15,7 @@ import (
 	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	"github.com/khoinguyen/factotum/pkg/isolation/local"
+	"github.com/khoinguyen/factotum/pkg/isolation/openshell"
 )
 
 // runOptions are the per-invocation overrides of the [run] config.
@@ -105,6 +106,7 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 	if opts.allowHost {
 		cfg.AllowHost = true
 	}
+	cfg.PolicyPath = projectPolicyPath(d.ProjectConfigPath)
 
 	if cfg.Backend == "" {
 		return nil, usageError(cmd, "--backend is required (set run.backend or FACTOTUM_RUN_BACKEND); available: %s", strings.Join(d.RunBackends.Names(), ", "))
@@ -225,6 +227,16 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 		return err
 	}
 	return runErr
+}
+
+// projectPolicyPath resolves the project's committed OpenShell policy override
+// from the loaded project config path (<root>/.factotum/config.toml). It is
+// empty when the project root is unknown, which means no opt-in.
+func projectPolicyPath(projectConfigPath string) string {
+	if projectConfigPath == "" {
+		return ""
+	}
+	return openshell.OverridePath(filepath.Dir(filepath.Dir(projectConfigPath)))
 }
 
 // runWorkspaceRoot resolves the workspace root: the configured value, or a

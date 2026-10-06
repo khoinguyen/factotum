@@ -252,6 +252,9 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 			}
 			dependents, reason := taskGraphFacts(cmd.Context(), deps, task)
 			doc := taskDocFrom(task)
+			// Carry the revision the document is derived from so a later
+			// `task apply` can three-way merge concurrent changes.
+			doc.Base = taskBaseFrom(task)
 			var checks []check.Result
 			if deps.TaskChecks != nil {
 				results, err := deps.TaskChecks.Cached(cmd.Context(), task.ID, nil)
@@ -1377,6 +1380,9 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// The in-memory task is the revision the editor opened, so a
+			// concurrent change during the edit is three-way merged.
+			doc.Base = taskBaseFrom(task)
 			set, err := doc.taskSet(task)
 			if err != nil {
 				return err

@@ -135,7 +135,8 @@ ft task next -p <project> --groomed
 ```
 
 `ft task apply` and `ft task edit` carry `groomed` and `acceptance_criteria` in
-the task document, so criteria can be set as a list.
+the task document, so criteria can be set as a list. A `task get` document also
+carries a read-only `base` that `apply` three-way merges.
 
 ## Record what you learn and file new work
 

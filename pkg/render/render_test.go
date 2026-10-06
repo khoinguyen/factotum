@@ -108,6 +108,50 @@ func TestAgentRender(t *testing.T) {
 	}
 }
 
+func ideaView(t *testing.T) View {
+	t.Helper()
+	policy := core.DefaultResolutionPolicy()
+	project := &core.Project{ID: "prj-1", Name: "Acme", Policy: policy}
+	idea := &core.Task{ID: "i-1", ProjectID: "prj-1", Kind: core.KindIdea, Title: "a spark", Status: core.StatusTodo}
+	a := task("a", core.StatusTodo)
+	values := []core.Task{*idea, *a}
+	built, err := graph.New(values, policy)
+	if err != nil {
+		t.Fatalf("graph.New() error = %v", err)
+	}
+	return View{
+		Project: project,
+		Tasks:   []*core.Task{idea, a},
+		Graph:   built,
+		Ready:   built.ReadyByActor(nil),
+	}
+}
+
+func TestAgentRenderCaptureSection(t *testing.T) {
+	view := ideaView(t)
+	out := renderString(t, Agent{}, view)
+	if !strings.Contains(out, "capture:") {
+		t.Fatalf("agent output should have a capture section:\n%s", out)
+	}
+	for _, want := range []string{"capture:", "i-1", "a spark"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("capture section missing %q:\n%s", want, out)
+		}
+	}
+	// The idea appears only in its capture section: it is not ranked or blocked.
+	if n := strings.Count(out, "i-1"); n != 1 {
+		t.Fatalf("idea should appear once (capture section), got %d:\n%s", n, out)
+	}
+}
+
+func TestClassifyIdea(t *testing.T) {
+	view := ideaView(t)
+	idea, _ := view.Graph.Task("i-1")
+	if got := view.Classify(idea); got != ClassCapture {
+		t.Fatalf("Classify(idea) = %q, want %q", got, ClassCapture)
+	}
+}
+
 func TestJSONRender(t *testing.T) {
 	view := fixture(t, "Acme")
 	out := renderString(t, JSON{}, view)

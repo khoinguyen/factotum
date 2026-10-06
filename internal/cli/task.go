@@ -46,6 +46,7 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 		newTaskUnsnoozeCommand(deps),
 		newTaskNextCommand(deps),
 		newTaskClaimCommand(deps),
+		newTaskPromoteCommand(deps),
 		newTaskDeleteCommand(deps),
 		statusCommand(deps, "start", core.StatusInProgress, "Mark a task in progress"),
 		statusCommand(deps, "review", core.StatusReadyForReview, "Mark a task ready for review"),
@@ -115,7 +116,7 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 	add.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
 	add.Flags().StringVar(&id, "id", "", "explicit task id (for imports)")
 	add.Flags().StringVarP(&repo, "repo", "r", "", "repository name within the project")
-	add.Flags().StringVarP(&kind, "kind", "k", string(core.KindTask), "task kind: task or milestone")
+	add.Flags().StringVarP(&kind, "kind", "k", string(core.KindTask), "task kind: task, milestone, or idea")
 	add.Flags().StringVarP(&title, "title", "t", "", "task title (required)")
 	add.Flags().StringVarP(&body, "body", "b", "", "task body (description)")
 	add.Flags().StringVarP(&bodyFile, "body-file", "f", "", "read the task body from a file")
@@ -270,8 +271,8 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 				actors := deps.actorResolver(cmd.Context())
 				deps.printf("(%s) %s: %s\n", task.Status, task.ID, task.Title)
 				deps.printf("project: %s\n", task.ProjectID)
-				if task.Kind == core.KindMilestone {
-					deps.printf("kind: milestone\n")
+				if task.Kind != core.KindTask {
+					deps.printf("kind: %s\n", task.Kind)
 				}
 				if task.Repo != "" {
 					deps.printf("repo: %s\n", deps.repoValue(task.Repo))
@@ -784,6 +785,26 @@ func claimable(snapshot *app.Snapshot, candidates []core.TaskID) []core.TaskID {
 	return out
 }
 
+func newTaskPromoteCommand(deps *Deps) *cobra.Command {
+	return &cobra.Command{
+		Use:   "promote <idea>",
+		Short: "Promote an idea to an executable task, keeping the idea as history",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ideaID := core.TaskID(args[0])
+			task, err := deps.Tasks.Promote(cmd.Context(), ideaID)
+			if err != nil {
+				return err
+			}
+			return deps.emit(taskDocFrom(task), func() {
+				deps.printFields(deps.taskFields(task, f("promoted", true), f("from", ideaID))...)
+			},
+				hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the promoted task"},
+				hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"})
+		},
+	}
+}
+
 func newTaskDeleteCommand(deps *Deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "delete <task>",
@@ -853,7 +874,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&title, "title", "t", "", "task title")
-	cmd.Flags().StringVarP(&kind, "kind", "k", "", "task kind: task or milestone")
+	cmd.Flags().StringVarP(&kind, "kind", "k", "", "task kind: task, milestone, or idea")
 	cmd.Flags().StringVarP(&body, "body", "b", "", "task body (description)")
 	cmd.Flags().StringVarP(&bodyFile, "body-file", "f", "", "read the task body from a file")
 	cmd.Flags().IntVar(&priority, "priority", 0, "task priority")

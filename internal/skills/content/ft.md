@@ -311,7 +311,9 @@ ft run --goal t-abc123 --backend local --harness opencode --allow-host --max-tas
 - The goal is a task or a milestone. A task goal is reached when it resolves (a
   successful run moves it to `ready_for_review`). A milestone is a human gate: the loop
   runs the milestone's prerequisites and stops when the milestone becomes startable,
-  never running the milestone itself.
+  never running the milestone itself. An intermediate milestone on the path to a task
+  goal is also a gate, so the loop runs its prerequisites and then stops
+  `no_ready_work` there until a human closes it.
 - Only tasks on a path to the goal are run, ordered by the composite ranker with the
   goal as the toward preference, so readiness and priority always decide the order.
 - `--max-tasks N` bounds the number of task runs (0 means no budget). The loop stops for

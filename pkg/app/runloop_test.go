@@ -121,6 +121,55 @@ func TestRunLoopStopsOnBudget(t *testing.T) {
 	}
 }
 
+func TestRunLoopGoalReachedExactlyAtBudget(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	first := addLoopTask(t, h, project, "first", 0)
+	goal := addLoopTask(t, h, project, "goal", 0)
+	mustDep(t, h, goal, first)
+
+	runner := &fakeLoopRunner{tasks: h.tasks}
+	// The budget is exactly the work on the path: the loop must report the goal,
+	// not a budget stop, once the last task resolves.
+	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: goal.ID, Runner: runner.run, MaxTasks: 2})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if outcome.Stop != StopGoalReached {
+		t.Fatalf("Stop = %q, want goal_reached", outcome.Stop)
+	}
+	if !equalIDs(runner.order, []core.TaskID{first.ID, goal.ID}) {
+		t.Fatalf("run order = %v, want [%s %s]", runner.order, first.ID, goal.ID)
+	}
+}
+
+func TestRunLoopStallTakesPrecedenceOverBudget(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	first := addLoopTask(t, h, project, "first", 0)
+	goal := addLoopTask(t, h, project, "goal", 0)
+	mustDep(t, h, goal, first)
+	if _, err := h.tasks.SetStatus(ctx, first.ID, core.StatusInProgress); err != nil {
+		t.Fatalf("SetStatus() error = %v", err)
+	}
+
+	runner := &fakeLoopRunner{tasks: h.tasks}
+	// No startable work: the loop reports the stall, not the budget it never
+	// needed to spend.
+	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: goal.ID, Runner: runner.run, MaxTasks: 5})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if outcome.Stop != StopNoReadyWork {
+		t.Fatalf("Stop = %q, want no_ready_work", outcome.Stop)
+	}
+	if len(runner.order) != 0 {
+		t.Fatalf("run order = %v, want none", runner.order)
+	}
+}
+
 func TestRunLoopStopsWhenNoReadyWork(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

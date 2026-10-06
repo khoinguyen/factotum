@@ -13,11 +13,13 @@
 //     identity Policy and returns isolation.ErrUnsupported rather than pretending
 //     to, and it has no separate environment log stream.
 //
-// Model credentials are never read from the host by this backend. A caller
+// Model credentials are never read from the host by this backend, and the run
+// does not inherit the full host environment: only a small allowlist of
+// non-secret variables (PATH, HOME, locale, proxy) is passed through. A caller
 // attaches a Credential naming a provider and reference, and the configured
 // CredentialResolver resolves it through the provider mechanism; with no
-// resolver (or an unsupported provider) AttachCredential returns ErrUnsupported
-// so the secret stays out of the run.
+// resolver (or an unsupported provider) AttachCredential and Spec.Credentials
+// return ErrUnsupported rather than reaching into the host.
 //
 // The port (pkg/isolation) assumes nothing about sandboxing, so this backend is
 // an ordinary implementation of it: the isolating OpenShell backend is a peer
@@ -122,7 +124,7 @@ func (h *handle) ID() string { return h.id }
 
 func (b *Backend) Name() string { return Name }
 
-func (b *Backend) Prepare(_ context.Context, spec isolation.Spec) (isolation.Handle, error) {
+func (b *Backend) Prepare(ctx context.Context, spec isolation.Spec) (isolation.Handle, error) {
 	if !b.allowHost {
 		return nil, ErrNotOptedIn
 	}
@@ -147,6 +149,11 @@ func (b *Backend) Prepare(_ context.Context, spec isolation.Spec) (isolation.Han
 		}
 	}
 
+	cleanup := func() {
+		if owned {
+			_ = os.RemoveAll(root)
+		}
+	}
 	env := &environment{
 		id:    fmt.Sprintf("%s-%d", Name, b.seq.Add(1)),
 		root:  root,
@@ -156,9 +163,15 @@ func (b *Backend) Prepare(_ context.Context, spec isolation.Spec) (isolation.Han
 	}
 	for _, f := range spec.Files {
 		if err := writeFile(root, f); err != nil {
-			if owned {
-				_ = os.RemoveAll(root)
-			}
+			cleanup()
+			return nil, err
+		}
+	}
+	// The Spec's credentials apply to the whole run; honor them here exactly as
+	// AttachCredential would, rather than silently dropping them.
+	for _, c := range spec.Credentials {
+		if err := b.attach(ctx, env, c); err != nil {
+			cleanup()
 			return nil, err
 		}
 	}
@@ -191,9 +204,17 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 		runCtx, cancel = context.WithCancel(ctx)
 	}
 
+	var exited atomic.Bool
 	c := exec.CommandContext(runCtx, cmd.Argv[0], cmd.Argv[1:]...)
 	c.Dir = firstNonEmpty(cmd.Workdir, env.root)
-	c.Env = mergeEnv(os.Environ(), env.snapshot(), cmd.Env)
+	c.Env = mergeEnv(baseEnv(), env.snapshot(), cmd.Env)
+	configureProcessGroup(c)
+	c.Cancel = func() error {
+		if exited.Load() {
+			return nil
+		}
+		return killProcessGroup(c)
+	}
 	if cmd.Stdin != nil {
 		c.Stdin = bytes.NewReader(cmd.Stdin)
 	}
@@ -224,6 +245,7 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 	go func() { defer wg.Done(); ex.consume(stderr, isolation.StreamStderr) }()
 	go func() {
 		waitErr := c.Wait()
+		exited.Store(true)
 		wg.Wait()
 		env.untrack(proc)
 		cancel()
@@ -329,6 +351,13 @@ func (b *Backend) AttachCredential(ctx context.Context, h isolation.Handle, c is
 	if err != nil {
 		return err
 	}
+	return b.attach(ctx, env, c)
+}
+
+// attach is the shared credential path for Prepare (Spec.Credentials) and
+// AttachCredential: resolve the provider reference and inject the value under
+// the credential's EnvVar, or refuse when no resolver is configured.
+func (b *Backend) attach(ctx context.Context, env *environment, c isolation.Credential) error {
 	if c.EnvVar == "" {
 		return errors.New("isolation/local: credential has no EnvVar")
 	}
@@ -522,6 +551,26 @@ func resolvePath(root, path string) string {
 		return filepath.Clean(path)
 	}
 	return filepath.Join(root, path)
+}
+
+// baseEnv is the minimal host environment a local run inherits. The full host
+// environment is deliberately not passed through: it routinely carries model API
+// keys and other secrets, which must instead arrive as an attached Credential.
+// Only the variables a CLI needs to run are allowed.
+func baseEnv() []string {
+	allowed := []string{
+		"PATH", "HOME", "TMPDIR", "TMP", "TEMP",
+		"LANG", "LC_ALL", "LC_CTYPE", "TERM", "USER", "SHELL",
+		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+		"http_proxy", "https_proxy", "no_proxy", "all_proxy",
+	}
+	out := make([]string, 0, len(allowed))
+	for _, key := range allowed {
+		if value := os.Getenv(key); value != "" {
+			out = append(out, key+"="+value)
+		}
+	}
+	return out
 }
 
 // mergeEnv layers environment maps over base, later values winning, and returns

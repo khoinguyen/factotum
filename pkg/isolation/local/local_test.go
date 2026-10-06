@@ -399,6 +399,45 @@ func TestUnknownHandleErrors(t *testing.T) {
 	}
 }
 
+func TestExecDoesNotInheritHostSecrets(t *testing.T) {
+	t.Setenv("FACTOTUM_LOCAL_SECRET_PROBE", "leak")
+	b, _ := newBackend(t, local.Options{})
+	h := prepare(t, b, isolation.Spec{})
+
+	secret := run(t, b, h, isolation.Command{Argv: []string{"sh", "-c", `printf %s "$FACTOTUM_LOCAL_SECRET_PROBE"`}})
+	if string(secret.Stdout) != "" {
+		t.Fatalf("host secret leaked into the run: %q", secret.Stdout)
+	}
+
+	path := run(t, b, h, isolation.Command{Argv: []string{"sh", "-c", `printf %s "${PATH:+set}"`}})
+	if string(path.Stdout) != "set" {
+		t.Fatalf("PATH not inherited, got %q", path.Stdout)
+	}
+}
+
+func TestPrepareAttachesSpecCredentials(t *testing.T) {
+	resolver := &fakeResolver{value: "secret"}
+	b, _ := newBackend(t, local.Options{Credentials: resolver})
+	h := prepare(t, b, isolation.Spec{Credentials: []isolation.Credential{
+		{Provider: "openrouter", Ref: "models/key", EnvVar: "SPEC_KEY"},
+	}})
+	res := run(t, b, h, isolation.Command{Argv: []string{"sh", "-c", `printf %s "$SPEC_KEY"`}})
+	if string(res.Stdout) != "secret" {
+		t.Fatalf("spec credential in env = %q, want secret", res.Stdout)
+	}
+}
+
+func TestPrepareRejectsSpecCredentialsWithoutResolver(t *testing.T) {
+	b, _ := newBackend(t, local.Options{})
+	_, err := b.Prepare(context.Background(), isolation.Spec{
+		Workdir:     t.TempDir(),
+		Credentials: []isolation.Credential{{Provider: "x", Ref: "y", EnvVar: "K"}},
+	})
+	if !errors.Is(err, isolation.ErrUnsupported) {
+		t.Fatalf("Prepare(spec credentials, no resolver) error = %v, want ErrUnsupported", err)
+	}
+}
+
 type otherHandle struct{}
 
 func (otherHandle) ID() string { return "other" }

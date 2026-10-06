@@ -132,19 +132,21 @@ func (h *Harness) Spec(req harness.Request) (isolation.Spec, error) {
 }
 
 // Command builds the headless invocation: `opencode run`, the model flag, any
-// passthrough arguments, and the prompt as the final positional.
+// passthrough arguments, then `--` and the prompt as the final positional. The
+// separator keeps a prompt that begins with a dash from being parsed as an
+// option.
 func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 	if req.Prompt == "" {
 		return isolation.Command{}, ErrNoPrompt
 	}
-	argv := make([]string, 0, len(h.args)+len(req.Args)+4)
+	argv := make([]string, 0, len(h.args)+len(req.Args)+5)
 	argv = append(argv, h.binary, "run")
 	if model := firstNonEmpty(req.Model, h.model); model != "" {
 		argv = append(argv, "--model", model)
 	}
 	argv = append(argv, h.args...)
 	argv = append(argv, req.Args...)
-	argv = append(argv, req.Prompt)
+	argv = append(argv, "--", req.Prompt)
 
 	return isolation.Command{
 		Argv:    argv,

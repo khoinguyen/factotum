@@ -507,6 +507,8 @@ workspace = "~/ws/{project}"
 model = "openrouter/x"
 allow_host = true
 args = ["--auto"]
+provider = "openrouter"
+credential_env = "OPENROUTER_API_KEY"
 `)
 	cfg, err := Load(Input{UserPath: user, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
 	if err != nil {
@@ -526,6 +528,12 @@ args = ["--auto"]
 	}
 	if len(cfg.Run.Args) != 1 || cfg.Run.Args[0] != "--auto" {
 		t.Fatalf("Run.Args = %v, want [--auto]", cfg.Run.Args)
+	}
+	if cfg.Run.Provider != "openrouter" {
+		t.Fatalf("Run.Provider = %q, want openrouter", cfg.Run.Provider)
+	}
+	if cfg.Run.CredentialEnvVar != "OPENROUTER_API_KEY" {
+		t.Fatalf("Run.CredentialEnvVar = %q, want OPENROUTER_API_KEY", cfg.Run.CredentialEnvVar)
 	}
 }
 
@@ -549,6 +557,10 @@ harness = "opencode"
 				return "openrouter/y"
 			case "FACTOTUM_RUN_ALLOW_HOST":
 				return "1"
+			case "FACTOTUM_RUN_PROVIDER":
+				return "openrouter"
+			case "FACTOTUM_RUN_CREDENTIAL_ENV":
+				return "OPENROUTER_API_KEY"
 			default:
 				return ""
 			}
@@ -559,6 +571,9 @@ harness = "opencode"
 	}
 	if cfg.Run.Backend != "openshell" || cfg.Run.Harness != "pi" || cfg.Run.Model != "openrouter/y" || !cfg.Run.AllowHost {
 		t.Fatalf("Run = %+v, want env overrides", cfg.Run)
+	}
+	if cfg.Run.Provider != "openrouter" || cfg.Run.CredentialEnvVar != "OPENROUTER_API_KEY" {
+		t.Fatalf("Run = %+v, want provider/credential env overrides", cfg.Run)
 	}
 }
 

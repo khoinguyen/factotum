@@ -177,7 +177,7 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 	}
 	deps.Commands = builtinCommands()
 	deps.FeedbackTransports = feedback.Builtins()
-	deps.RunBackends = runBackends()
+	deps.RunBackends = runBackends(getenv)
 	deps.RunHarnesses = runHarnesses()
 	return deps
 }
@@ -187,23 +187,60 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 // never run unsandboxed by default. The OpenShell backend is deny-by-default and
 // non-root; it needs a reachable gateway and the openshell CLI, and refuses a
 // run it cannot prepare.
-func runBackends() *registry.Registry[IsolationBackendFactory] {
+func runBackends(getenv func(string) string) *registry.Registry[IsolationBackendFactory] {
 	reg := registry.New[IsolationBackendFactory]()
 	registerRunBackend(reg, local.Name, func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error) {
 		return local.New(local.Options{AllowHost: cfg.AllowHost, Warn: errOut}), nil
 	})
-	registerRunBackend(reg, openshell.Name, func(config.Run, io.Writer) (isolation.IsolationBackend, error) {
-		return openshell.New(openshell.Options{}), nil
+	registerRunBackend(reg, openshell.Name, func(cfg config.Run, _ io.Writer) (isolation.IsolationBackend, error) {
+		return openshell.New(openshellBackendOptions(cfg, getenv)), nil
 	})
 	return reg
 }
 
+// openshellBackendOptions translates the run config into OpenShell backend
+// options: the project policy override path (whose allow_hosts widen egress) and
+// a host-environment credential resolver. It is the single mapping point, so a
+// run never wires empty Options and both reach the backend.
+func openshellBackendOptions(cfg config.Run, getenv func(string) string) openshell.Options {
+	return openshell.Options{
+		OverridePath: cfg.PolicyPath,
+		Credentials:  envCredentialResolver{getenv: getenv},
+	}
+}
+
+// envCredentialResolver resolves a harness credential to its secret value from
+// the host environment, keyed by the credential's EnvVar. The value is handed to
+// the gateway as provider material and is never written into the sandbox env,
+// where the backend substitutes a placeholder instead.
+type envCredentialResolver struct {
+	getenv func(string) string
+}
+
+func (r envCredentialResolver) Resolve(_ context.Context, c isolation.Credential) (string, error) {
+	if r.getenv == nil {
+		return "", fmt.Errorf("openshell: no host environment to resolve credential %s", c.EnvVar)
+	}
+	value := r.getenv(c.EnvVar)
+	if value == "" {
+		return "", fmt.Errorf("openshell: credential %s is not set in the host environment", c.EnvVar)
+	}
+	return value, nil
+}
+
 // runHarnesses registers the built-in harnesses. The OpenCode harness targets
 // the host `opencode` binary, which the dev-only local backend runs in place.
+// The configured provider and credential variable are forwarded so an isolating
+// backend can attach the credential as a provider placeholder.
 func runHarnesses() *registry.Registry[HarnessFactory] {
 	reg := registry.New[HarnessFactory]()
 	registerRunHarness(reg, opencode.Name, func(cfg config.Run) (harness.Harness, error) {
-		return opencode.New(opencode.Options{Model: cfg.Model, Args: cfg.Args}), nil
+		return opencode.New(opencode.Options{
+			Model:            cfg.Model,
+			Args:             cfg.Args,
+			Provider:         cfg.Provider,
+			CredentialEnvVar: cfg.CredentialEnvVar,
+		}), nil
 	})
 	return reg
 }

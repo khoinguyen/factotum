@@ -22,17 +22,19 @@ func NewTaskService(backend store.Backend, clock Clock, ids IDGen) *TaskService 
 }
 
 type TaskInput struct {
-	ID          *core.TaskID
-	ProjectID   core.ProjectID
-	Repo        string
-	Kind        core.TaskKind
-	Title       string
-	Description string
-	Priority    int
-	Labels      []string
-	AssigneeID  *core.ActorID
-	WaitingOn   []core.ActorID
-	Milestone   *core.MilestoneMeta
+	ID                 *core.TaskID
+	ProjectID          core.ProjectID
+	Repo               string
+	Kind               core.TaskKind
+	Title              string
+	Description        string
+	Priority           int
+	Labels             []string
+	AssigneeID         *core.ActorID
+	WaitingOn          []core.ActorID
+	Milestone          *core.MilestoneMeta
+	Groomed            bool
+	AcceptanceCriteria []string
 }
 
 func (s *TaskService) Add(ctx context.Context, in TaskInput) (*core.Task, error) {
@@ -53,20 +55,22 @@ func (s *TaskService) Add(ctx context.Context, in TaskInput) (*core.Task, error)
 	}
 	now := s.clock.Now()
 	task := &core.Task{
-		ID:          id,
-		ProjectID:   in.ProjectID,
-		Repo:        in.Repo,
-		Kind:        kind,
-		Title:       in.Title,
-		Description: in.Description,
-		Status:      core.StatusTodo,
-		AssigneeID:  in.AssigneeID,
-		WaitingOn:   in.WaitingOn,
-		Labels:      in.Labels,
-		Priority:    in.Priority,
-		Milestone:   in.Milestone,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:                 id,
+		ProjectID:          in.ProjectID,
+		Repo:               in.Repo,
+		Kind:               kind,
+		Title:              in.Title,
+		Description:        in.Description,
+		Status:             core.StatusTodo,
+		AssigneeID:         in.AssigneeID,
+		WaitingOn:          in.WaitingOn,
+		Labels:             in.Labels,
+		Priority:           in.Priority,
+		Milestone:          in.Milestone,
+		Groomed:            in.Groomed,
+		AcceptanceCriteria: in.AcceptanceCriteria,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	if err := task.Validate(); err != nil {
 		return nil, err
@@ -146,22 +150,26 @@ func (s *TaskService) Promote(ctx context.Context, ideaID core.TaskID) (*core.Ta
 }
 
 type TaskUpdate struct {
-	Kind        *core.TaskKind
-	Repo        *string
-	Title       *string
-	Description *string
-	Priority    *int
-	Labels      []string
+	Kind               *core.TaskKind
+	Repo               *string
+	Title              *string
+	Description        *string
+	Priority           *int
+	Labels             []string
+	Groomed            *bool
+	AcceptanceCriteria []string
 }
 
 func (s *TaskService) Update(ctx context.Context, id core.TaskID, patch TaskUpdate) (*core.Task, error) {
 	return s.Set(ctx, id, TaskSet{
-		Kind:        patch.Kind,
-		Repo:        patch.Repo,
-		Title:       patch.Title,
-		Description: patch.Description,
-		Priority:    patch.Priority,
-		Labels:      patch.Labels,
+		Kind:               patch.Kind,
+		Repo:               patch.Repo,
+		Title:              patch.Title,
+		Description:        patch.Description,
+		Priority:           patch.Priority,
+		Labels:             patch.Labels,
+		Groomed:            patch.Groomed,
+		AcceptanceCriteria: patch.AcceptanceCriteria,
 	})
 }
 
@@ -171,21 +179,24 @@ func (s *TaskService) Update(ctx context.Context, id core.TaskID, patch TaskUpda
 // task's UpdatedAt and fails with ErrConflict if the task changed since it was
 // read.
 type TaskSet struct {
-	Kind           *core.TaskKind
-	Repo           *string
-	Title          *string
-	Description    *string
-	Priority       *int
-	Status         *core.TaskStatus
-	Labels         []string
-	NotBefore      *time.Time
-	ClearNotBefore bool
-	Expect         *time.Time
+	Kind               *core.TaskKind
+	Repo               *string
+	Title              *string
+	Description        *string
+	Priority           *int
+	Status             *core.TaskStatus
+	Labels             []string
+	Groomed            *bool
+	AcceptanceCriteria []string
+	NotBefore          *time.Time
+	ClearNotBefore     bool
+	Expect             *time.Time
 }
 
 func (set TaskSet) hasNonStatus() bool {
 	return set.Kind != nil || set.Repo != nil || set.Title != nil ||
 		set.Description != nil || set.Priority != nil || set.Labels != nil ||
+		set.Groomed != nil || set.AcceptanceCriteria != nil ||
 		set.NotBefore != nil || set.ClearNotBefore
 }
 
@@ -239,6 +250,12 @@ func (s *TaskService) Set(ctx context.Context, id core.TaskID, set TaskSet) (*co
 	}
 	if set.Labels != nil {
 		task.Labels = set.Labels
+	}
+	if set.Groomed != nil {
+		task.Groomed = *set.Groomed
+	}
+	if set.AcceptanceCriteria != nil {
+		task.AcceptanceCriteria = set.AcceptanceCriteria
 	}
 	if set.ClearNotBefore {
 		task.NotBefore = nil

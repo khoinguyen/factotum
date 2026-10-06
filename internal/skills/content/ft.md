@@ -31,7 +31,8 @@ init` only creates the machine config (and hints at `ft init -p`), while `ft ini
 ft task next                    # the highest-ranked ready task (uses the default project)
 ft task next --for <actor>      # what a specific human or agent should pick up
 ft task next -n 5               # a shortlist
-ft task next --explain          # why tasks are excluded; honors --for/--label/--repo/-n
+ft task next --explain          # why tasks are excluded; honors --for/--label/--repo/--groomed/-n
+ft task next --for <actor> --groomed  # only groomed work, buildable autonomously
 ft task get <task>              # full detail; its Next: block names the follow-up command
 ft graph render --project <p>   # the whole DAG as text
 ```
@@ -40,8 +41,8 @@ ft graph render --project <p>   # the whole DAG as text
 milestone, the `--toward` target, and priority. Use it instead of scanning the
 list by hand. When a task is missing from the ranking, `ft task next --explain`
 lists each excluded task with its reason, applying the same
-`--for`/`--label`/`--repo`/`-n` filters as ranking, and `ft task get <task>`
-prints a `not ready because:` line for the same reason.
+`--for`/`--label`/`--repo`/`--groomed`/`-n` filters as ranking, and `ft task get
+<task>` prints a `not ready because:` line for the same reason.
 
 ## Move work through its lifecycle
 
@@ -105,6 +106,27 @@ decision only the author can make - escalate, do not edit the body).
 The body is the spec; notes are history. A note never changes a verdict, so fold
 a decision into the body to make it count. Recording a human override requires a
 human actor; it stops agents re-grooming, and editing the body makes it stale.
+
+## Definition of ready: groomed work an agent can start
+
+`groomed` is a dedicated task **field**, set explicitly - never inferred from a
+label or from the presence of acceptance criteria. A groomed task must carry at
+least one acceptance criterion: an observable condition that defines done. Only
+groomed work counts as agent-ready; an ungroomed task still needs a human to
+decide its scope and acceptance, so it stays human work even when assigned to an
+agent.
+
+```sh
+ft task create -p <project> -t "..." --groomed --acceptance "observable result"
+ft task update <task> --groomed --acceptance "observable result"  # or --ungroomed
+ft task set <task> groomed=true
+ft task list -p <project> --groomed     # only buildable work
+ft task list -p <project> --ungroomed   # still needs grooming
+ft task next -p <project> --groomed
+```
+
+`ft task apply` and `ft task edit` carry `groomed` and `acceptance_criteria` in
+the task document, so criteria can be set as a list.
 
 ## Record what you learn and file new work
 

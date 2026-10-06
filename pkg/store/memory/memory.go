@@ -171,6 +171,9 @@ func matchesTask(task core.Task, filter store.TaskFilter) bool {
 	if filter.DependsOn != nil && !taskDependsOn(task, *filter.DependsOn) {
 		return false
 	}
+	if !store.MatchGroomed(task, filter.Groomed) {
+		return false
+	}
 	return store.MatchLabels(task, filter.Labels)
 }
 

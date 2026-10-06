@@ -181,7 +181,7 @@ func TestTaskNextExplainHonorsActorFilter(t *testing.T) {
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	r.run("actor", "create", "--kind", "agent", "claude")
 	r.run("actor", "create", "--kind", "agent", "other")
-	mine := firstField(t, r.run("task", "create", "-p", projectID, "-t", "mine"))
+	mine := firstField(t, r.run("task", "create", "-p", projectID, "-t", "mine", "--groomed", "--acceptance", "done"))
 	r.run("task", "assign", mine, "--actor", "claude")
 	theirs := firstField(t, r.run("task", "create", "-p", projectID, "-t", "theirs"))
 	r.run("task", "assign", theirs, "--actor", "other")

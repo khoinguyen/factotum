@@ -38,10 +38,19 @@ type TaskFilter struct {
 	Statuses  []core.TaskStatus
 	Kind      *core.TaskKind
 	Labels    []string
+	// Groomed, when set, keeps only tasks whose Groomed flag matches. It is a
+	// pointer so an explicit false (ungroomed) is distinct from "unset".
+	Groomed *bool
 	// DependsOn, when set, keeps only tasks that declare the given task id in
 	// their Deps, i.e. the direct dependents of that id. It is a reverse-edge
 	// lookup, so a backend should serve it without scanning every task.
 	DependsOn *core.TaskID
+}
+
+// MatchGroomed reports whether task's groomed flag satisfies the filter. A nil
+// filter matches every task.
+func MatchGroomed(task core.Task, want *bool) bool {
+	return want == nil || task.Groomed == *want
 }
 
 // MatchLabels reports whether task carries every label in labels (AND).

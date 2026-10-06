@@ -186,18 +186,24 @@ func TestReadyByActor(t *testing.T) {
 
 	t1 := task("t1", core.KindTask, core.StatusTodo)
 	t1.AssigneeID = &agentID
+	t1.Groomed = true
+	t1.AcceptanceCriteria = []string{"done"}
 	t2 := task("t2", core.KindTask, core.StatusTodo)
 	t2.AssigneeID = &humanID
 	t3 := task("t3", core.KindTask, core.StatusTodo)
+	// An agent-assigned but ungroomed task is not agent-ready: it still needs a
+	// human to define its scope and acceptance criteria.
+	t4 := task("t4", core.KindTask, core.StatusTodo)
+	t4.AssigneeID = &agentID
 
-	g := mustGraph(t, t1, t2, t3)
+	g := mustGraph(t, t1, t2, t3, t4)
 	got := g.ReadyByActor(actors)
 
 	if !equalIDs(got.Agent, []core.TaskID{"t1"}) {
 		t.Fatalf("Agent = %v, want [t1]", got.Agent)
 	}
-	if !equalIDs(got.Human, []core.TaskID{"t2", "t3"}) {
-		t.Fatalf("Human = %v, want [t2 t3]", got.Human)
+	if !equalIDs(got.Human, []core.TaskID{"t2", "t3", "t4"}) {
+		t.Fatalf("Human = %v, want [t2 t3 t4]", got.Human)
 	}
 }
 

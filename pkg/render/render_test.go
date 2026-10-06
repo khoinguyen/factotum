@@ -32,6 +32,8 @@ func fixture(t *testing.T, projectName string) View {
 
 	a := task("a", core.StatusTodo)
 	a.AssigneeID = &agentID
+	a.Groomed = true
+	a.AcceptanceCriteria = []string{"done"}
 	a1 := task("a1", core.StatusTodo, "a")
 	b := task("b", core.StatusTodo)
 	b.AssigneeID = &humanID

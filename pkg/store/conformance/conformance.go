@@ -284,6 +284,39 @@ func testTask(t *testing.T, be store.Backend) {
 		t.Fatalf("List(missing label) len = %d, want 0", len(byMissing))
 	}
 
+	// Groomed filter: the flag is served as a tri-state pointer, so a backend
+	// must distinguish "unset" from an explicit false.
+	groomedReady, err := repo.Get(ctx, "t-1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	groomedReady.Groomed = true
+	groomedReady.AcceptanceCriteria = []string{"one observable result"}
+	if err := repo.Update(ctx, groomedReady); err != nil {
+		t.Fatalf("Update(groomed t-1) error = %v", err)
+	}
+	byGroomed, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Groomed: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("List(groomed) error = %v", err)
+	}
+	if len(byGroomed) != 1 || byGroomed[0].ID != "t-1" || !byGroomed[0].Groomed {
+		t.Fatalf("List(groomed) = %v, want [t-1]", byGroomed)
+	}
+	byUngroomed, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Groomed: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("List(ungroomed) error = %v", err)
+	}
+	if len(byUngroomed) != 2 || byUngroomed[0].ID != "m-1" || byUngroomed[1].ID != "t-2" {
+		t.Fatalf("List(ungroomed) = %v, want [m-1 t-2]", byUngroomed)
+	}
+	byAnyGroomed, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1"})
+	if err != nil {
+		t.Fatalf("List(no groomed filter) error = %v", err)
+	}
+	if len(byAnyGroomed) != 3 {
+		t.Fatalf("List(no groomed filter) len = %d, want 3", len(byAnyGroomed))
+	}
+
 	if err := repo.Delete(ctx, "t-3"); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
@@ -380,6 +413,8 @@ func testTaskDependents(t *testing.T, be store.Backend) {
 }
 
 func depPtr(id core.TaskID) *core.TaskID { return &id }
+
+func boolPtr(value bool) *bool { return &value }
 
 func assertTaskIDs(t *testing.T, repo store.TaskRepo, ctx context.Context, filter store.TaskFilter, want []core.TaskID) {
 	t.Helper()

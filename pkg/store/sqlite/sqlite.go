@@ -637,6 +637,9 @@ func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.T
 		if err := json.Unmarshal([]byte(data), &task); err != nil {
 			return nil, fmt.Errorf("decode task: %w", err)
 		}
+		if !store.MatchGroomed(task, filter.Groomed) {
+			continue
+		}
 		if !store.MatchLabels(task, filter.Labels) {
 			continue
 		}
@@ -688,6 +691,9 @@ func (r *taskRepo) Search(ctx context.Context, filter store.TaskFilter, query st
 		var task core.Task
 		if err := json.Unmarshal([]byte(data), &task); err != nil {
 			return nil, fmt.Errorf("decode task: %w", err)
+		}
+		if !store.MatchGroomed(task, filter.Groomed) {
+			continue
 		}
 		if !store.MatchLabels(task, filter.Labels) {
 			continue

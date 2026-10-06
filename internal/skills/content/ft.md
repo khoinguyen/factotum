@@ -254,6 +254,16 @@ fails, so a script can gate on it.
   `not_before=YYYY-MM-DD` (or `+7d`) to defer a task and `not_before=` to clear
   it.
 
+## Agent runs and isolation
+
+Agent runs execute a harness inside a pluggable isolation backend. The `local`
+backend runs the harness directly on the host with no isolation at all: it is
+dev-only, must be explicitly opted in, is never the default, and prints an
+unsandboxed warning when it starts. It can read host credentials, reach the
+network, and mutate files, so never use it for untrusted work. Isolating backends
+(for example OpenShell) are separate registrations of the same port and are the
+only ones fit for untrusted input.
+
 ## Getting help
 
 ```sh

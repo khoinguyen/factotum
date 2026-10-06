@@ -337,6 +337,91 @@ func TestGroomingEntailmentTable(t *testing.T) {
 	}
 }
 
+// TestGroomingShapingDimensionsTable covers the two task-shaping signals the
+// rubric adds beyond spec quality: a task that bundles independent units and
+// should split (decomposable), and one that is too large to finish as a single
+// unit (right_sized). Each is a concrete, agent-owned finding, so the verdict is
+// needs_grooming.
+func TestGroomingShapingDimensionsTable(t *testing.T) {
+	cases := []struct {
+		name   string
+		dim    string
+		aspect string
+	}{
+		{"task that should split", "decomposable", "bundles independent units"},
+		{"task that is too large", "right_sized", "oversized"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			answers := dims(map[string]float64{tc.dim: 0.30})
+			answers["gap::"+tc.dim] = judge.Answer{Choice: tc.aspect, Confidence: 0.9}
+			result := run(t, answers)
+			if result.Verdict != check.NeedsGrooming {
+				t.Fatalf("verdict = %q, want needs_grooming (findings %+v)", result.Verdict, result.Findings)
+			}
+			if len(result.Findings) != 1 {
+				t.Fatalf("findings = %+v, want exactly the %s finding", result.Findings, tc.dim)
+			}
+			finding := result.Findings[0]
+			if finding.Dimension != tc.dim || finding.Aspect != tc.aspect || finding.Owner != check.OwnerAgent || finding.Edit == "" {
+				t.Fatalf("finding = %+v, want an agent-owned %s/%s with an edit", finding, tc.dim, tc.aspect)
+			}
+		})
+	}
+}
+
+// TestShapingFindingKeepsTheAuditableDelta proves the shaping signals ride the
+// same audit trail as the entailment gate: a below-threshold shaping dimension on
+// a promoted task still records the deterministic delta against its origin.
+func TestShapingFindingKeepsTheAuditableDelta(t *testing.T) {
+	origin := originSpec()
+	spec := check.Spec{
+		ID:     "t-1",
+		Title:  origin.Title,
+		Kind:   "task",
+		Body:   origin.Body + "\nand do several other things",
+		Origin: &origin,
+	}
+	answers := dims(map[string]float64{"right_sized": 0.30})
+	answers["gap::right_sized"] = judge.Answer{Choice: "oversized", Confidence: 0.9}
+	result, err := New(fake.New(answers)).Run(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Delta == nil || result.Delta.Empty() {
+		t.Fatalf("delta = %+v, want the auditable refinement delta", result.Delta)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Dimension != "right_sized" {
+		t.Fatalf("findings = %+v, want the right_sized finding", result.Findings)
+	}
+}
+
+// TestShapingDimensionIsAdvisoryNotGatedByScore records the shaping signals'
+// intent: a low score with no named gap does not, by itself, gate the verdict,
+// because a size or split judgment is subjective and an agent cannot reach a
+// fixed point against a raw score. A spec-quality dimension behaves the opposite
+// way: a very low score stays a gap even when the follow-up names nothing.
+func TestShapingDimensionIsAdvisoryNotGatedByScore(t *testing.T) {
+	cases := []struct {
+		name    string
+		dim     string
+		verdict check.Verdict
+	}{
+		{"shaping signal below floor with none stays ready", "right_sized", check.Ready},
+		{"spec dimension below floor with none still gates", "scope_bounded", check.NeedsGrooming},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			answers := dims(map[string]float64{tc.dim: 0.20})
+			answers["gap::"+tc.dim] = judge.Answer{Choice: "none", Confidence: 0.9}
+			result := run(t, answers)
+			if result.Verdict != tc.verdict {
+				t.Fatalf("verdict = %q, want %q (findings %+v)", result.Verdict, tc.verdict, result.Findings)
+			}
+		})
+	}
+}
+
 func TestEntailmentDimensionOnlyAskedWithOrigin(t *testing.T) {
 	withOrigin := fake.New(dims(nil))
 	if _, err := New(withOrigin).Run(context.Background(), specWithOrigin()); err != nil {

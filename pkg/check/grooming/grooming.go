@@ -1,8 +1,9 @@
 // Package grooming is the first task check: an advisory readiness judgment. It
-// asks four dimension questions over the task's spec and, for each dimension
-// below the threshold, one follow-up that names the concrete gap. The verdict is
-// driven by concrete, owned findings, never by the raw scores, so an agent can
-// always reach a fixed point.
+// asks a set of dimension questions over the task's spec - spec quality and task
+// shaping, plus entailment against the immutable origin when one exists - and, for
+// each dimension below the threshold, one follow-up that names the concrete gap.
+// The verdict is driven by concrete, owned findings, never by the raw scores, so
+// an agent can always reach a fixed point.
 package grooming
 
 import (
@@ -19,7 +20,7 @@ const Name = "grooming"
 
 // Version identifies the rubric. Bump it when the questions or the verdict rule
 // change, so cached results are invalidated.
-const Version = "2"
+const Version = "3"
 
 // Thresholds. A dimension at or above readyThreshold passes; a dimension below
 // floor is a real gap even when the follow-up cannot name it, which stops a very
@@ -42,11 +43,29 @@ var dimensionNames = []string{
 	"acceptance_verifiable",
 	"decisions_author",
 	"dependencies_named",
+	"decomposable",
+	"right_sized",
+}
+
+// shapingDimensions are the task-shaping signals. Unlike the spec-quality
+// dimensions, they are advisory: a size or split judgment is subjective, so a low
+// score names nothing concrete an agent can close and a floor on it would trap the
+// agent in a loop. Only a concrete, named sub-aspect becomes a finding; the raw
+// score never does.
+var shapingDimensions = map[string]struct{}{
+	"decomposable": {},
+	"right_sized":  {},
+}
+
+func advisoryOnly(dimension string) bool {
+	_, ok := shapingDimensions[dimension]
+	return ok
 }
 
 // dimensionsFor is the gating dimension order for a spec. A task refined from an
 // origin adds the entailment dimension; an originless task is judged on spec
-// quality alone, so it never pays for a question that cannot apply.
+// quality and task shaping alone, so it never pays for a question that cannot
+// apply.
 func dimensionsFor(spec check.Spec) []string {
 	if spec.Origin == nil {
 		return dimensionNames
@@ -86,6 +105,18 @@ var subAspects = map[string][]aspect{
 		{"prerequisite unstated", check.OwnerAgent, "name the prerequisite work"},
 		{"not declared foundational", check.OwnerAgent, "declare the foundational dependency"},
 	},
+	// The shaping dimensions are task-structuring gaps: the implementer closes
+	// them by reshaping the task (splitting or narrowing), not by guessing intent.
+	"decomposable": {
+		{"bundles independent units", check.OwnerAgent, "split into one task per independent unit"},
+		{"multiple deliverables", check.OwnerAgent, "narrow to a single deliverable or split the task"},
+		{"unrelated changes", check.OwnerAgent, "separate the unrelated changes into their own tasks"},
+	},
+	"right_sized": {
+		{"oversized", check.OwnerAgent, "split or narrow the task to one deliverable"},
+		{"unbounded blast radius", check.OwnerAgent, "bound the affected area and scope"},
+		{"too many files or areas", check.OwnerAgent, "narrow the affected files or split the task"},
+	},
 	// A contradiction is the groomer's to fix: the origin is immutable, so the
 	// task is aligned to it (or the divergence is recorded as a human decision).
 	entailmentDimension: {
@@ -107,9 +138,9 @@ func New(j judge.Judge) *Check { return &Check{judge: j} }
 func (c *Check) Name() string    { return Name }
 func (c *Check) Version() string { return Version }
 
-// Run judges the spec in two batched requests: the four dimensions plus the
-// advisory holistic Noul, then one follow-up Choice per below-threshold
-// dimension. The holistic value never gates the verdict.
+// Run judges the spec in two batched requests: the dimensions plus the advisory
+// holistic Noul, then one follow-up Choice per below-threshold dimension. The
+// holistic value never gates the verdict.
 func (c *Check) Run(ctx context.Context, spec check.Spec) (check.Result, error) {
 	if c.judge == nil {
 		return check.Result{}, judge.ErrUnavailable
@@ -189,6 +220,22 @@ func dimensionQuestions(dims []string) map[string]judge.Question {
 		Criteria: map[string]any{
 			"true":  "Every prerequisite and foundational dependency is declared.",
 			"false": "A prerequisite is unstated or a foundational dependency is undeclared.",
+		},
+	}
+	questions["decomposable"] = judge.Question{
+		Kind:         judge.KindYesNo,
+		Instructions: "Is this task a single, cohesive unit of work - properly decomposed into one deliverable - rather than a bundle of independent units that should be separate tasks?",
+		Criteria: map[string]any{
+			"true":  "One deliverable an engineer can complete and verify as a unit.",
+			"false": "It bundles independent units or deliverables that should be split into separate tasks.",
+		},
+	}
+	questions["right_sized"] = judge.Question{
+		Kind:         judge.KindYesNo,
+		Instructions: "Is this task right-sized: small enough to implement and verify as one focused unit of work, with a bounded and proportionate blast radius?",
+		Criteria: map[string]any{
+			"true":  "Small enough for one focused change; the affected area and effort are bounded.",
+			"false": "Oversized: too much to implement or verify as one unit, or the blast radius is unbounded.",
 		},
 	}
 	if contains(dims, entailmentDimension) {
@@ -298,8 +345,10 @@ func certainty(probability float64) float64 {
 }
 
 // findings turns the follow-up choices into owned gaps. A gap exists when the
-// follow-up names a sub-aspect, or when the dimension is below the floor even
-// though the model answered "none".
+// follow-up names a sub-aspect, or - for a spec-quality dimension - when the
+// dimension is below the floor even though the model answered "none". An advisory
+// shaping dimension is never gated by the floor: it becomes a finding only when
+// the model names a concrete sub-aspect.
 func findings(dims []string, dimensions, followUps judge.Response) []check.Finding {
 	var out []check.Finding
 	for _, name := range dims {
@@ -317,7 +366,7 @@ func findings(dims []string, dimensions, followUps judge.Response) []check.Findi
 			})
 			continue
 		}
-		if value < floor {
+		if value < floor && !advisoryOnly(name) {
 			out = append(out, check.Finding{
 				Dimension: name,
 				Owner:     defaultOwner(name),
@@ -362,10 +411,12 @@ func unspecifiedEdit(dimension string) string {
 	if defaultOwner(dimension) == check.OwnerHuman {
 		return ""
 	}
-	if dimension == entailmentDimension {
+	switch dimension {
+	case entailmentDimension:
 		return "align the task with its origin, or record the divergence as a decision"
+	default:
+		return fmt.Sprintf("name and close the %s gap", dimension)
 	}
-	return fmt.Sprintf("name and close the %s gap", dimension)
 }
 
 func contains(values []string, want string) bool {

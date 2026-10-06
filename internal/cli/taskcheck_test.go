@@ -17,6 +17,8 @@ func readyJudge() *fake.Judge {
 		"acceptance_verifiable": {Probability: 0.9, Confidence: 0.9},
 		"decisions_author":      {Probability: 0.9, Confidence: 0.9},
 		"dependencies_named":    {Probability: 0.9, Confidence: 0.9},
+		"decomposable":          {Probability: 0.9, Confidence: 0.9},
+		"right_sized":           {Probability: 0.9, Confidence: 0.9},
 		"holistic":              {Probability: 0.55, Confidence: 0.9},
 	})
 }
@@ -207,6 +209,8 @@ func TestTaskCheckReportsFindingsAndNotes(t *testing.T) {
 		"acceptance_verifiable": {Probability: 0.9, Confidence: 0.9},
 		"decisions_author":      {Probability: 0.9, Confidence: 0.9},
 		"dependencies_named":    {Probability: 0.9, Confidence: 0.9},
+		"decomposable":          {Probability: 0.9, Confidence: 0.9},
+		"right_sized":           {Probability: 0.9, Confidence: 0.9},
 		"holistic":              {Probability: 0.5, Confidence: 0.9},
 		"gap::scope_bounded":    {Choice: "non-goals missing", Confidence: 0.9},
 	})
@@ -231,6 +235,8 @@ func TestTaskCheckGatesContradictingRefinementAndEmitsDelta(t *testing.T) {
 		"acceptance_verifiable":  {Probability: 0.9, Confidence: 0.9},
 		"decisions_author":       {Probability: 0.9, Confidence: 0.9},
 		"dependencies_named":     {Probability: 0.9, Confidence: 0.9},
+		"decomposable":           {Probability: 0.9, Confidence: 0.9},
+		"right_sized":            {Probability: 0.9, Confidence: 0.9},
 		"entailment_origin":      {Probability: 0.2, Confidence: 0.9},
 		"holistic":               {Probability: 0.5, Confidence: 0.9},
 		"gap::entailment_origin": {Choice: "contradicts origin", Confidence: 0.9},
@@ -287,6 +293,8 @@ func TestNoteCreateHintsTheBodyIsTheSpec(t *testing.T) {
 		"acceptance_verifiable": {Probability: 0.9, Confidence: 0.9},
 		"decisions_author":      {Probability: 0.9, Confidence: 0.9},
 		"dependencies_named":    {Probability: 0.9, Confidence: 0.9},
+		"decomposable":          {Probability: 0.9, Confidence: 0.9},
+		"right_sized":           {Probability: 0.9, Confidence: 0.9},
 		"holistic":              {Probability: 0.5, Confidence: 0.9},
 		"gap::scope_bounded":    {Choice: "non-goals missing", Confidence: 0.9},
 	})

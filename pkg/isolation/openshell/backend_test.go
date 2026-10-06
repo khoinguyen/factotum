@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	"github.com/khoinguyen/factotum/pkg/isolation/openshell"
@@ -698,8 +700,140 @@ func TestLogsStreamsEvents(t *testing.T) {
 	}
 }
 
+// --- cleanup and identity regression tests ---------------------------------
+
+// TestPrepareHonorsImageUser pins that a harness-requested non-root identity
+// carried by Spec.Image.User reaches the sandbox policy, and that a root image
+// is rejected rather than run.
+func TestPrepareHonorsImageUser(t *testing.T) {
+	t.Run("uid:gid", func(t *testing.T) {
+		r := &fakeRunner{}
+		var policy []byte
+		r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+			if hasPrefix(args, "sandbox", "create") {
+				if p, ok := flagValue(args, "--policy"); ok {
+					policy, _ = os.ReadFile(p)
+				}
+			}
+			return []byte(`{"phase":"Ready"}`), nil
+		}
+		be := openshell.New(openshell.Options{Runner: r, NewName: func() string { return "fttest" }})
+		prepared(t, be, isolation.Spec{Image: isolation.Image{Ref: "img", User: "1001:1002"}})
+
+		for _, want := range []string{`run_as_user: "1001"`, `run_as_group: "1002"`} {
+			if !bytes.Contains(policy, []byte(want)) {
+				t.Errorf("policy missing %s:\n%s", want, policy)
+			}
+		}
+	})
+	t.Run("root rejected", func(t *testing.T) {
+		be := openshell.New(openshell.Options{Runner: &fakeRunner{}, NewName: func() string { return "fttest" }})
+		if _, err := be.Prepare(context.Background(), isolation.Spec{Image: isolation.Image{Ref: "img", User: "0"}}); err == nil {
+			t.Fatal("Prepare(root image) error = nil, want a rejection")
+		}
+	})
+}
+
+// TestPrepareTeardownRetriesProviderCleanup pins finding 1: a partial Prepare
+// failure must not orphan a provider. The retrying cleanup is used and the
+// provider is eventually deleted.
+func TestPrepareTeardownRetriesProviderCleanup(t *testing.T) {
+	r := &fakeRunner{}
+	var deleteAttempts int
+	r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+		switch {
+		case hasPrefix(args, "sandbox", "get"):
+			return []byte(`{"phase":"Pending"}`), nil // never ready
+		case hasPrefix(args, "provider", "get"):
+			return []byte("exists"), nil
+		case hasPrefix(args, "provider", "delete"):
+			deleteAttempts++
+			if deleteAttempts < 3 {
+				return nil, errors.New("still attached")
+			}
+			return nil, nil
+		}
+		return nil, nil
+	}
+	be := openshell.New(openshell.Options{
+		Runner:                  r,
+		NewName:                 func() string { return "fttest" },
+		ReadyTimeout:            20 * time.Millisecond,
+		ProviderCleanupTimeout:  200 * time.Millisecond,
+		ProviderCleanupInterval: 5 * time.Millisecond,
+		Credentials:             resolverFunc(func(context.Context, isolation.Credential) (string, error) { return "v", nil }),
+	})
+
+	_, err := be.Prepare(context.Background(), isolation.Spec{
+		Credentials: []isolation.Credential{{Provider: "openrouter", Ref: "r", EnvVar: "KEY"}},
+	})
+	if err == nil {
+		t.Fatal("Prepare() error = nil, want the readiness failure")
+	}
+	if deleteAttempts < 3 {
+		t.Fatalf("provider delete attempts = %d, want the cleanup to retry past the transient failures", deleteAttempts)
+	}
+	if _, ok := r.first("sandbox", "delete", "fttest"); !ok {
+		t.Fatalf("teardown did not delete the created sandbox: %v", r.runs)
+	}
+}
+
+// TestDeleteRetriesAfterSandboxDeleteFailure pins finding 2: a transient sandbox
+// delete failure must not turn a retry into a no-op; the second Delete completes
+// the cleanup.
+func TestDeleteRetriesAfterSandboxDeleteFailure(t *testing.T) {
+	r := &fakeRunner{}
+	var sandboxDeletes, providerDeletes int
+	r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+		switch {
+		case hasPrefix(args, "sandbox", "delete"):
+			sandboxDeletes++
+			if sandboxDeletes == 1 {
+				return nil, errors.New("transient")
+			}
+			return nil, nil
+		case hasPrefix(args, "provider", "get"):
+			return []byte("exists"), nil
+		case hasPrefix(args, "provider", "delete"):
+			providerDeletes++
+			return nil, nil
+		case hasPrefix(args, "sandbox", "get"):
+			return []byte(`{"phase":"Ready"}`), nil
+		}
+		return nil, nil
+	}
+	be := openshell.New(openshell.Options{
+		Runner:      r,
+		NewName:     func() string { return "fttest" },
+		Credentials: resolverFunc(func(context.Context, isolation.Credential) (string, error) { return "v", nil }),
+	})
+	h := prepared(t, be, isolation.Spec{
+		Credentials: []isolation.Credential{{Provider: "openrouter", Ref: "r", EnvVar: "KEY"}},
+	})
+
+	if err := be.Delete(context.Background(), h); err == nil {
+		t.Fatal("first Delete() error = nil, want the transient failure")
+	}
+	if providerDeletes != 0 {
+		t.Fatalf("provider deletes after a failed sandbox delete = %d, want 0", providerDeletes)
+	}
+	if err := be.Delete(context.Background(), h); err != nil {
+		t.Fatalf("second Delete() error = %v, want the retry to complete", err)
+	}
+	if sandboxDeletes != 2 {
+		t.Fatalf("sandbox deletes = %d, want 2 (retried)", sandboxDeletes)
+	}
+	if providerDeletes != 1 {
+		t.Fatalf("provider deletes = %d, want 1 (cleanup completed on retry)", providerDeletes)
+	}
+	if _, err := be.Exec(context.Background(), h, isolation.Command{Argv: []string{"sh"}}); err == nil {
+		t.Error("Exec(after a completed retry) error = nil, want an error")
+	}
+}
+
 // --- small helpers ----------------------------------------------------------
 
+// foreignHandle is a handle the backend did not create.
 type foreignHandle struct{}
 
 func (foreignHandle) ID() string { return "foreign" }

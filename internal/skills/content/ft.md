@@ -299,6 +299,26 @@ ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt
   leaves the task's status untouched and records only a failure note and event, so
   a broken run never corrupts the graph.
 
+`ft run --goal <task|milestone>` drives the graph toward a goal instead of running one
+task: it repeatedly selects the highest-ranked startable task on the path to the goal,
+runs it, and re-reads the graph until the goal is reached, no work is ready, on-path
+work is blocked, or the task budget is exhausted.
+
+```sh
+ft run --goal t-abc123 --backend local --harness opencode --allow-host --max-tasks 5
+```
+
+- The goal is a task or a milestone. A task goal is reached when it resolves (a
+  successful run moves it to `ready_for_review`). A milestone is a human gate: the loop
+  runs the milestone's prerequisites and stops when the milestone becomes startable,
+  never running the milestone itself.
+- Only tasks on a path to the goal are run, ordered by the composite ranker with the
+  goal as the toward preference, so readiness and priority always decide the order.
+- `--max-tasks N` bounds the number of task runs (0 means no budget). The loop stops for
+  a human when a run fails; a failed run leaves the task's status untouched.
+- The stop reason is reported as `stop:` (`goal_reached`, `no_ready_work`, `blocked`,
+  `budget_exhausted`, or `failed`), and each iteration prints a compact `step:` block.
+
 ## Getting help
 
 ```sh

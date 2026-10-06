@@ -241,6 +241,32 @@ func TestRepoScopesCandidates(t *testing.T) {
 	}
 }
 
+func TestRankersExcludeIdeas(t *testing.T) {
+	idea := task("idea", core.StatusTodo)
+	idea.Kind = core.KindIdea
+	tasks := []core.Task{task("a", core.StatusTodo), idea}
+
+	// The ready-set default already omits the idea; an explicit candidate set
+	// must omit it too, so no caller can rank a non-executable capture.
+	req := request(t, tasks, "")
+	req.Candidates = []core.TaskID{"a", "idea"}
+	scored, err := Unblock{}.Rank(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Rank() error = %v", err)
+	}
+	if !equalOrder(order(scored), []core.TaskID{"a"}) {
+		t.Fatalf("Rank() = %v, want [a]", order(scored))
+	}
+
+	scored, err = Unblock{}.Rank(context.Background(), request(t, tasks, ""))
+	if err != nil {
+		t.Fatalf("Rank() error = %v", err)
+	}
+	if !equalOrder(order(scored), []core.TaskID{"a"}) {
+		t.Fatalf("Rank() = %v, want [a]", order(scored))
+	}
+}
+
 func TestBuiltinsRegisterAllRankers(t *testing.T) {
 	names := Builtins().Names()
 	want := []string{"composite", "milestone", "toward", "unblock"}

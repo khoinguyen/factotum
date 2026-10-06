@@ -155,9 +155,11 @@ func candidates(req Request) []core.TaskID {
 	ids := req.Candidates
 	if ids == nil {
 		ids = req.Graph.ReadySet()
-	}
-	if req.Actor == nil && req.Repo == nil {
-		return ids
+		// The ready set already omits non-executable kinds, so with no other
+		// filter the common case needs no lookup.
+		if req.Actor == nil && req.Repo == nil {
+			return ids
+		}
 	}
 	byID := make(map[core.TaskID]core.Task, len(req.Tasks))
 	for _, task := range req.Tasks {
@@ -166,6 +168,13 @@ func candidates(req Request) []core.TaskID {
 	out := make([]core.TaskID, 0, len(ids))
 	for _, id := range ids {
 		task, ok := byID[id]
+		if ok && !task.Kind.Executable() {
+			continue
+		}
+		if req.Actor == nil && req.Repo == nil {
+			out = append(out, id)
+			continue
+		}
 		if !ok {
 			continue
 		}

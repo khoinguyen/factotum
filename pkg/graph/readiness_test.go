@@ -91,6 +91,38 @@ func TestReadinessReasons(t *testing.T) {
 	}
 }
 
+func TestIdeaIsNotExecutable(t *testing.T) {
+	idea := task("idea", core.KindIdea, core.StatusTodo)
+	dependent := task("dependent", core.KindTask, core.StatusTodo, "idea")
+	g, err := New([]core.Task{idea, dependent}, core.DefaultResolutionPolicy())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if ready, reason := g.Readiness("idea"); ready || reason != nil {
+		t.Fatalf("idea Readiness() = (%v, %+v), want (false, nil)", ready, reason)
+	}
+	for _, id := range g.ReadySet() {
+		if id == "idea" {
+			t.Fatalf("idea must not be startable, ReadySet = %v", g.ReadySet())
+		}
+	}
+
+	ready, reason := g.Readiness("dependent")
+	if !ready || reason != nil {
+		t.Fatalf("dependent on idea Readiness() = (%v, %+v), want (true, nil): ideas do not block", ready, reason)
+	}
+
+	bucket := g.ReadyByActor(nil)
+	for _, ids := range [][]core.TaskID{bucket.Agent, bucket.Human} {
+		for _, id := range ids {
+			if id == "idea" {
+				t.Fatalf("idea must not appear in a ready bucket: %+v", bucket)
+			}
+		}
+	}
+}
+
 func TestReadinessPrecedence(t *testing.T) {
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	future := now.Add(time.Hour)

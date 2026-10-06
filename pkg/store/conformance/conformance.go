@@ -19,6 +19,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("Project", func(t *testing.T) { testProject(t, factory(t)) })
 	t.Run("Actor", func(t *testing.T) { testActor(t, factory(t)) })
 	t.Run("Task", func(t *testing.T) { testTask(t, factory(t)) })
+	t.Run("TaskIdeaKind", func(t *testing.T) { testTaskIdeaKind(t, factory(t)) })
 	t.Run("TaskDependents", func(t *testing.T) { testTaskDependents(t, factory(t)) })
 	t.Run("TaskSearch", func(t *testing.T) { testTaskSearch(t, factory(t)) })
 	t.Run("Artifact", func(t *testing.T) { testArtifact(t, factory(t)) })
@@ -288,6 +289,41 @@ func testTask(t *testing.T, be store.Backend) {
 	}
 	if _, err := repo.Get(ctx, "t-3"); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("Get() after delete error = %v, want ErrNotFound", err)
+	}
+}
+
+// testTaskIdeaKind pins that every backend round-trips the non-executable idea
+// kind and can filter by it, so capture is a first-class stored kind.
+func testTaskIdeaKind(t *testing.T, be store.Backend) {
+	t.Helper()
+	ctx := context.Background()
+	repo := be.Tasks()
+
+	tasks := []*core.Task{
+		{ID: "i-1", ProjectID: "prj-1", Kind: core.KindIdea, Title: "spark", Status: core.StatusTodo},
+		{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "work", Status: core.StatusTodo},
+	}
+	for _, task := range tasks {
+		if err := repo.Create(ctx, task); err != nil {
+			t.Fatalf("Create(%s) error = %v", task.ID, err)
+		}
+	}
+
+	got, err := repo.Get(ctx, "i-1")
+	if err != nil {
+		t.Fatalf("Get(i-1) error = %v", err)
+	}
+	if got.Kind != core.KindIdea {
+		t.Fatalf("Get(i-1).Kind = %q, want idea", got.Kind)
+	}
+
+	kind := core.KindIdea
+	byKind, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Kind: &kind})
+	if err != nil {
+		t.Fatalf("List(idea) error = %v", err)
+	}
+	if len(byKind) != 1 || byKind[0].ID != "i-1" {
+		t.Fatalf("List(idea) = %v, want [i-1]", byKind)
 	}
 }
 

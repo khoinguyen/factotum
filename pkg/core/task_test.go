@@ -55,6 +55,7 @@ func TestTaskKindValid(t *testing.T) {
 	}{
 		{KindTask, true},
 		{KindMilestone, true},
+		{KindIdea, true},
 		{"epic", false},
 		{"", false},
 	}
@@ -62,6 +63,55 @@ func TestTaskKindValid(t *testing.T) {
 		if got := tt.kind.Valid(); got != tt.want {
 			t.Errorf("TaskKind(%q).Valid() = %v, want %v", tt.kind, got, tt.want)
 		}
+	}
+}
+
+func TestTaskKindExecutable(t *testing.T) {
+	tests := []struct {
+		kind TaskKind
+		want bool
+	}{
+		{KindTask, true},
+		{KindMilestone, true},
+		{KindIdea, false},
+		{"epic", false},
+	}
+	for _, tt := range tests {
+		if got := tt.kind.Executable(); got != tt.want {
+			t.Errorf("TaskKind(%q).Executable() = %v, want %v", tt.kind, got, tt.want)
+		}
+	}
+}
+
+func TestTaskKindAllowsStatus(t *testing.T) {
+	tests := []struct {
+		kind   TaskKind
+		status TaskStatus
+		want   bool
+	}{
+		{KindTask, StatusInProgress, true},
+		{KindMilestone, StatusInProgress, true},
+		{KindIdea, StatusTodo, true},
+		{KindIdea, StatusDone, true},
+		{KindIdea, StatusCancelled, true},
+		{KindIdea, StatusInProgress, false},
+		{KindIdea, StatusBlocked, false},
+		{KindIdea, StatusReadyForReview, false},
+		{KindIdea, "archived", false},
+	}
+	for _, tt := range tests {
+		if got := tt.kind.AllowsStatus(tt.status); got != tt.want {
+			t.Errorf("TaskKind(%q).AllowsStatus(%q) = %v, want %v", tt.kind, tt.status, got, tt.want)
+		}
+	}
+}
+
+func TestTaskIsIdea(t *testing.T) {
+	if !(Task{Kind: KindIdea}).IsIdea() {
+		t.Fatal("idea task should report IsIdea")
+	}
+	if (Task{Kind: KindTask}).IsIdea() {
+		t.Fatal("plain task should not report IsIdea")
 	}
 }
 
@@ -104,6 +154,9 @@ func TestTaskValidate(t *testing.T) {
 		{"empty dependency", func(t *Task) { t.Deps = []TaskID{""} }, true},
 		{"duplicate dependency", func(t *Task) { t.Deps = []TaskID{"t-2", "t-2"} }, true},
 		{"valid dependencies", func(t *Task) { t.Deps = []TaskID{"t-2", "t-3"} }, false},
+		{"idea todo", func(t *Task) { t.Kind = KindIdea }, false},
+		{"idea in progress", func(t *Task) { t.Kind = KindIdea; t.Status = StatusInProgress }, true},
+		{"idea assigned", func(t *Task) { t.Kind = KindIdea; id := ActorID("act-1"); t.AssigneeID = &id }, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -129,6 +182,9 @@ func TestTaskResolves(t *testing.T) {
 		{"task done", Task{Kind: KindTask, Status: StatusDone}, true},
 		{"milestone in review", Task{Kind: KindMilestone, Status: StatusReadyForReview}, false},
 		{"milestone done", Task{Kind: KindMilestone, Status: StatusDone}, true},
+		{"idea todo", Task{Kind: KindIdea, Status: StatusTodo}, true},
+		{"idea done", Task{Kind: KindIdea, Status: StatusDone}, true},
+		{"idea cancelled", Task{Kind: KindIdea, Status: StatusCancelled}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

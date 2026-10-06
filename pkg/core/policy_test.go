@@ -42,6 +42,15 @@ func TestDefaultResolutionPolicyMilestone(t *testing.T) {
 	}
 }
 
+func TestDefaultResolutionPolicyIdea(t *testing.T) {
+	p := DefaultResolutionPolicy()
+	for _, status := range []TaskStatus{StatusTodo, StatusDone, StatusCancelled} {
+		if !p.Resolves(KindIdea, status) {
+			t.Errorf("Resolves(idea, %q) = false, want true: ideas are not executable and never block", status)
+		}
+	}
+}
+
 func TestResolutionPolicyValidate(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -10,12 +10,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/pkg/agent"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/doctor"
 	"github.com/khoinguyen/factotum/pkg/embed"
 	"github.com/khoinguyen/factotum/pkg/feedback"
+	"github.com/khoinguyen/factotum/pkg/harness"
+	"github.com/khoinguyen/factotum/pkg/isolation"
 	"github.com/khoinguyen/factotum/pkg/judge"
 	"github.com/khoinguyen/factotum/pkg/store/builtins"
 	"github.com/khoinguyen/factotum/pkg/vector"
@@ -42,6 +45,10 @@ type runner struct {
 	// feedbackFactory, when set, registers a fake feedback sink transport under
 	// the name "fake" so a test can prove the command is transport-agnostic.
 	feedbackFactory feedback.Factory
+	// runBackend and runHarness, when set, register fake ft run adapters under
+	// the name "fake" so `ft run --backend fake --harness fake` runs in-process.
+	runBackend isolation.IsolationBackend
+	runHarness harness.Harness
 }
 
 func newRunner(t *testing.T) *runner {
@@ -81,6 +88,20 @@ func (r *runner) setup(deps *Deps) []string {
 	if r.feedbackFactory != nil {
 		if err := deps.FeedbackTransports.Register("fake", r.feedbackFactory); err != nil {
 			r.t.Fatalf("register feedback transport: %v", err)
+		}
+	}
+	if r.runBackend != nil {
+		if err := deps.RunBackends.Register("fake", func(config.Run, io.Writer) (isolation.IsolationBackend, error) {
+			return r.runBackend, nil
+		}); err != nil {
+			r.t.Fatalf("register run backend: %v", err)
+		}
+	}
+	if r.runHarness != nil {
+		if err := deps.RunHarnesses.Register("fake", func(config.Run) (harness.Harness, error) {
+			return r.runHarness, nil
+		}); err != nil {
+			r.t.Fatalf("register run harness: %v", err)
 		}
 	}
 	return []string{

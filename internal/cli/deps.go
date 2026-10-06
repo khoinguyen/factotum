@@ -20,6 +20,10 @@ import (
 	"github.com/khoinguyen/factotum/pkg/embed"
 	_ "github.com/khoinguyen/factotum/pkg/embed/transport" // register the embedding providers
 	"github.com/khoinguyen/factotum/pkg/feedback"
+	"github.com/khoinguyen/factotum/pkg/harness"
+	"github.com/khoinguyen/factotum/pkg/harness/opencode"
+	"github.com/khoinguyen/factotum/pkg/isolation"
+	"github.com/khoinguyen/factotum/pkg/isolation/local"
 	"github.com/khoinguyen/factotum/pkg/judge"
 	_ "github.com/khoinguyen/factotum/pkg/judge/typesafe" // register the default provider
 	"github.com/khoinguyen/factotum/pkg/rank"
@@ -32,6 +36,15 @@ import (
 )
 
 type CommandFactory func(deps *Deps) *cobra.Command
+
+// IsolationBackendFactory builds the ft run isolation backend named in the run
+// config. It is a factory, not an instance, so the local backend's unsandboxed
+// opt-in is applied from config at selection time. errOut receives backend
+// notices (the local backend's unsandboxed warning).
+type IsolationBackendFactory func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error)
+
+// HarnessFactory builds the ft run harness named in the run config.
+type HarnessFactory func(cfg config.Run) (harness.Harness, error)
 
 type Deps struct {
 	Config       config.Config
@@ -73,6 +86,10 @@ type Deps struct {
 	// FeedbackTransports resolves feedback sink transports by name; the direct-DB
 	// transport is the only built-in today.
 	FeedbackTransports *registry.Registry[feedback.Factory]
+	// RunBackends and RunHarnesses select the ft run adapters by name. The
+	// selection is explicit (config/flags); there is no default backend.
+	RunBackends  *registry.Registry[IsolationBackendFactory]
+	RunHarnesses *registry.Registry[HarnessFactory]
 
 	Projects  *app.ProjectService
 	Tasks     *app.TaskService
@@ -159,7 +176,42 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 	}
 	deps.Commands = builtinCommands()
 	deps.FeedbackTransports = feedback.Builtins()
+	deps.RunBackends = runBackends()
+	deps.RunHarnesses = runHarnesses()
 	return deps
+}
+
+// runBackends registers the built-in isolation backends. The local backend is
+// registered but only ever constructible with the configured opt-in, so it can
+// never run unsandboxed by default.
+func runBackends() *registry.Registry[IsolationBackendFactory] {
+	reg := registry.New[IsolationBackendFactory]()
+	registerRunBackend(reg, local.Name, func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error) {
+		return local.New(local.Options{AllowHost: cfg.AllowHost, Warn: errOut}), nil
+	})
+	return reg
+}
+
+// runHarnesses registers the built-in harnesses. The OpenCode harness targets
+// the host `opencode` binary, which the dev-only local backend runs in place.
+func runHarnesses() *registry.Registry[HarnessFactory] {
+	reg := registry.New[HarnessFactory]()
+	registerRunHarness(reg, opencode.Name, func(cfg config.Run) (harness.Harness, error) {
+		return opencode.New(opencode.Options{Model: cfg.Model, Args: cfg.Args}), nil
+	})
+	return reg
+}
+
+func registerRunBackend(reg *registry.Registry[IsolationBackendFactory], name string, factory IsolationBackendFactory) {
+	if err := reg.Register(name, factory); err != nil {
+		panic(err)
+	}
+}
+
+func registerRunHarness(reg *registry.Registry[HarnessFactory], name string, factory HarnessFactory) {
+	if err := reg.Register(name, factory); err != nil {
+		panic(err)
+	}
 }
 
 // newJudge builds the judge for the configured provider. The provider is chosen by

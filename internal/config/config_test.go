@@ -495,6 +495,94 @@ timeout = "30s"
 	}
 }
 
+func TestLoadReadsRunOptions(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+default_project = "acme"
+
+[run]
+backend = "local"
+harness = "opencode"
+workspace = "~/ws/{project}"
+model = "openrouter/x"
+allow_host = true
+args = ["--auto"]
+`)
+	cfg, err := Load(Input{UserPath: user, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Run.Backend != "local" || cfg.Run.Harness != "opencode" {
+		t.Fatalf("Run = %+v, want local/opencode", cfg.Run)
+	}
+	if want := ExpandPath("~/ws/acme"); cfg.Run.Workspace != want {
+		t.Fatalf("Run.Workspace = %q, want %q", cfg.Run.Workspace, want)
+	}
+	if cfg.Run.Model != "openrouter/x" {
+		t.Fatalf("Run.Model = %q, want openrouter/x", cfg.Run.Model)
+	}
+	if !cfg.Run.AllowHost {
+		t.Fatal("Run.AllowHost = false, want true")
+	}
+	if len(cfg.Run.Args) != 1 || cfg.Run.Args[0] != "--auto" {
+		t.Fatalf("Run.Args = %v, want [--auto]", cfg.Run.Args)
+	}
+}
+
+func TestRunEnvOverridesFiles(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[run]
+backend = "local"
+harness = "opencode"
+`)
+	cfg, err := Load(Input{
+		UserPath:    user,
+		ProjectPath: filepath.Join(dir, "none.toml"),
+		Getenv: func(key string) string {
+			switch key {
+			case "FACTOTUM_RUN_BACKEND":
+				return "openshell"
+			case "FACTOTUM_RUN_HARNESS":
+				return "pi"
+			case "FACTOTUM_RUN_MODEL":
+				return "openrouter/y"
+			case "FACTOTUM_RUN_ALLOW_HOST":
+				return "1"
+			default:
+				return ""
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Run.Backend != "openshell" || cfg.Run.Harness != "pi" || cfg.Run.Model != "openrouter/y" || !cfg.Run.AllowHost {
+		t.Fatalf("Run = %+v, want env overrides", cfg.Run)
+	}
+}
+
+func TestRunAllowHostIgnoredFromProjectFile(t *testing.T) {
+	dir := t.TempDir()
+	project := writeConfig(t, dir, "project.toml", `
+project = "acme"
+
+[run]
+backend = "local"
+allow_host = true
+`)
+	cfg, err := Load(Input{UserPath: filepath.Join(dir, "none.toml"), ProjectPath: project, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Run.AllowHost {
+		t.Fatal("AllowHost from the committed project file must be ignored")
+	}
+	if cfg.Run.Backend != "" {
+		t.Fatalf("Run.Backend = %q, want empty (project file must not select a backend)", cfg.Run.Backend)
+	}
+}
+
 func TestAgentEnvOverridesFiles(t *testing.T) {
 	dir := t.TempDir()
 	user := writeConfig(t, dir, "user.toml", `

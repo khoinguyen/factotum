@@ -10,6 +10,8 @@ func TestEventKindValid(t *testing.T) {
 		{EventProjectCreated, true},
 		{EventTaskStatusChanged, true},
 		{EventArtifactCreated, true},
+		{EventTaskRunStarted, true},
+		{EventTaskRunFinished, true},
 		{"task.exploded", false},
 		{"", false},
 	}

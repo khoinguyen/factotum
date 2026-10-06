@@ -107,6 +107,13 @@ type Options struct {
 	// ReadyTimeout bounds sandbox readiness polling. Zero uses
 	// DefaultReadyTimeout.
 	ReadyTimeout time.Duration
+	// ProviderCleanupTimeout bounds retrying provider deletion after a sandbox
+	// is deleted (the gateway detaches providers asynchronously). Zero uses
+	// providerDeleteAttempts * providerDeleteDelay.
+	ProviderCleanupTimeout time.Duration
+	// ProviderCleanupInterval is the pause between provider-delete retries.
+	// Zero uses providerDeleteDelay.
+	ProviderCleanupInterval time.Duration
 	// NewName returns a sandbox name; nil generates a random one. The gateway
 	// caps sandbox names at 19 characters.
 	NewName func() string

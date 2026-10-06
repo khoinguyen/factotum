@@ -157,6 +157,12 @@ func New(opts Options) *Backend {
 	if opts.ReadyTimeout <= 0 {
 		opts.ReadyTimeout = DefaultReadyTimeout
 	}
+	if opts.ProviderCleanupTimeout <= 0 {
+		opts.ProviderCleanupTimeout = providerDeleteAttempts * providerDeleteDelay
+	}
+	if opts.ProviderCleanupInterval <= 0 {
+		opts.ProviderCleanupInterval = providerDeleteDelay
+	}
 	if opts.NewName == nil {
 		opts.NewName = randomName
 	}
@@ -184,6 +190,12 @@ type environment struct {
 	mu        sync.Mutex
 	providers []string
 	procs     map[*execution]*runningProcess
+	// created records that a sandbox create was attempted, so teardown knows
+	// whether a sandbox delete is warranted.
+	created bool
+	// sandboxGone records a completed `sandbox delete`, so a retried Delete
+	// skips it instead of failing on an already-removed sandbox.
+	sandboxGone bool
 }
 
 // runningProcess is a live command tracked so Stop can end it.
@@ -200,7 +212,7 @@ func (h *handle) ID() string { return h.id }
 // Prepare creates a detached sandbox, applies the hardened policy, and places
 // the spec's workspace and files inside it.
 func (b *Backend) Prepare(ctx context.Context, spec isolation.Spec) (isolation.Handle, error) {
-	policyPath, cleanup, err := b.writePolicy(spec.Policy)
+	policyPath, cleanup, err := b.writePolicy(spec.Policy, spec.Image.User)
 	if err != nil {
 		return nil, err
 	}
@@ -218,31 +230,26 @@ func (b *Backend) Prepare(ctx context.Context, spec isolation.Spec) (isolation.H
 	for _, c := range spec.Credentials {
 		provider, err := b.createProvider(ctx, name, c)
 		if err != nil {
-			b.teardown(ctx, env)
-			return nil, err
+			return nil, errors.Join(err, b.teardown(ctx, env))
 		}
 		env.providers = append(env.providers, provider)
 	}
 
+	env.created = true
 	if _, err := b.run.Run(ctx, b.cmd(b.createArgs(name, image, policyPath, env, spec)...), nil); err != nil {
-		b.teardown(ctx, env)
-		return nil, fmt.Errorf("openshell: create sandbox %q: %w", name, err)
+		return nil, errors.Join(fmt.Errorf("openshell: create sandbox %q: %w", name, err), b.teardown(ctx, env))
 	}
 	if err := b.waitReady(ctx, name); err != nil {
-		b.teardown(ctx, env)
-		return nil, err
+		return nil, errors.Join(err, b.teardown(ctx, env))
 	}
 	if err := b.mkdir(ctx, name, env.workdir); err != nil {
-		b.teardown(ctx, env)
-		return nil, err
+		return nil, errors.Join(err, b.teardown(ctx, env))
 	}
 	if err := b.uploadWorkspace(ctx, env, spec.Workdir); err != nil {
-		b.teardown(ctx, env)
-		return nil, err
+		return nil, errors.Join(err, b.teardown(ctx, env))
 	}
 	if err := b.uploadFiles(ctx, env, spec.Files); err != nil {
-		b.teardown(ctx, env)
-		return nil, err
+		return nil, errors.Join(err, b.teardown(ctx, env))
 	}
 
 	b.mu.Lock()
@@ -511,7 +518,9 @@ func (b *Backend) Stop(_ context.Context, h isolation.Handle) error {
 
 // Delete stops the sandbox, removes it and its workspace, and deletes every
 // provider it created. It is idempotent; a foreign or never-prepared handle is
-// an error.
+// an error. A handle is only recorded as deleted once both the sandbox and its
+// providers are gone, so a transient failure is retried rather than turned into
+// a no-op that leaks the sandbox or a provider.
 func (b *Backend) Delete(ctx context.Context, h isolation.Handle) error {
 	id, err := handleID(h)
 	if err != nil {
@@ -524,17 +533,14 @@ func (b *Backend) Delete(ctx context.Context, h isolation.Handle) error {
 		return nil
 	}
 	env, ok := b.envs[id]
+	b.mu.Unlock()
 	if !ok {
-		b.mu.Unlock()
 		return fmt.Errorf("isolation/openshell: unknown handle %q", id)
 	}
-	delete(b.envs, id)
-	b.deleted[id] = struct{}{}
-	b.mu.Unlock()
 
 	env.stop()
-	if _, err := b.run.Run(ctx, b.cmd("sandbox", "delete", env.name), nil); err != nil {
-		return fmt.Errorf("openshell: delete sandbox %q: %w", env.name, err)
+	if err := b.deleteSandbox(ctx, env); err != nil {
+		return err
 	}
 	var errs error
 	for _, provider := range env.providerList() {
@@ -542,7 +548,28 @@ func (b *Backend) Delete(ctx context.Context, h isolation.Handle) error {
 			errs = errors.Join(errs, err)
 		}
 	}
-	return errs
+	if errs != nil {
+		return errs
+	}
+
+	b.mu.Lock()
+	delete(b.envs, id)
+	b.deleted[id] = struct{}{}
+	b.mu.Unlock()
+	return nil
+}
+
+// deleteSandbox removes the sandbox once, recording completion so a retried
+// Delete skips an already-removed sandbox.
+func (b *Backend) deleteSandbox(ctx context.Context, env *environment) error {
+	if env.isSandboxGone() {
+		return nil
+	}
+	if _, err := b.run.Run(ctx, b.cmd("sandbox", "delete", env.name), nil); err != nil {
+		return fmt.Errorf("openshell: delete sandbox %q: %w", env.name, err)
+	}
+	env.markSandboxGone()
+	return nil
 }
 
 // ApplyPolicy installs a policy on the live sandbox. An empty policy (nothing
@@ -557,7 +584,7 @@ func (b *Backend) ApplyPolicy(ctx context.Context, h isolation.Handle, p isolati
 	if emptyPolicy(p) {
 		return nil
 	}
-	policyPath, cleanup, err := b.writePolicy(p)
+	policyPath, cleanup, err := b.writePolicy(p, "")
 	if err != nil {
 		return err
 	}
@@ -619,29 +646,45 @@ func (b *Backend) createProvider(ctx context.Context, sandbox string, c isolatio
 }
 
 // deleteProvider removes a provider, retrying while the asynchronous sandbox
-// deletion settles. A provider that cannot be removed is reported, never
-// swallowed: it may still hold credential material.
+// deletion settles. A provider that no longer exists counts as removed. A
+// provider that cannot be removed is reported, never swallowed: it may still
+// hold credential material.
 func (b *Backend) deleteProvider(ctx context.Context, provider string) error {
+	deadline := time.Now().Add(b.opts.ProviderCleanupTimeout)
 	var last error
-	for attempt := 0; attempt < providerDeleteAttempts; attempt++ {
+	for {
+		// A provider that is already gone is a success, so a retried Delete
+		// does not spin on "not found".
+		if _, err := b.run.Run(ctx, b.cmd("provider", "get", provider), nil); err != nil {
+			return nil
+		}
 		if _, err := b.run.Run(ctx, b.cmd("provider", "delete", provider), nil); err == nil {
 			return nil
 		} else {
 			last = err
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(providerDeleteDelay):
+		if !time.Now().After(deadline) {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(b.opts.ProviderCleanupInterval):
+				continue
+			}
 		}
+		return fmt.Errorf("openshell: delete provider %q: %w", provider, last)
 	}
-	return fmt.Errorf("openshell: delete provider %q: %w", provider, last)
 }
 
 // writePolicy renders the effective policy to a temp file and returns its path
-// and a cleanup function. A Spec that carries a backend-native Raw document is
-// honored verbatim; otherwise the hardened template is rendered.
-func (b *Backend) writePolicy(p isolation.Policy) (string, func(), error) {
+// and a cleanup function. A caller-supplied Raw document is honored verbatim;
+// otherwise the hardened template is rendered. The identity is seeded from the
+// image's user (a harness's requested non-root identity), then a policy or
+// backend override; Build rejects root.
+func (b *Backend) writePolicy(p isolation.Policy, imageUser string) (string, func(), error) {
+	user, group := splitUser(imageUser)
+	runAsUser := firstNonEmpty(p.RunAsUser, user, b.opts.RunAsUser)
+	runAsGroup := firstNonEmpty(p.RunAsGroup, group, b.opts.RunAsGroup)
+
 	var raw []byte
 	if len(p.Raw) > 0 {
 		raw = p.Raw
@@ -650,8 +693,8 @@ func (b *Backend) writePolicy(p isolation.Policy) (string, func(), error) {
 			OverridePath:  b.opts.OverridePath,
 			AllowHosts:    append(append([]string(nil), b.opts.AllowHosts...), p.AllowHosts...),
 			HarnessBinary: b.opts.HarnessBinary,
-			RunAsUser:     firstNonEmpty(p.RunAsUser, b.opts.RunAsUser),
-			RunAsGroup:    firstNonEmpty(p.RunAsGroup, b.opts.RunAsGroup),
+			RunAsUser:     runAsUser,
+			RunAsGroup:    runAsGroup,
 		})
 		if err != nil {
 			return "", nil, err
@@ -706,12 +749,24 @@ func (b *Backend) mkdir(ctx context.Context, name, dir string) error {
 	return nil
 }
 
-// teardown best-effort removes a partially-created sandbox and its providers.
-func (b *Backend) teardown(ctx context.Context, env *environment) {
-	_, _ = b.run.Run(context.WithoutCancel(ctx), b.cmd("sandbox", "delete", env.name), nil)
-	for _, provider := range env.providerList() {
-		_, _ = b.run.Run(context.WithoutCancel(ctx), b.cmd("provider", "delete", provider), nil)
+// teardown removes a partially-created sandbox and its providers after a failed
+// Prepare. Provider deletion uses the retrying path (the gateway detaches
+// providers asynchronously) and any cleanup failure is returned, never
+// swallowed: an orphaned provider still holds credential material.
+func (b *Backend) teardown(ctx context.Context, env *environment) error {
+	ctx = context.WithoutCancel(ctx)
+	var errs error
+	if env.created {
+		if err := b.deleteSandbox(ctx, env); err != nil {
+			errs = errors.Join(errs, err)
+		}
 	}
+	for _, provider := range env.providerList() {
+		if err := b.deleteProvider(ctx, provider); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+	return errs
 }
 
 func (b *Backend) lookup(h isolation.Handle) (*environment, error) {
@@ -794,6 +849,32 @@ func (e *environment) providerList() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return append([]string(nil), e.providers...)
+}
+
+func (e *environment) isSandboxGone() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.sandboxGone
+}
+
+func (e *environment) markSandboxGone() {
+	e.mu.Lock()
+	e.sandboxGone = true
+	e.mu.Unlock()
+}
+
+// splitUser splits an image user "uid[:gid]" into its non-root parts. An empty
+// user yields empty strings, so a backend override or the hardened default
+// applies.
+func splitUser(user string) (string, string) {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return "", ""
+	}
+	if i := strings.IndexByte(user, ':'); i >= 0 {
+		return strings.TrimSpace(user[:i]), strings.TrimSpace(user[i+1:])
+	}
+	return user, ""
 }
 
 // execution is one running command: it streams output events and, independently,

@@ -81,4 +81,12 @@ func TestTaskKindMutationInvolvingIdeaRejected(t *testing.T) {
 	if err := r.runErr("task", "update", ideaID, "-k", "task"); err == nil {
 		t.Fatal("turning an idea into a task via update should fail; use task promote")
 	}
+
+	help := r.run("task", "update", "--help")
+	if strings.Contains(help, "task, milestone, or idea") {
+		t.Fatalf("update help must not advertise idea as an accepted value:\n%s", help)
+	}
+	if !strings.Contains(help, "ft task promote") {
+		t.Fatalf("update help should point at task promote for ideas:\n%s", help)
+	}
 }

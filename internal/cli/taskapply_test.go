@@ -130,6 +130,77 @@ func TestTaskApplyRejectsStaleDocument(t *testing.T) {
 	}
 }
 
+func TestTaskApplyMergesConcurrentChangeToAnotherField(t *testing.T) {
+	r := newRunner(t)
+	taskID := newDocTask(t, r)
+	doc := r.run("task", "get", taskID, "-o", "json")
+
+	// A concurrent change to a field the document does not touch must survive.
+	r.run("task", "set", taskID, "body=concurrent body")
+
+	edited := mutateJSON(t, doc, func(fields map[string]any) { fields["title"] = "mine" })
+	path := writeDoc(t, "task.json", edited)
+
+	out := r.run("task", "apply", "-f", path)
+	if !strings.Contains(out, "updated: true") {
+		t.Fatalf("a mergeable stale document should apply, got:\n%s", out)
+	}
+	got := r.run("task", "get", taskID, "-o", "json")
+	if !strings.Contains(got, `"title": "mine"`) {
+		t.Fatalf("document change was not applied:\n%s", got)
+	}
+	if !strings.Contains(got, `"description": "concurrent body"`) {
+		t.Fatalf("concurrent change was overwritten:\n%s", got)
+	}
+}
+
+func TestTaskApplyConflictsOnSameFieldChange(t *testing.T) {
+	r := newRunner(t)
+	taskID := newDocTask(t, r)
+	doc := r.run("task", "get", taskID, "-o", "json")
+
+	// A concurrent change to the same field the document edits is a conflict.
+	r.run("task", "set", taskID, "body=concurrent body")
+
+	edited := mutateJSON(t, doc, func(fields map[string]any) { fields["title"] = "mine" })
+	edited = mutateJSON(t, edited, func(fields map[string]any) { fields["description"] = "mine body" })
+	path := writeDoc(t, "task.json", edited)
+
+	err := r.runErr("task", "apply", "-f", path)
+	if err == nil {
+		t.Fatal("expected a conflict applying a document that diverged on one field, got nil")
+	}
+	if !strings.Contains(err.Error(), "description") {
+		t.Fatalf("conflict should name the diverging field, got: %v", err)
+	}
+	if got := r.run("task", "get", taskID, "-o", "json"); !strings.Contains(got, `"description": "concurrent body"`) {
+		t.Fatalf("conflicting apply must not overwrite the concurrent change:\n%s", got)
+	}
+}
+
+func TestTaskApplyMergesAcrossConcurrentManagedChange(t *testing.T) {
+	r := newRunner(t)
+	taskID := newDocTask(t, r)
+	doc := r.run("task", "get", taskID, "-o", "json")
+
+	// A concurrent command changes a relation the document only echoes; an
+	// unrelated field edit must still apply instead of being rejected as a
+	// managed-field modification.
+	r.run("actor", "create", "--kind", "agent", "claude")
+	r.run("task", "assign", taskID, "-a", "claude")
+
+	edited := mutateJSON(t, doc, func(fields map[string]any) { fields["title"] = "mine" })
+	path := writeDoc(t, "task.json", edited)
+
+	if err := r.runErr("task", "apply", "-f", path); err != nil {
+		t.Fatalf("a concurrent managed-field change must not block an unrelated merge: %v", err)
+	}
+	got := r.run("task", "get", taskID, "-o", "json")
+	if !strings.Contains(got, `"title": "mine"`) || !strings.Contains(got, `"assignee": "claude"`) {
+		t.Fatalf("merge lost a change:\n%s", got)
+	}
+}
+
 func TestTaskEditUsesEditor(t *testing.T) {
 	r := newRunner(t)
 	taskID := newDocTask(t, r)

@@ -47,6 +47,29 @@ type notReadyDoc struct {
 	Detail     string `json:"detail" yaml:"detail"`
 }
 
+// taskBase is the revision a task document was derived from: the field values
+// `task get -o json|yaml` observed when it produced the document. `task apply`
+// three-way merges the document against this base and the stored task, so a
+// stale document still applies when it and a concurrent change touched
+// different fields.
+type taskBase struct {
+	Repo               *string    `json:"repo,omitempty" yaml:"repo,omitempty"`
+	Kind               *string    `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Title              *string    `json:"title,omitempty" yaml:"title,omitempty"`
+	Description        *string    `json:"description,omitempty" yaml:"description,omitempty"`
+	Status             *string    `json:"status,omitempty" yaml:"status,omitempty"`
+	Priority           *int       `json:"priority,omitempty" yaml:"priority,omitempty"`
+	Labels             *[]string  `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Groomed            *bool      `json:"groomed,omitempty" yaml:"groomed,omitempty"`
+	AcceptanceCriteria *[]string  `json:"acceptance_criteria,omitempty" yaml:"acceptance_criteria,omitempty"`
+	Assignee           *string    `json:"assignee,omitempty" yaml:"assignee,omitempty"`
+	Deps               *[]string  `json:"deps,omitempty" yaml:"deps,omitempty"`
+	WaitingOn          *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
+	Notes              []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
+	Snooze             *snoozeDoc `json:"snooze,omitempty" yaml:"snooze,omitempty"`
+	NotBefore          *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
+}
+
 // taskDoc is the stable document exchanged by `task get -o json|yaml` and
 // `task apply -f`. Pointer fields distinguish an omitted field (leave
 // unchanged, or ignore for read-only fields) from an explicit value.
@@ -78,6 +101,10 @@ type taskDoc struct {
 	Checks    []checkResultDoc `json:"checks,omitempty" yaml:"checks,omitempty"`
 	CreatedAt *time.Time       `json:"created_at,omitempty" yaml:"created_at,omitempty"`
 	UpdatedAt *time.Time       `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+	// Base is the revision the document was derived from, captured by
+	// `task get -o json|yaml`. `task apply` three-way merges the document's
+	// fields against it. It is read-only input, not a field of the task.
+	Base *taskBase `json:"base,omitempty" yaml:"base,omitempty"`
 }
 
 // taskDocFrom renders a task as the round-trippable document. Relation fields
@@ -104,14 +131,6 @@ func taskDocFrom(task *core.Task) taskDoc {
 	}
 	createdAt := task.CreatedAt
 	updatedAt := task.UpdatedAt
-	notes := make([]noteDoc, 0, len(task.Notes))
-	for _, note := range task.Notes {
-		entry := noteDoc{ID: note.ID, Author: string(note.Author), Body: note.Body, CreatedAt: note.CreatedAt, System: note.System}
-		for _, link := range note.Links {
-			entry.Links = append(entry.Links, linkDoc{Kind: string(link.Kind), URL: link.URL, Title: link.Title})
-		}
-		notes = append(notes, entry)
-	}
 	doc := taskDoc{
 		ID:                 &id,
 		ProjectID:          &projectID,
@@ -126,7 +145,7 @@ func taskDocFrom(task *core.Task) taskDoc {
 		AcceptanceCriteria: &acceptanceCriteria,
 		Deps:               &deps,
 		WaitingOn:          &waitingOn,
-		Notes:              notes,
+		Notes:              noteDocsFrom(task.Notes),
 		CreatedAt:          &createdAt,
 		UpdatedAt:          &updatedAt,
 	}
@@ -142,6 +161,66 @@ func taskDocFrom(task *core.Task) taskDoc {
 		doc.Snooze = snoozeDocFrom(*task.Snooze)
 	}
 	return doc
+}
+
+func noteDocsFrom(notes []core.Note) []noteDoc {
+	out := make([]noteDoc, 0, len(notes))
+	for _, note := range notes {
+		entry := noteDoc{ID: note.ID, Author: string(note.Author), Body: note.Body, CreatedAt: note.CreatedAt, System: note.System}
+		for _, link := range note.Links {
+			entry.Links = append(entry.Links, linkDoc{Kind: string(link.Kind), URL: link.URL, Title: link.Title})
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// taskBaseFrom snapshots the fields a document can carry a change to, so a
+// document produced by `task get` remembers the revision it was derived from.
+func taskBaseFrom(task *core.Task) *taskBase {
+	repo := task.Repo
+	kind := string(task.Kind)
+	title := task.Title
+	description := task.Description
+	status := string(task.Status)
+	priority := task.Priority
+	labels := append([]string{}, task.Labels...)
+	groomed := task.Groomed
+	acceptanceCriteria := append([]string{}, task.AcceptanceCriteria...)
+	deps := make([]string, 0, len(task.Deps))
+	for _, dep := range task.Deps {
+		deps = append(deps, string(dep))
+	}
+	waitingOn := make([]string, 0, len(task.WaitingOn))
+	for _, actor := range task.WaitingOn {
+		waitingOn = append(waitingOn, string(actor))
+	}
+	base := &taskBase{
+		Repo:               &repo,
+		Kind:               &kind,
+		Title:              &title,
+		Description:        &description,
+		Status:             &status,
+		Priority:           &priority,
+		Labels:             &labels,
+		Groomed:            &groomed,
+		AcceptanceCriteria: &acceptanceCriteria,
+		Deps:               &deps,
+		WaitingOn:          &waitingOn,
+		Notes:              noteDocsFrom(task.Notes),
+	}
+	if task.AssigneeID != nil {
+		assignee := string(*task.AssigneeID)
+		base.Assignee = &assignee
+	}
+	if task.NotBefore != nil {
+		notBefore := *task.NotBefore
+		base.NotBefore = &notBefore
+	}
+	if task.Snooze != nil {
+		base.Snooze = snoozeDocFrom(*task.Snooze)
+	}
+	return base
 }
 
 // taskListEntry is the stable, snake_case shape of one `task list` row. Its
@@ -273,9 +352,16 @@ func taskDocValues(doc taskDoc) map[string]any {
 	return out
 }
 
-// taskSet validates the document against the current task and maps its mutable
-// fields into an app.TaskSet. Immutable and command-managed fields may be
-// echoed unchanged but must not be modified.
+// taskSet validates the document against the current task and maps its changed
+// fields into an app.TaskSet.
+//
+// When the document carries the Base revision it was derived from, changes are
+// three-way merged with concurrent writes: a field only the document touched
+// takes the document's value, a field only a concurrent write touched keeps the
+// stored value, and a field both changed to different values fails with a
+// conflict naming it. Without a Base (a hand-written document), the document is
+// compared directly to the current task and updated_at stays a compare-and-swap
+// token.
 func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
 	if doc.ID != nil && *doc.ID != string(current.ID) {
 		return app.TaskSet{}, fmt.Errorf("%w: id is immutable", core.ErrInvalid)
@@ -283,75 +369,102 @@ func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
 	if doc.ProjectID != nil && *doc.ProjectID != string(current.ProjectID) {
 		return app.TaskSet{}, fmt.Errorf("%w: project_id is immutable", core.ErrInvalid)
 	}
-	// created_at is server-owned bookkeeping; it is carried for visibility and
-	// otherwise ignored. updated_at is a real compare-and-swap token: the store
-	// rejects the write if the task changed since the document was read.
-	if doc.Assignee != nil && !equalOptionalString(doc.Assignee, actorIDString(current.AssigneeID)) {
+	// The revision the document was derived from; without a base block this is
+	// the current task, which reduces the merge to a direct comparison.
+	base := doc.baseValues(current)
+
+	// Immutable and command-managed fields may be echoed back unchanged but
+	// must not be modified. Compared against the base so a concurrent change to
+	// a managed field is preserved rather than blamed on the document.
+	if !equalOptionalString(doc.Assignee, base.assignee) {
 		return app.TaskSet{}, fmt.Errorf("%w: assignee is managed by `ft task assign`", core.ErrInvalid)
 	}
-	currentDeps := make([]string, 0, len(current.Deps))
-	for _, dep := range current.Deps {
-		currentDeps = append(currentDeps, string(dep))
-	}
-	if !equalStringSet(doc.Deps, currentDeps) {
+	if !equalStringSet(doc.Deps, base.deps) {
 		return app.TaskSet{}, fmt.Errorf("%w: deps are managed by `ft task dep`", core.ErrInvalid)
 	}
-	currentWaiting := make([]string, 0, len(current.WaitingOn))
-	for _, actor := range current.WaitingOn {
-		currentWaiting = append(currentWaiting, string(actor))
-	}
-	if !equalStringSet(doc.WaitingOn, currentWaiting) {
+	if !equalStringSet(doc.WaitingOn, base.waitingOn) {
 		return app.TaskSet{}, fmt.Errorf("%w: waiting_on is managed by `ft task wait`", core.ErrInvalid)
 	}
-	if !equalNotes(doc.Notes, current.Notes) {
+	if doc.Notes != nil && !equalNoteDocs(doc.Notes, base.notes) {
 		return app.TaskSet{}, fmt.Errorf("%w: notes are managed by `ft task note`", core.ErrInvalid)
 	}
-	if !equalSnooze(doc.Snooze, current.Snooze) {
+	if doc.Snooze != nil && !equalSnoozeDocs(doc.Snooze, base.snooze) {
 		return app.TaskSet{}, fmt.Errorf("%w: snooze is managed by `ft task snooze`", core.ErrInvalid)
 	}
 
 	var set app.TaskSet
-	if doc.Kind != nil && *doc.Kind != string(current.Kind) {
-		kind := core.TaskKind(*doc.Kind)
+	var conflicts []string
+	record := func(field string) { conflicts = append(conflicts, field) }
+
+	if value, changed, conflict := mergeScalar(doc.Kind, base.kind, string(current.Kind)); conflict {
+		record("kind")
+	} else if changed {
+		kind := core.TaskKind(*value)
 		if !kind.Valid() {
 			return app.TaskSet{}, fmt.Errorf("%w: unknown task kind %q", core.ErrInvalid, *doc.Kind)
 		}
 		set.Kind = &kind
 	}
-	if doc.Status != nil && *doc.Status != string(current.Status) {
-		status := core.TaskStatus(*doc.Status)
+	if value, changed, conflict := mergeScalar(doc.Status, base.status, string(current.Status)); conflict {
+		record("status")
+	} else if changed {
+		status := core.TaskStatus(*value)
 		if !status.Valid() {
 			return app.TaskSet{}, fmt.Errorf("%w: unknown task status %q", core.ErrInvalid, *doc.Status)
 		}
 		set.Status = &status
 	}
-	if doc.Repo != nil && *doc.Repo != current.Repo {
-		set.Repo = doc.Repo
+	if value, changed, conflict := mergeScalar(doc.Repo, base.repo, current.Repo); conflict {
+		record("repo")
+	} else if changed {
+		set.Repo = value
 	}
-	if doc.Title != nil && *doc.Title != current.Title {
-		set.Title = doc.Title
+	if value, changed, conflict := mergeScalar(doc.Title, base.title, current.Title); conflict {
+		record("title")
+	} else if changed {
+		set.Title = value
 	}
-	if doc.Description != nil && *doc.Description != current.Description {
-		set.Description = doc.Description
+	if value, changed, conflict := mergeScalar(doc.Description, base.description, current.Description); conflict {
+		record("description")
+	} else if changed {
+		set.Description = value
 	}
-	if doc.Priority != nil && *doc.Priority != current.Priority {
-		set.Priority = doc.Priority
+	if value, changed, conflict := mergeScalar(doc.Priority, base.priority, current.Priority); conflict {
+		record("priority")
+	} else if changed {
+		set.Priority = value
 	}
-	if doc.NotBefore != nil && (current.NotBefore == nil || !doc.NotBefore.Equal(*current.NotBefore)) {
-		notBefore := *doc.NotBefore
-		set.NotBefore = &notBefore
+	if value, changed, conflict := mergeScalar(doc.Groomed, base.groomed, current.Groomed); conflict {
+		record("groomed")
+	} else if changed {
+		set.Groomed = value
 	}
-	if doc.Labels != nil && !equalStringSet(doc.Labels, current.Labels) {
-		set.Labels = *doc.Labels
+	if value, changed, conflict := mergeStringSet(doc.Labels, base.labels, current.Labels); conflict {
+		record("labels")
+	} else if changed {
+		set.Labels = *value
 	}
-	if doc.Groomed != nil && *doc.Groomed != current.Groomed {
-		groomed := *doc.Groomed
-		set.Groomed = &groomed
+	if value, changed, conflict := mergeStringSlice(doc.AcceptanceCriteria, base.acceptanceCriteria, current.AcceptanceCriteria); conflict {
+		record("acceptance_criteria")
+	} else if changed {
+		set.AcceptanceCriteria = *value
 	}
-	if doc.AcceptanceCriteria != nil && !equalStringSlice(doc.AcceptanceCriteria, current.AcceptanceCriteria) {
-		set.AcceptanceCriteria = *doc.AcceptanceCriteria
+	if value, changed, conflict := mergeTime(doc.NotBefore, base.notBefore, current.NotBefore); conflict {
+		record("not_before")
+	} else if changed {
+		set.NotBefore = value
 	}
-	set.Expect = doc.UpdatedAt
+
+	if len(conflicts) > 0 {
+		return app.TaskSet{}, fmt.Errorf("%w: task %s was modified concurrently; conflicting fields: %s",
+			core.ErrConflict, current.ID, strings.Join(conflicts, ", "))
+	}
+	if doc.Base != nil {
+		expected := current.UpdatedAt
+		set.Expect = &expected
+	} else {
+		set.Expect = doc.UpdatedAt
+	}
 	return set, nil
 }
 
@@ -481,39 +594,32 @@ func editTask(contents []byte, format string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-// equalNotes reports whether an optional document note list matches the
-// current notes. A nil document list means "not supplied".
-func equalNotes(doc []noteDoc, current []core.Note) bool {
-	if doc == nil {
-		return true
-	}
-	if len(doc) != len(current) {
+// equalNoteDocs reports whether two note lists match by identity and body, the
+// fields a document can carry back.
+func equalNoteDocs(left, right []noteDoc) bool {
+	if len(left) != len(right) {
 		return false
 	}
-	for i := range doc {
-		if doc[i].ID != current[i].ID || doc[i].Body != current[i].Body {
+	for i := range left {
+		if left[i].ID != right[i].ID || left[i].Body != right[i].Body {
 			return false
 		}
 	}
 	return true
 }
 
-// equalSnooze reports whether an optional document snooze matches the current
-// snooze. A nil document snooze means "not supplied".
-func equalSnooze(doc *snoozeDoc, current *core.Snooze) bool {
-	if doc == nil {
-		return true
+// equalSnoozeDocs reports whether two snooze documents match.
+func equalSnoozeDocs(left, right *snoozeDoc) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
 	}
-	if current == nil {
+	if left.Indefinite != right.Indefinite {
 		return false
 	}
-	if doc.Indefinite != current.Indefinite {
+	if !equalOptionalTime(left.Until, right.Until) {
 		return false
 	}
-	if !equalOptionalTime(doc.Until, current.Until) {
-		return false
-	}
-	return equalOptionalTask(doc.UntilTask, current.UntilTask)
+	return equalOptionalStringPtr(left.UntilTask, right.UntilTask)
 }
 
 func equalOptionalTime(left, right *time.Time) bool {
@@ -523,11 +629,176 @@ func equalOptionalTime(left, right *time.Time) bool {
 	return left.Equal(*right)
 }
 
-func equalOptionalTask(left *string, right *core.TaskID) bool {
+func equalOptionalStringPtr(left, right *string) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
-	return *left == string(*right)
+	return *left == *right
+}
+
+func currentDeps(current *core.Task) []string {
+	out := make([]string, 0, len(current.Deps))
+	for _, dep := range current.Deps {
+		out = append(out, string(dep))
+	}
+	return out
+}
+
+func currentWaiting(current *core.Task) []string {
+	out := make([]string, 0, len(current.WaitingOn))
+	for _, actor := range current.WaitingOn {
+		out = append(out, string(actor))
+	}
+	return out
+}
+
+// taskBaseValues is the base revision with every field resolved to a concrete
+// value. A document without a base block resolves to the current task, which
+// makes every three-way merge a direct comparison.
+type taskBaseValues struct {
+	repo               string
+	kind               string
+	title              string
+	description        string
+	status             string
+	priority           int
+	labels             []string
+	groomed            bool
+	acceptanceCriteria []string
+	notBefore          *time.Time
+	assignee           string
+	deps               []string
+	waitingOn          []string
+	notes              []noteDoc
+	snooze             *snoozeDoc
+}
+
+// baseValues resolves the revision the document was derived from. Without a
+// base block the current task is the base.
+func (doc taskDoc) baseValues(current *core.Task) taskBaseValues {
+	values := taskBaseValues{
+		repo:               current.Repo,
+		kind:               string(current.Kind),
+		title:              current.Title,
+		description:        current.Description,
+		status:             string(current.Status),
+		priority:           current.Priority,
+		labels:             append([]string{}, current.Labels...),
+		groomed:            current.Groomed,
+		acceptanceCriteria: append([]string{}, current.AcceptanceCriteria...),
+		notBefore:          current.NotBefore,
+		assignee:           actorIDString(current.AssigneeID),
+		deps:               currentDeps(current),
+		waitingOn:          currentWaiting(current),
+		notes:              noteDocsFrom(current.Notes),
+	}
+	if current.Snooze != nil {
+		values.snooze = snoozeDocFrom(*current.Snooze)
+	}
+	if doc.Base == nil {
+		return values
+	}
+	// A base block is a complete snapshot: a nil optional field means the base
+	// carried no value, not that the value is unknown.
+	values.repo = derefString(doc.Base.Repo)
+	values.kind = derefString(doc.Base.Kind)
+	values.title = derefString(doc.Base.Title)
+	values.description = derefString(doc.Base.Description)
+	values.status = derefString(doc.Base.Status)
+	if doc.Base.Priority != nil {
+		values.priority = *doc.Base.Priority
+	}
+	values.labels = derefStringSlice(doc.Base.Labels)
+	if doc.Base.Groomed != nil {
+		values.groomed = *doc.Base.Groomed
+	}
+	values.acceptanceCriteria = derefStringSlice(doc.Base.AcceptanceCriteria)
+	values.notBefore = doc.Base.NotBefore
+	values.assignee = derefString(doc.Base.Assignee)
+	values.deps = derefStringSlice(doc.Base.Deps)
+	values.waitingOn = derefStringSlice(doc.Base.WaitingOn)
+	values.notes = doc.Base.Notes
+	values.snooze = doc.Base.Snooze
+	return values
+}
+
+func derefStringSlice(value *[]string) []string {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+// mergeScalar three-way merges one comparable field. ours is the document's
+// value (nil means "not supplied"); base and theirs are the revision the
+// document was derived from and the stored value. It reports whether the
+// document changed the field to a new value and whether the document and a
+// concurrent write diverged.
+func mergeScalar[T comparable](ours *T, base, theirs T) (value *T, changed, conflict bool) {
+	if ours == nil {
+		return nil, false, false
+	}
+	if *ours == base {
+		return nil, false, false
+	}
+	if *ours == theirs {
+		return nil, false, false
+	}
+	if theirs != base {
+		return nil, false, true
+	}
+	return ours, true, false
+}
+
+// mergeStringSet three-way merges an unordered string-list field.
+func mergeStringSet(ours *[]string, base, theirs []string) (value *[]string, changed, conflict bool) {
+	if ours == nil {
+		return nil, false, false
+	}
+	if equalStringSet(ours, base) {
+		return nil, false, false
+	}
+	if equalStringSet(ours, theirs) {
+		return nil, false, false
+	}
+	if !equalStringSet(&theirs, base) {
+		return nil, false, true
+	}
+	return ours, true, false
+}
+
+// mergeStringSlice three-way merges an ordered string-list field.
+func mergeStringSlice(ours *[]string, base, theirs []string) (value *[]string, changed, conflict bool) {
+	if ours == nil {
+		return nil, false, false
+	}
+	if equalStringSlice(ours, base) {
+		return nil, false, false
+	}
+	if equalStringSlice(ours, theirs) {
+		return nil, false, false
+	}
+	if !equalStringSlice(&theirs, base) {
+		return nil, false, true
+	}
+	return ours, true, false
+}
+
+// mergeTime three-way merges an optional timestamp field.
+func mergeTime(ours, base, theirs *time.Time) (value *time.Time, changed, conflict bool) {
+	if ours == nil {
+		return nil, false, false
+	}
+	if equalOptionalTime(ours, base) {
+		return nil, false, false
+	}
+	if equalOptionalTime(ours, theirs) {
+		return nil, false, false
+	}
+	if !equalOptionalTime(theirs, base) {
+		return nil, false, true
+	}
+	return ours, true, false
 }
 
 func actorIDString(id *core.ActorID) string {

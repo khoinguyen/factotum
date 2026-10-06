@@ -134,9 +134,12 @@ until the time passes, then becomes ready with no manual step.
 `task apply -f <file>` (format inferred from the extension; override with `--format`), or open it
 in `$EDITOR` with `task edit <task>`. `id` and `project_id` are immutable, and command-managed
 relations (`assignee`, `deps`, `waiting_on`) may be echoed back unchanged but any modification is
-rejected. `updated_at` is a compare-and-swap token: applying a document produced before a concurrent
-change fails with a conflict instead of overwriting it (`created_at` is carried for information
-only).
+rejected. The document also carries a read-only `base` block: the field values it was derived from.
+`task apply` three-way merges the document against that base and the stored task, so a document
+produced before a concurrent change still applies when the two touched different fields; a field
+both changed to different values fails, naming it (e.g. `conflicting fields: title`). A
+hand-written document without a `base` is compared directly to the current task, and its
+`updated_at` remains a compare-and-swap token (`created_at` is carried for information only).
 
 ## Search
 

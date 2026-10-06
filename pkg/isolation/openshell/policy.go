@@ -36,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -265,11 +266,29 @@ func OverridePath(projectRoot string) string {
 
 func identity(opts Options) (string, string, error) {
 	user := strings.TrimSpace(firstNonEmpty(opts.RunAsUser, DefaultRunAsUser))
-	if isRoot(user) {
-		return "", "", fmt.Errorf("openshell: run_as_user %q is root; a non-root identity is required", user)
+	if !validIdentity(user) {
+		return "", "", fmt.Errorf("openshell: run_as_user %q is not a non-root identity; use numeric UID 1..4294967294 or \"sandbox\"", user)
 	}
 	group := strings.TrimSpace(firstNonEmpty(opts.RunAsGroup, DefaultRunAsGroup))
+	if !validIdentity(group) {
+		return "", "", fmt.Errorf("openshell: run_as_group %q is not a non-root identity; use numeric GID 1..4294967294 or \"sandbox\"", group)
+	}
 	return user, group, nil
+}
+
+// validIdentity mirrors the gateway's process identity rule: the literal
+// "sandbox" or a numeric uid/gid in [1, 4294967294]. Root (0 in any spelling)
+// and the u32::MAX sentinel are rejected locally so the invariant holds before
+// the gateway sees the policy.
+func validIdentity(value string) bool {
+	if value == "sandbox" {
+		return true
+	}
+	n, err := strconv.ParseUint(value, 10, 32)
+	if err != nil {
+		return false
+	}
+	return n >= 1 && n <= uint64(^uint32(0))-1
 }
 
 func normalizeHosts(hosts []string) ([]string, error) {
@@ -290,11 +309,65 @@ func normalizeHosts(hosts []string) ([]string, error) {
 	return out, nil
 }
 
+// validHost accepts the documented OpenShell network-endpoint host grammar: a
+// DNS hostname whose labels are letters, digits, and interior hyphens, or a
+// wildcard pattern. A single `*` may appear inside the first label, and `*` or
+// `**` may be a whole label, but a wildcard host needs at least three labels
+// (rejecting bare `*`/`**` and TLD wildcards like `*.com`), `**` only as the
+// whole first label, and no wildcard in the last (TLD) label. The check is at
+// least as strict as the gateway, so a malformed host fails in Build instead of
+// surfacing later as an opaque sandbox-create error.
 func validHost(host string) bool {
-	if host == "" {
+	if host == "" || strings.ContainsAny(host, " \t/\\@:#?{}") {
 		return false
 	}
-	return !strings.ContainsAny(host, " \t/\\@:#?")
+	labels := strings.Split(host, ".")
+	wildcard := false
+	for i, label := range labels {
+		switch {
+		case label == "":
+			return false
+		case label == "**":
+			if i != 0 {
+				return false
+			}
+			wildcard = true
+		case label == "*":
+			if i == len(labels)-1 {
+				return false
+			}
+			wildcard = true
+		case strings.Contains(label, "*"):
+			if i != 0 || strings.Contains(label, "**") || !validHostLabel(label, true) {
+				return false
+			}
+			wildcard = true
+		default:
+			if !validHostLabel(label, false) {
+				return false
+			}
+		}
+	}
+	return !wildcard || len(labels) >= 3
+}
+
+// validHostLabel reports whether label is a valid DNS label. With wildcard set,
+// `*` characters are treated as ordinary label characters (validated in place,
+// so a wildcard cannot sit on a hyphen edge).
+func validHostLabel(label string, wildcard bool) bool {
+	for i := 0; i < len(label); i++ {
+		c := label[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', wildcard && c == '*':
+		case c == '-':
+			if i == 0 || i == len(label)-1 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func rulesFor(hosts []string, binary string) map[string]NetworkPolicy {
@@ -317,8 +390,15 @@ func rulesFor(hosts []string, binary string) map[string]NetworkPolicy {
 }
 
 func ruleName(host string, port int) string {
-	sanitized := strings.NewReplacer(".", "_", "-", "_").Replace(host)
-	return fmt.Sprintf("allow_%s_%d", sanitized, port)
+	var b strings.Builder
+	for _, r := range host {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return fmt.Sprintf("allow_%s_%d", b.String(), port)
 }
 
 func allowedHosts(rules map[string]NetworkPolicy) []string {
@@ -334,15 +414,6 @@ func allowedHosts(rules map[string]NetworkPolicy) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func isRoot(user string) bool {
-	switch strings.TrimSpace(user) {
-	case "", "0", "root":
-		return true
-	default:
-		return false
-	}
 }
 
 func firstNonEmpty(values ...string) string {

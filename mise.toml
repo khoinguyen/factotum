@@ -88,6 +88,14 @@ description = "Quick scale-harness smoke: 1k tasks across all backends"
 depends = ["build"]
 run = "go run ./cmd/ftscale --tasks 1000 --iterations 3 --warmups 1 --out .perf/results.jsonl"
 
+[tasks.spike-openshell]
+description = "Opt-in real OpenShell isolation spike (needs a local OpenShell gateway; throwaway workspace, no real credentials)"
+run = "spike/openshell/spike.sh"
+
+[tasks.spike-openshell-sdk]
+description = "Opt-in probe of the OpenShell Go SDK against the local gateway (mTLS wiring + Files transport status)"
+run = "spike/openshell/sdk_probe.sh"
+
 [tasks.build]
 description = "Build the ft CLI to ./bin/ft (never the installed binary)"
 run = """

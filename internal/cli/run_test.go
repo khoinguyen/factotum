@@ -81,8 +81,25 @@ func TestRunCommandLocalBackendRequiresOptIn(t *testing.T) {
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("local without opt-in error = %v, want usage", err)
 	}
+	if !strings.Contains(err.Error(), `backend "local"`) {
+		t.Fatalf("guardrail message lost the backend name: %v", err)
+	}
 	if shown := r.run("task", "get", taskID); !strings.HasPrefix(shown, "(todo) ") {
 		t.Fatalf("local run without opt-in changed task state:\n%s", shown)
+	}
+}
+
+func TestRunCommandLoopLocalBackendRequiresOptIn(t *testing.T) {
+	r := newRunner(t)
+	_, _, goal := loopContext(t, r)
+	r.runHarness = harnessfake.New("opencode")
+
+	err := r.runErr("run", "--goal", goal, "--backend", "local", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("local loop without opt-in error = %v, want usage", err)
+	}
+	if !strings.Contains(err.Error(), `backend "local"`) {
+		t.Fatalf("loop guardrail message lost the backend name: %v", err)
 	}
 }
 

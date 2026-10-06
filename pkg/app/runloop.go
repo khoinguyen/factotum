@@ -96,7 +96,7 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 	// Milestones are executable in the graph, but the loop runs work toward the
 	// gate, never the gate itself.
 	if !goal.Kind.Executable() {
-		return nil, fmt.Errorf("%w: goal %s is a %s, not a task or milestone", core.ErrInvalid, goal.ID, goal.Kind)
+		return nil, fmt.Errorf("%w: goal %s has kind %q, not task or milestone", core.ErrInvalid, goal.ID, goal.Kind)
 	}
 
 	outcome := &LoopOutcome{Goal: goal.ID, GoalKind: goal.Kind}

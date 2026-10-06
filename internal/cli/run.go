@@ -74,11 +74,12 @@ func newRunCommand(deps *Deps) *cobra.Command {
 
 // runSelection is the resolved backend, harness, and workspace a run uses.
 type runSelection struct {
-	backend   isolation.IsolationBackend
-	harness   harnesspkg.Harness
-	workspace string
-	model     string
-	args      []string
+	backend     isolation.IsolationBackend
+	backendName string
+	harness     harnesspkg.Harness
+	workspace   string
+	model       string
+	args        []string
 }
 
 // prepareRun merges the per-invocation overrides into the [run] config and
@@ -133,11 +134,12 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 		return nil, err
 	}
 	return &runSelection{
-		backend:   backend,
-		harness:   agentHarness,
-		workspace: workspaceRoot,
-		model:     cfg.Model,
-		args:      cfg.Args,
+		backend:     backend,
+		backendName: backend.Name(),
+		harness:     agentHarness,
+		workspace:   workspaceRoot,
+		model:       cfg.Model,
+		args:        cfg.Args,
 	}, nil
 }
 
@@ -162,7 +164,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID string, opts runOptions) error
 		Actor:         d.currentActorID(cmd.Context()),
 	})
 	if errors.Is(runErr, local.ErrNotOptedIn) {
-		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", d.Config.Run.Backend)
+		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
 	}
 	if outcome == nil {
 		return runErr
@@ -214,7 +216,7 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 		},
 	})
 	if errors.Is(runErr, local.ErrNotOptedIn) {
-		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", d.Config.Run.Backend)
+		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
 	}
 	if outcome == nil {
 		return runErr

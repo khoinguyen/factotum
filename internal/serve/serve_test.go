@@ -298,6 +298,90 @@ func TestNewRequiresBackend(t *testing.T) {
 	}
 }
 
+// TestReasonChipWraps guards the mobile regression where a long, nowrap reason
+// chip (a task with several unresolved deps) overflowed a phone-width viewport
+// and was clipped by overflow-x:hidden. The chip must be allowed to wrap and
+// break long dependency lists anywhere.
+func TestReasonChipWraps(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	f.addTask(t, project.ID, "Fix the widget")
+	ts := newTestServer(t, f, Options{Project: project.ID})
+
+	css := cssRule(getBody(t, ts.URL+"/"), ".chip.reason")
+	if css == "" {
+		t.Fatal("no .chip.reason rule found in the dashboard stylesheet")
+	}
+	for _, decl := range []string{"white-space:normal", "overflow-wrap:anywhere"} {
+		if !strings.Contains(css, decl) {
+			t.Fatalf(".chip.reason does not %q, so a long reason will overflow on phones:\n%s", decl, css)
+		}
+	}
+}
+
+// TestWaitingReasonRendersEveryBlocker ensures the server sends the full
+// unresolved-dependency list to the page rather than truncating it, so the
+// wrapping fix above has content to wrap.
+func TestWaitingReasonRendersEveryBlocker(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	var blockers []core.TaskID
+	for i := 0; i < 6; i++ {
+		blocker := f.addTask(t, project.ID, fmt.Sprintf("blocker %d", i))
+		blockers = append(blockers, blocker.ID)
+	}
+	target := f.addTask(t, project.ID, "target")
+	for _, blocker := range blockers {
+		if _, err := f.tasks.AddDep(context.Background(), target.ID, blocker); err != nil {
+			t.Fatalf("AddDep(%s) error = %v", blocker, err)
+		}
+	}
+
+	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(context.Background())
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+	waiting, ok := findTask(page.Waiting, target.ID)
+	if !ok {
+		t.Fatalf("Waiting = %v, want %s", taskIDs(page.Waiting), target.ID)
+	}
+	for _, blocker := range blockers {
+		if !strings.Contains(waiting.Detail, string(blocker)) {
+			t.Fatalf("waiting detail %q is missing blocker %s", waiting.Detail, blocker)
+		}
+	}
+}
+
+func getBody(t *testing.T, url string) string {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("Get(%s) error = %v", url, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Get(%s) status = %d, want 200", url, resp.StatusCode)
+	}
+	return readBody(t, resp)
+}
+
+// cssRule returns the declaration block for selector in css, or "".
+func cssRule(css, selector string) string {
+	idx := strings.Index(css, selector)
+	if idx < 0 {
+		return ""
+	}
+	rest := css[idx:]
+	end := strings.IndexByte(rest, '}')
+	if end < 0 {
+		return rest
+	}
+	return rest[:end]
+}
+
 func eventNames(body io.Reader) <-chan string {
 	out := make(chan string)
 	go func() {

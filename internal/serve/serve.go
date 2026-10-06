@@ -427,7 +427,10 @@ func (s *Server) projectLabel(snapshot *app.Snapshot) string {
 }
 
 // classify maps a task to its visual class, reusing the readiness buckets the
-// graph already computed rather than re-deriving readiness.
+// graph already computed rather than re-deriving readiness. It intentionally
+// mirrors pkg/render's presentation classes instead of calling render.Classify,
+// which would re-derive the whole view on every task; the class strings are CSS
+// keys local to this template, so there is no behavior to keep in sync.
 func classify(task core.Task, readyAgent, readyHuman, cycle bool) string {
 	switch {
 	case cycle:

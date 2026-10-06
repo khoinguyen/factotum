@@ -26,11 +26,13 @@ const (
 
 // Harness is an in-memory Harness.
 type Harness struct {
-	name     string
-	image    string
-	delivery Delivery
-	sentinel string
-	fail     error
+	name       string
+	image      string
+	entrypoint []string
+	user       string
+	delivery   Delivery
+	sentinel   string
+	fail       error
 }
 
 // New returns a fake harness named name. It delivers the prompt as an argument
@@ -42,6 +44,18 @@ func New(name string) *Harness {
 // WithImage sets the harness's base image reference.
 func (h *Harness) WithImage(ref string) *Harness {
 	h.image = ref
+	return h
+}
+
+// WithEntrypoint overrides the image entrypoint the harness requests.
+func (h *Harness) WithEntrypoint(argv ...string) *Harness {
+	h.entrypoint = argv
+	return h
+}
+
+// WithUser sets the non-root identity the harness requests.
+func (h *Harness) WithUser(user string) *Harness {
+	h.user = user
 	return h
 }
 
@@ -70,7 +84,7 @@ func (h *Harness) Spec(req harness.Request) (isolation.Spec, error) {
 		return isolation.Spec{}, h.fail
 	}
 	spec := isolation.Spec{
-		Image:   isolation.Image{Ref: h.image},
+		Image:   isolation.Image{Ref: h.image, Entrypoint: h.entrypoint, User: h.user},
 		Workdir: req.Workdir,
 		Env:     req.Env,
 		Labels:  req.Labels,

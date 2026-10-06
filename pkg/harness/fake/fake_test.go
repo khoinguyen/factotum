@@ -1,12 +1,14 @@
 package fake_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
+	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
 )
 
 func TestSpecCarriesImageAndWorkdir(t *testing.T) {
@@ -20,6 +22,33 @@ func TestSpecCarriesImageAndWorkdir(t *testing.T) {
 	}
 	if spec.Workdir != "/work" {
 		t.Errorf("workdir = %q, want /work", spec.Workdir)
+	}
+}
+
+func TestSpecCarriesEntrypointAndUser(t *testing.T) {
+	h := fake.New("agent").
+		WithImage("ghcr.io/example/agent:1").
+		WithEntrypoint("opencode", "run").
+		WithUser("1000:1000")
+	spec, err := h.Spec(harness.Request{Workdir: "/work"})
+	if err != nil {
+		t.Fatalf("Spec() error = %v", err)
+	}
+
+	backend := isofake.New("fake")
+	if _, err := backend.Prepare(context.Background(), spec); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	prepared := backend.Prepared()
+	if len(prepared) != 1 {
+		t.Fatalf("Prepared() = %d specs, want 1", len(prepared))
+	}
+	image := prepared[0].Image
+	if strings.Join(image.Entrypoint, " ") != "opencode run" {
+		t.Errorf("entrypoint = %v, want [opencode run]", image.Entrypoint)
+	}
+	if image.User != "1000:1000" {
+		t.Errorf("user = %q, want 1000:1000", image.User)
 	}
 }
 

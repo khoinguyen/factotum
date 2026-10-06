@@ -275,6 +275,27 @@ flag, and a configured credential is declared as a provider reference that the
 isolation backend resolves. A local run uses the host `opencode` binary
 (dev-only); an isolating backend runs the shipped image as a non-root user.
 
+An isolating backend imposes a policy on the run. The OpenShell policy
+(`pkg/isolation/openshell`, checked-in template `policy.yaml`) is deny-by-default:
+the sandbox reaches no host until the project opts in, so OpenCode's phone-home
+to `models.opencode.ai` and `registry.npmjs.org` stays denied. The workload runs
+as a non-root identity, filesystem access is limited to read-only system paths
+plus the workdir and `/tmp`, and no credential value is placed in the sandbox: a
+configured credential is attached through a provider that injects a placeholder.
+The policy advisor stays `manual`; agent-authored rules are never auto-approved.
+
+A project opts in to the hosts it needs by committing
+`.factotum/openshell-policy.yaml`:
+
+```yaml
+allow_hosts:
+  - models.opencode.ai
+  - registry.npmjs.org
+```
+
+Only `allow_hosts` is honored. Any other key is rejected, so a project can widen
+egress but never weaken the identity, filesystem, or credential defaults.
+
 `ft run <task>` drives one task end-to-end: it resolves the task's repositories
 into a workspace, prepares the selected isolation backend, runs the selected
 harness with the task as its prompt, captures the output, and reflects progress

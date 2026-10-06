@@ -264,6 +264,17 @@ network, and mutate files, so never use it for untrusted work. Isolating backend
 (for example OpenShell) are separate registrations of the same port and are the
 only ones fit for untrusted input.
 
+A harness describes one agent CLI end to end: its image, entrypoint, invocation,
+model flag, prompt delivery, completion detection, and output parsing. The first
+harness is OpenCode (image `ghcr.io/anomalyco/opencode`, binary `opencode`). A
+headless run is `opencode run --model <provider/model> <prompt>`: the prompt is
+the final positional argument, the agent's answer is read from stdout, and
+progress and the banner go to stderr. The model and its credentials come from the
+configured provider, never hardcoded: the model is passed through as the model
+flag, and a configured credential is declared as a provider reference that the
+isolation backend resolves. A local run uses the host `opencode` binary
+(dev-only); an isolating backend runs the shipped image as a non-root user.
+
 ## Getting help
 
 ```sh

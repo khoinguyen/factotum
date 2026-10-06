@@ -117,6 +117,39 @@ func TestPromoteCreatesLinkedTaskAndKeepsIdea(t *testing.T) {
 	}
 }
 
+func TestKindMutationInvolvingIdeaIsRejected(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := newIdea(t, h, project, "a spark")
+	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "work"})
+	if err != nil {
+		t.Fatalf("Add(task) error = %v", err)
+	}
+
+	// Demoting executable work into a capture loses its graph position; only an
+	// explicit create makes an idea.
+	ideaKind := core.KindIdea
+	if _, err := h.tasks.Update(ctx, task.ID, TaskUpdate{Kind: &ideaKind}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Update(task -> idea) error = %v, want ErrInvalid", err)
+	}
+
+	// Promoting must go through `task promote` so the origin edge and history
+	// note are written, not a bare kind mutation.
+	taskKind := core.KindTask
+	if _, err := h.tasks.Update(ctx, idea.ID, TaskUpdate{Kind: &taskKind}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Update(idea -> task) error = %v, want ErrInvalid", err)
+	}
+
+	stored, err := h.tasks.Get(ctx, idea.ID)
+	if err != nil {
+		t.Fatalf("Get(idea) error = %v", err)
+	}
+	if stored.Kind != core.KindIdea {
+		t.Fatalf("idea kind changed to %q, want it untouched", stored.Kind)
+	}
+}
+
 func TestPromoteRejectsNonIdea(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

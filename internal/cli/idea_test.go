@@ -41,9 +41,12 @@ func TestTaskPromoteCreatesLinkedTask(t *testing.T) {
 		t.Fatalf("promote should create a task:\n%s", out)
 	}
 
-	// The idea is retained as history.
+	// The idea is retained as history. It gates nothing, so it must not print a
+	// graph "unblocks" line for the promoted task.
 	if got := r.run("task", "get", ideaID); !strings.Contains(got, "kind: idea") {
 		t.Fatalf("the idea should be kept after promotion:\n%s", got)
+	} else if strings.Contains(got, "unblocks:") {
+		t.Fatalf("an idea gates no work and should not print unblocks:\n%s", got)
 	}
 
 	// The new task is linked back to the idea as its origin.
@@ -63,5 +66,19 @@ func TestTaskPromoteRejectsTask(t *testing.T) {
 	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "work"))
 	if err := r.runErr("task", "promote", taskID); err == nil {
 		t.Fatal("promoting a task that is not an idea should fail")
+	}
+}
+
+func TestTaskKindMutationInvolvingIdeaRejected(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("task", "create", "-p", projectID, "-k", "idea", "-t", "spark"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "work"))
+
+	if err := r.runErr("task", "update", taskID, "-k", "idea"); err == nil {
+		t.Fatal("demoting a task to an idea via update should fail")
+	}
+	if err := r.runErr("task", "update", ideaID, "-k", "task"); err == nil {
+		t.Fatal("turning an idea into a task via update should fail; use task promote")
 	}
 }

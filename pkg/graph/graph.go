@@ -23,7 +23,9 @@ type Graph struct {
 
 // ReadyBucket classifies startable tasks by the kind of actor that should pick
 // them up. Ready tasks with no assignee are treated as human work, because an
-// unowned decision needs a person.
+// unowned decision needs a person. A task assigned to an agent counts as agent
+// work only when it is groomed: an ungroomed task still needs a human to decide
+// its scope and acceptance criteria, so it falls to the human bucket.
 type ReadyBucket struct {
 	Agent []core.TaskID
 	Human []core.TaskID
@@ -239,7 +241,7 @@ func (g *Graph) ReadyByActor(actors map[core.ActorID]core.Actor) ReadyBucket {
 				isAgent = true
 			}
 		}
-		if isAgent {
+		if isAgent && t.Groomed {
 			bucket.Agent = append(bucket.Agent, id)
 		} else {
 			bucket.Human = append(bucket.Human, id)

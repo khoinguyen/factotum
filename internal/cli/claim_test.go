@@ -9,8 +9,8 @@ func TestTaskClaimClaimsDistinctReadyTasks(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	r.run("actor", "create", "--kind", "agent", "claude")
-	a := firstField(t, r.run("task", "create", "-p", projectID, "-t", "a"))
-	b := firstField(t, r.run("task", "create", "-p", projectID, "-t", "b"))
+	a := firstField(t, r.run("task", "create", "-p", projectID, "-t", "a", "--groomed", "--acceptance", "done"))
+	b := firstField(t, r.run("task", "create", "-p", projectID, "-t", "b", "--groomed", "--acceptance", "done"))
 
 	first := r.run("task", "claim", "--for", "claude", "-p", projectID)
 	firstID := firstField(t, first)
@@ -37,7 +37,7 @@ func TestTaskClaimStartBeginsWork(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	r.run("actor", "create", "--kind", "agent", "claude")
-	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "a"))
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "a", "--groomed", "--acceptance", "done"))
 
 	out := r.run("task", "claim", "--for", "claude", "--start", "-p", projectID)
 	if !strings.Contains(out, "status: in_progress") {

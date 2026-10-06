@@ -157,6 +157,11 @@ func TestTaskValidate(t *testing.T) {
 		{"idea todo", func(t *Task) { t.Kind = KindIdea }, false},
 		{"idea in progress", func(t *Task) { t.Kind = KindIdea; t.Status = StatusInProgress }, true},
 		{"idea assigned", func(t *Task) { t.Kind = KindIdea; id := ActorID("act-1"); t.AssigneeID = &id }, true},
+		{"groomed without criteria", func(t *Task) { t.Groomed = true }, true},
+		{"groomed with criteria", func(t *Task) { t.Groomed = true; t.AcceptanceCriteria = []string{"it works"} }, false},
+		{"criteria without groomed", func(t *Task) { t.AcceptanceCriteria = []string{"it works"} }, false},
+		{"blank criterion", func(t *Task) { t.AcceptanceCriteria = []string{"  "} }, true},
+		{"groomed idea", func(t *Task) { t.Kind = KindIdea; t.Groomed = true; t.AcceptanceCriteria = []string{"it works"} }, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

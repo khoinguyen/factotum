@@ -200,7 +200,12 @@ func TestAssignAndReadyByActor(t *testing.T) {
 		t.Fatalf("Add(human) error = %v", err)
 	}
 
-	agentTask, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "agent work"})
+	agentTask, _ := h.tasks.Add(ctx, TaskInput{
+		ProjectID:          project.ID,
+		Title:              "agent work",
+		Groomed:            true,
+		AcceptanceCriteria: []string{"done"},
+	})
 	if _, err := h.tasks.Assign(ctx, agentTask.ID, &agent.ID); err != nil {
 		t.Fatalf("Assign(agent) error = %v", err)
 	}
@@ -743,6 +748,51 @@ func TestTaskSetRejectsInvalidStatus(t *testing.T) {
 	bad := core.TaskStatus("bogus")
 	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Status: &bad}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Set(bad status) error = %v, want ErrInvalid", err)
+	}
+}
+
+func TestTaskSetAppliesGroomedAndCriteria(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+
+	created, err := h.tasks.Add(ctx, TaskInput{
+		ProjectID:          project.ID,
+		Title:              "groomed at birth",
+		Groomed:            true,
+		AcceptanceCriteria: []string{"the flag round-trips"},
+	})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if !created.Groomed || len(created.AcceptanceCriteria) != 1 {
+		t.Fatalf("Add() groomed = %v criteria = %v, want true/[1]", created.Groomed, created.AcceptanceCriteria)
+	}
+
+	groomed := true
+	updated, err := h.tasks.Set(ctx, created.ID, TaskSet{
+		Groomed:            &groomed,
+		AcceptanceCriteria: []string{"one", "two"},
+	})
+	if err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if !updated.Groomed || len(updated.AcceptanceCriteria) != 2 {
+		t.Fatalf("Set() groomed = %v criteria = %v, want true/[one two]", updated.Groomed, updated.AcceptanceCriteria)
+	}
+
+	ungroomed := false
+	cleared, err := h.tasks.Set(ctx, created.ID, TaskSet{Groomed: &ungroomed})
+	if err != nil {
+		t.Fatalf("Set(ungroomed) error = %v", err)
+	}
+	if cleared.Groomed {
+		t.Fatalf("Set(ungroomed) Groomed = true, want false")
+	}
+
+	plain, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "ungroomed"})
+	if _, err := h.tasks.Set(ctx, plain.ID, TaskSet{Groomed: &groomed}); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Set(groomed without criteria) error = %v, want ErrInvalid", err)
 	}
 }
 

@@ -61,7 +61,8 @@ func newTaskCommand(deps *Deps) *cobra.Command {
 func newTaskCreateCommand(deps *Deps) *cobra.Command {
 	var projectID, repo, kind, title, body, bodyFile, id string
 	var priority int
-	var labels, depIDs []string
+	var labels, depIDs, acceptance []string
+	var groomed bool
 
 	add := &cobra.Command{
 		Use:   "create",
@@ -82,13 +83,15 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 				body = string(data)
 			}
 			input := app.TaskInput{
-				ProjectID:   project,
-				Repo:        repo,
-				Kind:        core.TaskKind(kind),
-				Title:       title,
-				Description: body,
-				Priority:    priority,
-				Labels:      labels,
+				ProjectID:          project,
+				Repo:               repo,
+				Kind:               core.TaskKind(kind),
+				Title:              title,
+				Description:        body,
+				Priority:           priority,
+				Labels:             labels,
+				Groomed:            groomed,
+				AcceptanceCriteria: acceptance,
 			}
 			if id != "" {
 				customID := core.TaskID(id)
@@ -123,19 +126,26 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 	add.Flags().IntVar(&priority, "priority", 0, "task priority (higher is more important)")
 	add.Flags().StringArrayVar(&labels, "label", nil, "label (repeatable)")
 	add.Flags().StringArrayVarP(&depIDs, "dep", "d", nil, "dependency task id (repeatable)")
+	add.Flags().BoolVar(&groomed, "groomed", false, "mark the task groomed, ready for agent execution (requires --acceptance)")
+	add.Flags().StringArrayVar(&acceptance, "acceptance", nil, "acceptance criterion an engineer can verify (repeatable)")
 	return add
 }
 
 func newTaskListCommand(deps *Deps) *cobra.Command {
 	var projectID, repo string
 	var statuses, kinds, labels []string
+	var groomed, ungroomed bool
 
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List tasks",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			groomedWant, err := groomedFilter(cmd, groomed, ungroomed)
+			if err != nil {
+				return err
+			}
 			projectID = string(deps.resolveProject(projectID))
-			filter := store.TaskFilter{ProjectID: core.ProjectID(projectID), Labels: labels}
+			filter := store.TaskFilter{ProjectID: core.ProjectID(projectID), Labels: labels, Groomed: groomedWant}
 			if repo != "" {
 				filter.Repo = &repo
 			}
@@ -168,21 +178,27 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 	list.Flags().StringArrayVarP(&statuses, "status", "s", nil, "filter by status (repeatable)")
 	list.Flags().StringArrayVarP(&kinds, "kind", "k", nil, "filter by kind")
 	list.Flags().StringArrayVarP(&labels, "label", "l", nil, "filter by label (repeatable; all must match)")
+	list.Flags().BoolVar(&groomed, "groomed", false, "only groomed tasks, ready for agent execution")
+	list.Flags().BoolVar(&ungroomed, "ungroomed", false, "only ungroomed tasks, still needing refinement")
 	return list
 }
 
 func newTaskSearchCommand(deps *Deps) *cobra.Command {
 	var projectID, repo string
 	var statuses, kinds, labels []string
-	var noRerank bool
+	var noRerank, groomed, ungroomed bool
 
 	search := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search task titles, descriptions, and notes",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			groomedWant, err := groomedFilter(cmd, groomed, ungroomed)
+			if err != nil {
+				return err
+			}
 			projectID = string(deps.resolveProject(projectID))
-			filter := store.TaskFilter{ProjectID: core.ProjectID(projectID), Labels: labels}
+			filter := store.TaskFilter{ProjectID: core.ProjectID(projectID), Labels: labels, Groomed: groomedWant}
 			if repo != "" {
 				filter.Repo = &repo
 			}
@@ -217,6 +233,8 @@ func newTaskSearchCommand(deps *Deps) *cobra.Command {
 	search.Flags().StringArrayVarP(&kinds, "kind", "k", nil, "filter by kind")
 	search.Flags().StringArrayVarP(&labels, "label", "l", nil, "filter by label (repeatable; all must match)")
 	search.Flags().BoolVar(&noRerank, "no-rerank", false, "keep lexical order instead of reranking by meaning")
+	search.Flags().BoolVar(&groomed, "groomed", false, "only groomed tasks, ready for agent execution")
+	search.Flags().BoolVar(&ungroomed, "ungroomed", false, "only ungroomed tasks, still needing refinement")
 	return search
 }
 
@@ -282,6 +300,12 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 				}
 				if task.Priority != 0 {
 					deps.printf("priority: %d\n", task.Priority)
+				}
+				if task.Groomed {
+					deps.printf("groomed: true\n")
+				}
+				for _, criterion := range task.AcceptanceCriteria {
+					deps.printf("acceptance: %s\n", criterion)
 				}
 				if task.NotBefore != nil {
 					deps.printf("not_before: %s\n", task.NotBefore.UTC().Format(time.RFC3339))
@@ -546,7 +570,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 	var projectID, forRef, repo, toward, rankerName string
 	var labels []string
 	var limit int
-	var all, explain bool
+	var all, explain, groomed, ungroomed bool
 
 	cmd := &cobra.Command{
 		Use:   "next",
@@ -555,6 +579,10 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 			if all && cmd.Flags().Changed("project") {
 				return usageError(cmd, "only one of --project or --all may be set")
 			}
+			groomedWant, err := groomedFilter(cmd, groomed, ungroomed)
+			if err != nil {
+				return err
+			}
 			if !all && projectID == "" {
 				projectID = deps.Config.Project
 			}
@@ -562,7 +590,6 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 				return usageError(cmd, "one of --project or --all is required, or set default_project")
 			}
 			var snapshot *app.Snapshot
-			var err error
 			if all {
 				snapshot, err = app.LoadAllSnapshot(cmd.Context(), deps.Backend, deps.Clock.Now())
 			} else {
@@ -572,7 +599,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			if explain {
-				return emitNotReady(cmd, deps, snapshot, notReadyFilter{forRef: forRef, labels: labels, repo: repo, limit: limit})
+				return emitNotReady(cmd, deps, snapshot, notReadyFilter{forRef: forRef, labels: labels, repo: repo, limit: limit, groomed: groomedWant})
 			}
 
 			candidates := unionIDs(snapshot.Ready.Agent, snapshot.Ready.Human)
@@ -584,6 +611,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 				candidates = filterByActor(snapshot, candidates, actor)
 			}
 			candidates = filterByLabels(snapshot, candidates, labels)
+			candidates = filterByGroomed(snapshot, candidates, groomedWant)
 
 			ranker, err := deps.Rankers.MustLookup(rankerName)
 			if err != nil {
@@ -641,6 +669,8 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&forRef, "for", "", "restrict to an actor (id or name)")
 	cmd.Flags().StringVarP(&repo, "repo", "r", "", "restrict to a repository name")
 	cmd.Flags().StringArrayVarP(&labels, "label", "l", nil, "restrict to tasks with all given labels")
+	cmd.Flags().BoolVar(&groomed, "groomed", false, "restrict to groomed tasks, ready for agent execution")
+	cmd.Flags().BoolVar(&ungroomed, "ungroomed", false, "restrict to ungroomed tasks, still needing refinement")
 	cmd.Flags().StringVar(&toward, "toward", "", "prefer tasks on the path to this task")
 	cmd.Flags().StringVar(&rankerName, "rank", "composite", "ranker: composite, unblock, milestone, or toward")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 0, "maximum number of tasks (0 means all)")
@@ -649,13 +679,14 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 }
 
 // notReadyFilter narrows the excluded tasks `task next --explain` reports. Its
-// fields mirror the ready-path filters, so both interpret --for/--label/--repo
-// the same way.
+// fields mirror the ready-path filters, so both interpret
+// --for/--label/--repo/--groomed the same way.
 type notReadyFilter struct {
-	forRef string
-	labels []string
-	repo   string
-	limit  int
+	forRef  string
+	labels  []string
+	repo    string
+	limit   int
+	groomed *bool
 }
 
 // emitNotReady lists every pending task excluded from the ready set with the
@@ -671,6 +702,7 @@ func emitNotReady(cmd *cobra.Command, deps *Deps, snapshot *app.Snapshot, filter
 		ids = filterByActor(snapshot, ids, actor)
 	}
 	ids = filterByLabels(snapshot, ids, filter.labels)
+	ids = filterByGroomed(snapshot, ids, filter.groomed)
 
 	entries := make([]notReadyEntry, 0, len(ids))
 	for _, id := range ids {
@@ -736,6 +768,11 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			candidates := claimable(snapshot, unionIDs(snapshot.Ready.Agent, snapshot.Ready.Human))
+			// An agent may only claim groomed work; ungroomed tasks need a human
+			// to decide scope and acceptance criteria first.
+			if actor.Kind == core.ActorAgent {
+				candidates = filterByGroomed(snapshot, candidates, boolPtr(true))
+			}
 			if len(candidates) == 0 {
 				return fmt.Errorf("%w: no ready task to claim", core.ErrNotFound)
 			}
@@ -830,7 +867,8 @@ func newTaskDeleteCommand(deps *Deps) *cobra.Command {
 func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 	var title, body, bodyFile, repo, kind string
 	var priority int
-	var labels []string
+	var labels, acceptance []string
+	var groomed, ungroomed bool
 
 	cmd := &cobra.Command{
 		Use:   "update <task>",
@@ -838,6 +876,14 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			patch := app.TaskUpdate{}
+			groomedWant, err := groomedFilter(cmd, groomed, ungroomed)
+			if err != nil {
+				return err
+			}
+			patch.Groomed = groomedWant
+			if cmd.Flags().Changed("acceptance") {
+				patch.AcceptanceCriteria = acceptance
+			}
 			if cmd.Flags().Changed("kind") {
 				taskKind := core.TaskKind(kind)
 				patch.Kind = &taskKind
@@ -882,6 +928,9 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().IntVar(&priority, "priority", 0, "task priority")
 	cmd.Flags().StringVarP(&repo, "repo", "r", "", "repository name within the project")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "label (repeatable; replaces existing)")
+	cmd.Flags().BoolVar(&groomed, "groomed", false, "mark the task groomed, ready for agent execution (requires acceptance criteria)")
+	cmd.Flags().BoolVar(&ungroomed, "ungroomed", false, "mark the task ungroomed, still needing refinement")
+	cmd.Flags().StringArrayVar(&acceptance, "acceptance", nil, "acceptance criterion an engineer can verify (repeatable; replaces existing)")
 	return cmd
 }
 
@@ -967,6 +1016,12 @@ func mergeTaskSet(base, over app.TaskSet) app.TaskSet {
 	if over.Labels != nil {
 		base.Labels = over.Labels
 	}
+	if over.Groomed != nil {
+		base.Groomed = over.Groomed
+	}
+	if over.AcceptanceCriteria != nil {
+		base.AcceptanceCriteria = over.AcceptanceCriteria
+	}
 	if over.NotBefore != nil {
 		base.NotBefore = over.NotBefore
 	}
@@ -1028,6 +1083,9 @@ func appendSetFields(fields []field, set app.TaskSet) []field {
 	}
 	if set.Labels != nil {
 		fields = append(fields, f("labels", strings.Join(set.Labels, ", ")))
+	}
+	if set.Groomed != nil {
+		fields = append(fields, f("groomed", *set.Groomed))
 	}
 	if set.Title != nil {
 		fields = append(fields, f("title", *set.Title))
@@ -1105,6 +1163,12 @@ func parseTaskSet(assignments []string, resolveWhen func(string) (time.Time, err
 			set.Description = &text
 		case "labels":
 			set.Labels = parseLabels(value)
+		case "groomed":
+			groomed, err := strconv.ParseBool(value)
+			if err != nil {
+				return app.TaskSet{}, fmt.Errorf("invalid groomed %q, want true or false", value)
+			}
+			set.Groomed = &groomed
 		case "not_before":
 			if strings.TrimSpace(value) == "" {
 				set.ClearNotBefore = true
@@ -1116,7 +1180,7 @@ func parseTaskSet(assignments []string, resolveWhen func(string) (time.Time, err
 			}
 			set.NotBefore = &notBefore
 		default:
-			return app.TaskSet{}, fmt.Errorf("unknown field %q, want status, priority, kind, repo, title, body, labels, or not_before", key)
+			return app.TaskSet{}, fmt.Errorf("unknown field %q, want status, priority, kind, repo, title, body, labels, groomed, or not_before", key)
 		}
 	}
 	return set, nil
@@ -1565,11 +1629,33 @@ func filterByLabels(snapshot *app.Snapshot, candidates []core.TaskID, labels []s
 	return out
 }
 
+func filterByGroomed(snapshot *app.Snapshot, candidates []core.TaskID, want *bool) []core.TaskID {
+	if want == nil {
+		return candidates
+	}
+	out := make([]core.TaskID, 0, len(candidates))
+	for _, id := range candidates {
+		task, ok := snapshot.Graph.Task(id)
+		if !ok {
+			continue
+		}
+		if task.Groomed == *want {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func filterByActor(snapshot *app.Snapshot, candidates []core.TaskID, actor *core.Actor) []core.TaskID {
 	out := make([]core.TaskID, 0, len(candidates))
 	for _, id := range candidates {
 		task, ok := snapshot.Graph.Task(id)
 		if !ok {
+			continue
+		}
+		// An agent can only act on groomed work: an ungroomed task still needs
+		// a human to decide its scope and acceptance criteria.
+		if actor.Kind == core.ActorAgent && !task.Groomed {
 			continue
 		}
 		if task.AssigneeID != nil && *task.AssigneeID == actor.ID {
@@ -1582,3 +1668,20 @@ func filterByActor(snapshot *app.Snapshot, candidates []core.TaskID, actor *core
 	}
 	return out
 }
+
+// groomedFilter resolves the mutually exclusive --groomed/--ungroomed flags
+// into the tri-state a store filter or candidate filter expects.
+func groomedFilter(cmd *cobra.Command, groomed, ungroomed bool) (*bool, error) {
+	switch {
+	case groomed && ungroomed:
+		return nil, usageError(cmd, "only one of --groomed or --ungroomed may be set")
+	case groomed:
+		return boolPtr(true), nil
+	case ungroomed:
+		return boolPtr(false), nil
+	default:
+		return nil, nil
+	}
+}
+
+func boolPtr(value bool) *bool { return &value }

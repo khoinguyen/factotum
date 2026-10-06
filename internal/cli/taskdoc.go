@@ -51,22 +51,26 @@ type notReadyDoc struct {
 // `task apply -f`. Pointer fields distinguish an omitted field (leave
 // unchanged, or ignore for read-only fields) from an explicit value.
 type taskDoc struct {
-	ID          *string    `json:"id,omitempty" yaml:"id,omitempty"`
-	ProjectID   *string    `json:"project_id,omitempty" yaml:"project_id,omitempty"`
-	Repo        *string    `json:"repo,omitempty" yaml:"repo,omitempty"`
-	Kind        *string    `json:"kind,omitempty" yaml:"kind,omitempty"`
-	Title       *string    `json:"title,omitempty" yaml:"title,omitempty"`
-	Description *string    `json:"description,omitempty" yaml:"description,omitempty"`
-	Status      *string    `json:"status,omitempty" yaml:"status,omitempty"`
-	Priority    *int       `json:"priority,omitempty" yaml:"priority,omitempty"`
-	Labels      *[]string  `json:"labels,omitempty" yaml:"labels,omitempty"`
-	Assignee    *string    `json:"assignee,omitempty" yaml:"assignee,omitempty"`
-	Deps        *[]string  `json:"deps,omitempty" yaml:"deps,omitempty"`
-	Dependents  *[]string  `json:"dependents,omitempty" yaml:"dependents,omitempty"`
-	WaitingOn   *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
-	Notes       []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
-	NotBefore   *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
-	Snooze      *snoozeDoc `json:"snooze,omitempty" yaml:"snooze,omitempty"`
+	ID          *string   `json:"id,omitempty" yaml:"id,omitempty"`
+	ProjectID   *string   `json:"project_id,omitempty" yaml:"project_id,omitempty"`
+	Repo        *string   `json:"repo,omitempty" yaml:"repo,omitempty"`
+	Kind        *string   `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Title       *string   `json:"title,omitempty" yaml:"title,omitempty"`
+	Description *string   `json:"description,omitempty" yaml:"description,omitempty"`
+	Status      *string   `json:"status,omitempty" yaml:"status,omitempty"`
+	Priority    *int      `json:"priority,omitempty" yaml:"priority,omitempty"`
+	Labels      *[]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Groomed     *bool     `json:"groomed,omitempty" yaml:"groomed,omitempty"`
+	// AcceptanceCriteria are the observable conditions that define done; a
+	// groomed task carries at least one.
+	AcceptanceCriteria *[]string  `json:"acceptance_criteria,omitempty" yaml:"acceptance_criteria,omitempty"`
+	Assignee           *string    `json:"assignee,omitempty" yaml:"assignee,omitempty"`
+	Deps               *[]string  `json:"deps,omitempty" yaml:"deps,omitempty"`
+	Dependents         *[]string  `json:"dependents,omitempty" yaml:"dependents,omitempty"`
+	WaitingOn          *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
+	Notes              []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
+	NotBefore          *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
+	Snooze             *snoozeDoc `json:"snooze,omitempty" yaml:"snooze,omitempty"`
 	// NotReady is read-only: it is derived from the graph and ignored on apply.
 	NotReady *notReadyDoc `json:"not_ready,omitempty" yaml:"not_ready,omitempty"`
 	// Checks is read-only: cached check results, populated only by `task get`
@@ -88,6 +92,8 @@ func taskDocFrom(task *core.Task) taskDoc {
 	status := string(task.Status)
 	priority := task.Priority
 	labels := append([]string{}, task.Labels...)
+	groomed := task.Groomed
+	acceptanceCriteria := append([]string{}, task.AcceptanceCriteria...)
 	deps := make([]string, 0, len(task.Deps))
 	for _, dep := range task.Deps {
 		deps = append(deps, string(dep))
@@ -107,20 +113,22 @@ func taskDocFrom(task *core.Task) taskDoc {
 		notes = append(notes, entry)
 	}
 	doc := taskDoc{
-		ID:          &id,
-		ProjectID:   &projectID,
-		Repo:        &repo,
-		Kind:        &kind,
-		Title:       &title,
-		Description: &description,
-		Status:      &status,
-		Priority:    &priority,
-		Labels:      &labels,
-		Deps:        &deps,
-		WaitingOn:   &waitingOn,
-		Notes:       notes,
-		CreatedAt:   &createdAt,
-		UpdatedAt:   &updatedAt,
+		ID:                 &id,
+		ProjectID:          &projectID,
+		Repo:               &repo,
+		Kind:               &kind,
+		Title:              &title,
+		Description:        &description,
+		Status:             &status,
+		Priority:           &priority,
+		Labels:             &labels,
+		Groomed:            &groomed,
+		AcceptanceCriteria: &acceptanceCriteria,
+		Deps:               &deps,
+		WaitingOn:          &waitingOn,
+		Notes:              notes,
+		CreatedAt:          &createdAt,
+		UpdatedAt:          &updatedAt,
 	}
 	if task.AssigneeID != nil {
 		assignee := string(*task.AssigneeID)
@@ -148,6 +156,7 @@ type taskListEntry struct {
 	Status    string    `json:"status" yaml:"status"`
 	Priority  int       `json:"priority" yaml:"priority"`
 	Labels    []string  `json:"labels" yaml:"labels"`
+	Groomed   bool      `json:"groomed,omitempty" yaml:"groomed,omitempty"`
 	Assignee  string    `json:"assignee,omitempty" yaml:"assignee,omitempty"`
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" yaml:"updated_at"`
@@ -163,6 +172,7 @@ func taskListEntryFrom(task *core.Task) taskListEntry {
 		Status:    string(task.Status),
 		Priority:  task.Priority,
 		Labels:    append([]string{}, task.Labels...),
+		Groomed:   task.Groomed,
 		CreatedAt: task.CreatedAt,
 		UpdatedAt: task.UpdatedAt,
 	}
@@ -188,8 +198,9 @@ func snoozeDocFrom(snooze core.Snooze) *snoozeDoc {
 // taskDocFieldNames lists every selectable field of a task document.
 var taskDocFieldNames = []string{
 	"id", "project_id", "repo", "kind", "title", "description", "status",
-	"priority", "labels", "assignee", "deps", "dependents", "waiting_on",
-	"notes", "checks", "not_ready", "not_before", "created_at", "updated_at",
+	"priority", "labels", "groomed", "acceptance_criteria", "assignee", "deps",
+	"dependents", "waiting_on", "notes", "checks", "not_ready", "not_before",
+	"created_at", "updated_at",
 }
 
 // taskDocValues renders a task document as selectable key/value pairs. Keys
@@ -222,6 +233,12 @@ func taskDocValues(doc taskDoc) map[string]any {
 	}
 	if doc.Labels != nil {
 		out["labels"] = *doc.Labels
+	}
+	if doc.Groomed != nil {
+		out["groomed"] = *doc.Groomed
+	}
+	if doc.AcceptanceCriteria != nil {
+		out["acceptance_criteria"] = *doc.AcceptanceCriteria
 	}
 	if doc.Assignee != nil {
 		out["assignee"] = *doc.Assignee
@@ -326,6 +343,13 @@ func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
 	}
 	if doc.Labels != nil && !equalStringSet(doc.Labels, current.Labels) {
 		set.Labels = *doc.Labels
+	}
+	if doc.Groomed != nil && *doc.Groomed != current.Groomed {
+		groomed := *doc.Groomed
+		set.Groomed = &groomed
+	}
+	if doc.AcceptanceCriteria != nil && !equalStringSlice(doc.AcceptanceCriteria, current.AcceptanceCriteria) {
+		set.AcceptanceCriteria = *doc.AcceptanceCriteria
 	}
 	set.Expect = doc.UpdatedAt
 	return set, nil
@@ -536,6 +560,23 @@ func equalStringSet(provided *[]string, current []string) bool {
 	for _, value := range *provided {
 		counts[value]--
 		if counts[value] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// equalStringSlice reports whether an optional provided list matches current in
+// order. A nil provided list means "not supplied".
+func equalStringSlice(provided *[]string, current []string) bool {
+	if provided == nil {
+		return true
+	}
+	if len(*provided) != len(current) {
+		return false
+	}
+	for i := range *provided {
+		if (*provided)[i] != current[i] {
 			return false
 		}
 	}

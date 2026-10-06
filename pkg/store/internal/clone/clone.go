@@ -23,6 +23,7 @@ func Task(task core.Task) core.Task {
 	}
 	task.WaitingOn = append([]core.ActorID(nil), task.WaitingOn...)
 	task.Labels = append([]string(nil), task.Labels...)
+	task.AcceptanceCriteria = append([]string(nil), task.AcceptanceCriteria...)
 	task.Deps = append([]core.TaskID(nil), task.Deps...)
 	task.Notes = notes(task.Notes)
 	if task.NotBefore != nil {

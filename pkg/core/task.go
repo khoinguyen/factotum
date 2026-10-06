@@ -179,8 +179,17 @@ type Task struct {
 	Milestone   *MilestoneMeta
 	NotBefore   *time.Time
 	Snooze      *Snooze
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// Groomed marks a task as refined enough for an agent to execute on its
+	// own: scope, approach, and acceptance criteria are decided. It is set
+	// explicitly, never inferred from the "groomed" label or from the presence
+	// of acceptance criteria, and it gates agent readiness.
+	Groomed bool
+	// AcceptanceCriteria are the observable conditions that define done. A
+	// groomed task must carry at least one; an ungroomed task may carry a
+	// partial set while it is still being refined.
+	AcceptanceCriteria []string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // ReadyAt reports whether the task's not_before constraint has elapsed at now.
@@ -210,6 +219,17 @@ func (t Task) Validate() error {
 	}
 	if t.Kind == KindIdea && t.AssigneeID != nil {
 		return fmt.Errorf("%w: idea %s is not assignable", ErrInvalid, t.ID)
+	}
+	if t.Kind == KindIdea && t.Groomed {
+		return fmt.Errorf("%w: idea %s is not groomable", ErrInvalid, t.ID)
+	}
+	for _, criterion := range t.AcceptanceCriteria {
+		if strings.TrimSpace(criterion) == "" {
+			return fmt.Errorf("%w: task %s has an empty acceptance criterion", ErrInvalid, t.ID)
+		}
+	}
+	if t.Groomed && len(t.AcceptanceCriteria) == 0 {
+		return fmt.Errorf("%w: groomed task %s requires at least one acceptance criterion", ErrInvalid, t.ID)
 	}
 
 	seen := make(map[TaskID]struct{}, len(t.Deps))

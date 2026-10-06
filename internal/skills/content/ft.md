@@ -298,8 +298,8 @@ backend runs the harness directly on the host with no isolation at all: it is
 dev-only, must be explicitly opted in, is never the default, and prints an
 unsandboxed warning when it starts. It can read host credentials, reach the
 network, and mutate files, so never use it for untrusted work. Isolating backends
-(for example OpenShell) are separate registrations of the same port and are the
-only ones fit for untrusted input.
+(for example OpenShell and docker) are separate registrations of the same port
+and are the only ones fit for untrusted input.
 
 A harness describes one agent CLI end to end: its image, entrypoint, invocation,
 model flag, prompt delivery, completion detection, and output parsing. The first
@@ -350,19 +350,19 @@ ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt
   `refresh`, `provider`, `credential_env`) or `FACTOTUM_RUN_*` overrides; there is no
   default backend. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
 - `provider` and `credential_env` name the credential a harness may use and the
-  variable it arrives under (`provider = "openrouter"`,
-  `credential_env = "OPENROUTER_API_KEY"`). The value is read from the host
-  environment of the same name and handed to the isolating backend as provider
-  material; it is never placed in the sandbox env.
+  variable it arrives under, e.g. `provider = "openrouter"` with
+  `credential_env = "OPENROUTER_API_KEY"`; the value is read from the host
+  environment and handed to the isolating backend, never placed in the sandbox.
 - The `local` backend is unsandboxed and refuses to run until explicitly opted in
   with `--allow-host` or `run.allow_host`; the opt-in is machine-scoped and is
   ignored from the committed project file.
-- The `openshell` backend runs the harness inside a non-root OpenShell sandbox
-  under the deny-by-default policy above. It needs the `openshell` CLI and a
-  reachable gateway; `ft run` creates the sandbox, uploads the workspace, runs
-  the harness, and deletes the sandbox and any providers it created when the run
-  ends. It never places a credential value in the sandbox: a configured
-  credential is attached as a provider placeholder.
+- The `openshell` backend runs the harness in a non-root sandbox under the
+  deny-by-default policy above; it needs the `openshell` CLI and a gateway, and
+  attaches a configured credential as a provider placeholder, never a value.
+- The `docker` backend runs the harness in a per-task container from the
+  harness's image, mounting only the resolved workspace at its same absolute
+  path. It needs the `docker` CLI and a daemon, refuses a policy it cannot
+  enforce, and injects credentials per-exec so no secret enters argv or metadata.
 - A successful run moves the task to `ready_for_review` and records a note with the
   agent's output plus `task.run_started`/`task.run_finished` events. A failed run
   leaves the task's status untouched and records only a failure note and event, so

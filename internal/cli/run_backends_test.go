@@ -17,6 +17,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/harness"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
+	"github.com/khoinguyen/factotum/pkg/isolation/docker"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation/openshell"
 )
@@ -45,6 +46,24 @@ func TestRunBackendsIncludeOpenShell(t *testing.T) {
 	}
 	if backend.Name() != "openshell" {
 		t.Fatalf("backend.Name() = %q, want openshell", backend.Name())
+	}
+}
+
+// TestRunBackendsIncludeDocker pins that the docker isolation backend is a
+// registered, selectable `ft run` backend and that its factory constructs
+// without error.
+func TestRunBackendsIncludeDocker(t *testing.T) {
+	reg := runBackends(func(string) string { return "" })
+	factory, err := reg.MustLookup(docker.Name)
+	if err != nil {
+		t.Fatalf("lookup %q: %v", docker.Name, err)
+	}
+	backend, err := factory(config.Run{}, io.Discard)
+	if err != nil {
+		t.Fatalf("build docker backend: %v", err)
+	}
+	if backend.Name() != docker.Name {
+		t.Fatalf("backend.Name() = %q, want %q", backend.Name(), docker.Name)
 	}
 }
 

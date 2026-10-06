@@ -76,8 +76,9 @@ type Run struct {
 	// machine-scoped, like the rest of this table.
 	Provider         string
 	CredentialEnvVar string
-	// PolicyPath is the resolved project OpenShell policy override
-	// (<projectRoot>/.factotum/openshell-policy.yaml). The launcher sets it
+	// PolicyPath is the resolved project OpenShell policy override (the
+	// sibling of the loaded project config, for example
+	// <projectRoot>/.factotum/openshell-policy.yaml). The launcher sets it
 	// from the loaded project config; it is never read from a config file.
 	PolicyPath string
 }

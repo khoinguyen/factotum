@@ -239,13 +239,14 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 }
 
 // projectPolicyPath resolves the project's committed OpenShell policy override
-// from the loaded project config path (<root>/.factotum/config.toml). It is
-// empty when the project root is unknown, which means no opt-in.
+// from the loaded project config path. The override is the config file's
+// sibling, so a custom -c/--config resolves the policy next to the config it
+// loaded. It is empty when no config path is known, which means no opt-in.
 func projectPolicyPath(projectConfigPath string) string {
 	if projectConfigPath == "" {
 		return ""
 	}
-	return openshell.OverridePath(filepath.Dir(filepath.Dir(projectConfigPath)))
+	return openshell.OverridePathForConfig(projectConfigPath)
 }
 
 // runWorkspaceRoot resolves the workspace root: the configured value, or a

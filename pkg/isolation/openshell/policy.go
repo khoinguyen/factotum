@@ -264,6 +264,14 @@ func OverridePath(projectRoot string) string {
 	return filepath.Join(projectRoot, ".factotum", overrideFileName)
 }
 
+// OverridePathForConfig returns the committed override path for a loaded config
+// file. The override is the config file's sibling, so a custom -c path resolves
+// the policy next to the config it actually loaded instead of assuming a
+// <root>/.factotum/config.toml layout.
+func OverridePathForConfig(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), overrideFileName)
+}
+
 func identity(opts Options) (string, string, error) {
 	user := strings.TrimSpace(firstNonEmpty(opts.RunAsUser, DefaultRunAsUser))
 	if !validIdentity(user) {

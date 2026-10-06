@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -192,10 +193,24 @@ func runBackends(getenv func(string) string) *registry.Registry[IsolationBackend
 	registerRunBackend(reg, local.Name, func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error) {
 		return local.New(local.Options{AllowHost: cfg.AllowHost, Warn: errOut}), nil
 	})
-	registerRunBackend(reg, openshell.Name, func(cfg config.Run, _ io.Writer) (isolation.IsolationBackend, error) {
+	registerRunBackend(reg, openshell.Name, func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error) {
+		warnMissingProjectPolicy(errOut, cfg.PolicyPath)
 		return openshell.New(openshellBackendOptions(cfg, getenv)), nil
 	})
 	return reg
+}
+
+// warnMissingProjectPolicy surfaces a clear message when the OpenShell backend
+// has no project policy override at the resolved path, so a deny-all run is not
+// silent.
+func warnMissingProjectPolicy(errOut io.Writer, policyPath string) {
+	if errOut == nil || policyPath == "" {
+		return
+	}
+	if _, err := os.Stat(policyPath); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	_, _ = fmt.Fprintf(errOut, "ft: warning: openshell: no project policy at %s; egress is deny-all\n", policyPath)
 }
 
 // openshellBackendOptions translates the run config into OpenShell backend

@@ -2,8 +2,11 @@ package conformance
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/isolation"
 )
@@ -76,6 +79,55 @@ func (b *capBackend) ApplyPolicy(_ context.Context, _ isolation.Handle, p isolat
 
 func (b *capBackend) AttachCredential(context.Context, isolation.Handle, isolation.Credential) error {
 	return isolation.ErrUnsupported
+}
+
+// TestDrainBoundedTimesOutOnOpenStream pins the suite's defense against a
+// backend that never closes Events: the drain must fail rather than hang.
+func TestDrainBoundedTimesOutOnOpenStream(t *testing.T) {
+	open := make(chan isolation.Event)
+	if err := drainBounded(open, nil, 10*time.Millisecond); err == nil {
+		t.Fatal("drainBounded(open stream) = nil, want a timeout error")
+	}
+}
+
+// TestDrainBoundedDrainsToClose pins that a well-behaved stream is fully drained
+// before the deadline, so the bound never trips on a healthy backend.
+func TestDrainBoundedDrainsToClose(t *testing.T) {
+	stream := make(chan isolation.Event, 2)
+	stream <- isolation.Event{Kind: isolation.EventOutput, Message: "a"}
+	stream <- isolation.Event{Kind: isolation.EventOutput, Message: "b"}
+	close(stream)
+
+	var got int
+	if err := drainBounded(stream, func(isolation.Event) { got++ }, time.Second); err != nil {
+		t.Fatalf("drainBounded(closed stream) error = %v", err)
+	}
+	if got != 2 {
+		t.Fatalf("drained %d events, want 2", got)
+	}
+}
+
+// TestHandleRejectedDistinguishesUnsupported pins that an unsupported operation
+// is not accepted as a handle rejection, so HandleHygiene fails a backend that
+// reports ErrUnsupported for a foreign handle instead of rejecting it.
+func TestHandleRejectedDistinguishesUnsupported(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"unsupported", isolation.ErrUnsupported, false},
+		{"wrapped unsupported", fmt.Errorf("x: %w", isolation.ErrUnsupported), false},
+		{"handle error", errors.New("foreign handle"), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := handleRejected(tc.err); got != tc.want {
+				t.Errorf("handleRejected(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
 }
 
 type capHandle struct{}

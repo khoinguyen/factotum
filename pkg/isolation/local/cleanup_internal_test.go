@@ -35,3 +35,44 @@ func TestDeleteRemovesOwnedWorkspace(t *testing.T) {
 		t.Fatalf("owned workspace %s survived Delete (stat err = %v)", env.root, err)
 	}
 }
+
+// TestDeletedTombstonesAreBounded pins that a backend which prepares and deletes
+// many environments does not retain a tombstone per handle forever. Idempotent
+// Delete only needs to remember recently deleted handles, so the set is capped.
+func TestDeletedTombstonesAreBounded(t *testing.T) {
+	b := New(Options{AllowHost: true, Warn: io.Discard})
+	ctx := context.Background()
+	for i := 0; i < deletedMax*3; i++ {
+		h, err := b.Prepare(ctx, isolation.Spec{})
+		if err != nil {
+			t.Fatalf("Prepare() error = %v", err)
+		}
+		if err := b.Delete(ctx, h); err != nil {
+			t.Fatalf("Delete() error = %v", err)
+		}
+	}
+
+	b.mu.Lock()
+	got := len(b.deleted)
+	b.mu.Unlock()
+	if got > deletedMax {
+		t.Fatalf("deleted tombstones = %d, want <= %d", got, deletedMax)
+	}
+}
+
+// TestDeleteIdempotentForRecentHandle pins that capping the tombstones keeps the
+// common case — deleting the same handle twice — idempotent.
+func TestDeleteIdempotentForRecentHandle(t *testing.T) {
+	b := New(Options{AllowHost: true, Warn: io.Discard})
+	ctx := context.Background()
+	h, err := b.Prepare(ctx, isolation.Spec{})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if err := b.Delete(ctx, h); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if err := b.Delete(ctx, h); err != nil {
+		t.Fatalf("second Delete() error = %v, want idempotent nil", err)
+	}
+}

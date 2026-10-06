@@ -29,6 +29,11 @@ import (
 // ErrUnsupported means the backend cannot honor a request it is not required to
 // support, such as a filesystem or network policy it cannot enforce. Callers
 // treat it as "this backend cannot do that", not as a crash.
+//
+// It is reserved for a well-formed request with a valid handle: a backend must
+// reject an unknown, foreign, or nil handle with a different error, before
+// considering whether the operation is supported, so ErrUnsupported never
+// disguises a failed handle check.
 var ErrUnsupported = errors.New("isolation: unsupported by backend")
 
 // Image is the base the backend provisions the environment from. Container,
@@ -51,7 +56,10 @@ type Resources struct {
 }
 
 // File is a file to place in, or copy out of, the environment. Path is the
-// location inside the environment.
+// location inside the environment. A relative Path is rooted at the
+// environment's workspace root (Spec.Workdir, or the backend's own workspace
+// when Workdir is empty); an absolute Path is used as given where the backend
+// supports it.
 type File struct {
 	Path    string
 	Content []byte
@@ -200,10 +208,17 @@ type IsolationBackend interface {
 	// Logs streams the environment's events (lifecycle, policy decisions).
 	Logs(ctx context.Context, h Handle, opts LogOptions) (<-chan Event, error)
 	// Stop stops the environment's processes but keeps its state for a restart.
+	// It is idempotent: stopping an environment with nothing running, or one
+	// already stopped, returns nil.
 	Stop(ctx context.Context, h Handle) error
-	// Delete stops and removes the environment and all of its state.
+	// Delete stops and removes the environment and all of its state. It is
+	// idempotent: deleting an already-deleted handle returns nil, so a caller's
+	// deferred teardown never races a retry. An unknown, foreign, or nil handle
+	// is still an error.
 	Delete(ctx context.Context, h Handle) error
-	// ApplyPolicy installs or replaces the run's policy, where supported.
+	// ApplyPolicy installs or replaces the run's policy, where supported. An
+	// empty Policy is a no-op every backend must accept; a backend that cannot
+	// enforce a non-empty policy returns ErrUnsupported.
 	ApplyPolicy(ctx context.Context, h Handle, p Policy) error
 	// AttachCredential makes a credential reference available to the run.
 	AttachCredential(ctx context.Context, h Handle, c Credential) error

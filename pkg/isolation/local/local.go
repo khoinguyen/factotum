@@ -58,6 +58,13 @@ var ErrNotOptedIn = errors.New("isolation/local: host execution is not opted in"
 // tailing while keeping a detached run bounded.
 const eventBuffer = 256
 
+// deletedMax bounds the deleted-handle tombstones the backend keeps so Delete
+// stays idempotent. Handle ids are unique and never reused, so only recently
+// deleted handles need remembering; the cap keeps a long-lived backend (a serve
+// loop, an agent fleet) from growing without limit. Once the set is full the
+// oldest half is evicted, which still covers a caller's immediate double-delete.
+const deletedMax = 1024
+
 // Options configures the local backend.
 type Options struct {
 	// AllowHost is the explicit opt-in. Prepare refuses unless it is true.
@@ -88,6 +95,9 @@ type Backend struct {
 	mu      sync.Mutex
 	envs    map[string]*environment
 	deleted map[string]struct{}
+	// deletedOrder records tombstone insertion order so the oldest can be
+	// evicted once deleted reaches deletedMax. Guarded by mu.
+	deletedOrder []string
 }
 
 // New returns a local backend. It is inert until Prepare is called with
@@ -334,7 +344,7 @@ func (b *Backend) Delete(_ context.Context, h isolation.Handle) error {
 		return fmt.Errorf("isolation/local: unknown handle %q", id)
 	}
 	delete(b.envs, id)
-	b.deleted[id] = struct{}{}
+	b.rememberDeleted(id)
 	b.mu.Unlock()
 
 	env.stop()
@@ -344,6 +354,21 @@ func (b *Backend) Delete(_ context.Context, h isolation.Handle) error {
 		}
 	}
 	return nil
+}
+
+// rememberDeleted records id as a deleted handle for idempotent Delete,
+// evicting the oldest tombstones once the set is full. Callers must hold b.mu.
+func (b *Backend) rememberDeleted(id string) {
+	if len(b.deletedOrder) >= deletedMax {
+		half := len(b.deletedOrder) / 2
+		for _, gone := range b.deletedOrder[:half] {
+			delete(b.deleted, gone)
+		}
+		n := copy(b.deletedOrder, b.deletedOrder[half:])
+		b.deletedOrder = b.deletedOrder[:n]
+	}
+	b.deleted[id] = struct{}{}
+	b.deletedOrder = append(b.deletedOrder, id)
 }
 
 // ApplyPolicy accepts an empty policy (nothing to enforce) and returns

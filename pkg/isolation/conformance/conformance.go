@@ -24,6 +24,7 @@ package conformance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -146,9 +147,9 @@ func testExec(t *testing.T, be isolation.IsolationBackend) {
 				t.Fatalf("Exec() error = %v", err)
 			}
 			var streamOut, streamErr strings.Builder
-			for ev := range ex.Events() {
+			drainEvents(t, ex.Events(), func(ev isolation.Event) {
 				if ev.Kind != isolation.EventOutput {
-					continue
+					return
 				}
 				switch ev.Stream {
 				case isolation.StreamStdout:
@@ -156,7 +157,7 @@ func testExec(t *testing.T, be isolation.IsolationBackend) {
 				case isolation.StreamStderr:
 					streamErr.WriteString(ev.Message)
 				}
-			}
+			})
 			res := waitResult(t, ex)
 
 			if res.ExitCode != tc.wantExit {
@@ -287,7 +288,10 @@ func testDelete(t *testing.T, be isolation.IsolationBackend) {
 }
 
 // testHandleHygiene pins that a foreign or nil handle is rejected by every
-// operation, never dereferenced or silently accepted.
+// operation, never dereferenced or silently accepted. The rejection must be an
+// actual handle error, not ErrUnsupported: a backend that reports the operation
+// unsupported without validating the handle has not rejected it, and local
+// backends validate the handle before considering capabilities.
 func testHandleHygiene(t *testing.T, be isolation.IsolationBackend) {
 	t.Helper()
 	ctx := context.Background()
@@ -317,11 +321,16 @@ func testHandleHygiene(t *testing.T, be isolation.IsolationBackend) {
 	}
 	for _, op := range ops {
 		t.Run(op.name, func(t *testing.T) {
-			if err := op.call(foreignHandle{}); err == nil {
-				t.Errorf("%s(foreign handle) error = nil, want an error", op.name)
-			}
-			if err := op.call(nil); err == nil {
-				t.Errorf("%s(nil handle) error = nil, want an error", op.name)
+			for _, tc := range []struct {
+				name string
+				h    isolation.Handle
+			}{
+				{"foreign", foreignHandle{}},
+				{"nil", nil},
+			} {
+				if err := op.call(tc.h); !handleRejected(err) {
+					t.Errorf("%s(%s handle) error = %v, want a handle rejection (non-nil and not ErrUnsupported)", op.name, tc.name, err)
+				}
 			}
 		})
 	}
@@ -445,9 +454,45 @@ func run(t *testing.T, be isolation.IsolationBackend, h isolation.Handle, cmd is
 	if err != nil {
 		t.Fatalf("Exec(%v) error = %v", cmd.Argv, err)
 	}
-	for range ex.Events() {
-	}
+	drainEvents(t, ex.Events(), nil)
 	return waitResult(t, ex)
+}
+
+// drainEvents drains events until the channel closes, failing the test when the
+// backend never closes it instead of hanging the suite.
+func drainEvents(t *testing.T, events <-chan isolation.Event, sink func(isolation.Event)) {
+	t.Helper()
+	if err := drainBounded(events, sink, waitTimeout); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// drainBounded consumes events until the channel closes or timeout elapses,
+// whichever comes first. It exists so a backend that never closes Events fails
+// a test rather than blocking it forever.
+func drainBounded(events <-chan isolation.Event, sink func(isolation.Event), timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return nil
+			}
+			if sink != nil {
+				sink(ev)
+			}
+		case <-timer.C:
+			return fmt.Errorf("Events() was not closed within %s", timeout)
+		}
+	}
+}
+
+// handleRejected reports whether err shows the backend rejected an invalid
+// handle. A backend that reports the operation unsupported instead has not
+// validated the handle, so HandleHygiene treats that as a failure.
+func handleRejected(err error) bool {
+	return err != nil && !errors.Is(err, isolation.ErrUnsupported)
 }
 
 // waitResult waits for an execution with a bounded context.
@@ -462,23 +507,12 @@ func waitResult(t *testing.T, ex isolation.Execution) isolation.ExecResult {
 	return res
 }
 
-// drainWait drains Events and waits, failing if the execution never finishes.
+// drainWait drains Events and waits, each phase bounded so an execution that
+// never finishes fails the test instead of hanging it.
 func drainWait(t *testing.T, ex isolation.Execution) {
 	t.Helper()
-	done := make(chan struct{})
-	go func() {
-		for range ex.Events() {
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
-		defer cancel()
-		_, _ = ex.Wait(ctx)
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(waitTimeout + 5*time.Second):
-		t.Fatal("execution did not finish")
-	}
+	drainEvents(t, ex.Events(), nil)
+	waitResult(t, ex)
 }
 
 // waitForFile polls Download until path appears, so a test can observe that a

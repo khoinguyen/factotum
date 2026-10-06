@@ -44,6 +44,15 @@ lists each excluded task with its reason, applying the same
 `--for`/`--label`/`--repo`/`--groomed`/`-n` filters as ranking, and `ft task get
 <task>` prints a `not ready because:` line for the same reason.
 
+## Watch the factory
+
+```sh
+ft serve                        # read-only live dashboard; also -p <project>, --all, --bind <host:port>
+```
+
+`ft serve` shows next, in-flight, and blocked work, reloading over SSE within a
+second; it is responsive and read-only, binding to localhost by default.
+
 ## Move work through its lifecycle
 
 ```sh
@@ -268,15 +277,12 @@ fails, so a script can gate on it.
   all.
 - `-o json|yaml` is the machine-readable interface. Text output is yaml-like
   `key: value` lines for single results and tables for lists.
-- Large output is bounded so it cannot flood an agent's context. When stdout is
-  not a terminal and output exceeds 32 KiB or 400 lines, `ft` spills the full
-  text to a temp file and prints the first 60 and last 20 lines plus that file's
-  path; the file stays for the OS temp cleaner, so read it for the full text.
-  Pass `--full` to print everything instead; `FACTOTUM_MAX_OUTPUT=<bytes>` sets a
-  byte budget (the line threshold no longer applies) and
-  `FACTOTUM_MAX_OUTPUT=unlimited` disables the bound. `-o json|yaml` becomes an
-  envelope `{truncated, full_output_path, preview}`. On a terminal, output is
-  never bounded.
+- Large output is bounded so it cannot flood an agent's context: when stdout is
+  not a terminal and output exceeds 32 KiB or 400 lines, `ft` spills the full text
+  to a temp file and prints a head/tail window plus its path (interactive output is
+  never bounded); pass `--full` to print everything, `FACTOTUM_MAX_OUTPUT=<bytes>`
+  to set a byte budget, or `=unlimited` to disable the bound. `-o json|yaml` becomes
+  a truncation envelope.
 - Never edit a database by hand: go through `ft`.
 - A branch build can forward-migrate the shared database. If `ft` reports a schema version newer
   than it supports, update the installed binary (`mise run install`) or use the newer branch binary;
@@ -342,11 +348,8 @@ ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt
 
 - The backend and harness are selected explicitly, by flag or by the machine-scoped
   `[run]` table in `~/.factotum/config.toml` (`backend`, `harness`, `workspace`,
-  `model`, `args`, `allow_host`, `provider`, `credential_env`), or by
-  `FACTOTUM_RUN_BACKEND`, `FACTOTUM_RUN_HARNESS`, `FACTOTUM_RUN_WORKSPACE`,
-  `FACTOTUM_RUN_MODEL`, `FACTOTUM_RUN_ALLOW_HOST`, `FACTOTUM_RUN_PROVIDER`, and
-  `FACTOTUM_RUN_CREDENTIAL_ENV`. There is no default backend: a run without one
-  fails rather than guessing.
+  `model`, `args`, `allow_host`, `provider`, `credential_env`) or its `FACTOTUM_RUN_*`
+  overrides. There is no default backend: a run without one fails rather than guessing.
 - `provider` and `credential_env` name the credential a harness may use and the
   variable it arrives under (`provider = "openrouter"`,
   `credential_env = "OPENROUTER_API_KEY"`). The value is read from the host
@@ -375,12 +378,9 @@ work is blocked, or the task budget is exhausted.
 ft run --goal t-abc123 --backend local --harness opencode --allow-host --max-tasks 5
 ```
 
-- The goal is a task or a milestone. A task goal is reached when it resolves (a
-  successful run moves it to `ready_for_review`). A milestone is a human gate: the loop
-  runs the milestone's prerequisites and stops when the milestone becomes startable,
-  never running the milestone itself. An intermediate milestone on the path to a task
-  goal is also a gate, so the loop runs its prerequisites and then stops
-  `no_ready_work` there until a human closes it.
+- The goal is a task or a milestone. A task is reached when it resolves; a milestone
+  is a human gate, so the loop runs its prerequisites and stops `no_ready_work` until a
+  human closes it (an intermediate milestone on the path also gates).
 - Only tasks on a path to the goal are run, ordered by the composite ranker with the
   goal as the toward preference, so readiness and priority always decide the order.
 - `--max-tasks N` bounds the number of task runs (0 means no budget). The loop stops for

@@ -111,36 +111,41 @@ func TestCommandBuildsHeadlessInvocation(t *testing.T) {
 		{
 			name: "model from the request",
 			req:  harness.Request{Prompt: "do the thing", Model: "opencode-go/deepseek-v4.1-flash"},
-			want: []string{"opencode", "run", "--model", "opencode-go/deepseek-v4.1-flash", "do the thing"},
+			want: []string{"opencode", "run", "--model", "opencode-go/deepseek-v4.1-flash", "--", "do the thing"},
 		},
 		{
 			name: "configured model is the fallback",
 			opts: opencode.Options{Model: "openrouter/nvidia/nemotron"},
 			req:  harness.Request{Prompt: "hi"},
-			want: []string{"opencode", "run", "--model", "openrouter/nvidia/nemotron", "hi"},
+			want: []string{"opencode", "run", "--model", "openrouter/nvidia/nemotron", "--", "hi"},
 		},
 		{
 			name: "request model overrides configured model",
 			opts: opencode.Options{Model: "provider/configured"},
 			req:  harness.Request{Prompt: "hi", Model: "provider/requested"},
-			want: []string{"opencode", "run", "--model", "provider/requested", "hi"},
+			want: []string{"opencode", "run", "--model", "provider/requested", "--", "hi"},
 		},
 		{
 			name: "no model flag when unset",
 			req:  harness.Request{Prompt: "hi"},
-			want: []string{"opencode", "run", "hi"},
+			want: []string{"opencode", "run", "--", "hi"},
+		},
+		{
+			name: "leading-dash prompt is separated from the options",
+			req:  harness.Request{Prompt: "-looks like a flag", Model: "p/m"},
+			want: []string{"opencode", "run", "--model", "p/m", "--", "-looks like a flag"},
 		},
 		{
 			name: "configured and per-request args pass through before the prompt",
 			opts: opencode.Options{Args: []string{"--agent", "build"}},
 			req:  harness.Request{Prompt: "hi", Args: []string{"--pure"}},
-			want: []string{"opencode", "run", "--agent", "build", "--pure", "hi"},
+			want: []string{"opencode", "run", "--agent", "build", "--pure", "--", "hi"},
 		},
 		{
 			name: "binary and workdir are honored",
 			opts: opencode.Options{Binary: "/opt/opencode", Model: "p/m"},
 			req:  harness.Request{Prompt: "go", Workdir: "/work"},
-			want: []string{"/opt/opencode", "run", "--model", "p/m", "go"},
+			want: []string{"/opt/opencode", "run", "--model", "p/m", "--", "go"},
 		},
 	}
 	for _, tc := range tests {

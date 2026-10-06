@@ -27,6 +27,8 @@ var groomingDimensions = []string{
 	"acceptance_verifiable",
 	"decisions_author",
 	"dependencies_named",
+	"decomposable",
+	"right_sized",
 }
 
 // realStrongSpec is deliberately fully groomed: bounded scope, verifiable
@@ -142,7 +144,7 @@ func TestRealGroomingSmoke(t *testing.T) {
 		if result.JudgeConfidence <= 0 {
 			t.Fatalf("judge_confidence = %v, want the advisory holistic Noul recorded", result.JudgeConfidence)
 		}
-		// The holistic Noul is advisory: the four dimensions alone decide readiness,
+		// The holistic Noul is advisory: the dimensions alone decide readiness,
 		// so a low holistic still leaves the strong task ready.
 		if result.JudgeConfidence < 0.70 {
 			t.Logf("holistic Noul %.3f is below the 0.70 threshold yet the task is ready: it does not gate",

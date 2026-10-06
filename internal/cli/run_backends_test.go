@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -178,5 +179,80 @@ func TestPrepareRunResolvesProjectPolicyPath(t *testing.T) {
 	want := filepath.Join(factotumDir, "openshell-policy.yaml")
 	if got.PolicyPath != want {
 		t.Fatalf("resolved PolicyPath = %q, want %q", got.PolicyPath, want)
+	}
+}
+
+// TestPrepareRunResolvesPolicyFromCustomConfigLocation pins that a custom
+// -c/--config resolves the policy next to that config file instead of assuming
+// <root>/.factotum/config.toml and silently denying all.
+func TestPrepareRunResolvesPolicyFromCustomConfigLocation(t *testing.T) {
+	configDir := t.TempDir()
+	var got config.Run
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, io.Discard, io.Discard, func(string) string { return "" })
+	deps.ProjectConfigPath = filepath.Join(configDir, "ft.toml")
+	if err := deps.RunBackends.Register("capture", func(cfg config.Run, _ io.Writer) (isolation.IsolationBackend, error) {
+		got = cfg
+		return isofake.New("capture"), nil
+	}); err != nil {
+		t.Fatalf("register backend: %v", err)
+	}
+	if err := deps.RunHarnesses.Register("fake", func(config.Run) (harness.Harness, error) {
+		return harnessfake.New("fake"), nil
+	}); err != nil {
+		t.Fatalf("register harness: %v", err)
+	}
+
+	if _, err := deps.prepareRun(&cobra.Command{Use: "run"}, runOptions{
+		backend:   "capture",
+		harness:   "fake",
+		workspace: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("prepareRun() error = %v", err)
+	}
+	want := filepath.Join(configDir, "openshell-policy.yaml")
+	if got.PolicyPath != want {
+		t.Fatalf("resolved PolicyPath = %q, want %q", got.PolicyPath, want)
+	}
+}
+
+// TestOpenShellFactoryWarnsWhenProjectPolicyMissing pins that selecting the
+// OpenShell backend without a project policy surfaces a clear deny-all message
+// instead of silently denying all egress.
+func TestOpenShellFactoryWarnsWhenProjectPolicyMissing(t *testing.T) {
+	factory, err := runBackends(func(string) string { return "" }).MustLookup("openshell")
+	if err != nil {
+		t.Fatalf("lookup openshell: %v", err)
+	}
+	policyPath := filepath.Join(t.TempDir(), "openshell-policy.yaml")
+	var errBuf bytes.Buffer
+	if _, err := factory(config.Run{PolicyPath: policyPath}, &errBuf); err != nil {
+		t.Fatalf("build openshell backend: %v", err)
+	}
+	got := errBuf.String()
+	if !strings.Contains(got, policyPath) {
+		t.Fatalf("warning = %q, want it to name %q", got, policyPath)
+	}
+	if !strings.Contains(strings.ToLower(got), "deny-all") {
+		t.Fatalf("warning = %q, want it to say egress is deny-all", got)
+	}
+}
+
+// TestOpenShellFactorySilentWhenProjectPolicyExists pins that a present policy
+// override produces no warning.
+func TestOpenShellFactorySilentWhenProjectPolicyExists(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "openshell-policy.yaml")
+	if err := os.WriteFile(policyPath, []byte("allow_hosts:\n  - models.opencode.ai\n"), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	factory, err := runBackends(func(string) string { return "" }).MustLookup("openshell")
+	if err != nil {
+		t.Fatalf("lookup openshell: %v", err)
+	}
+	var errBuf bytes.Buffer
+	if _, err := factory(config.Run{PolicyPath: policyPath}, &errBuf); err != nil {
+		t.Fatalf("build openshell backend: %v", err)
+	}
+	if errBuf.Len() != 0 {
+		t.Fatalf("unexpected warning: %q", errBuf.String())
 	}
 }

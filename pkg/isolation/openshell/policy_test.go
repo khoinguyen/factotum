@@ -36,6 +36,28 @@ func TestOverridePathIsUnderProjectFactotumDir(t *testing.T) {
 	}
 }
 
+// TestOverridePathForConfigResolvesTheConfigSibling pins that the override is
+// resolved next to the active config file, so a custom -c path loads its own
+// policy rather than silently assuming a <root>/.factotum layout.
+func TestOverridePathForConfigResolvesTheConfigSibling(t *testing.T) {
+	cases := []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{"default layout", ".factotum/config.toml", filepath.Join(".factotum", "openshell-policy.yaml")},
+		{"absolute default", "/work/acme/.factotum/config.toml", filepath.Join("/work/acme", ".factotum", "openshell-policy.yaml")},
+		{"custom name", "/work/acme/ft.toml", filepath.Join("/work/acme", "openshell-policy.yaml")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := openshell.OverridePathForConfig(tc.config); got != tc.want {
+				t.Fatalf("OverridePathForConfig(%q) = %q, want %q", tc.config, got, tc.want)
+			}
+		})
+	}
+}
+
 // rawMap decodes a rendered policy into a generic map so tests can assert that
 // a section or key is entirely absent.
 func rawMap(t *testing.T, p openshell.Policy) map[string]any {

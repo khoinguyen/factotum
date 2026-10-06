@@ -332,8 +332,8 @@ allow_hosts:
 
 Only `allow_hosts` is honored. Any other key is rejected, so a project can widen
 egress but never weaken the identity, filesystem, or credential defaults. `ft run`
-loads this file for the selected run's project and applies it to the OpenShell
-sandbox, so the hosts a project names are the only ones the agent may reach.
+loads the policy next to the active project config (a custom `-c` uses its sibling
+`openshell-policy.yaml`); with no policy file present it warns that egress is deny-all.
 
 `ft run <task>` drives one task end-to-end: it resolves the task's repositories
 into a workspace, prepares the selected isolation backend, runs the selected

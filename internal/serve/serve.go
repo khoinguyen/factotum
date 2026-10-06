@@ -61,6 +61,7 @@ type Options struct {
 // Server is the read-only dashboard HTTP handler.
 type Server struct {
 	options Options
+	broker  *eventBroker
 }
 
 // New validates the options and returns a dashboard server.
@@ -87,7 +88,9 @@ func New(opts Options) (*Server, error) {
 	if !opts.All && opts.Project == "" {
 		opts.All = true
 	}
-	return &Server{options: opts}, nil
+	server := &Server{options: opts}
+	server.broker = newEventBroker(opts.Poll, server.latestEventID)
+	return server, nil
 }
 
 // Handler returns the read-only HTTP handler. Only GET (and HEAD, for the page)
@@ -169,7 +172,8 @@ func (s *Server) handleFragment(w http.ResponseWriter, r *http.Request) {
 
 // handleEvents streams server-sent events. It sends a hello on connect, then an
 // update whenever the newest event id changes, which is how a task status change
-// reaches the page without a manual reload.
+// reaches the page without a manual reload. Every client shares one broker poll,
+// so many open dashboards do not multiply the load on the event log.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -182,25 +186,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	last, err := s.latestEventID(r.Context())
-	if err != nil {
-		last = ""
-	}
 	_, _ = fmt.Fprint(w, "retry: 1000\nevent: hello\ndata: {}\n\n")
 	flusher.Flush()
 
-	ticker := time.NewTicker(s.options.Poll)
-	defer ticker.Stop()
+	updates, cancel := s.broker.subscribe()
+	defer cancel()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ticker.C:
-			id, err := s.latestEventID(r.Context())
-			if err != nil || id == last {
-				continue
-			}
-			last = id
+		case id := <-updates:
 			_, _ = fmt.Fprintf(w, "event: update\ndata: %s\n\n", id)
 			flusher.Flush()
 		}

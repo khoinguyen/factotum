@@ -369,23 +369,24 @@ ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt
   leaves the task's status untouched and records only a failure note and event, so
   a broken run never corrupts the graph.
 
-`ft run --goal <task|milestone>` drives the graph toward a goal instead of running one
-task: it repeatedly selects the highest-ranked startable task on the path to the goal,
-runs it, and re-reads the graph until the goal is reached, no work is ready, on-path
-work is blocked, or the task budget is exhausted.
+`ft run --goal <task|milestone>` drives the graph toward a goal: it repeatedly selects
+the highest-ranked agent-ready task on the path, runs it, and re-reads the graph until
+the goal is reached, no work is ready, on-path work is blocked, or the budget runs out.
 
 ```sh
 ft run --goal t-abc123 --backend local --harness opencode --allow-host --max-tasks 5
 ```
 
-- The goal is a task or a milestone. A task is reached when it resolves; a milestone
-  is a human gate, so the loop runs its prerequisites and stops `no_ready_work` until a
-  human closes it (an intermediate milestone on the path also gates).
+- The goal is a task or a milestone: a task resolves, a milestone is a human gate, so the
+  loop runs its prerequisites and stops `no_ready_work` until a human closes it.
+- Only agent-ready work is run: a task must be assigned to an agent and `groomed`, the
+  bucket `ft task next --for <agent>` offers. Startable but non-agent-ready on-path work
+  (unassigned, human-owned, or ungroomed) is left for a human and named in `not_run:`.
 - Only tasks on a path to the goal are run, ordered by the composite ranker with the
   goal as the toward preference, so readiness and priority always decide the order.
 - `--max-tasks N` bounds the number of task runs (0 means no budget). The loop stops for
   a human when a run fails; a failed run leaves the task's status untouched.
-- The stop reason is reported as `stop:` (`goal_reached`, `no_ready_work`, `blocked`,
+- The stop reason is `stop:` (`goal_reached`, `no_ready_work`, `blocked`,
   `budget_exhausted`, or `failed`), and each iteration prints a compact `step:` block.
 
 ## Getting help

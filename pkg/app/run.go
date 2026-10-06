@@ -42,6 +42,10 @@ type RunInput struct {
 	Backend       isolation.IsolationBackend
 	Harness       harnesspkg.Harness
 	WorkspaceRoot string
+	// WorkspaceRefresh fetches and hard-resets a reused workspace checkout to
+	// its upstream before running. A reused checkout whose origin URL changed
+	// always fails, refresh or not.
+	WorkspaceRefresh bool
 	// Git and Token are the workspace's clone ports; nil uses the host git and
 	// anonymous clones.
 	Git   workspace.Git
@@ -89,9 +93,10 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 	}
 
 	plan, err := workspace.Resolve(ctx, *project, *task, workspace.Options{
-		Root:  in.WorkspaceRoot,
-		Git:   in.Git,
-		Token: in.Token,
+		Root:    in.WorkspaceRoot,
+		Git:     in.Git,
+		Token:   in.Token,
+		Refresh: in.WorkspaceRefresh,
 	})
 	if err != nil {
 		return nil, err

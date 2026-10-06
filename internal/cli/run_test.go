@@ -2,6 +2,9 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -218,6 +221,80 @@ func TestRunCommandLoopGoalSelectionIsExclusive(t *testing.T) {
 	if err := r.runErr("run", "--backend", "fake", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
 		t.Fatalf("neither task-id nor --goal error = %v, want usage", err)
 	}
+}
+
+// TestRunCommandRefreshUpdatesReusedCheckout drives `ft run` against a real
+// file:// remote through the real git executor, proving --refresh reaches the
+// workspace: the first run clones, an unrefreshed re-run stays stale, and a
+// refreshed re-run follows the advanced upstream.
+func TestRunCommandRefreshUpdatesReusedCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	src := t.TempDir()
+	commitCLIRepo(t, src, "v1\n")
+
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("project", "repo", "create", projectID, "web", "--url", "file://"+src)
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--repo", "web", "--title", "T", "--body", "B"))
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+	workspace := t.TempDir()
+	checkout := filepath.Join(workspace, "web")
+	args := func(extra ...string) []string {
+		return append([]string{"run", taskID, "--backend", "fake", "--harness", "fake", "--workspace", workspace}, extra...)
+	}
+
+	r.run(args()...)
+	if got := readCLIFile(t, filepath.Join(checkout, "README.md")); got != "v1\n" {
+		t.Fatalf("checkout README = %q, want v1 after the first run", got)
+	}
+
+	commitCLIRepo(t, src, "v2\n")
+
+	r.run(args()...)
+	if got := readCLIFile(t, filepath.Join(checkout, "README.md")); got != "v1\n" {
+		t.Fatalf("checkout README = %q, want the stale v1 without --refresh", got)
+	}
+
+	r.run(args("--refresh")...)
+	if got := readCLIFile(t, filepath.Join(checkout, "README.md")); got != "v2\n" {
+		t.Fatalf("checkout README = %q, want v2 after --refresh", got)
+	}
+}
+
+func commitCLIRepo(t *testing.T, dir, contents string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		runCLIGit(t, dir, "init", "-q")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runCLIGit(t, dir, "add", "README.md")
+	runCLIGit(t, dir, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "update")
+}
+
+func runCLIGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+}
+
+func readCLIFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }
 
 func TestRunCommandFailureLeavesTaskIntact(t *testing.T) {

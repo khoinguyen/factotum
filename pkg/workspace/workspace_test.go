@@ -28,11 +28,17 @@ func testTask(repo string) core.Task {
 	}
 }
 
-// fakeGit records clone requests and simulates the side effect a real clone has:
-// creating dir with a .git marker so re-runs detect an existing checkout.
+// fakeGit records clone and refresh requests and simulates the side effect a
+// real clone has: creating dir with a .git marker so re-runs detect an existing
+// checkout. RemoteURL returns the URL of the clone recorded for dir unless
+// remoteURL overrides it, so an idempotent re-run sees the clone it made.
 type fakeGit struct {
-	calls []workspace.CloneRequest
-	err   error
+	calls        []workspace.CloneRequest
+	err          error
+	remoteURL    string
+	remoteErr    error
+	refreshCalls []workspace.RefreshRequest
+	refreshErr   error
 }
 
 func (f *fakeGit) Clone(_ context.Context, req workspace.CloneRequest) error {
@@ -44,6 +50,26 @@ func (f *fakeGit) Clone(_ context.Context, req workspace.CloneRequest) error {
 		return err
 	}
 	return nil
+}
+
+func (f *fakeGit) RemoteURL(_ context.Context, dir string) (string, error) {
+	if f.remoteErr != nil {
+		return "", f.remoteErr
+	}
+	if f.remoteURL != "" {
+		return f.remoteURL, nil
+	}
+	for _, c := range f.calls {
+		if c.Dir == dir {
+			return c.URL, nil
+		}
+	}
+	return "", errors.New("fakeGit: no remote recorded for " + dir)
+}
+
+func (f *fakeGit) Refresh(_ context.Context, req workspace.RefreshRequest) error {
+	f.refreshCalls = append(f.refreshCalls, req)
+	return f.refreshErr
 }
 
 func TestResolveClonesMissingRepoIntoDeterministicDir(t *testing.T) {
@@ -95,6 +121,111 @@ func TestResolveIsIdempotent(t *testing.T) {
 	}
 	if second.Checkouts[0].Path != first.Checkouts[0].Path {
 		t.Errorf("second path = %q, want %q", second.Checkouts[0].Path, first.Checkouts[0].Path)
+	}
+}
+
+func TestResolveErrorsWhenRemoteURLChanged(t *testing.T) {
+	root := t.TempDir()
+	git := &fakeGit{}
+	original := testProject(core.Repository{Name: "backend", URL: "https://example.com/acme/backend.git"})
+	if _, err := workspace.Resolve(context.Background(), original, testTask("backend"), workspace.Options{Root: root, Git: git}); err != nil {
+		t.Fatalf("first Resolve() error = %v", err)
+	}
+
+	changed := testProject(core.Repository{Name: "backend", URL: "https://example.com/acme/backend-renamed.git"})
+	_, err := workspace.Resolve(context.Background(), changed, testTask("backend"), workspace.Options{Root: root, Git: git})
+	if !errors.Is(err, workspace.ErrRemoteChanged) {
+		t.Fatalf("Resolve() error = %v, want ErrRemoteChanged", err)
+	}
+	if !strings.Contains(err.Error(), "backend.git") || !strings.Contains(err.Error(), "backend-renamed.git") {
+		t.Errorf("error %q should name both the checkout and configured URLs", err)
+	}
+	if len(git.calls) != 1 {
+		t.Errorf("clone calls = %d, want 1 (a changed URL must not silently re-clone)", len(git.calls))
+	}
+}
+
+func TestResolveErrorsWhenRemoteURLUnreadable(t *testing.T) {
+	root := t.TempDir()
+	git := &fakeGit{}
+	project := testProject(core.Repository{Name: "backend", URL: "https://example.com/acme/backend.git"})
+	if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Git: git}); err != nil {
+		t.Fatalf("first Resolve() error = %v", err)
+	}
+
+	git.remoteErr = errors.New("origin missing")
+	if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Git: git}); err == nil || !strings.Contains(err.Error(), "origin missing") {
+		t.Fatalf("Resolve() error = %v, want the remote read error", err)
+	}
+}
+
+func TestResolveRefreshUpdatesExistingCheckout(t *testing.T) {
+	root := t.TempDir()
+	git := &fakeGit{}
+	project := testProject(core.Repository{Name: "backend", URL: "https://example.com/acme/backend.git"})
+	if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Git: git}); err != nil {
+		t.Fatalf("first Resolve() error = %v", err)
+	}
+
+	plan, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Git: git, Refresh: true})
+	if err != nil {
+		t.Fatalf("second Resolve() error = %v", err)
+	}
+	if !plan.Checkouts[0].Reused {
+		t.Errorf("checkout Reused = false, want true")
+	}
+	if len(git.calls) != 1 {
+		t.Errorf("clone calls = %d, want 1 (refresh must not re-clone)", len(git.calls))
+	}
+	if len(git.refreshCalls) != 1 {
+		t.Fatalf("refresh calls = %d, want 1", len(git.refreshCalls))
+	}
+	if git.refreshCalls[0].Dir != plan.Checkouts[0].Path {
+		t.Errorf("refreshed dir = %q, want %q", git.refreshCalls[0].Dir, plan.Checkouts[0].Path)
+	}
+}
+
+func TestResolveDoesNotRefreshByDefault(t *testing.T) {
+	root := t.TempDir()
+	git := &fakeGit{}
+	project := testProject(core.Repository{Name: "backend", URL: "https://example.com/acme/backend.git"})
+	for range 2 {
+		if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Git: git}); err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+	}
+	if len(git.refreshCalls) != 0 {
+		t.Errorf("refresh calls = %d, want 0 without Refresh", len(git.refreshCalls))
+	}
+}
+
+func TestResolveRefreshPassesCredential(t *testing.T) {
+	root := t.TempDir()
+	git := &fakeGit{}
+	project := testProject(core.Repository{Name: "backend", URL: "https://example.com/acme/private.git"})
+	token := stubToken{cred: workspace.Credential{Token: "s3cret"}}
+	if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Git: git, Token: token}); err != nil {
+		t.Fatalf("first Resolve() error = %v", err)
+	}
+
+	if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Git: git, Token: token, Refresh: true}); err != nil {
+		t.Fatalf("second Resolve() error = %v", err)
+	}
+	if len(git.refreshCalls) != 1 || git.refreshCalls[0].Cred == nil || git.refreshCalls[0].Cred.Token != "s3cret" {
+		t.Fatalf("refresh calls = %+v, want one carrying the token", git.refreshCalls)
+	}
+}
+
+func TestResolveDoesNotRefreshFreshClone(t *testing.T) {
+	root := t.TempDir()
+	git := &fakeGit{}
+	project := testProject(core.Repository{Name: "backend", URL: "https://example.com/acme/backend.git"})
+
+	if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Git: git, Refresh: true}); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if len(git.refreshCalls) != 0 {
+		t.Errorf("refresh calls = %d, want 0 for a fresh clone", len(git.refreshCalls))
 	}
 }
 
@@ -332,6 +463,120 @@ func TestResolveClonesRealRepoWithRealGit(t *testing.T) {
 	if !again.Checkouts[0].Reused {
 		t.Errorf("second run Reused = false, want true")
 	}
+}
+
+func TestResolveRefreshRealRepoWithRealGit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	src := t.TempDir()
+	initRepoWithReadme(t, src, "hello\n")
+
+	root := t.TempDir()
+	project := testProject(core.Repository{Name: "backend", URL: "file://" + src})
+	if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root}); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	checkout := filepath.Join(root, "backend")
+
+	// Advance the upstream; an unrefreshed re-run stays on the stale revision.
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, src, "add", "README.md")
+	runGit(t, src, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "second")
+
+	if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root}); err != nil {
+		t.Fatalf("stale Resolve() error = %v", err)
+	}
+	if got := readFile(t, filepath.Join(checkout, "README.md")); got != "hello\n" {
+		t.Errorf("without refresh README = %q, want the stale revision", got)
+	}
+
+	if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Refresh: true}); err != nil {
+		t.Fatalf("refreshing Resolve() error = %v", err)
+	}
+	if got := readFile(t, filepath.Join(checkout, "README.md")); got != "hello v2\n" {
+		t.Errorf("after refresh README = %q, want the upstream revision", got)
+	}
+}
+
+func TestResolveDetectsChangedURLWithRealGit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	src := t.TempDir()
+	initRepoWithReadme(t, src, "hello\n")
+	other := t.TempDir()
+	initRepoWithReadme(t, other, "other\n")
+
+	root := t.TempDir()
+	project := testProject(core.Repository{Name: "backend", URL: "file://" + src})
+	if _, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root}); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	changed := testProject(core.Repository{Name: "backend", URL: "file://" + other})
+	_, err := workspace.Resolve(context.Background(), changed, testTask("backend"), workspace.Options{Root: root})
+	if !errors.Is(err, workspace.ErrRemoteChanged) {
+		t.Fatalf("Resolve() error = %v, want ErrRemoteChanged", err)
+	}
+}
+
+func TestExecGitRemoteURLReadsOriginRegardlessOfAmbientGitDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q")
+	runGit(t, repo, "remote", "add", "origin", "https://example.com/acme/backend.git")
+
+	t.Setenv("GIT_DIR", "/host/elsewhere")
+	got, err := workspace.NewExecGit().RemoteURL(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("RemoteURL() error = %v", err)
+	}
+	if want := "https://example.com/acme/backend.git"; got != want {
+		t.Errorf("RemoteURL() = %q, want %q", got, want)
+	}
+}
+
+func TestExecGitRefreshUpdatesCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	src := t.TempDir()
+	initRepoWithReadme(t, src, "hello\n")
+
+	root := t.TempDir()
+	project := testProject(core.Repository{Name: "backend", URL: "file://" + src})
+	plan, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, src, "add", "README.md")
+	runGit(t, src, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "second")
+
+	if err := workspace.NewExecGit().Refresh(context.Background(), workspace.RefreshRequest{Dir: plan.Checkouts[0].Path}); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if got := readFile(t, filepath.Join(plan.Checkouts[0].Path, "README.md")); got != "hello v2\n" {
+		t.Errorf("after Refresh README = %q, want hello v2", got)
+	}
+}
+
+func initRepoWithReadme(t *testing.T, dir, contents string) {
+	t.Helper()
+	runGit(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "README.md")
+	runGit(t, dir, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "init")
 }
 
 func TestExecGitEnvIsDeliberate(t *testing.T) {

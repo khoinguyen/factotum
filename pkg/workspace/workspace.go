@@ -12,12 +12,20 @@
 // local backend runs in place (Spec.Workdir is the root), while an isolating
 // backend uploads the tree into its environment. No isolation type appears here.
 //
-// Design decisions (see the task t-r3ipl6xxal):
+// Design decisions (see the tasks t-r3ipl6xxal and t-el7zfhsufc):
 //
 //   - Workspace root: the caller supplies an absolute Root. The layout inside it
 //     is deterministic: one checkout per repo at Root/<RepoDir(name)>. A stable
 //     root makes re-runs idempotent: an existing git checkout is reused, never
 //     re-cloned, and an existing local Path is used as-is.
+//   - Re-run policy: a reused clone is not updated by default, but the resolver
+//     first compares the checkout's origin URL against the repo's configured URL
+//     and fails with ErrRemoteChanged when they differ, so a changed URL is never
+//     silently ignored. Set Options.Refresh to fetch and hard-reset a reused
+//     clone to the tip of its upstream branch, discarding local changes. The
+//     model carries no revision or branch, so there is nothing to pin to; refresh
+//     follows the remote default branch (upstream), and the resolver never
+//     re-clones a checkout it already made.
 //   - Branch/worktree strategy: this task clones the remote's default branch into
 //     a plain checkout and does not create a task branch or a git worktree.
 //     Branch/worktree-per-run needs a run lifecycle to clean them up (the
@@ -57,6 +65,9 @@ var (
 	// ErrRepoDirConflict means two repos reduce to the same workspace directory,
 	// so one would reuse the other's checkout.
 	ErrRepoDirConflict = errors.New("workspace: repositories share a workspace directory")
+	// ErrRemoteChanged means a reused checkout's origin URL no longer matches the
+	// repo's configured URL, so reusing it would run against the wrong code.
+	ErrRemoteChanged = errors.New("workspace: checkout remote URL changed")
 )
 
 // Origin says where a checkout came from.
@@ -113,10 +124,22 @@ type CloneRequest struct {
 	Cred *Credential
 }
 
+// RefreshRequest is one fetch-and-reset the resolver asks a Git to perform on an
+// existing checkout: fetch the origin and hard-reset the current branch to its
+// upstream, discarding local changes.
+type RefreshRequest struct {
+	Dir  string
+	Cred *Credential
+}
+
 // Git runs git. It is a port so the resolver can be tested without a real
 // network and so accounting or tracing can wrap the real runner.
 type Git interface {
 	Clone(ctx context.Context, req CloneRequest) error
+	// RemoteURL returns the URL of the checkout's origin remote.
+	RemoteURL(ctx context.Context, dir string) (string, error)
+	// Refresh fetches and hard-resets an existing checkout to its upstream.
+	Refresh(ctx context.Context, req RefreshRequest) error
 }
 
 // Options configure resolution.
@@ -127,11 +150,17 @@ type Options struct {
 	Git Git
 	// Token is the deliberate credential source; nil means anonymous clones.
 	Token TokenProvider
+	// Refresh updates a reused clone to its upstream before returning it,
+	// discarding local changes. Without it a reused clone is left as-is (still
+	// rejected if its origin URL changed).
+	Refresh bool
 }
 
 // Resolve selects the repositories a task touches and materializes each one
 // under opts.Root. It is idempotent: a second run reuses existing checkouts and
-// local paths instead of re-cloning.
+// local paths instead of re-cloning. A reused clone whose origin URL no longer
+// matches the repo's configured URL fails with ErrRemoteChanged; with
+// opts.Refresh it is fetched and hard-reset to its upstream first.
 func Resolve(ctx context.Context, project core.Project, task core.Task, opts Options) (*Plan, error) {
 	root := opts.Root
 	if root == "" || !filepath.IsAbs(root) {
@@ -164,7 +193,7 @@ func Resolve(ctx context.Context, project core.Project, task core.Task, opts Opt
 			}
 			dirs[dir] = repo.Name
 		}
-		checkout, err := materialize(ctx, repo, root, git, opts.Token)
+		checkout, err := materialize(ctx, repo, root, git, opts.Token, opts.Refresh)
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +227,7 @@ func RepoDir(name string) string {
 	return out
 }
 
-func materialize(ctx context.Context, repo core.Repository, root string, git Git, token TokenProvider) (Checkout, error) {
+func materialize(ctx context.Context, repo core.Repository, root string, git Git, token TokenProvider, refresh bool) (Checkout, error) {
 	if repo.Path != "" {
 		if !filepath.IsAbs(repo.Path) {
 			return Checkout{}, fmt.Errorf("%w: %q is not an absolute path", ErrLocalPath, repo.Path)
@@ -219,23 +248,61 @@ func materialize(ctx context.Context, repo core.Repository, root string, git Git
 		return Checkout{}, err
 	}
 	if reused {
+		if err := verifyRemoteURL(ctx, git, dir, repo); err != nil {
+			return Checkout{}, err
+		}
+		if refresh {
+			cred, err := resolveCredential(ctx, token, repo.URL)
+			if err != nil {
+				return Checkout{}, err
+			}
+			if err := git.Refresh(ctx, RefreshRequest{Dir: dir, Cred: cred}); err != nil {
+				return Checkout{}, err
+			}
+		}
 		return Checkout{Name: repo.Name, Path: dir, Origin: OriginClone, Reused: true}, nil
 	}
 
-	var cred *Credential
-	if token != nil {
-		c, ok, err := token.Token(ctx, repo.URL)
-		if err != nil {
-			return Checkout{}, fmt.Errorf("workspace: resolve credential for %q: %w", repo.URL, err)
-		}
-		if ok {
-			cred = &c
-		}
+	cred, err := resolveCredential(ctx, token, repo.URL)
+	if err != nil {
+		return Checkout{}, err
 	}
 	if err := git.Clone(ctx, CloneRequest{URL: repo.URL, Dir: dir, Cred: cred}); err != nil {
 		return Checkout{}, err
 	}
 	return Checkout{Name: repo.Name, Path: dir, Origin: OriginClone}, nil
+}
+
+// verifyRemoteURL compares a reused checkout's origin URL against the repo's
+// configured URL. A mismatch means the checkout belongs to a different remote
+// and reusing it would run against the wrong code, so it fails rather than
+// silently re-cloning (which would discard the checkout).
+func verifyRemoteURL(ctx context.Context, git Git, dir string, repo core.Repository) error {
+	remote, err := git.RemoteURL(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("workspace: read origin URL for %q: %w", repo.Name, err)
+	}
+	if remote != repo.URL {
+		return fmt.Errorf("%w: %q is at %q, configures %q", ErrRemoteChanged, repo.Name, remote, repo.URL)
+	}
+	return nil
+}
+
+// resolveCredential asks the token provider for a deliberate credential for
+// repoURL. A nil provider, or one with no credential for the URL, yields nil so
+// the clone or refresh stays anonymous.
+func resolveCredential(ctx context.Context, token TokenProvider, repoURL string) (*Credential, error) {
+	if token == nil {
+		return nil, nil
+	}
+	c, ok, err := token.Token(ctx, repoURL)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: resolve credential for %q: %w", repoURL, err)
+	}
+	if !ok {
+		return nil, nil
+	}
+	return &c, nil
 }
 
 // existingCheckout reports whether dir already holds a git checkout. A missing

@@ -346,10 +346,10 @@ ft run t-abc123 --backend local --harness opencode --workspace ~/.factotum/works
 ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt-in
 ```
 
-- The backend and harness are selected explicitly, by flag or by the machine-scoped
-  `[run]` table in `~/.factotum/config.toml` (`backend`, `harness`, `workspace`,
-  `model`, `args`, `allow_host`, `provider`, `credential_env`) or its `FACTOTUM_RUN_*`
-  overrides. There is no default backend: a run without one fails rather than guessing.
+- The backend and harness are selected explicitly, by flag or the machine-scoped
+  `[run]` table (`backend`, `harness`, `workspace`, `model`, `args`, `allow_host`,
+  `refresh`, `provider`, `credential_env`) or `FACTOTUM_RUN_*` overrides; there is no
+  default backend. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
 - `provider` and `credential_env` name the credential a harness may use and the
   variable it arrives under (`provider = "openrouter"`,
   `credential_env = "OPENROUTER_API_KEY"`). The value is read from the host

@@ -504,11 +504,12 @@ default_project = "acme"
 backend = "local"
 harness = "opencode"
 workspace = "~/ws/{project}"
-model = "openrouter/x"
-allow_host = true
-args = ["--auto"]
-provider = "openrouter"
-credential_env = "OPENROUTER_API_KEY"
+ model = "openrouter/x"
+ allow_host = true
+ refresh = true
+ args = ["--auto"]
+ provider = "openrouter"
+ credential_env = "OPENROUTER_API_KEY"
 `)
 	cfg, err := Load(Input{UserPath: user, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
 	if err != nil {
@@ -516,6 +517,9 @@ credential_env = "OPENROUTER_API_KEY"
 	}
 	if cfg.Run.Backend != "local" || cfg.Run.Harness != "opencode" {
 		t.Fatalf("Run = %+v, want local/opencode", cfg.Run)
+	}
+	if !cfg.Run.Refresh {
+		t.Fatal("Run.Refresh = false, want true")
 	}
 	if want := ExpandPath("~/ws/acme"); cfg.Run.Workspace != want {
 		t.Fatalf("Run.Workspace = %q, want %q", cfg.Run.Workspace, want)
@@ -557,6 +561,8 @@ harness = "opencode"
 				return "openrouter/y"
 			case "FACTOTUM_RUN_ALLOW_HOST":
 				return "1"
+			case "FACTOTUM_RUN_REFRESH":
+				return "1"
 			case "FACTOTUM_RUN_PROVIDER":
 				return "openrouter"
 			case "FACTOTUM_RUN_CREDENTIAL_ENV":
@@ -569,7 +575,7 @@ harness = "opencode"
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Run.Backend != "openshell" || cfg.Run.Harness != "pi" || cfg.Run.Model != "openrouter/y" || !cfg.Run.AllowHost {
+	if cfg.Run.Backend != "openshell" || cfg.Run.Harness != "pi" || cfg.Run.Model != "openrouter/y" || !cfg.Run.AllowHost || !cfg.Run.Refresh {
 		t.Fatalf("Run = %+v, want env overrides", cfg.Run)
 	}
 	if cfg.Run.Provider != "openrouter" || cfg.Run.CredentialEnvVar != "OPENROUTER_API_KEY" {

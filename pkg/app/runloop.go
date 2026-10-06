@@ -52,6 +52,10 @@ type LoopOutcome struct {
 	Stop       StopReason
 	Steps      []LoopStep
 	Remaining  int
+	// NotRun names the startable tasks on the path to the goal the loop left
+	// alone because they are not agent-ready (groomed and agent-assigned). They
+	// need a human to groom or run them.
+	NotRun []core.TaskID
 }
 
 // LoopRunner runs one task end-to-end and reflects its outcome into the store.
@@ -71,8 +75,8 @@ type LoopInput struct {
 }
 
 // RunLoopService drives the graph toward a goal: it repeatedly selects the
-// highest-ranked startable task on the path to the goal, runs it, and re-reads
-// the graph until the goal is reached or the loop cannot progress.
+// highest-ranked agent-ready (groomed) task on the path to the goal, runs it,
+// and re-reads the graph until the goal is reached or the loop cannot progress.
 type RunLoopService struct {
 	backend store.Backend
 	ranker  rank.Ranker
@@ -122,7 +126,7 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 			}
 		}
 
-		candidates := readyOnPath(snapshot.Graph, goal.ID)
+		candidates := agentReadyOnPath(snapshot, goal.ID)
 		if len(candidates) == 0 {
 			return s.stall(outcome, snapshot, goal.ID), nil
 		}
@@ -191,6 +195,7 @@ func (s *RunLoopService) reachGoal(outcome *LoopOutcome, snapshot *Snapshot, rem
 func (s *RunLoopService) stall(outcome *LoopOutcome, snapshot *Snapshot, goal core.TaskID) *LoopOutcome {
 	unresolved := unresolvedOnPath(snapshot.Graph, goal, snapshot.Project.Policy)
 	outcome.Remaining = len(unresolved)
+	outcome.NotRun = notRunOnPath(snapshot, goal)
 	outcome.Stop = StopNoReadyWork
 	for _, id := range unresolved {
 		if task, ok := snapshot.Graph.Task(id); ok && task.Status == core.StatusBlocked {
@@ -201,17 +206,41 @@ func (s *RunLoopService) stall(outcome *LoopOutcome, snapshot *Snapshot, goal co
 	return outcome
 }
 
-// readyOnPath returns the startable tasks that lie on a path to the goal.
-// Milestones are excluded: a milestone is a human gate, so the loop completes
-// its prerequisites and stops rather than running the gate.
-func readyOnPath(g *graph.Graph, goal core.TaskID) []core.TaskID {
-	onPath := ancestorsToward(g, goal)
+// agentReadyOnPath returns the agent-ready (groomed) startable tasks that lie on
+// a path to the goal. A task that is startable but not agent-ready - unassigned,
+// assigned to a human, or ungroomed - is left for a human; the loop never runs
+// it. Milestones are excluded: a milestone is a human gate, so the loop
+// completes its prerequisites and stops rather than running the gate.
+func agentReadyOnPath(snapshot *Snapshot, goal core.TaskID) []core.TaskID {
+	onPath := ancestorsToward(snapshot.Graph, goal)
 	var out []core.TaskID
-	for _, id := range g.ReadySet() {
+	for _, id := range snapshot.Ready.Agent {
 		if !onPath[id] {
 			continue
 		}
-		if task, ok := g.Task(id); ok && task.IsMilestone() {
+		if task, ok := snapshot.Graph.Task(id); ok && task.IsMilestone() {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+// notRunOnPath returns the startable on-path tasks the loop declines to run
+// because they are not agent-ready. They are the work a human must groom or
+// take on before the loop can make progress.
+func notRunOnPath(snapshot *Snapshot, goal core.TaskID) []core.TaskID {
+	onPath := ancestorsToward(snapshot.Graph, goal)
+	agentReady := make(map[core.TaskID]bool, len(snapshot.Ready.Agent))
+	for _, id := range snapshot.Ready.Agent {
+		agentReady[id] = true
+	}
+	var out []core.TaskID
+	for _, id := range snapshot.Graph.ReadySet() {
+		if !onPath[id] || agentReady[id] {
+			continue
+		}
+		if task, ok := snapshot.Graph.Task(id); ok && task.IsMilestone() {
 			continue
 		}
 		out = append(out, id)

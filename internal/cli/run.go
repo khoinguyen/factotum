@@ -40,7 +40,7 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			"task mode `ft run <task-id>` resolves the task's workspace, prepares the selected\n" +
 			"isolation backend, runs the selected harness, captures its output, and reflects\n" +
 			"progress back into the store. With --goal the launcher repeatedly selects the\n" +
-			"highest-ranked startable task on the path to the goal, runs it, and re-reads the\n" +
+			"highest-ranked agent-ready (groomed) task on the path to the goal, runs it, and re-reads the\n" +
 			"graph until the goal is reached, no work is ready, on-path work is blocked, or the\n" +
 			"--max-tasks budget is exhausted. The backend and harness are selected explicitly,\n" +
 			"by flag or by the [run] config table; there is no default backend. The local backend\n" +
@@ -330,6 +330,7 @@ type runLoopDoc struct {
 	Stop       string           `json:"stop" yaml:"stop"`
 	Iterations int              `json:"iterations" yaml:"iterations"`
 	Remaining  int              `json:"remaining" yaml:"remaining"`
+	NotRun     []string         `json:"not_run,omitempty" yaml:"not_run,omitempty"`
 	Steps      []runLoopStepDoc `json:"steps" yaml:"steps"`
 	Project    string           `json:"project" yaml:"project"`
 	Repo       string           `json:"repo" yaml:"repo"`
@@ -364,20 +365,26 @@ func (d *Deps) printLoopOutcome(goal *core.Task, outcome *app.LoopOutcome, runEr
 		Project:    string(goal.ProjectID),
 		Repo:       goal.Repo,
 	}
+	for _, id := range outcome.NotRun {
+		doc.NotRun = append(doc.NotRun, string(id))
+	}
 	for _, step := range outcome.Steps {
 		doc.Steps = append(doc.Steps, loopStepDoc(step))
 	}
 	return d.emit(doc, func() {
-		d.printFields(
+		fields := []field{
 			f("goal", outcome.Goal),
 			f("goal_kind", outcome.GoalKind),
 			f("goal_status", outcome.GoalStatus),
 			f("stop", outcome.Stop),
 			f("iterations", len(outcome.Steps)),
 			f("remaining", outcome.Remaining),
-			f("project", goal.ProjectID),
-			f("repo", d.repoValue(goal.Repo)),
-		)
+		}
+		for _, id := range outcome.NotRun {
+			fields = append(fields, f("not_run", id))
+		}
+		fields = append(fields, f("project", goal.ProjectID), f("repo", d.repoValue(goal.Repo)))
+		d.printFields(fields...)
 	}, d.runLoopHints(goal, outcome, runErr)...)
 }
 

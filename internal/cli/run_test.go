@@ -105,14 +105,21 @@ func TestRunCommandLoopLocalBackendRequiresOptIn(t *testing.T) {
 
 // loopContext creates a project whose one repo is an existing checkout and a
 // two-task chain (goal depends on prereq), so `ft run --goal` can be exercised.
+// Both tasks are assigned to an agent and groomed, because the loop only runs
+// agent-ready work.
 func loopContext(t *testing.T, r *runner) (projectID, prereq, goal string) {
 	t.Helper()
 	projectID = firstField(t, r.run("project", "create", "Acme"))
 	r.run("project", "repo", "create", projectID, "web", "--path", t.TempDir())
+	r.run("actor", "create", "--kind", "agent", "claude")
 	prereq = firstField(t, r.run("task", "create",
-		"--project", projectID, "--repo", "web", "--title", "Prereq", "--body", "Do the first part."))
+		"--project", projectID, "--repo", "web", "--title", "Prereq", "--body", "Do the first part.",
+		"--groomed", "--acceptance", "the first part is done"))
+	r.run("task", "assign", prereq, "--actor", "claude")
 	goal = firstField(t, r.run("task", "create",
-		"--project", projectID, "--repo", "web", "--title", "Goal", "--body", "Do the last part."))
+		"--project", projectID, "--repo", "web", "--title", "Goal", "--body", "Do the last part.",
+		"--groomed", "--acceptance", "the last part is done"))
+	r.run("task", "assign", goal, "--actor", "claude")
 	r.run("task", "dep", "create", goal, prereq)
 	return projectID, prereq, goal
 }
@@ -161,6 +168,42 @@ func TestRunCommandLoopStopsOnBudget(t *testing.T) {
 	}
 	if shown := r.run("task", "get", goal); !strings.Contains(shown, "(todo)") {
 		t.Fatalf("goal should be untouched after budget stop:\n%s", shown)
+	}
+}
+
+// An ungroomed on-path task is not agent-ready: the loop will not run it and
+// reports it as not-run so a human knows to groom it.
+func TestRunCommandLoopReportsUngroomedTaskNotRun(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("project", "repo", "create", projectID, "web", "--path", t.TempDir())
+	r.run("actor", "create", "--kind", "agent", "claude")
+	prereq := firstField(t, r.run("task", "create",
+		"--project", projectID, "--repo", "web", "--title", "Prereq", "--body", "Do the first part."))
+	r.run("task", "assign", prereq, "--actor", "claude")
+	goal := firstField(t, r.run("task", "create",
+		"--project", projectID, "--repo", "web", "--title", "Goal", "--body", "Do the last part.",
+		"--groomed", "--acceptance", "the last part is done"))
+	r.run("task", "assign", goal, "--actor", "claude")
+	r.run("task", "dep", "create", goal, prereq)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("run", "--goal", goal, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !strings.Contains(out, "stop: no_ready_work") {
+		t.Fatalf("loop should stall on ungroomed work:\n%s", out)
+	}
+	if !strings.Contains(out, "not_run: "+prereq) {
+		t.Fatalf("loop should report the ungroomed task as not-run:\n%s", out)
+	}
+	if got := backend.Commands(); len(got) != 0 {
+		t.Fatalf("ran %d tasks, want 0", len(got))
+	}
+	if shown := r.run("task", "get", prereq); !strings.HasPrefix(shown, "(todo) ") {
+		t.Fatalf("ungroomed task should be untouched:\n%s", shown)
 	}
 }
 

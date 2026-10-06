@@ -876,7 +876,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&title, "title", "t", "", "task title")
-	cmd.Flags().StringVarP(&kind, "kind", "k", "", "task kind: task, milestone, or idea")
+	cmd.Flags().StringVarP(&kind, "kind", "k", "", "task kind: task or milestone; an idea is turned into a task with `ft task promote`")
 	cmd.Flags().StringVarP(&body, "body", "b", "", "task body (description)")
 	cmd.Flags().StringVarP(&bodyFile, "body-file", "f", "", "read the task body from a file")
 	cmd.Flags().IntVar(&priority, "priority", 0, "task priority")

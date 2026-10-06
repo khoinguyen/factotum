@@ -24,6 +24,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/harness/opencode"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	"github.com/khoinguyen/factotum/pkg/isolation/local"
+	"github.com/khoinguyen/factotum/pkg/isolation/openshell"
 	"github.com/khoinguyen/factotum/pkg/judge"
 	_ "github.com/khoinguyen/factotum/pkg/judge/typesafe" // register the default provider
 	"github.com/khoinguyen/factotum/pkg/rank"
@@ -183,11 +184,16 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 
 // runBackends registers the built-in isolation backends. The local backend is
 // registered but only ever constructible with the configured opt-in, so it can
-// never run unsandboxed by default.
+// never run unsandboxed by default. The OpenShell backend is deny-by-default and
+// non-root; it needs a reachable gateway and the openshell CLI, and refuses a
+// run it cannot prepare.
 func runBackends() *registry.Registry[IsolationBackendFactory] {
 	reg := registry.New[IsolationBackendFactory]()
 	registerRunBackend(reg, local.Name, func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error) {
 		return local.New(local.Options{AllowHost: cfg.AllowHost, Warn: errOut}), nil
+	})
+	registerRunBackend(reg, openshell.Name, func(config.Run, io.Writer) (isolation.IsolationBackend, error) {
+		return openshell.New(openshell.Options{}), nil
 	})
 	return reg
 }

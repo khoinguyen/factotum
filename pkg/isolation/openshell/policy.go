@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -70,7 +71,7 @@ const (
 	allowPort        = 443
 )
 
-// Options configures the rendered policy.
+// Options configures the rendered policy and the backend that applies it.
 type Options struct {
 	// OverridePath is the project's committed override file. An empty path, or
 	// a path that does not exist, means no opt-in.
@@ -85,6 +86,33 @@ type Options struct {
 	// HarnessBinary is the in-image path egress rules are scoped to. Defaults
 	// to DefaultHarnessBinary.
 	HarnessBinary string
+
+	// CLI is the openshell executable the backend shells out to. Defaults to
+	// DefaultCLI.
+	CLI string
+	// Image is the sandbox image used when Spec.Image.Ref is empty. Defaults to
+	// DefaultImage, so a spec with no image (for example the conformance suite)
+	// still prepares.
+	Image string
+	// Workdir is the in-sandbox directory a run executes in. Defaults to
+	// DefaultWorkdir.
+	Workdir string
+	// Gateway selects a named openShell gateway. Empty uses the CLI default.
+	Gateway string
+	// Credentials resolves a provider credential reference to its secret value,
+	// which is passed to the gateway as provider material. A nil resolver makes
+	// AttachCredential return ErrUnsupported: the backend never reads a secret
+	// on its own.
+	Credentials CredentialResolver
+	// ReadyTimeout bounds sandbox readiness polling. Zero uses
+	// DefaultReadyTimeout.
+	ReadyTimeout time.Duration
+	// NewName returns a sandbox name; nil generates a random one. The gateway
+	// caps sandbox names at 19 characters.
+	NewName func() string
+	// Runner runs the openshell CLI. Nil execs the real binary; tests inject a
+	// fake so no gateway is needed.
+	Runner Runner
 }
 
 // Policy is an OpenShell version-1 policy document.

@@ -85,8 +85,9 @@ type Backend struct {
 	creds     CredentialResolver
 	seq       atomic.Int64
 
-	mu   sync.Mutex
-	envs map[string]*environment
+	mu      sync.Mutex
+	envs    map[string]*environment
+	deleted map[string]struct{}
 }
 
 // New returns a local backend. It is inert until Prepare is called with
@@ -97,6 +98,7 @@ func New(opts Options) *Backend {
 		warn:      opts.Warn,
 		creds:     opts.Credentials,
 		envs:      map[string]*environment{},
+		deleted:   map[string]struct{}{},
 	}
 }
 
@@ -312,17 +314,30 @@ func (b *Backend) Stop(_ context.Context, h isolation.Handle) error {
 	return nil
 }
 
+// Delete stops and removes the environment. It is idempotent: deleting an
+// already-deleted handle is a no-op, so a caller's deferred teardown never
+// races a retry. A foreign or never-prepared handle is still an error.
 func (b *Backend) Delete(_ context.Context, h isolation.Handle) error {
-	env, err := b.lookup(h)
+	id, err := handleID(h)
 	if err != nil {
 		return err
 	}
-	env.stop()
 
 	b.mu.Lock()
-	delete(b.envs, env.id)
+	if _, gone := b.deleted[id]; gone {
+		b.mu.Unlock()
+		return nil
+	}
+	env, ok := b.envs[id]
+	if !ok {
+		b.mu.Unlock()
+		return fmt.Errorf("isolation/local: unknown handle %q", id)
+	}
+	delete(b.envs, id)
+	b.deleted[id] = struct{}{}
 	b.mu.Unlock()
 
+	env.stop()
 	if env.owned {
 		if err := os.RemoveAll(env.root); err != nil {
 			return fmt.Errorf("isolation/local: remove environment: %w", err)
@@ -373,20 +388,30 @@ func (b *Backend) attach(ctx context.Context, env *environment, c isolation.Cred
 }
 
 func (b *Backend) lookup(h isolation.Handle) (*environment, error) {
-	if h == nil {
-		return nil, errors.New("isolation/local: nil handle")
-	}
-	hh, ok := h.(*handle)
-	if !ok {
-		return nil, fmt.Errorf("isolation/local: foreign handle %q", h.ID())
+	id, err := handleID(h)
+	if err != nil {
+		return nil, err
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	env, ok := b.envs[hh.id]
+	env, ok := b.envs[id]
 	if !ok {
-		return nil, fmt.Errorf("isolation/local: unknown handle %q", hh.id)
+		return nil, fmt.Errorf("isolation/local: unknown handle %q", id)
 	}
 	return env, nil
+}
+
+// handleID validates that h is a handle this backend created and returns its
+// id. A nil or foreign handle is an error, never a panic.
+func handleID(h isolation.Handle) (string, error) {
+	if h == nil {
+		return "", errors.New("isolation/local: nil handle")
+	}
+	hh, ok := h.(*handle)
+	if !ok {
+		return "", fmt.Errorf("isolation/local: foreign handle %q", h.ID())
+	}
+	return hh.id, nil
 }
 
 func (b *Backend) warnUnsandboxed() {

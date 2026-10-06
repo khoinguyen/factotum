@@ -17,6 +17,27 @@ func skillDriftRoot(t *testing.T) *cobra.Command {
 	return NewRoot(deps)
 }
 
+// TestEmbeddedSkillsFitOutputBound guards `ft skill get` against the output
+// bound silently truncating a skill: when stdout is not a terminal the printed
+// window keeps only a head and tail, so a piped skill must stay under
+// maxOutputLines with headroom. The guard fails at the bound, before truncation
+// can reach an agent.
+func TestEmbeddedSkillsFitOutputBound(t *testing.T) {
+	all, err := skills.All()
+	if err != nil {
+		t.Fatalf("skills.All() error = %v", err)
+	}
+	if len(all) == 0 {
+		t.Fatal("no embedded skills to check")
+	}
+	for _, skill := range all {
+		if lines := countLines([]byte(skill.Body)); lines >= maxOutputLines {
+			t.Errorf("skill %q is %d lines; keep it below the %d-line output bound or `ft skill get %s` is truncated",
+				skill.Name, lines, maxOutputLines, skill.Name)
+		}
+	}
+}
+
 func TestEmbeddedSkillsReferenceRealCommandsAndFlags(t *testing.T) {
 	root := skillDriftRoot(t)
 	all, err := skills.All()

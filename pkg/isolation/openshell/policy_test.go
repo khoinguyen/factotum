@@ -254,11 +254,120 @@ func TestMissingOverrideIsNoOverride(t *testing.T) {
 }
 
 func TestInvalidHostRejected(t *testing.T) {
-	for _, host := range []string{"http://evil.example.com", "evil.example.com/path", "user@evil.example.com", "evil.example.com:8443", "  "} {
-		path := writeOverride(t, "allow_hosts:\n  - \""+host+"\"\n")
-		if _, err := openshell.Build(openshell.Options{OverridePath: path}); err == nil {
-			t.Errorf("Build() accepted invalid host %q, want an error", host)
-		}
+	tests := []struct {
+		name string
+		host string
+	}{
+		{"empty", ""},
+		{"blank", "  "},
+		{"scheme", "http://evil.example.com"},
+		{"path", "evil.example.com/path"},
+		{"userinfo", "user@evil.example.com"},
+		{"port", "evil.example.com:8443"},
+		{"whitespace inside", "exa mple.com"},
+		{"brace alternate", "{a,b}.example.com"},
+		{"bare wildcard", "*"},
+		{"bare recursive wildcard", "**"},
+		{"lone dot", "."},
+		{"lone hyphen", "-"},
+		{"tld wildcard", "*.com"},
+		{"recursive tld wildcard", "**.com"},
+		{"two-label wildcard", "*.example"},
+		{"leading empty label", ".example.com"},
+		{"trailing dot", "example.com."},
+		{"empty middle label", "example..com"},
+		{"leading hyphen", "-example.com"},
+		{"trailing hyphen", "example-.com"},
+		{"underscore", "exa_mple.com"},
+		{"recursive outside first label", "foo.**.example.com"},
+		{"partial middle wildcard", "foo.us-*.example.com"},
+		{"recursive mixed in label", "foo**.example.com"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeOverride(t, "allow_hosts:\n  - \""+tc.host+"\"\n")
+			if _, err := openshell.Build(openshell.Options{OverridePath: path}); err == nil {
+				t.Errorf("Build() accepted invalid host %q, want an error", tc.host)
+			}
+		})
+	}
+}
+
+func TestValidHostAccepted(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+	}{
+		{"apex", "example.com"},
+		{"subdomain", "sub.example.com"},
+		{"phone home", "models.opencode.ai"},
+		{"single label", "localhost"},
+		{"ipv4 literal", "192.168.1.1"},
+		{"subdomain wildcard", "*.example.com"},
+		{"recursive subdomain wildcard", "**.example.com"},
+		{"intra-label first wildcard", "*-api.example.com"},
+		{"middle label wildcard", "api.*.example.com"},
+		{"multiple middle wildcards", "*.s3.*.amazonaws.com"},
+		{"three-label tld", "*.co.uk"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeOverride(t, "allow_hosts:\n  - \""+tc.host+"\"\n")
+			if _, err := openshell.Build(openshell.Options{OverridePath: path}); err != nil {
+				t.Errorf("Build() rejected valid host %q: %v", tc.host, err)
+			}
+		})
+	}
+}
+
+func TestBuildRejectsRootAndInvalidIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		opts openshell.Options
+	}{
+		{"user uid zero", openshell.Options{RunAsUser: "0"}},
+		{"user leading-zero zero", openshell.Options{RunAsUser: "00"}},
+		{"user root name", openshell.Options{RunAsUser: "root"}},
+		{"user non-numeric name", openshell.Options{RunAsUser: "nobody"}},
+		{"user u32 max sentinel", openshell.Options{RunAsUser: "4294967295"}},
+		{"user over u32", openshell.Options{RunAsUser: "4294967296"}},
+		{"group gid zero", openshell.Options{RunAsGroup: "0"}},
+		{"group leading-zero zero", openshell.Options{RunAsGroup: "00"}},
+		{"group root name", openshell.Options{RunAsGroup: "root"}},
+		{"group non-numeric name", openshell.Options{RunAsGroup: "nobody"}},
+		{"group u32 max sentinel", openshell.Options{RunAsGroup: "4294967295"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := openshell.Build(tc.opts); err == nil {
+				t.Fatalf("Build(%+v) accepted an invalid identity, want an error", tc.opts)
+			}
+		})
+	}
+}
+
+func TestBuildAcceptsValidIdentity(t *testing.T) {
+	tests := []struct {
+		name      string
+		opts      openshell.Options
+		wantUser  string
+		wantGroup string
+	}{
+		{"defaults", openshell.Options{}, openshell.DefaultRunAsUser, openshell.DefaultRunAsGroup},
+		{"numeric override", openshell.Options{RunAsUser: "501", RunAsGroup: "20"}, "501", "20"},
+		{"sandbox name", openshell.Options{RunAsUser: "sandbox", RunAsGroup: "sandbox"}, "sandbox", "sandbox"},
+		{"range bounds", openshell.Options{RunAsUser: "1", RunAsGroup: "4294967294"}, "1", "4294967294"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := openshell.Build(tc.opts)
+			if err != nil {
+				t.Fatalf("Build(%+v) error = %v, want nil", tc.opts, err)
+			}
+			if p.Process.RunAsUser != tc.wantUser || p.Process.RunAsGroup != tc.wantGroup {
+				t.Errorf("Process = %+v, want %s/%s", p.Process, tc.wantUser, tc.wantGroup)
+			}
+		})
 	}
 }
 

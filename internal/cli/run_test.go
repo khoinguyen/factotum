@@ -86,6 +86,80 @@ func TestRunCommandLocalBackendRequiresOptIn(t *testing.T) {
 	}
 }
 
+// loopContext creates a project whose one repo is an existing checkout and a
+// two-task chain (goal depends on prereq), so `ft run --goal` can be exercised.
+func loopContext(t *testing.T, r *runner) (projectID, prereq, goal string) {
+	t.Helper()
+	projectID = firstField(t, r.run("project", "create", "Acme"))
+	r.run("project", "repo", "create", projectID, "web", "--path", t.TempDir())
+	prereq = firstField(t, r.run("task", "create",
+		"--project", projectID, "--repo", "web", "--title", "Prereq", "--body", "Do the first part."))
+	goal = firstField(t, r.run("task", "create",
+		"--project", projectID, "--repo", "web", "--title", "Goal", "--body", "Do the last part."))
+	r.run("task", "dep", "create", goal, prereq)
+	return projectID, prereq, goal
+}
+
+func TestRunCommandLoopDrivesToGoal(t *testing.T) {
+	r := newRunner(t)
+	_, prereq, goal := loopContext(t, r)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("run", "--goal", goal, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	for _, want := range []string{"goal: " + goal, "stop: goal_reached", "iterations: 2", prereq} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("run loop output missing %q:\n%s", want, out)
+		}
+	}
+	if shown := r.run("task", "get", prereq); !strings.Contains(shown, "ready_for_review") {
+		t.Fatalf("prerequisite not advanced by the loop:\n%s", shown)
+	}
+	if shown := r.run("task", "get", goal); !strings.Contains(shown, "ready_for_review") {
+		t.Fatalf("goal not advanced by the loop:\n%s", shown)
+	}
+	if got := backend.Commands(); len(got) != 2 {
+		t.Fatalf("ran %d tasks, want 2", len(got))
+	}
+}
+
+func TestRunCommandLoopStopsOnBudget(t *testing.T) {
+	r := newRunner(t)
+	_, prereq, goal := loopContext(t, r)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("run", "--goal", goal, "--max-tasks", "1", "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !strings.Contains(out, "stop: budget_exhausted") {
+		t.Fatalf("run loop output missing budget stop:\n%s", out)
+	}
+	if shown := r.run("task", "get", prereq); !strings.Contains(shown, "ready_for_review") {
+		t.Fatalf("prerequisite not advanced before budget:\n%s", shown)
+	}
+	if shown := r.run("task", "get", goal); !strings.Contains(shown, "(todo)") {
+		t.Fatalf("goal should be untouched after budget stop:\n%s", shown)
+	}
+}
+
+func TestRunCommandLoopGoalSelectionIsExclusive(t *testing.T) {
+	r := newRunner(t)
+	r.runHarness = harnessfake.New("opencode")
+	workspace := t.TempDir()
+
+	if err := r.runErr("run", "t-anything", "--goal", "t-other", "--backend", "fake", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
+		t.Fatalf("task-id + --goal error = %v, want usage", err)
+	}
+	if err := r.runErr("run", "--backend", "fake", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
+		t.Fatalf("neither task-id nor --goal error = %v, want usage", err)
+	}
+}
+
 func TestRunCommandFailureLeavesTaskIntact(t *testing.T) {
 	r := newRunner(t)
 	_, taskID := runContext(t, r)

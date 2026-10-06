@@ -302,7 +302,9 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 					}
 					deps.printf("deps: %s\n", strings.Join(ids, ", "))
 				}
-				if len(dependents) > 0 {
+				// Ideas never gate work, so a dependent of a capture is origin
+				// lineage, not something the capture unblocks.
+				if len(dependents) > 0 && task.Kind.Executable() {
 					ids := make([]string, 0, len(dependents))
 					for _, dependent := range dependents {
 						ids = append(ids, string(dependent))

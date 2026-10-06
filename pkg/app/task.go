@@ -210,6 +210,12 @@ func (s *TaskService) Set(ctx context.Context, id core.TaskID, set TaskSet) (*co
 		if !set.Kind.Valid() {
 			return nil, fmt.Errorf("%w: unknown task kind %q", core.ErrInvalid, *set.Kind)
 		}
+		// Crossing between an idea and an executable kind is never an in-place
+		// edit: promoting is an explicit, linked, history-preserving operation,
+		// and demoting executable work would silently drop it from the graph.
+		if *set.Kind != task.Kind && (task.Kind == core.KindIdea || *set.Kind == core.KindIdea) {
+			return nil, fmt.Errorf("%w: cannot change kind to or from idea in place; use `ft task promote` to turn an idea into a task", core.ErrInvalid)
+		}
 		task.Kind = *set.Kind
 	}
 	if set.Repo != nil {

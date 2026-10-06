@@ -246,7 +246,7 @@ func TestTaskCheckGatesContradictingRefinementAndEmitsDelta(t *testing.T) {
 	// The cached result is the audit artifact: it names the origin and carries
 	// the delta, and `task get` shows it without another judge call.
 	doc := r.run("task", "get", taskID)
-	for _, want := range []string{"entailment_origin", "contradicts origin", "origin: " + ideaID, "delta vs origin"} {
+	for _, want := range []string{"entailment_origin", "contradicts origin", "origin: " + ideaID, "    delta vs origin:"} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("task get checks missing %q:\n%s", want, doc)
 		}

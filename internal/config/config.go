@@ -50,6 +50,22 @@ type Config struct {
 	// Disabled, so `ft prompt` reports that no agent is configured. Options are
 	// generic so a new provider needs no new field here.
 	Agent Agent
+	// Run configures the `ft run` launcher: which isolation backend and harness
+	// to select, where to materialize workspaces, and the explicit opt-in to the
+	// unsandboxed local backend. It is machine-scoped (the user file): backend and
+	// harness availability and the opt-in are host properties, never committed.
+	Run Run
+}
+
+// Run configures the `ft run` launcher. An empty Backend or Harness means the
+// command must be told which to use; there is no safe default backend.
+type Run struct {
+	Backend   string
+	Harness   string
+	Workspace string
+	Model     string
+	AllowHost bool
+	Args      []string
 }
 
 // Agent configures the inference provider behind `ft prompt`. Agent is the
@@ -110,7 +126,20 @@ type userFile struct {
 	NoHints        *bool                   `toml:"no_hints"`
 	Store          fileStore               `toml:"store"`
 	Judge          judgeFile               `toml:"judge"`
+	Run            runFile                 `toml:"run"`
 	Projects       map[string]projectEntry `toml:"projects"`
+}
+
+// runFile is the machine-scoped [run] table. It is deliberately absent from
+// projectFile: a committed file must never select a backend or opt into the
+// unsandboxed host backend.
+type runFile struct {
+	Backend   string   `toml:"backend"`
+	Harness   string   `toml:"harness"`
+	Workspace string   `toml:"workspace"`
+	Model     string   `toml:"model"`
+	AllowHost bool     `toml:"allow_host"`
+	Args      []string `toml:"args"`
 }
 
 type projectFile struct {
@@ -177,6 +206,15 @@ func Load(in Input) (Config, error) {
 	cfg.Agent.Options = agentOptions
 	cfg.Agent.Provider = firstNonEmpty(strings.TrimSpace(agentOptions["provider"]), Default().Agent.Provider)
 	applyAgentEnv(&cfg.Agent, getenv)
+	cfg.Run = Run{
+		Backend:   user.Run.Backend,
+		Harness:   user.Run.Harness,
+		Workspace: expand(user.Run.Workspace, cfg.Project),
+		Model:     user.Run.Model,
+		AllowHost: user.Run.AllowHost,
+		Args:      append([]string(nil), user.Run.Args...),
+	}
+	applyRunEnv(&cfg.Run, getenv)
 	cfg.DefaultActor = firstNonEmpty(project.DefaultActor, entry.DefaultActor, user.DefaultActor)
 	cfg.NoHints = boolAt(user.NoHints, false)
 	cfg.NoHints = boolAt(entry.NoHints, cfg.NoHints)
@@ -345,6 +383,26 @@ func applyAgentEnv(agent *Agent, getenv func(string) string) {
 	}
 	if command := getenv("FACTOTUM_AGENT_COMMAND"); command != "" {
 		agent.Options["command"] = command
+	}
+}
+
+// applyRunEnv overlays the FACTOTUM_RUN_* environment variables on the [run]
+// table, so a launcher can be selected without editing a config file.
+func applyRunEnv(run *Run, getenv func(string) string) {
+	if backend := getenv("FACTOTUM_RUN_BACKEND"); backend != "" {
+		run.Backend = backend
+	}
+	if harness := getenv("FACTOTUM_RUN_HARNESS"); harness != "" {
+		run.Harness = harness
+	}
+	if workspace := getenv("FACTOTUM_RUN_WORKSPACE"); workspace != "" {
+		run.Workspace = ExpandPath(workspace)
+	}
+	if model := getenv("FACTOTUM_RUN_MODEL"); model != "" {
+		run.Model = model
+	}
+	if truthy(getenv("FACTOTUM_RUN_ALLOW_HOST")) {
+		run.AllowHost = true
 	}
 }
 

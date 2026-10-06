@@ -275,6 +275,30 @@ flag, and a configured credential is declared as a provider reference that the
 isolation backend resolves. A local run uses the host `opencode` binary
 (dev-only); an isolating backend runs the shipped image as a non-root user.
 
+`ft run <task>` drives one task end-to-end: it resolves the task's repositories
+into a workspace, prepares the selected isolation backend, runs the selected
+harness with the task as its prompt, captures the output, and reflects progress
+back into the store.
+
+```sh
+ft run t-abc123 --backend local --harness opencode --workspace ~/.factotum/workspaces
+ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt-in
+```
+
+- The backend and harness are selected explicitly, by flag or by the machine-scoped
+  `[run]` table in `~/.factotum/config.toml` (`backend`, `harness`, `workspace`,
+  `model`, `args`, `allow_host`), or by `FACTOTUM_RUN_BACKEND`,
+  `FACTOTUM_RUN_HARNESS`, `FACTOTUM_RUN_WORKSPACE`, `FACTOTUM_RUN_MODEL`, and
+  `FACTOTUM_RUN_ALLOW_HOST`. There is no default backend: a run without one fails
+  rather than guessing.
+- The `local` backend is unsandboxed and refuses to run until explicitly opted in
+  with `--allow-host` or `run.allow_host`; the opt-in is machine-scoped and is
+  ignored from the committed project file.
+- A successful run moves the task to `ready_for_review` and records a note with the
+  agent's output plus `task.run_started`/`task.run_finished` events. A failed run
+  leaves the task's status untouched and records only a failure note and event, so
+  a broken run never corrupts the graph.
+
 ## Getting help
 
 ```sh

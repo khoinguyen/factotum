@@ -50,7 +50,26 @@ expect_not_contains() {
 cleanup() {
   log "cleanup"
   openshell sandbox delete "$SANDBOX" >/dev/null 2>&1 || true
-  openshell provider delete "$PROVIDER" >/dev/null 2>&1 || true
+  # `sandbox delete` is asynchronous, so the provider is still attached for a
+  # moment; retry the provider delete instead of swallowing the failure, or the
+  # provider (and its credential material) leaks into gateway state.
+  if openshell provider get "$PROVIDER" >/dev/null 2>&1; then
+    i=0
+    deleted=0
+    while [ "$i" -lt 60 ]; do
+      if openshell provider delete "$PROVIDER" >/dev/null 2>&1; then
+        deleted=1
+        break
+      fi
+      i=$((i + 1))
+      sleep 1
+    done
+    if [ "$deleted" -eq 1 ]; then
+      echo "provider $PROVIDER deleted"
+    else
+      echo "WARNING: provider $PROVIDER not deleted after ${i}s; clean it manually"
+    fi
+  fi
   rm -rf "$WORKDIR"
 }
 trap cleanup EXIT INT TERM
@@ -132,7 +151,8 @@ expect_contains "workdir is writable" "$rw_out" "rc=0"
 log "deny-by-default egress (wget example.com)"
 eg_out="$(guest sh -c 'wget -T 5 -q -O - https://example.com 2>&1; echo rc=$?' 2>&1)"
 echo "$eg_out"
-expect_not_contains "egress is denied" "$eg_out" "rc=0"
+expect_contains "egress is denied" "$eg_out" "rc=1"
+expect_not_contains "egress did not succeed" "$eg_out" "rc=0"
 
 log "process controls (mount / unshare)"
 mount_out="$(guest sh -c 'mount -t tmpfs none /mnt 2>&1; echo rc=$?' 2>&1)"

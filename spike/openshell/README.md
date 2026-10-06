@@ -21,8 +21,8 @@ Rationale, in order of weight:
 1. **File transfer decides it.** The SDK's `FileInterface` has no transport: `Files().Download`
    returns `ErrTransportNotAvailable` (the SSH transport in the open-source module is a stub), so the
    SDK cannot move a workspace in or results out. The CLI's `sandbox upload` is the only working bulk
-   path — it is directory-aware and honors `.gitignore`. (Download is broken on both; see caveats —
-   the adapter must stream files over `exec` regardless.)
+   path — it is directory-aware and, inside a git work tree, honors `.gitignore`. (Download is broken
+   on both; see caveats — the adapter must stream files over `exec` regardless.)
 2. **The SDK's gateway helper refuses the local gateway's auth mode.** `gateway.NewClient` maps
    `auth_mode: mtls` to `ErrUnsupportedAuthMode`, and the local gateway *is* mTLS. Manual TLS wiring
    works (proven below), but then the adapter reimplements the gateway discovery and credential
@@ -72,7 +72,11 @@ manually wiring the CLI's mTLS material into `v1.NewClient` connects and `Exec()
   Stream the file out with `exec` + `base64` instead (what `spike.sh` does).
 - **Sandbox names are capped at 19 characters.**
 - **No host bind-mount** (as researched): the workspace moves via upload/download or persists across
-  stop/start; `upload` is directory + `.gitignore` aware, which is what the adapter should use.
+  stop/start; `upload` is directory-aware and, inside a git work tree, `.gitignore`-aware — which is
+  what the adapter should use (a cloned repo is a work tree, so this holds in the real case).
+- **Provider cleanup is asynchronous**: `sandbox delete` returns before cleanup completes, so deleting
+  the provider immediately can fail with "still attached"; retry the provider delete and never swallow
+  it, or the provider (and its credential material) leaks into gateway state.
 - **Advisor proposals are asynchronous** (~10s) and stay pending; keep auto-approval off.
 - **Alpha / version pin**: pin the OpenShell version the adapter targets; the installer guards
   breaking gateway-state changes across releases.
@@ -85,5 +89,6 @@ mise run spike-openshell-sdk   # SDK mTLS + Files-transport probe (throwaway san
 ```
 
 Both need a local OpenShell gateway and the opencode image. They create their own throwaway
-sandbox, provider, and `mktemp` workspace, and delete them on exit (including on failure). Never
-point them at real credentials.
+sandbox, provider, and `mktemp` workspace, and delete them on exit (including on failure); the
+provider delete is retried while the asynchronous sandbox deletion settles, so a successful run
+leaves nothing behind. Never point them at real credentials.

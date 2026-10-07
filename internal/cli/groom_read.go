@@ -1,0 +1,269 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/khoinguyen/factotum/internal/groom"
+	"github.com/khoinguyen/factotum/pkg/app"
+	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/store"
+)
+
+func newGroomListCommand(deps *Deps) *cobra.Command {
+	var projectID string
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List past grooming sessions",
+		Long: "List the grooming sessions recorded under the project data dir, newest first, with\n" +
+			"the session id, its date and mode, and the size of its scope and the number of tasks\n" +
+			"it produced. Filter with --project; without one the configured project is used.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			resolved := string(deps.resolveProject(projectID))
+			dataDir, err := projectDataDir(deps.Config)
+			if err != nil {
+				return err
+			}
+			sessions, err := groom.ListSessions(dataDir)
+			if err != nil {
+				return err
+			}
+			docs := make([]groomSessionListDoc, 0, len(sessions))
+			rows := make([][]string, 0, len(sessions))
+			// Newest first: the store returns oldest first.
+			for i := len(sessions) - 1; i >= 0; i-- {
+				session := sessions[i]
+				if resolved != "" && session.Project != resolved {
+					continue
+				}
+				docs = append(docs, groomSessionListDocFrom(session))
+				rows = append(rows, []string{
+					session.ID,
+					session.CreatedAt.UTC().Format("2006-01-02"),
+					session.Mode,
+					fmt.Sprintf("%d", len(session.Scope)),
+					fmt.Sprintf("%d", len(session.Produced)),
+				})
+			}
+			return deps.emit(docs, func() {
+				deps.printTable([]string{"SESSION", "DATE", "MODE", "SCOPE", "PRODUCED"}, rows)
+			},
+				hint{Command: "ft groom show <session>", About: "read one session in full"},
+				hint{Command: "ft groom", About: "start a new session"})
+		},
+	}
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "filter by project id (defaults to the configured project)")
+	return cmd
+}
+
+func newGroomShowCommand(deps *Deps) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "show <session>",
+		Short: "Show a grooming session's report, deferred questions, and produced tasks",
+		Long: "Print one recorded grooming session: its scope and mode, the captured report, the\n" +
+			"deferred questions, and the tasks the session produced. The report and deferred bodies\n" +
+			"come from the doc artifacts `ft groom` recorded; the produced tasks are read live from\n" +
+			"the graph.",
+		Args: exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dataDir, err := projectDataDir(deps.Config)
+			if err != nil {
+				return err
+			}
+			session, err := groom.ReadSession(dataDir, args[0])
+			if err != nil {
+				return err
+			}
+			reportBody, err := deps.sessionOutputBody(cmd.Context(), session.Report, groom.ReportPath(dataDir, session.ID))
+			if err != nil {
+				return err
+			}
+			deferredBody, err := deps.sessionOutputBody(cmd.Context(), session.Deferred, groom.DeferredQuestionsPath(dataDir, session.ID))
+			if err != nil {
+				return err
+			}
+			produced, err := deps.producedTaskDocs(cmd.Context(), session.Produced)
+			if err != nil {
+				return err
+			}
+			doc := groomSessionDoc{
+				Session:      session.ID,
+				Created:      session.CreatedAt.UTC().Format(time.RFC3339),
+				Mode:         session.Mode,
+				Project:      session.Project,
+				Scope:        scopeItemIDs(session.Scope),
+				Report:       session.Report,
+				Deferred:     session.Deferred,
+				ReportBody:   reportBody,
+				DeferredBody: deferredBody,
+				Produced:     produced,
+			}
+			return deps.emit(doc, func() {
+				deps.printFields(
+					f("session", doc.Session),
+					f("created", doc.Created),
+					f("mode", doc.Mode),
+					f("project", doc.Project),
+					f("scope", strings.Join(doc.Scope, ", ")),
+					f("report", doc.Report),
+					f("deferred", doc.Deferred),
+				)
+				deps.printf("\n=== Report ===\n%s\n", strings.TrimRight(doc.ReportBody, "\n"))
+				deps.printf("\n=== Deferred questions ===\n%s\n", strings.TrimRight(doc.DeferredBody, "\n"))
+				deps.printf("\n=== Produced tasks ===\n")
+				if len(doc.Produced) == 0 {
+					deps.printf("(none)\n")
+				} else {
+					rows := make([][]string, 0, len(doc.Produced))
+					for _, task := range doc.Produced {
+						rows = append(rows, []string{task.TaskID, task.Kind, task.Status, task.Title})
+					}
+					deps.printTable([]string{"TASK", "KIND", "STATUS", "TITLE"}, rows)
+				}
+			}, groomShowHints(doc.Project)...)
+		},
+	}
+	return cmd
+}
+
+// groomSessionListDoc is the lossless structured shape of `ft groom list`.
+type groomSessionListDoc struct {
+	Session  string   `json:"session" yaml:"session"`
+	Created  string   `json:"created" yaml:"created"`
+	Mode     string   `json:"mode" yaml:"mode"`
+	Project  string   `json:"project" yaml:"project"`
+	Scope    []string `json:"scope" yaml:"scope"`
+	Produced []string `json:"produced" yaml:"produced"`
+}
+
+func groomSessionListDocFrom(session groom.SessionRecord) groomSessionListDoc {
+	return groomSessionListDoc{
+		Session:  session.ID,
+		Created:  session.CreatedAt.UTC().Format(time.RFC3339),
+		Mode:     session.Mode,
+		Project:  session.Project,
+		Scope:    scopeItemIDs(session.Scope),
+		Produced: session.Produced,
+	}
+}
+
+// groomTaskDoc is one produced task as `ft groom show` reports it.
+type groomTaskDoc struct {
+	TaskID string `json:"task_id" yaml:"task_id"`
+	Kind   string `json:"kind" yaml:"kind"`
+	Title  string `json:"title" yaml:"title"`
+	Status string `json:"status" yaml:"status"`
+}
+
+// groomSessionDoc is the lossless structured shape of `ft groom show`.
+type groomSessionDoc struct {
+	Session      string         `json:"session" yaml:"session"`
+	Created      string         `json:"created" yaml:"created"`
+	Mode         string         `json:"mode" yaml:"mode"`
+	Project      string         `json:"project" yaml:"project"`
+	Scope        []string       `json:"scope" yaml:"scope"`
+	Report       string         `json:"report" yaml:"report"`
+	Deferred     string         `json:"deferred" yaml:"deferred"`
+	ReportBody   string         `json:"report_body" yaml:"report_body"`
+	DeferredBody string         `json:"deferred_body" yaml:"deferred_body"`
+	Produced     []groomTaskDoc `json:"produced" yaml:"produced"`
+}
+
+func scopeItemIDs(items []groom.ScopeItem) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
+// sessionOutputBody reads one captured output: the doc artifact body, falling
+// back to the session file when the artifact is gone.
+func (d *Deps) sessionOutputBody(ctx context.Context, artifactID, path string) (string, error) {
+	if artifactID != "" {
+		artifact, err := d.Artifacts.Get(ctx, core.ArtifactID(artifactID))
+		if err == nil {
+			return artifact.Body, nil
+		}
+		if !errors.Is(err, core.ErrNotFound) {
+			return "", err
+		}
+	}
+	if path == "" {
+		return "", nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// producedTaskDocs reads the produced task ids live from the graph, so a task
+// renamed or completed after the session shows its current state. A task since
+// deleted is reported by id alone.
+func (d *Deps) producedTaskDocs(ctx context.Context, ids []string) ([]groomTaskDoc, error) {
+	docs := make([]groomTaskDoc, 0, len(ids))
+	for _, id := range ids {
+		task, err := d.Tasks.Get(ctx, core.TaskID(id))
+		if errors.Is(err, core.ErrNotFound) {
+			docs = append(docs, groomTaskDoc{TaskID: id})
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, groomTaskDoc{
+			TaskID: string(task.ID),
+			Kind:   string(task.Kind),
+			Title:  task.Title,
+			Status: string(task.Status),
+		})
+	}
+	return docs, nil
+}
+
+// projectTaskIDs snapshots the ids in a project before a session runs, so the
+// capture can tell which tasks the session produced.
+func (d *Deps) projectTaskIDs(ctx context.Context, projectID core.ProjectID) (map[core.TaskID]bool, error) {
+	tasks, err := d.Tasks.List(ctx, store.TaskFilter{ProjectID: projectID})
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[core.TaskID]bool, len(tasks))
+	for _, task := range tasks {
+		ids[task.ID] = true
+	}
+	return ids, nil
+}
+
+// producedTaskIDs returns the ids present after a session that were absent
+// before it, sorted for a deterministic manifest.
+func producedTaskIDs(ctx context.Context, tasks *app.TaskService, projectID core.ProjectID, before map[core.TaskID]bool) ([]string, error) {
+	after, err := tasks.List(ctx, store.TaskFilter{ProjectID: projectID})
+	if err != nil {
+		return nil, err
+	}
+	var produced []string
+	for _, task := range after {
+		if !before[task.ID] {
+			produced = append(produced, string(task.ID))
+		}
+	}
+	sort.Strings(produced)
+	return produced, nil
+}
+
+func groomShowHints(projectID string) []hint {
+	return []hint{
+		{Command: fmt.Sprintf("ft groom list -p %s", projectID), About: "see every session"},
+		{Command: "ft groom", About: "start a new session"},
+	}
+}

@@ -38,45 +38,64 @@ ft run --prompt-file docs/grooming/prompt.md --backend local --harness opencode 
    your kickoff) for sharing with stakeholders.
 5. Decompose: produce small, focused, independently-reviewable tasks (1 task = 1 PR). Add dependencies
    that express real blocking. Add verification gates per task. Optionally phase/roll out.
-6. Apply agent-owned changes: notes, task decomposition, acceptance criteria directly implied.
+6. Apply agent-owned changes: notes, task decomposition, acceptance criteria directly implied. Do NOT
+   promote an idea, split, or mark a task groomed until the PO answers the product grill.
 7. After answers: apply outcomes (acceptance criteria, new ideas for future possibilities, new tasks),
-   build the DAG, and run hygiene.
+   promote/split the ready items and mark every produced task groomed and assigned to an agent, build
+   the DAG, and run hygiene.
 8. Deterministic report (template below).
 
 ## Completion
 
 A session is complete only when every task it produces is **agent-ready**: `groomed` (it carries at
 least one acceptance criterion) AND assigned to an agent, so `ft task next --for <agent>` offers it.
-Promote each idea that is ready into a groomed, assigned task in the same step. Do not leave produced
-work ungroomed or unassigned for a human - that is what put session 1's work in the human bucket.
-Genuinely human items (product decisions, human testing and review) stay human on purpose and are
-named in the report.
+This is the end state *after* the grill answers: the timing guard in step 6 forbids promoting,
+splitting, or marking groomed before then, and this rule requires it by the time the session is done.
+Promoting an idea creates a linked task that is groomed and assigned in the same step. Do not leave
+produced work ungroomed or unassigned for a human - that is what put session 1's work in the human
+bucket. Genuinely human items (product decisions, human testing and review) stay human on purpose and
+are named in the report.
 
 ## Deterministic grooming report template
 
 ```
 # Grooming report - <session date>
-Scope: <items>
+
+Scope: <items groomed>
+Session: <prompt file or source>
+
 ## Summary
-- items groomed: N
-- promoted to tasks: N
-- split into tasks: N
-- new ideas filed: N
-- product questions for the PO: N (see <file>)
-- engineering decisions taken: N
+
+- items groomed: <n>
+- promoted to tasks: <n>
+- split into tasks: <n>
+- new ideas filed: <n>
+- product questions for the PO: <n> (see <deferred-questions file>)
+- engineering decisions taken: <n>
+
 ## Per item
+
 ### <id> <title>
+
 - verdict: ready | needs_grooming | needs_human
-- product decisions needed: ...
-- engineering decisions taken: ...
-- actions taken: ...
+- product decisions needed: <...>
+- engineering decisions taken: <...>
+- actions taken: <...>
+
 ## Product questions (grill)
+
 1. <question>
-   a) ...  b) ...  c) ...  defer
+   a) <option>   b) <option>   c) <option>   defer
+
 ## Deferred (for stakeholders)
-- ...
+
+- <question> (item: <id>, owner: <stakeholder>)
+
 ## DAG changes
-- added / linked / removed edges
+
+- added: <edge>
+- linked: <edge>
+- removed: <edge>
 ```
 
 ## Constraints

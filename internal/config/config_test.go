@@ -292,6 +292,36 @@ func TestExpandPath(t *testing.T) {
 	}
 }
 
+func TestProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"conventional", filepath.Join(root, ".factotum", "config.toml"), root},
+		{"custom name", filepath.Join(root, "project.toml"), root},
+		{"empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ProjectRoot(tc.path); got != tc.want {
+				t.Fatalf("ProjectRoot(%q) = %q, want %q", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProjectRootMakesRelativeAbsolute(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ProjectRoot(".factotum/config.toml"), cwd; got != want {
+		t.Fatalf("ProjectRoot() = %q, want the absolute cwd %q", got, want)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	if err := Default().Validate(); err != nil {
 		t.Fatalf("Default().Validate() error = %v", err)

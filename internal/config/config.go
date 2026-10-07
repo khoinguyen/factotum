@@ -305,6 +305,26 @@ func ExpandPath(path string) string {
 	return filepath.Join(home, path[2:])
 }
 
+// ProjectRoot returns the absolute project root for a loaded project config
+// path: the directory that holds the .factotum directory, so a relative repo
+// Path resolves against the checkout's root. The conventional
+// <root>/.factotum/config.toml drops the .factotum layer; any other file name
+// uses the config file's own directory. An empty path has no root and returns "".
+func ProjectRoot(configPath string) string {
+	if configPath == "" {
+		return ""
+	}
+	root := filepath.Dir(configPath)
+	if filepath.Base(root) == userDir {
+		root = filepath.Dir(root)
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return root
+	}
+	return abs
+}
+
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.Store.Backend) == "" {
 		return fmt.Errorf("store backend is required")

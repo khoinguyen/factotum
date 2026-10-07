@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
 	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
@@ -130,6 +131,7 @@ type runSelection struct {
 	backendName string
 	harness     harnesspkg.Harness
 	workspace   string
+	repoBase    string
 	model       string
 	refresh     bool
 	args        []string
@@ -195,6 +197,7 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 		backendName: backend.Name(),
 		harness:     agentHarness,
 		workspace:   workspaceRoot,
+		repoBase:    config.ProjectRoot(d.ProjectConfigPath),
 		model:       cfg.Model,
 		refresh:     cfg.Refresh,
 		args:        cfg.Args,
@@ -217,6 +220,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		Backend:          sel.backend,
 		Harness:          sel.harness,
 		WorkspaceRoot:    sel.workspace,
+		RepoBase:         sel.repoBase,
 		WorkspaceRefresh: sel.refresh,
 		Model:            sel.model,
 		Args:             sel.args,
@@ -257,6 +261,7 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 		Backend:          sel.backend,
 		Harness:          sel.harness,
 		WorkspaceRoot:    sel.workspace,
+		RepoBase:         sel.repoBase,
 		WorkspaceRefresh: sel.refresh,
 		Model:            sel.model,
 		Args:             sel.args,
@@ -297,6 +302,7 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 			Backend:          sel.backend,
 			Harness:          sel.harness,
 			WorkspaceRoot:    sel.workspace,
+			RepoBase:         sel.repoBase,
 			WorkspaceRefresh: sel.refresh,
 			Model:            sel.model,
 			Args:             sel.args,

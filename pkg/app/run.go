@@ -42,6 +42,9 @@ type RunInput struct {
 	Backend       isolation.IsolationBackend
 	Harness       harnesspkg.Harness
 	WorkspaceRoot string
+	// RepoBase is the absolute directory a relative project repo Path resolves
+	// against (the project root); empty means relative paths cannot be resolved.
+	RepoBase string
 	// WorkspaceRefresh fetches and hard-resets a reused workspace checkout to
 	// its upstream before running. A reused checkout whose origin URL changed
 	// always fails, refresh or not.
@@ -98,6 +101,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 
 	plan, err := workspace.Resolve(ctx, *project, *task, workspace.Options{
 		Root:    in.WorkspaceRoot,
+		Base:    in.RepoBase,
 		Git:     in.Git,
 		Token:   in.Token,
 		Refresh: in.WorkspaceRefresh,
@@ -167,6 +171,9 @@ type ProjectRunInput struct {
 	Harness          harnesspkg.Harness
 	WorkspaceRoot    string
 	WorkspaceRefresh bool
+	// RepoBase is the absolute directory a relative project repo Path resolves
+	// against (the project root); empty means relative paths cannot be resolved.
+	RepoBase string
 	// Git and Token are the workspace's clone ports; nil uses the host git and
 	// anonymous clones.
 	Git   workspace.Git
@@ -209,6 +216,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 	// An empty task names no repo, so resolution spans every project repo.
 	plan, err := workspace.Resolve(ctx, *project, core.Task{}, workspace.Options{
 		Root:    in.WorkspaceRoot,
+		Base:    in.RepoBase,
 		Git:     in.Git,
 		Token:   in.Token,
 		Refresh: in.WorkspaceRefresh,

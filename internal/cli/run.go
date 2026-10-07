@@ -48,9 +48,11 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			"graph until the goal is reached, no work is ready, on-path work is blocked, or the\n" +
 			"--max-tasks budget is exhausted. With a prompt source and no task id, `ft run`\n" +
 			"runs the prompt once over every repository of the configured project, writing\n" +
-			"nothing to the task graph. The backend and harness are selected explicitly,\n" +
-			"by flag or by the [run] config table; there is no default backend. The local backend\n" +
-			"is unsandboxed and requires --allow-host (or run.allow_host).",
+			"nothing to the task graph. The sandbox and harness resolve from --sandbox and\n" +
+			"--harness, then FACTOTUM_RUN_*, then the [run] config table (project over user);\n" +
+			"on a terminal an unset one prompts once and is saved, while a non-interactive\n" +
+			"unset one is an error. The local backend is unsandboxed and requires\n" +
+			"--allow-host (or run.allow_host).",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.goal != "" && len(args) > 0 {
@@ -75,10 +77,10 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			return deps.runTask(cmd, args[0], prompt, opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.sandbox, "sandbox", "", "isolation backend name (required; e.g. local, openshell, docker)")
+	cmd.Flags().StringVar(&opts.sandbox, "sandbox", "", "isolation backend name (defaults to run.sandbox; e.g. local, openshell, docker)")
 	cmd.Flags().StringVar(&opts.sandbox, "backend", "", "deprecated alias for --sandbox")
 	_ = cmd.Flags().MarkHidden("backend")
-	cmd.Flags().StringVar(&opts.harness, "harness", "", "harness name (required; e.g. opencode)")
+	cmd.Flags().StringVar(&opts.harness, "harness", "", "harness name (defaults to run.harness; e.g. opencode)")
 	cmd.Flags().StringVar(&opts.workspace, "workspace", "", "workspace root directory (default under the config dir)")
 	cmd.Flags().StringVar(&opts.model, "model", "", "model override passed to the harness")
 	cmd.Flags().StringArrayVar(&opts.args, "arg", nil, "extra argument passed to the harness (repeatable)")
@@ -185,11 +187,8 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 	}
 	cfg.PolicyPath = projectPolicyPath(d.ProjectConfigPath)
 
-	if cfg.Sandbox == "" {
-		return nil, usageError(cmd, "--sandbox is required (set run.sandbox or FACTOTUM_RUN_SANDBOX); available: %s", strings.Join(d.RunBackends.Names(), ", "))
-	}
-	if cfg.Harness == "" {
-		return nil, usageError(cmd, "--harness is required (set run.harness or FACTOTUM_RUN_HARNESS); available: %s", strings.Join(d.RunHarnesses.Names(), ", "))
+	if err := d.resolveRunSelection(cmd, &cfg); err != nil {
+		return nil, err
 	}
 	workspaceRoot, err := runWorkspaceRoot(cfg.Workspace)
 	if err != nil {
@@ -222,6 +221,110 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 		refresh:     cfg.Refresh,
 		args:        cfg.Args,
 	}, nil
+}
+
+// resolveRunSelection fills an unset sandbox or harness. Config (env > project
+// > user) and flags have already been merged into cfg. A non-interactive session
+// with a missing selection is a usage error naming the available options; an
+// interactive one prompts once from them, persists the pick to the project or
+// user config the user selects, and uses it so the next run needs no flag.
+func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
+	if cfg.Sandbox != "" && cfg.Harness != "" {
+		return nil
+	}
+	if !d.interactive() {
+		if cfg.Sandbox == "" {
+			return usageError(cmd, "--sandbox is required; set run.sandbox (project or user config), FACTOTUM_RUN_SANDBOX, or run on a terminal to choose; available: %s", strings.Join(d.RunBackends.Names(), ", "))
+		}
+		return usageError(cmd, "--harness is required; set run.harness (project or user config), FACTOTUM_RUN_HARNESS, or run on a terminal to choose; available: %s", strings.Join(d.RunHarnesses.Names(), ", "))
+	}
+
+	p := d.prompter(cmd)
+	var chosen config.RunDefaults
+	if cfg.Sandbox == "" {
+		name, err := promptRunChoice(p, "sandbox", d.RunBackends.Names())
+		if err != nil {
+			return err
+		}
+		chosen.Sandbox = name
+	}
+	if cfg.Harness == "" {
+		name, err := promptRunChoice(p, "harness", d.RunHarnesses.Names())
+		if err != nil {
+			return err
+		}
+		chosen.Harness = name
+	}
+	scope, err := promptRunScope(p)
+	if err != nil {
+		return err
+	}
+	path, err := d.persistRunDefaults(scope, chosen)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(d.Err, "ft: saved run defaults to %s\n", path)
+	if chosen.Sandbox != "" {
+		cfg.Sandbox = chosen.Sandbox
+	}
+	if chosen.Harness != "" {
+		cfg.Harness = chosen.Harness
+	}
+	return nil
+}
+
+// promptRunChoice asks for one run dimension from its available options,
+// defaulting to the first. An answer outside the set is rejected, so a typo
+// never selects an unknown adapter.
+func promptRunChoice(p Prompter, dimension string, options []string) (string, error) {
+	if len(options) == 0 {
+		return "", fmt.Errorf("no %s is available to choose; register one first", dimension)
+	}
+	label := fmt.Sprintf("%s (%s)", dimension, strings.Join(options, ", "))
+	value, err := p.Input(label, options[0])
+	if err != nil {
+		return "", err
+	}
+	for _, option := range options {
+		if value == option {
+			return value, nil
+		}
+	}
+	return "", fmt.Errorf("unknown %s %q; available: %s", dimension, value, strings.Join(options, ", "))
+}
+
+// promptRunScope asks which config scope persists the chosen defaults.
+func promptRunScope(p Prompter) (string, error) {
+	scope, err := p.Input("save run defaults to (project/user)", "user")
+	if err != nil {
+		return "", err
+	}
+	switch scope {
+	case "project", "user":
+		return scope, nil
+	default:
+		return "", fmt.Errorf("unknown scope %q; want project or user", scope)
+	}
+}
+
+// persistRunDefaults writes chosen into the selected scope's config and returns
+// the path written.
+func (d *Deps) persistRunDefaults(scope string, chosen config.RunDefaults) (string, error) {
+	if scope == "project" {
+		path := d.ProjectConfigPath
+		if path == "" {
+			path = config.DefaultPath
+		}
+		return path, config.WriteRunDefaults(path, true, d.Config.Project, chosen)
+	}
+	path := d.UserConfigPath
+	if path == "" {
+		path = config.UserPath(d.Getenv)
+	}
+	if path == "" {
+		return "", errors.New("cannot locate the machine config; set $HOME or pass --user-config")
+	}
+	return path, config.WriteRunDefaults(path, false, "", chosen)
 }
 
 func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {

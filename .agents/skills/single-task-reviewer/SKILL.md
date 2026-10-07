@@ -26,21 +26,25 @@ evidence" below, which you file yourself.
 
 ## Identity and channel
 
-- Your shell does **not** inherit `CMUX_*`, so pass explicit refs to every cmux command
-  (`--workspace <ws>`, `--surface <ref>`, `--pane <ref>`); a bare command fails with `not_found`. Get
-  your own refs from `cmux identify --id-format both`. Enumerate with `cmux tree --all` or
-  `cmux list-pane-surfaces` (there is no `list-surfaces`).
+- Your shell does **not** inherit `CMUX_*`. Agent-to-agent messaging goes through the shared wrapper
+  `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (run from your worktree root): it
+  resolves a tab or workspace title, or takes a `surface:N`/`workspace:N` ref, and calls
+  `cmux agent message`. That delivers via the target agent's hooks and never types into its terminal,
+  so your message can't land in a half-typed prompt. Set `CMUX_MSG_FROM=reviewer-<task-id>` to identify
+  yourself. **Do not use `set-buffer`/`paste-buffer`/`send-key` to message the builder or chief**;
+  keep `paste-buffer` only for input that genuinely needs a terminal.
+- Structural cmux commands (`rename-tab`, `move-surface`, …) likewise need explicit refs: get your own
+  from `cmux identify --id-format both`, pass `--workspace <ws>` / `--surface <ref>`, and enumerate
+  with `cmux tree --all` (there is no `list-surfaces`).
 - Prefix every message with `From reviewer-<task-id>, regarding PR #N: ...`. The builder writes
   `From builder-<task-id>: ...`.
 - The chief gives you the task id and the builder's name (`builder-<task-id>`); he is a peer agent in
-  another cmux surface. Find him with `cmux find-window --content builder-<task-id>`.
-- Deliver with `cmux set-buffer --name <n> "<one line>"`, `cmux paste-buffer --name <n> --surface <ref>`,
-  then `cmux send-key --surface <ref> enter`. **Flatten the text to a single line first** — an embedded
-  newline submits early, so a multi-line paste arrives as several messages. Keep messages small;
-  longer text goes in a temp file whose path you send.
-- **After sending, read the screen once to confirm receipt, then stop and wait.** Do not poll.
-- Reporting to the chief wakes it: you paste into the `chief` surface and press Enter, and that input
-  starts its next turn.
+  another cmux surface. Find him with `cmux tree --all` or `cmux find-window --content
+  builder-<task-id>`; pass either his title or `surface:N` to `cmux-msg.sh`.
+- **After sending, confirm delivery, then stop and wait.** `cmux agent message` wakes an idle agent;
+  do not poll.
+- Reporting to the chief wakes it the same way: `CMUX_MSG_FROM=reviewer-<task-id>
+  .agents/skills/chief/scripts/cmux-msg.sh chief "<report>"`.
 
 ## Verify before you judge
 
@@ -95,8 +99,9 @@ exists to prevent.
 ## Report to the chief and stop
 
 Report to the chief: task id, PR number, the commit you reviewed, approved or not, and residual
-watch items (include the PR comment link). The chief gave you its name (`chief`) and surface ref at
-spawn; message it the same way you message the builder, or find it with
+watch items (include the PR comment link). The chief gave you its name (`chief`); message it the same
+way you message the builder — `CMUX_MSG_FROM=reviewer-<task-id>
+.agents/skills/chief/scripts/cmux-msg.sh chief "<report>"` — or find it with
 `cmux find-window --content chief`. Then stop and wait.
 - **Escalation:** if after three rounds you and the builder cannot align, tell the chief, post your
   verdict and the builder's disagreement on the PR, and leave it open for Khoi.

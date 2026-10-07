@@ -67,6 +67,45 @@ func TestWriteRunDefaultsUpdatesExistingKey(t *testing.T) {
 	}
 }
 
+// TestWriteRunDefaultsRecognizesHeaderVariants pins that a valid [run] header
+// with an inline comment or inner whitespace is updated in place rather than
+// duplicated, which would make the file unparseable.
+func TestWriteRunDefaultsRecognizesHeaderVariants(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+	}{
+		{"bare", "[run]"},
+		{"inline comment", "[run] # note"},
+		{"inner spaces", "[ run ]"},
+		{"tab comment", "[run]\t# note"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := writeConfig(t, dir, "user.toml", tt.header+"\nsandbox = \"local\"\n")
+
+			if err := WriteRunDefaults(path, false, "", RunDefaults{Harness: "opencode"}); err != nil {
+				t.Fatalf("WriteRunDefaults() error = %v", err)
+			}
+			got := readFile(t, path)
+			if strings.Count(got, "[run]")+strings.Count(got, "[ run ]") != 1 {
+				t.Fatalf("expected exactly one [run] header, got:\n%s", got)
+			}
+			if !strings.Contains(got, `harness = "opencode"`) {
+				t.Fatalf("harness not written:\n%s", got)
+			}
+			cfg, err := Load(Input{UserPath: path, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.Run.Sandbox != "local" || cfg.Run.Harness != "opencode" {
+				t.Fatalf("Run = %+v, want local/opencode", cfg.Run)
+			}
+		})
+	}
+}
+
 func TestWriteRunDefaultsProjectPinsProject(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".factotum", "config.toml")

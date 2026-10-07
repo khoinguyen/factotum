@@ -1,8 +1,12 @@
-// Package serve hosts the read-only, auto-reloading factory dashboard behind
+// Package serve hosts the read-only, auto-reloading PO dashboard behind
 // `ft serve`. It is a delivery adapter: it loads project state through pkg/app
 // (which reuses pkg/graph readiness), ranks startable work through pkg/rank, and
 // watches the event log to push live updates over SSE. It exposes no mutating
 // endpoint.
+//
+// The dashboard is idea-centric: ideas are the primary unit, rolled up from the
+// tasks promoted from them (the origin edge), with drill-down to a task, idea,
+// memory, or doc detail page.
 package serve
 
 import (
@@ -12,6 +16,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,10 +27,20 @@ import (
 	"github.com/khoinguyen/factotum/pkg/store"
 )
 
-//go:embed dashboard.html
+//go:embed dashboard.html detail.html dashboard.css
 var templateFS embed.FS
 
-var dashboardTemplate = template.Must(template.ParseFS(templateFS, "dashboard.html"))
+var templates = template.Must(template.ParseFS(templateFS, "dashboard.html", "detail.html"))
+
+// dashboardCSS is injected verbatim into each page's <style>. It is served from
+// the same embedded file so the index and detail pages cannot drift.
+var dashboardCSS = func() template.CSS {
+	css, err := templateFS.ReadFile("dashboard.css")
+	if err != nil {
+		panic("serve: embedded dashboard.css: " + err.Error())
+	}
+	return template.CSS(css)
+}()
 
 const (
 	defaultPoll   = 500 * time.Millisecond
@@ -102,13 +117,22 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) route(w http.ResponseWriter, r *http.Request) {
-	switch r.URL.Path {
-	case "/":
+	path := r.URL.Path
+	switch {
+	case path == "/":
 		s.getOrHead(s.handleIndex)(w, r)
-	case "/fragment":
+	case path == "/fragment":
 		s.getOrHead(s.handleFragment)(w, r)
-	case "/events":
+	case path == "/events":
 		s.getOnly(s.handleEvents)(w, r)
+	case strings.HasPrefix(path, "/idea/"):
+		s.getOrHead(s.handleIdea)(w, r)
+	case strings.HasPrefix(path, "/task/"):
+		s.getOrHead(s.handleTask)(w, r)
+	case strings.HasPrefix(path, "/memory/"):
+		s.getOrHead(s.handleMemory)(w, r)
+	case strings.HasPrefix(path, "/doc/"):
+		s.getOrHead(s.handleDoc)(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -150,11 +174,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	if err := dashboardTemplate.ExecuteTemplate(w, "dashboard.html", page); err != nil {
-		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
-	}
+	s.render(w, "dashboard.html", page)
 }
 
 func (s *Server) handleFragment(w http.ResponseWriter, r *http.Request) {
@@ -163,9 +183,13 @@ func (s *Server) handleFragment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.render(w, "dashboard-body", page)
+}
+
+func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	if err := dashboardTemplate.ExecuteTemplate(w, "dashboard-body", page); err != nil {
+	if err := templates.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -223,6 +247,7 @@ func (s *Server) latestEventID(ctx context.Context) (string, error) {
 // pageStats are the unambiguous graph counts shown in the header.
 type pageStats struct {
 	Scope      int
+	Ideas      int
 	Done       int
 	ReadyAgent int
 	ReadyHuman int
@@ -231,20 +256,23 @@ type pageStats struct {
 	Waves      int
 }
 
-// taskView is one task projected for display.
+// taskView is one executable task projected for the work board and next-up lists.
 type taskView struct {
-	ID        core.TaskID
-	Title     string
-	Repo      string
-	Class     string
-	Chip      string
-	Reason    string
-	Detail    string
-	Assignee  string
-	Wave      int
-	Unblocks  int
-	Milestone bool
-	Score     float64
+	ID          core.TaskID
+	Title       string
+	Repo        string
+	Class       string
+	Chip        string
+	Reason      string
+	Detail      string
+	Assignee    string
+	Wave        int
+	Unblocks    int
+	Milestone   bool
+	Score       float64
+	URL         string
+	Origin      core.TaskID
+	OriginTitle string
 }
 
 type updateView struct {
@@ -252,19 +280,127 @@ type updateView struct {
 	Summary string
 }
 
+// artifactView is one artifact projected for a link chip or a detail page.
+type artifactView struct {
+	ID    core.ArtifactID
+	Kind  string
+	Title string
+	Brief string
+	Body  string
+	URL   string
+}
+
+// taskLink is a compact reference to a task, used inside idea and task detail
+// pages where the full work-board projection is unnecessary.
+type taskLink struct {
+	ID     core.TaskID
+	Title  string
+	Class  string
+	Chip   string
+	Reason string
+	Detail string
+	URL    string
+}
+
+// noteView is one note rendered on a task detail page.
+type noteView struct {
+	Author    string
+	Body      string
+	CreatedAt string
+	System    bool
+	Links     []linkView
+}
+
+type linkView struct {
+	Kind  string
+	URL   string
+	Title string
+}
+
+// ideaView is one idea rolled up from the tasks promoted from it. State is one
+// of finished, active, blocked, or captured.
+type ideaView struct {
+	ID          core.TaskID
+	Title       string
+	Description string
+	Repo        string
+	State       string
+	Chip        string
+	URL         string
+	Total       int
+	Done        int
+	Active      int
+	Blocked     int
+	Tasks       []taskLink
+	Artifacts   []artifactView
+}
+
+// taskGroup is a set of tasks sharing an origin idea. Ungrouped marks the bucket
+// for tasks with no origin idea.
+type taskGroup struct {
+	IdeaID    core.TaskID
+	IdeaTitle string
+	Ungrouped bool
+	Tasks     []taskView
+}
+
+// laneView is one ideas-board lane (blocked, active, finished, captured).
+type laneView struct {
+	Name  string
+	Key   string
+	Ideas []ideaView
+}
+
+// columnView is one work-board column (in-progress or waiting).
+type columnView struct {
+	Name   string
+	Key    string
+	Count  int
+	Groups []taskGroup
+}
+
 // pageData is the fully-derived dashboard state. It carries no storage handle.
 type pageData struct {
-	Title     string
-	Project   string
-	Snapshot  string
-	Stats     pageStats
-	NextAgent []taskView
-	NextHuman []taskView
-	InFlight  []taskView
-	Waiting   []taskView
-	Capture   []taskView
-	Updates   []updateView
-	Flags     []string
+	Title          string
+	Project        string
+	Snapshot       string
+	CSS            template.CSS
+	Stats          pageStats
+	NextAgent      []taskView
+	NextHuman      []taskView
+	InFlight       []taskView
+	Waiting        []taskView
+	InFlightGroups []taskGroup
+	WaitingGroups  []taskGroup
+	BlockedIdeas   []ideaView
+	ActiveIdeas    []ideaView
+	FinishedIdeas  []ideaView
+	CapturedIdeas  []ideaView
+	Updates        []updateView
+	Flags          []string
+}
+
+// Lane returns the ideas-board lane for key. It keeps the template free of
+// conditionals over the four fixed lanes.
+func (p *pageData) Lane(key string) laneView {
+	switch key {
+	case "blocked":
+		return laneView{Name: "Blocked — needs unblock", Key: key, Ideas: p.BlockedIdeas}
+	case "active":
+		return laneView{Name: "In progress", Key: key, Ideas: p.ActiveIdeas}
+	case "finished":
+		return laneView{Name: "Finished", Key: key, Ideas: p.FinishedIdeas}
+	default:
+		return laneView{Name: "Captured", Key: key, Ideas: p.CapturedIdeas}
+	}
+}
+
+// Column returns the work-board column for key.
+func (p *pageData) Column(key string) columnView {
+	if key == "waiting" {
+		return columnView{Name: "Waiting / blocked", Key: key, Count: len(p.Waiting), Groups: p.WaitingGroups}
+	}
+	return columnView{Name: "In progress", Key: key, Count: len(p.InFlight), Groups: p.InFlightGroups}
 }
 
 // page loads and projects the current state. Readiness and ranking are reused
@@ -274,16 +410,20 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 	var (
 		snapshot *app.Snapshot
 		scope    core.ProjectID
-		err      error
 	)
 	if s.options.All {
+		var err error
 		snapshot, err = app.LoadAllSnapshot(ctx, s.options.Backend, now)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		scope = s.options.Project
+		var err error
 		snapshot, err = app.LoadSnapshot(ctx, s.options.Backend, scope, now)
-	}
-	if err != nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	events, err := s.options.Backend.Events().List(ctx, store.EventFilter{
@@ -299,80 +439,56 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		return nil, err
 	}
 
-	ids := snapshot.Graph.IDs()
-	byID := make(map[core.TaskID]core.Task, len(snapshot.Tasks))
-	for _, task := range snapshot.Tasks {
-		byID[task.ID] = *task
+	artifacts, err := s.options.Backend.Artifacts().List(ctx, store.ArtifactFilter{ProjectID: scope})
+	if err != nil {
+		return nil, err
 	}
-	waves, _ := snapshot.Graph.Waves()
-	cycles := snapshot.Graph.Cycles()
-	cycleIDs := make(map[core.TaskID]bool)
-	for _, cycle := range cycles {
-		for _, id := range cycle {
-			cycleIDs[id] = true
-		}
-	}
-	agentSet := idSet(snapshot.Ready.Agent)
-	humanSet := idSet(snapshot.Ready.Human)
 
+	vs := s.buildViews(snapshot, artifacts)
 	page := &pageData{
 		Title:    s.title(snapshot),
 		Project:  s.projectLabel(snapshot),
 		Snapshot: now.UTC().Format(time.RFC3339),
+		CSS:      dashboardCSS,
 	}
 	page.Stats = pageStats{
-		Scope:      len(ids),
+		Scope:      len(vs.ids),
 		ReadyAgent: len(snapshot.Ready.Agent),
 		ReadyHuman: len(snapshot.Ready.Human),
-		Cycles:     len(cycles),
+		Cycles:     len(vs.cycles),
 	}
 	if deep, err := snapshot.Graph.WavesDeep(); err == nil {
 		page.Stats.Waves = deep
 	}
-	for _, id := range ids {
-		if byID[id].Status == core.StatusDone {
+	for _, id := range vs.ids {
+		switch vs.byID[id].Status {
+		case core.StatusDone:
 			page.Stats.Done++
-		}
-		if byID[id].Status == core.StatusBlocked {
+		case core.StatusBlocked:
 			page.Stats.Blocked++
 		}
-	}
-
-	views := make(map[core.TaskID]taskView, len(ids))
-	for _, id := range ids {
-		task := byID[id]
-		class := classify(task, agentSet[id], humanSet[id], cycleIDs[id])
-		views[id] = taskView{
-			ID:        task.ID,
-			Title:     task.Title,
-			Repo:      task.Repo,
-			Class:     class,
-			Chip:      chip(class),
-			Assignee:  actorName(snapshot.Actors, task.AssigneeID),
-			Wave:      waves[id],
-			Unblocks:  snapshot.Graph.UnblockCount(id),
-			Milestone: task.IsMilestone(),
+		if vs.byID[id].IsIdea() {
+			page.Stats.Ideas++
 		}
 	}
 
 	for _, score := range scored {
-		view := views[score.TaskID]
+		view := vs.views[score.TaskID]
 		view.Score = score.Score
 		switch {
-		case agentSet[score.TaskID]:
+		case vs.agentSet[score.TaskID]:
 			page.NextAgent = append(page.NextAgent, view)
-		case humanSet[score.TaskID]:
+		case vs.humanSet[score.TaskID]:
 			page.NextHuman = append(page.NextHuman, view)
 		}
 	}
 
-	for _, id := range ids {
-		task := byID[id]
-		view := views[id]
+	for _, id := range vs.ids {
+		task := vs.byID[id]
+		view := vs.views[id]
 		ready, reason := snapshot.Graph.Readiness(id)
 		switch {
 		case task.IsIdea():
-			page.Capture = append(page.Capture, view)
 		case task.Status == core.StatusInProgress || task.Status == core.StatusReadyForReview:
 			page.InFlight = append(page.InFlight, view)
 		case ready:
@@ -383,7 +499,28 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		}
 	}
 
-	for _, cycle := range cycles {
+	page.InFlightGroups = groupByOrigin(page.InFlight)
+	page.WaitingGroups = groupByOrigin(page.Waiting)
+
+	for _, id := range vs.ids {
+		task := vs.byID[id]
+		if !task.IsIdea() {
+			continue
+		}
+		idea := s.rollupIdea(task, vs)
+		switch idea.State {
+		case "blocked":
+			page.BlockedIdeas = append(page.BlockedIdeas, idea)
+		case "finished":
+			page.FinishedIdeas = append(page.FinishedIdeas, idea)
+		case "active":
+			page.ActiveIdeas = append(page.ActiveIdeas, idea)
+		default:
+			page.CapturedIdeas = append(page.CapturedIdeas, idea)
+		}
+	}
+
+	for _, cycle := range vs.cycles {
 		parts := make([]string, 0, len(cycle))
 		for _, id := range cycle {
 			parts = append(parts, string(id))
@@ -405,6 +542,210 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		})
 	}
 	return page, nil
+}
+
+// viewSet is the shared projection of one snapshot used by both the dashboard
+// index and the drill-down pages, so grouping and rollups cannot drift.
+type viewSet struct {
+	snapshot        *app.Snapshot
+	ids             []core.TaskID
+	byID            map[core.TaskID]core.Task
+	views           map[core.TaskID]taskView
+	origin          map[core.TaskID]core.TaskID
+	artifactsByTask map[core.TaskID][]artifactView
+	waves           map[core.TaskID]int
+	actors          map[core.ActorID]string
+	agentSet        map[core.TaskID]bool
+	humanSet        map[core.TaskID]bool
+	cycles          [][]core.TaskID
+}
+
+// buildViews projects a snapshot into the ids, readiness-annotated task views,
+// origin edges, and task-attached artifacts the pages render.
+func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) viewSet {
+	ids := snapshot.Graph.IDs()
+	byID := make(map[core.TaskID]core.Task, len(snapshot.Tasks))
+	for _, task := range snapshot.Tasks {
+		byID[task.ID] = *task
+	}
+	waves, _ := snapshot.Graph.Waves()
+	cycles := snapshot.Graph.Cycles()
+	cycleIDs := make(map[core.TaskID]bool)
+	for _, cycle := range cycles {
+		for _, id := range cycle {
+			cycleIDs[id] = true
+		}
+	}
+	vs := viewSet{
+		snapshot: snapshot,
+		ids:      ids,
+		byID:     byID,
+		views:    make(map[core.TaskID]taskView, len(ids)),
+		origin:   make(map[core.TaskID]core.TaskID, len(ids)),
+		waves:    waves,
+		actors:   make(map[core.ActorID]string, len(snapshot.Actors)),
+		agentSet: idSet(snapshot.Ready.Agent),
+		humanSet: idSet(snapshot.Ready.Human),
+		cycles:   cycles,
+	}
+	for id, actor := range snapshot.Actors {
+		vs.actors[id] = actor.Name
+	}
+	// The origin edge is each task's first dependency that is an idea; promotion
+	// writes exactly that edge, so it is what groups tasks under ideas.
+	for _, id := range ids {
+		if byID[id].IsIdea() {
+			continue
+		}
+		if o, ok := firstIdeaDep(byID[id], byID); ok {
+			vs.origin[id] = o
+		}
+	}
+	for _, id := range ids {
+		task := byID[id]
+		class := classify(task, vs.agentSet[id], vs.humanSet[id], cycleIDs[id])
+		view := taskView{
+			ID:        task.ID,
+			Title:     task.Title,
+			Repo:      task.Repo,
+			Class:     class,
+			Chip:      chip(class),
+			Assignee:  actorName(snapshot.Actors, task.AssigneeID),
+			Wave:      waves[id],
+			Unblocks:  snapshot.Graph.UnblockCount(id),
+			Milestone: task.IsMilestone(),
+			URL:       taskOrIdeaURL(task),
+		}
+		if !task.IsIdea() {
+			if _, reason := snapshot.Graph.Readiness(id); reason != nil && reason.Code != graph.ReasonInProgress {
+				view.Reason = string(reason.Code)
+				view.Detail = reason.Detail
+			}
+		}
+		if o, ok := vs.origin[id]; ok {
+			view.Origin = o
+			if oTask, ok := byID[o]; ok {
+				view.OriginTitle = oTask.Title
+			}
+		}
+		vs.views[id] = view
+	}
+	vs.artifactsByTask = make(map[core.TaskID][]artifactView)
+	for _, artifact := range artifacts {
+		if artifact.TaskID == nil {
+			continue
+		}
+		vs.artifactsByTask[*artifact.TaskID] = append(vs.artifactsByTask[*artifact.TaskID], artifactViewOf(artifact))
+	}
+	return vs
+}
+
+// rollupIdea builds the idea card from the tasks promoted from it and the
+// artifacts attached to the idea or any of those tasks.
+func (s *Server) rollupIdea(idea core.Task, vs viewSet) ideaView {
+	out := ideaView{
+		ID:          idea.ID,
+		Title:       idea.Title,
+		Description: idea.Description,
+		Repo:        idea.Repo,
+		URL:         ideaURL(idea.ID),
+	}
+	var promoted []core.TaskID
+	for _, id := range vs.ids {
+		if vs.origin[id] == idea.ID {
+			promoted = append(promoted, id)
+		}
+	}
+	for _, id := range promoted {
+		out.Tasks = append(out.Tasks, taskLinkOf(vs.views[id]))
+		out.Artifacts = append(out.Artifacts, vs.artifactsByTask[id]...)
+		switch taskState(vs.byID[id], vs.views[id]) {
+		case "finished":
+			out.Done++
+		case "blocked":
+			out.Blocked++
+		default:
+			out.Active++
+		}
+	}
+	out.Artifacts = append(out.Artifacts, vs.artifactsByTask[idea.ID]...)
+	out.Total = len(promoted)
+	out.State, out.Chip = ideaRollup(out)
+	return out
+}
+
+// taskState reduces one promoted task to its rollup contribution. A task is
+// finished once it resolves, blocked when it is explicitly blocked or waiting on
+// an unresolved condition, and active otherwise.
+func taskState(task core.Task, view taskView) string {
+	switch {
+	case task.Status == core.StatusDone || task.Status == core.StatusCancelled:
+		return "finished"
+	case task.Status == core.StatusBlocked:
+		return "blocked"
+	case view.Reason != "":
+		return "blocked"
+	default:
+		return "active"
+	}
+}
+
+// ideaRollup classifies an idea from the state of its promoted tasks. An idea
+// with no promoted work is captured; all done is finished; any blocked task
+// makes it blocked (a needs-unblock signal outranks work still moving);
+// otherwise it is active.
+func ideaRollup(idea ideaView) (state, chip string) {
+	switch {
+	case idea.Total == 0:
+		return "captured", "capture"
+	case idea.Done == idea.Total:
+		return "finished", "done"
+	case idea.Blocked > 0:
+		return "blocked", "blocked"
+	default:
+		return "active", "ready-agent"
+	}
+}
+
+// firstIdeaDep returns the first dependency of task that is an idea, matching
+// pkg/app's origin rule. It is skipped when the dependency dangles.
+func firstIdeaDep(task core.Task, byID map[core.TaskID]core.Task) (core.TaskID, bool) {
+	for _, dep := range task.Deps {
+		if depTask, ok := byID[dep]; ok && depTask.IsIdea() {
+			return dep, true
+		}
+	}
+	return "", false
+}
+
+// groupByOrigin groups tasks under the idea they were promoted from, with the
+// ungrouped bucket last. Groups are ordered deterministically by idea id.
+func groupByOrigin(tasks []taskView) []taskGroup {
+	order := make([]core.TaskID, 0)
+	byIdea := make(map[core.TaskID]*taskGroup)
+	for _, task := range tasks {
+		group, ok := byIdea[task.Origin]
+		if !ok {
+			group = &taskGroup{IdeaID: task.Origin, IdeaTitle: task.OriginTitle, Ungrouped: task.Origin == ""}
+			byIdea[task.Origin] = group
+			order = append(order, task.Origin)
+		}
+		group.Tasks = append(group.Tasks, task)
+	}
+	sort.Slice(order, func(i, j int) bool {
+		if order[i] == "" {
+			return false
+		}
+		if order[j] == "" {
+			return true
+		}
+		return order[i] < order[j]
+	})
+	out := make([]taskGroup, 0, len(order))
+	for _, id := range order {
+		out = append(out, *byIdea[id])
+	}
+	return out
 }
 
 func (s *Server) title(snapshot *app.Snapshot) string {
@@ -488,4 +829,45 @@ func idSet(ids []core.TaskID) map[core.TaskID]bool {
 		set[id] = true
 	}
 	return set
+}
+func taskURL(id core.TaskID) string { return "/task/" + string(id) }
+func ideaURL(id core.TaskID) string { return "/idea/" + string(id) }
+
+// taskOrIdeaURL routes an idea to its own detail page and executable work to
+// the task page.
+func taskOrIdeaURL(task core.Task) string {
+	if task.IsIdea() {
+		return ideaURL(task.ID)
+	}
+	return taskURL(task.ID)
+}
+
+func artifactURL(artifact *core.Artifact) string {
+	if artifact.Kind == core.ArtifactMemory {
+		return "/memory/" + string(artifact.ID)
+	}
+	return "/doc/" + string(artifact.ID)
+}
+
+func artifactViewOf(artifact *core.Artifact) artifactView {
+	return artifactView{
+		ID:    artifact.ID,
+		Kind:  string(artifact.Kind),
+		Title: artifact.Title,
+		Brief: artifact.Brief,
+		Body:  artifact.Body,
+		URL:   artifactURL(artifact),
+	}
+}
+
+func taskLinkOf(view taskView) taskLink {
+	return taskLink{
+		ID:     view.ID,
+		Title:  view.Title,
+		Class:  view.Class,
+		Chip:   view.Chip,
+		Reason: view.Reason,
+		Detail: view.Detail,
+		URL:    view.URL,
+	}
 }

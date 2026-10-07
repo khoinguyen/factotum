@@ -49,8 +49,8 @@ lists each excluded task with its reason, applying the same
 ft serve                        # read-only live dashboard; also -p <project>, --all, --bind <host:port>
 ```
 
-`ft serve` shows next, in-flight, and blocked work, reloading over SSE within a
-second; it is responsive and read-only, binding to localhost by default.
+`ft serve` is an idea-centric dashboard: ideas roll up their promoted tasks as
+finished/active/blocked/captured, with a grouped work board, drill-down (`/idea`, `/task`, `/memory`, `/doc`), and live SSE figures; read-only.
 
 ## Move work through its lifecycle
 

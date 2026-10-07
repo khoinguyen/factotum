@@ -25,6 +25,35 @@ func TestGroomSkillDocumentsProtocol(t *testing.T) {
 	}
 }
 
+// TestGroomSkillCompletionLeavesAgentReadyTasks pins the completion contract:
+// a session is not done until the work it produces is groomed and assigned, so
+// it lands in the agent bucket. Session 1 deferred everything and left the work
+// human-next, which this rule prevents.
+func TestGroomSkillCompletionLeavesAgentReadyTasks(t *testing.T) {
+	skill, err := Get("groom")
+	if err != nil {
+		t.Fatalf("Get(groom) error = %v", err)
+	}
+	body := strings.ToLower(skill.Body)
+	for _, want := range []string{"completed session", "groomed", "assigned", "agent-ready"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("groom skill body does not mention %q", want)
+		}
+	}
+}
+
+// TestGroomSkillNamesDurablePrompt pins that the session is launched from the
+// committed repo data file, not an ephemeral temp path.
+func TestGroomSkillNamesDurablePrompt(t *testing.T) {
+	skill, err := Get("groom")
+	if err != nil {
+		t.Fatalf("Get(groom) error = %v", err)
+	}
+	if !strings.Contains(skill.Body, groom.PromptPath) {
+		t.Errorf("groom skill does not reference the durable session prompt %q", groom.PromptPath)
+	}
+}
+
 func TestGroomSkillListsReportSectionsInOrder(t *testing.T) {
 	skill, err := Get("groom")
 	if err != nil {

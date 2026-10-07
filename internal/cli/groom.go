@@ -60,6 +60,7 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.run.args, "arg", nil, "extra argument passed to the harness (repeatable)")
 	cmd.Flags().BoolVar(&opts.run.allowHost, "allow-host", false, "opt in to the unsandboxed local backend (dev-only)")
 	cmd.Flags().BoolVar(&opts.run.refresh, "refresh", false, "fetch and reset a reused workspace checkout before running")
+	cmd.AddCommand(newGroomListCommand(deps), newGroomShowCommand(deps))
 	return cmd
 }
 
@@ -106,6 +107,14 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	}
 	reportPath := groom.ReportPath(dataDir, sessionID)
 	deferredPath := groom.DeferredQuestionsPath(dataDir, sessionID)
+
+	// Snapshot the graph and start time before the session runs, so the
+	// manifest can name the tasks the session produced.
+	before, err := d.projectTaskIDs(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	started := d.Clock.Now()
 
 	prompt := strings.TrimRight(string(promptBytes), "\n") + "\n\n" +
 		groom.Kickoff(string(projectID), groomScopeItems(items), reportPath, deferredPath, opts.unattended)
@@ -183,6 +192,25 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	if opts.unattended {
 		mode = "unattended"
 	}
+
+	produced, err := producedTaskIDs(ctx, post.tasks, project.ID, before)
+	if err != nil {
+		return err
+	}
+	record := groom.SessionRecord{
+		ID:        sessionID,
+		Project:   string(project.ID),
+		Mode:      mode,
+		CreatedAt: started,
+		Scope:     groomScopeItems(items),
+		Report:    string(report.ID),
+		Deferred:  string(deferred.ID),
+		Produced:  produced,
+	}
+	if err := groom.WriteSession(dataDir, record); err != nil {
+		return err
+	}
+
 	doc := groomDoc{
 		Session:  sessionID,
 		Scope:    scopeIDs(items),
@@ -204,7 +232,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 			f("project", project.ID),
 			f("repo", d.repoValue("")),
 		)
-	}, groomHints(project.ID, report.ID)...)
+	}, groomHints(project.ID, sessionID, report.ID)...)
 }
 
 // groomScope resolves the session's items: the named ones, or by default every
@@ -477,9 +505,10 @@ func joinTaskIDs(ids []core.TaskID) string {
 	return strings.Join(parts, ", ")
 }
 
-func groomHints(projectID core.ProjectID, reportID core.ArtifactID) []hint {
+func groomHints(projectID core.ProjectID, sessionID string, reportID core.ArtifactID) []hint {
 	return []hint{
-		{Command: fmt.Sprintf("ft doc get %s", reportID), About: "read the grooming report"},
+		{Command: fmt.Sprintf("ft groom show %s", sessionID), About: "read the session report and deferred questions"},
+		{Command: fmt.Sprintf("ft doc get %s", reportID), About: "read the grooming report artifact"},
 		{Command: fmt.Sprintf("ft doc list -p %s", projectID), About: "see the session artifacts"},
 	}
 }

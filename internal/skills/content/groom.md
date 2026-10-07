@@ -15,7 +15,7 @@ project, and captures the two outputs.
 
 ```sh
 ft groom --sandbox local --harness opencode --allow-host
-ft groom t-abc t-def --sandbox local --harness opencode --allow-host
+ft groom <item> <item> --sandbox local --harness opencode --allow-host
 ft groom --unattended --sandbox local --harness opencode --allow-host
 ```
 
@@ -39,6 +39,27 @@ and records them as `doc` artifacts (`ft doc list`); a session that writes
 neither fails with a clear error. The files are written on the host under the
 project data dir, so the selected backend must give the session write access
 there; the isolating backends mount only the resolved workspace today.
+
+## Read a session
+
+`ft groom` records each finished session under `grooming-sessions/<session-id>/`
+so it can be read back:
+
+```sh
+ft groom list                     # past sessions: id, date, mode, scope, produced counts
+ft groom list -p <project>
+ft groom show <session>           # the report, the deferred questions, and the tasks it produced
+```
+
+`ft groom list` prints a table (`SESSION`, `DATE`, `MODE`, `SCOPE`, `PRODUCED`) and,
+as `-o json|yaml`, a list of objects with `session`, `created` (RFC3339), `mode`,
+`project`, `scope` (the item ids), and `produced` (the task ids). It defaults to the
+configured project; `--project` selects another.
+
+`ft groom show <session>` prints the session metadata, the captured report, the
+deferred questions, and the tasks the session produced, read live from the graph
+(their current kind, status, and title). As `-o json|yaml` it adds `report_body`,
+`deferred_body`, and a `produced` list of `{task_id, kind, title, status}`.
 
 ## Unattended mode
 

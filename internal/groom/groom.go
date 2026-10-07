@@ -79,9 +79,9 @@ func DeferredQuestionsPath(dataDir, sessionID string) string {
 
 // ScopeItem is one item a grooming session covers, as named in the kickoff.
 type ScopeItem struct {
-	ID    string
-	Kind  string
-	Title string
+	ID    string `json:"id" yaml:"id"`
+	Kind  string `json:"kind" yaml:"kind"`
+	Title string `json:"title" yaml:"title"`
 }
 
 // unattendedOverride is appended to the kickoff when no product owner is

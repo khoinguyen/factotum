@@ -113,6 +113,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		Backend:          sel.backend,
 		Harness:          sel.harness,
 		WorkspaceRoot:    sel.workspace,
+		RepoBase:         sel.repoBase,
 		WorkspaceRefresh: sel.refresh,
 		Model:            sel.model,
 		Args:             sel.args,

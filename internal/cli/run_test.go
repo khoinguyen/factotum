@@ -59,6 +59,43 @@ func TestRunCommandDrivesTaskToReview(t *testing.T) {
 	}
 }
 
+// TestRunCommandResolvesRelativeRepoPathFromProjectConfigRoot reproduces the
+// factotum dogfood failure: the project registers its repo with a relative Path
+// (".") and no URL, which `ft run` must resolve against the project root (the
+// directory holding .factotum/config.toml) instead of rejecting it.
+func TestRunCommandResolvesRelativeRepoPathFromProjectConfigRoot(t *testing.T) {
+	r := newRunner(t)
+	root := t.TempDir()
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("project", "repo", "create", projectID, "factotum", "--path", ".")
+	cfgPath := filepath.Join(root, ".factotum", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("project = \""+projectID+"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskID := firstField(t, r.run("--config", cfgPath, "task", "create",
+		"--project", projectID, "--repo", "factotum", "--title", "T", "--body", "B"))
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("--config", cfgPath, "run", taskID, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !strings.Contains(out, "run: finished") {
+		t.Fatalf("relative-path run did not finish:\n%s", out)
+	}
+	prepared := backend.Prepared()
+	if len(prepared) != 1 {
+		t.Fatalf("Prepare called %d times, want 1", len(prepared))
+	}
+	if prepared[0].Workdir != root {
+		t.Fatalf("workdir = %q, want the project root %q", prepared[0].Workdir, root)
+	}
+}
+
 func TestRunCommandRequiresExplicitSelection(t *testing.T) {
 	r := newRunner(t)
 	r.runHarness = harnessfake.New("opencode")

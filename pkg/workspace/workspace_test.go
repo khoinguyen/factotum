@@ -261,13 +261,71 @@ func TestResolveErrorsWhenLocalPathMissing(t *testing.T) {
 	}
 }
 
-func TestResolveErrorsWhenLocalPathRelative(t *testing.T) {
+func TestResolveErrorsWhenLocalPathRelativeWithoutBase(t *testing.T) {
 	root := t.TempDir()
 	project := testProject(core.Repository{Name: "backend", Path: "repos/backend"})
 
 	_, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Git: &fakeGit{}})
 	if !errors.Is(err, workspace.ErrLocalPath) {
 		t.Fatalf("Resolve() error = %v, want ErrLocalPath", err)
+	}
+	if !strings.Contains(err.Error(), "repos/backend") {
+		t.Errorf("error %q does not name the offending path", err)
+	}
+	if !strings.Contains(err.Error(), "absolute") {
+		t.Errorf("error %q does not say how to fix it", err)
+	}
+}
+
+func TestResolveUsesRelativeLocalPathAgainstBase(t *testing.T) {
+	root := t.TempDir()
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "repos", "backend"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	project := testProject(core.Repository{Name: "backend", Path: "repos/backend"})
+
+	plan, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Base: base})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	got := plan.Checkouts[0]
+	want := filepath.Join(base, "repos", "backend")
+	if got.Path != want {
+		t.Errorf("path = %q, want %q", got.Path, want)
+	}
+	if got.Origin != workspace.OriginLocal {
+		t.Errorf("origin = %v, want OriginLocal", got.Origin)
+	}
+}
+
+// A repo registered from a local checkout with Path "." (the factotum project's
+// own registration) resolves to the base directory itself.
+func TestResolveDotRelativeLocalPathResolvesToBase(t *testing.T) {
+	root := t.TempDir()
+	base := t.TempDir()
+	project := testProject(core.Repository{Name: "factotum", Path: "."})
+
+	plan, err := workspace.Resolve(context.Background(), project, testTask("factotum"), workspace.Options{Root: root, Base: base})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if got := plan.Checkouts[0].Path; got != base {
+		t.Errorf("path = %q, want the base %q", got, base)
+	}
+}
+
+func TestResolveAbsoluteLocalPathIgnoresBase(t *testing.T) {
+	root := t.TempDir()
+	local := t.TempDir()
+	project := testProject(core.Repository{Name: "backend", Path: local})
+
+	plan, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Base: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if got := plan.Checkouts[0].Path; got != local {
+		t.Errorf("path = %q, want the absolute path %q", got, local)
 	}
 }
 

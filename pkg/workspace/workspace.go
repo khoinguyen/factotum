@@ -18,6 +18,10 @@
 //     is deterministic: one checkout per repo at Root/<RepoDir(name)>. A stable
 //     root makes re-runs idempotent: an existing git checkout is reused, never
 //     re-cloned, and an existing local Path is used as-is.
+//   - Local paths: an absolute repo Path is used as-is. A relative Path (for
+//     example ".", a project registered from a local checkout) resolves against
+//     Options.Base, the project root. Without a base a relative Path is an error
+//     that names the path and the fix (t-7wd6op3rxf).
 //   - Re-run policy: a reused clone is not updated by default, but the resolver
 //     first compares the checkout's origin URL against the repo's configured URL
 //     and fails with ErrRemoteChanged when they differ, so a changed URL is never
@@ -146,6 +150,11 @@ type Git interface {
 type Options struct {
 	// Root is the absolute workspace root. Required.
 	Root string
+	// Base is the absolute directory a relative repo Path resolves against,
+	// typically the project root (the directory holding .factotum/config.toml).
+	// It is only consulted for a relative Path; empty means a relative Path
+	// cannot be resolved.
+	Base string
 	// Git is the clone runner; nil uses the host git (NewExecGit).
 	Git Git
 	// Token is the deliberate credential source; nil means anonymous clones.
@@ -193,7 +202,7 @@ func Resolve(ctx context.Context, project core.Project, task core.Task, opts Opt
 			}
 			dirs[dir] = repo.Name
 		}
-		checkout, err := materialize(ctx, repo, root, git, opts.Token, opts.Refresh)
+		checkout, err := materialize(ctx, repo, root, opts.Base, git, opts.Token, opts.Refresh)
 		if err != nil {
 			return nil, err
 		}
@@ -227,16 +236,31 @@ func RepoDir(name string) string {
 	return out
 }
 
-func materialize(ctx context.Context, repo core.Repository, root string, git Git, token TokenProvider, refresh bool) (Checkout, error) {
+// resolveLocalPath returns the checkout directory for a repo's configured Path.
+// An absolute Path is used as-is; a relative Path resolves against base (the
+// project root). A relative Path with no base is an error that names the path
+// and how to fix it.
+func resolveLocalPath(repo core.Repository, base string) (string, error) {
+	if filepath.IsAbs(repo.Path) {
+		return filepath.Clean(repo.Path), nil
+	}
+	if base == "" {
+		return "", fmt.Errorf("%w: repository %q path %q is relative and no project root is configured to resolve it; register an absolute path (ft project repo update) or run from the project root", ErrLocalPath, repo.Name, repo.Path)
+	}
+	return filepath.Clean(filepath.Join(base, repo.Path)), nil
+}
+
+func materialize(ctx context.Context, repo core.Repository, root, base string, git Git, token TokenProvider, refresh bool) (Checkout, error) {
 	if repo.Path != "" {
-		if !filepath.IsAbs(repo.Path) {
-			return Checkout{}, fmt.Errorf("%w: %q is not an absolute path", ErrLocalPath, repo.Path)
+		path, err := resolveLocalPath(repo, base)
+		if err != nil {
+			return Checkout{}, err
 		}
-		info, err := os.Stat(repo.Path)
+		info, err := os.Stat(path)
 		if err != nil || !info.IsDir() {
-			return Checkout{}, fmt.Errorf("%w: %q does not exist or is not a directory", ErrLocalPath, repo.Path)
+			return Checkout{}, fmt.Errorf("%w: %q does not exist or is not a directory", ErrLocalPath, path)
 		}
-		return Checkout{Name: repo.Name, Path: filepath.Clean(repo.Path), Origin: OriginLocal, Reused: true}, nil
+		return Checkout{Name: repo.Name, Path: path, Origin: OriginLocal, Reused: true}, nil
 	}
 	if repo.URL == "" {
 		return Checkout{}, fmt.Errorf("%w: %q", ErrNoSource, repo.Name)

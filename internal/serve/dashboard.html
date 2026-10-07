@@ -1,6 +1,6 @@
 {{define "task-row"}}
 <div class="task">
-  <span class="tid">{{.ID}}</span>
+  {{if .URL}}<a class="tid" href="{{.URL}}">{{.ID}}</a>{{else}}<span class="tid">{{.ID}}</span>{{end}}
   <span class="chip {{.Class}}">{{.Chip}}</span>
   {{if .Milestone}}<span class="chip milestone">milestone</span>{{end}}
   <span class="title">{{.Title}}</span>
@@ -9,11 +9,73 @@
   {{if .Wave}}<span class="chip ghost">w{{.Wave}}</span>{{end}}
   {{if .Repo}}<span class="chip ghost">{{.Repo}}</span>{{end}}
   {{if .Assignee}}<span class="chip ghost">{{.Assignee}}</span>{{end}}
+  {{if .Origin}}<a class="chip ghost" href="/idea/{{.Origin}}">idea {{.Origin}}</a>{{end}}
   {{if .Reason}}<span class="chip reason">{{.Reason}}{{if .Detail}} · {{.Detail}}{{end}}</span>{{end}}
 </div>
 {{end}}
 
+{{define "idea-card"}}
+<a class="idea idea-{{.State}}" href="{{.URL}}">
+  <span>
+    <span class="chip {{.Chip}}">{{.State}}</span>
+    <span class="idea-title">{{.Title}}</span>
+  </span>
+  <span class="meta">{{.Total}} task{{if ne .Total 1}}s{{end}} · {{.Done}} done · {{.Active}} active · {{.Blocked}} blocked{{if .Artifacts}} · {{len .Artifacts}} artifact{{if ne (len .Artifacts) 1}}s{{end}}{{end}}</span>
+</a>
+{{end}}
+
+{{define "idea-lane"}}
+<div class="panel lane">
+  <h3>{{.Name}} · {{len .Ideas}}</h3>
+  <div class="rows">
+    {{if .Ideas}}{{range .Ideas}}{{template "idea-card" .}}{{end}}{{else}}<p class="empty">nothing here</p>{{end}}
+  </div>
+</div>
+{{end}}
+
+{{define "task-group"}}
+<div class="group">
+  <div class="group-label">
+    {{if .Ungrouped}}<span class="chip capture">ungrouped</span>
+    {{else}}<a class="tid idea-link" href="/idea/{{.IdeaID}}">{{.IdeaID}}</a><span>{{.IdeaTitle}}</span>{{end}}
+  </div>
+  <div class="rows">{{range .Tasks}}{{template "task-row" .}}{{end}}</div>
+</div>
+{{end}}
+
+{{define "kanban-column"}}
+<div class="panel">
+  <h3>{{.Name}} · {{.Count}}</h3>
+  <div>
+    {{if .Groups}}{{range .Groups}}{{template "task-group" .}}{{end}}{{else}}<p class="empty">nothing here</p>{{end}}
+  </div>
+</div>
+{{end}}
+
 {{define "dashboard-body"}}
+<p class="eyebrow">updated {{.Snapshot}}</p>
+
+<dl class="stats">
+  <div class="stat"><dt>Ideas</dt><dd>{{.Stats.Ideas}}</dd></div>
+  <div class="stat"><dt>In scope</dt><dd>{{.Stats.Scope}}</dd></div>
+  <div class="stat done"><dt>Done</dt><dd>{{.Stats.Done}}</dd></div>
+  <div class="stat agent"><dt>Agent next</dt><dd>{{.Stats.ReadyAgent}}</dd></div>
+  <div class="stat human"><dt>Human next</dt><dd>{{.Stats.ReadyHuman}}</dd></div>
+  <div class="stat"><dt>Blocked</dt><dd>{{.Stats.Blocked}}</dd></div>
+  <div class="stat"><dt>Cycles</dt><dd>{{.Stats.Cycles}}</dd></div>
+  <div class="stat"><dt>Waves</dt><dd>{{.Stats.Waves}}</dd></div>
+</dl>
+
+<section>
+  <h2>Ideas</h2>
+  <div class="board">
+    {{template "idea-lane" (.Lane "blocked")}}
+    {{template "idea-lane" (.Lane "active")}}
+    {{template "idea-lane" (.Lane "finished")}}
+    {{template "idea-lane" (.Lane "captured")}}
+  </div>
+</section>
+
 <section>
   <h2>Next up</h2>
   {{if or .NextAgent .NextHuman}}
@@ -39,29 +101,12 @@
 </section>
 
 <section>
-  <h2>In flight · {{len .InFlight}}</h2>
-  {{if .InFlight}}
-  <div class="rows">{{range .InFlight}}{{template "task-row" .}}{{end}}</div>
-  {{else}}
-  <p class="empty">Nothing in progress.</p>
-  {{end}}
+  <h2>Work board</h2>
+  <div class="kanban">
+    {{template "kanban-column" (.Column "in-progress")}}
+    {{template "kanban-column" (.Column "waiting")}}
+  </div>
 </section>
-
-<section>
-  <h2>Waiting / blocked · {{len .Waiting}}</h2>
-  {{if .Waiting}}
-  <div class="rows">{{range .Waiting}}{{template "task-row" .}}{{end}}</div>
-  {{else}}
-  <p class="empty">Nothing waiting.</p>
-  {{end}}
-</section>
-
-{{if .Capture}}
-<section>
-  <h2>Capture · {{len .Capture}}</h2>
-  <div class="rows">{{range .Capture}}{{template "task-row" .}}{{end}}</div>
-</section>
-{{end}}
 
 {{if .Flags}}
 <section>
@@ -86,86 +131,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
-<style>
-:root {
-  --ground:#f4f6f7; --surface:#fff; --sunk:#eaeef0; --line:#d5dde0; --line-strong:#b3c0c5;
-  --ink:#111b1f; --ink-soft:#4a5b61; --ink-faint:#71848b;
-  --signal:#0d7d80; --signal-soft:#d9eeee; --gate:#a35c00; --gate-soft:#f8edd3;
-  --done:#2f7d4f; --done-soft:#ddeee3; --alert:#a8322a; --alert-soft:#f7dfdd; --prod:#6b4fa3; --prod-soft:#ece6f7;
-  --radius:6px;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ground:#0d1417; --surface:#151f23; --sunk:#101a1d; --line:#253439; --line-strong:#3b5057;
-    --ink:#e4ecef; --ink-soft:#a3b5bb; --ink-faint:#7c9098;
-    --signal:#4ec3c4; --signal-soft:#123033; --gate:#e0a340; --gate-soft:#33260f;
-    --done:#6cc48c; --done-soft:#12281b; --alert:#e8817a; --alert-soft:#3a1a17; --prod:#b9a1e8; --prod-soft:#251a3a;
-  }
-}
-* { box-sizing:border-box; }
-html, body { max-width:100%; overflow-x:hidden; }
-body { margin:0; background:var(--ground); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; }
-.page { max-width:1100px; margin:0 auto; padding:20px 16px 56px; }
-header { margin-bottom:20px; }
-.eyebrow { margin:0 0 4px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--signal); }
-h1 { margin:0; font-size:clamp(24px,6vw,36px); line-height:1.15; overflow-wrap:anywhere; }
-h2 { margin:0 0 10px; font-size:15px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid var(--line); padding-bottom:6px; }
-section { margin:0 0 24px; }
-.grid { display:grid; grid-template-columns:1fr; gap:12px; }
-@media (min-width:760px) { .grid.two { grid-template-columns:1fr 1fr; } }
-.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(88px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; margin:0 0 24px; padding:0; }
-.stat { background:var(--surface); padding:10px 12px; }
-.stat dt { margin:0 0 2px; font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); }
-.stat dd { margin:0; font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
-.stat.agent dd { color:var(--signal); } .stat.human dd { color:var(--gate); } .stat.done dd { color:var(--done); }
-.panel { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
-.panel h3 { margin:0; padding:8px 12px; font-size:13px; letter-spacing:.03em; text-transform:uppercase; border-bottom:1px solid var(--line); }
-.panel.agent h3 { color:var(--signal); background:var(--signal-soft); }
-.panel.human h3 { color:var(--gate); background:var(--gate-soft); }
-.rows { display:flex; flex-direction:column; }
-.task { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 8px; padding:8px 12px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); overflow-wrap:anywhere; }
-.rows > .task + .task, .rows > .task, .rows > .update + .update, .rows > .flag + .flag { margin-top:8px; }
-.panel .rows { padding:6px; }
-.panel .rows .task { border:0; border-radius:0; border-top:1px solid var(--line); }
-.panel .rows .task:first-child { border-top:0; }
-.tid { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; color:var(--signal); word-break:break-all; }
-.title { flex:1 1 100%; color:var(--ink); }
-.chip { display:inline-block; font-family:ui-monospace,monospace; font-size:10px; letter-spacing:.04em; text-transform:uppercase; padding:1px 6px; border-radius:3px; border:1px solid transparent; white-space:nowrap; }
-.chip.done { color:var(--done); background:var(--done-soft); }
-.chip.cancelled { color:var(--ink-faint); background:var(--sunk); }
-.chip.review { color:var(--prod); background:var(--prod-soft); }
-.chip.ready-agent { color:var(--signal); background:var(--signal-soft); }
-.chip.ready-human { color:var(--gate); background:var(--gate-soft); }
-.chip.blocked, .chip.waiting { color:var(--ink-faint); background:var(--sunk); }
-.chip.cycle { color:var(--alert); background:var(--alert-soft); }
-.chip.capture { color:var(--prod); background:var(--prod-soft); }
-.chip.milestone { color:var(--prod); border-color:var(--prod); }
-.chip.ghost { color:var(--ink-faint); border-color:var(--line-strong); }
-.chip.reason { color:var(--alert); border-color:var(--alert); text-transform:none; white-space:normal; overflow-wrap:anywhere; min-width:0; max-width:100%; }
-.empty { margin:0; padding:8px 12px; color:var(--ink-faint); font-style:italic; }
-.flag { margin:0; padding:8px 12px; background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--gate); border-radius:var(--radius); color:var(--ink-soft); }
-.update { display:flex; flex-wrap:wrap; gap:4px 10px; padding:8px 12px; background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--signal); border-radius:var(--radius); }
-.update time { font-family:ui-monospace,monospace; font-size:12px; color:var(--ink-faint); }
-footer { margin-top:8px; padding-top:16px; border-top:1px solid var(--line); font-size:12px; color:var(--ink-faint); }
-.live { color:var(--signal); }
-</style>
+<style>{{.CSS}}</style>
 </head>
 <body>
 <div class="page">
   <header>
-    <p class="eyebrow">{{.Project}} · snapshot {{.Snapshot}}</p>
+    <p class="eyebrow">{{.Project}}</p>
     <h1>{{.Title}}</h1>
   </header>
-
-  <dl class="stats">
-    <div class="stat"><dt>In scope</dt><dd>{{.Stats.Scope}}</dd></div>
-    <div class="stat done"><dt>Done</dt><dd>{{.Stats.Done}}</dd></div>
-    <div class="stat agent"><dt>Agent next</dt><dd>{{.Stats.ReadyAgent}}</dd></div>
-    <div class="stat human"><dt>Human next</dt><dd>{{.Stats.ReadyHuman}}</dd></div>
-    <div class="stat"><dt>Blocked</dt><dd>{{.Stats.Blocked}}</dd></div>
-    <div class="stat"><dt>Cycles</dt><dd>{{.Stats.Cycles}}</dd></div>
-    <div class="stat"><dt>Waves</dt><dd>{{.Stats.Waves}}</dd></div>
-  </dl>
 
   <main id="dash">{{template "dashboard-body" .}}</main>
 

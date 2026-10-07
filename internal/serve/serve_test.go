@@ -30,11 +30,12 @@ func (s *seqIDs) NewID(prefix string) string {
 }
 
 type fixture struct {
-	backend  store.Backend
-	projects *app.ProjectService
-	tasks    *app.TaskService
-	actors   *app.ActorService
-	clock    fixedClock
+	backend   store.Backend
+	projects  *app.ProjectService
+	tasks     *app.TaskService
+	actors    *app.ActorService
+	artifacts *app.ArtifactService
+	clock     fixedClock
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -44,11 +45,12 @@ func newFixture(t *testing.T) *fixture {
 	clock := fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	ids := &seqIDs{}
 	return &fixture{
-		backend:  backend,
-		projects: app.NewProjectService(backend, clock, ids),
-		tasks:    app.NewTaskService(backend, clock, ids),
-		actors:   app.NewActorService(backend, clock, ids),
-		clock:    clock,
+		backend:   backend,
+		projects:  app.NewProjectService(backend, clock, ids),
+		tasks:     app.NewTaskService(backend, clock, ids),
+		actors:    app.NewActorService(backend, clock, ids),
+		artifacts: app.NewArtifactService(backend, clock, ids),
+		clock:     clock,
 	}
 }
 

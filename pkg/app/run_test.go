@@ -160,6 +160,28 @@ func TestRunDeliversPromptAndCompletesTask(t *testing.T) {
 	}
 }
 
+// TestRunPromptOverrideReplacesTaskPrompt proves a caller-supplied prompt is
+// delivered verbatim instead of the task-derived one.
+func TestRunPromptOverrideReplacesTaskPrompt(t *testing.T) {
+	f := newRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("ok\n"), ExitCode: 0})
+
+	if _, err := f.run(t, RunInput{Prompt: "You are the grooming agent."}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	cmds := f.backend.Commands()
+	if len(cmds) != 1 {
+		t.Fatalf("Exec called %d times, want 1", len(cmds))
+	}
+	prompt := cmds[0].Argv[len(cmds[0].Argv)-1]
+	if prompt != "You are the grooming agent." {
+		t.Fatalf("prompt = %q, want the override verbatim", prompt)
+	}
+	if strings.Contains(prompt, "Add a widget") {
+		t.Fatalf("prompt still carries the task text:\n%s", prompt)
+	}
+}
+
 func TestRunFailureLeavesTaskStateIntact(t *testing.T) {
 	f := newRunFixture(t)
 	f.backend.Program(isolation.ExecResult{Stdout: []byte("boom"), ExitCode: 2})

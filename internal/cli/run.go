@@ -20,15 +20,17 @@ import (
 
 // runOptions are the per-invocation overrides of the [run] config.
 type runOptions struct {
-	backend   string
-	harness   string
-	workspace string
-	model     string
-	args      []string
-	allowHost bool
-	refresh   bool
-	goal      string
-	maxTasks  int
+	backend        string
+	harness        string
+	workspace      string
+	model          string
+	args           []string
+	allowHost      bool
+	refresh        bool
+	goal           string
+	maxTasks       int
+	promptFile     string
+	promptArtifact string
 }
 
 func newRunCommand(deps *Deps) *cobra.Command {
@@ -57,10 +59,14 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			if opts.maxTasks < 0 {
 				return usageError(cmd, "--max-tasks must not be negative")
 			}
+			prompt, err := deps.resolveRunPrompt(cmd, opts)
+			if err != nil {
+				return err
+			}
 			if opts.goal != "" {
 				return deps.runGoal(cmd, opts.goal, opts)
 			}
-			return deps.runTask(cmd, args[0], opts)
+			return deps.runTask(cmd, args[0], prompt, opts)
 		},
 	}
 	cmd.Flags().StringVar(&opts.backend, "backend", "", "isolation backend name (required; e.g. local, openshell, docker)")
@@ -72,7 +78,44 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "fetch and reset a reused workspace checkout to its upstream before running")
 	cmd.Flags().StringVar(&opts.goal, "goal", "", "drive the DAG loop toward this goal task or milestone")
 	cmd.Flags().IntVar(&opts.maxTasks, "max-tasks", 0, "stop the loop after this many task runs (0 = no budget)")
+	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "use this file's content as the harness prompt (single task runs)")
+	cmd.Flags().StringVar(&opts.promptArtifact, "prompt-artifact", "", "use this artifact's body as the harness prompt (single task runs)")
 	return cmd
+}
+
+// resolveRunPrompt resolves the optional prompt override for a run from a file
+// or an artifact body. An empty result means the run uses the task-derived
+// prompt. The two sources are mutually exclusive and apply only to a single
+// task run, so a --goal loop (whose prompt differs per task) rejects them.
+func (d *Deps) resolveRunPrompt(cmd *cobra.Command, opts runOptions) (string, error) {
+	if opts.promptFile != "" && opts.promptArtifact != "" {
+		return "", usageError(cmd, "give either --prompt-file or --prompt-artifact, not both")
+	}
+	if opts.goal != "" && (opts.promptFile != "" || opts.promptArtifact != "") {
+		return "", usageError(cmd, "--prompt-file and --prompt-artifact apply to a single task run, not --goal")
+	}
+	switch {
+	case opts.promptFile != "":
+		data, err := os.ReadFile(opts.promptFile)
+		if err != nil {
+			return "", usageError(cmd, "read prompt file %s: %v", opts.promptFile, err)
+		}
+		if strings.TrimSpace(string(data)) == "" {
+			return "", usageError(cmd, "prompt file %s is empty", opts.promptFile)
+		}
+		return string(data), nil
+	case opts.promptArtifact != "":
+		artifact, err := d.Artifacts.Get(cmd.Context(), core.ArtifactID(opts.promptArtifact))
+		if err != nil {
+			return "", fmt.Errorf("resolve prompt artifact %s: %w", opts.promptArtifact, err)
+		}
+		if strings.TrimSpace(artifact.Body) == "" {
+			return "", usageError(cmd, "prompt artifact %s has an empty body", opts.promptArtifact)
+		}
+		return artifact.Body, nil
+	default:
+		return "", nil
+	}
 }
 
 // runSelection is the resolved backend, harness, and workspace a run uses.
@@ -152,7 +195,7 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 	}, nil
 }
 
-func (d *Deps) runTask(cmd *cobra.Command, taskID string, opts runOptions) error {
+func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
@@ -171,6 +214,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID string, opts runOptions) error
 		WorkspaceRefresh: sel.refresh,
 		Model:            sel.model,
 		Args:             sel.args,
+		Prompt:           prompt,
 		Actor:            d.currentActorID(cmd.Context()),
 	})
 	if errors.Is(runErr, local.ErrNotOptedIn) {

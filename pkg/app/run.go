@@ -52,7 +52,11 @@ type RunInput struct {
 	Token workspace.TokenProvider
 	Model string
 	Args  []string
-	Actor *core.ActorID
+	// Prompt, when non-empty, replaces the task-derived prompt the harness
+	// receives. It lets a run be driven by a stored prompt (a file or an
+	// artifact body) instead of the task's title and description.
+	Prompt string
+	Actor  *core.ActorID
 	// OutputLimit caps the agent output stored in the run note; 0 uses the
 	// service default.
 	OutputLimit int
@@ -103,7 +107,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 	}
 
 	req := harnesspkg.Request{
-		Prompt:  TaskPrompt(project, task),
+		Prompt:  runPrompt(project, task, in.Prompt),
 		Model:   in.Model,
 		Workdir: runWorkdir(plan),
 		Args:    in.Args,
@@ -181,6 +185,16 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		return outcome, err
 	}
 	return outcome, nil
+}
+
+// runPrompt returns the prompt a harness receives: the caller-supplied override
+// when set, else the task-derived prompt. An override is data (a stored prompt),
+// so it is used verbatim.
+func runPrompt(project *core.Project, task *core.Task, override string) string {
+	if override != "" {
+		return override
+	}
+	return TaskPrompt(project, task)
 }
 
 // TaskPrompt builds the instruction a harness receives for a task: its title,

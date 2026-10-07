@@ -4,7 +4,23 @@
 // the groom skill documents the protocol around it.
 package groom
 
-import _ "embed"
+import (
+	_ "embed"
+	"fmt"
+	"path/filepath"
+	"strings"
+)
+
+const (
+	// SessionsDirName is the directory, under the project data dir, that holds
+	// every grooming session's outputs.
+	SessionsDirName = "grooming-sessions"
+	// ReportFileName is the deterministic name of a session's report.
+	ReportFileName = "report.md"
+	// DeferredQuestionsFileName is the deterministic name of a session's
+	// deferred-questions file.
+	DeferredQuestionsFileName = "deferred-questions.md"
+)
 
 // PromptPath is the committed repo path of the grooming-session prompt. It is
 // durable data (not code) so a session can be launched with
@@ -42,3 +58,52 @@ func ReportTemplate() string { return reportTemplate }
 
 // DeferredQuestionsTemplate returns the deferred-questions file format (markdown).
 func DeferredQuestionsTemplate() string { return deferredQuestionsTemplate }
+
+// SessionDir returns the directory a session's outputs live in: a deterministically
+// named subdirectory of the project data dir. The session id keeps concurrent or
+// repeated sessions from overwriting each other's report.
+func SessionDir(dataDir, sessionID string) string {
+	return filepath.Join(dataDir, SessionsDirName, sessionID)
+}
+
+// ReportPath returns the absolute path a session writes its report to.
+func ReportPath(dataDir, sessionID string) string {
+	return filepath.Join(SessionDir(dataDir, sessionID), ReportFileName)
+}
+
+// DeferredQuestionsPath returns the absolute path a session writes its
+// deferred-questions file to.
+func DeferredQuestionsPath(dataDir, sessionID string) string {
+	return filepath.Join(SessionDir(dataDir, sessionID), DeferredQuestionsFileName)
+}
+
+// ScopeItem is one item a grooming session covers, as named in the kickoff.
+type ScopeItem struct {
+	ID    string
+	Kind  string
+	Title string
+}
+
+// Kickoff returns the block `ft groom` appends to the durable session prompt. It
+// names the project, every scoped item, and the absolute paths the session must
+// write, and restates the templates' section contract, so the harness has the
+// scope and the deterministic outputs without re-reading the code.
+func Kickoff(project string, items []ScopeItem, reportPath, deferredPath string) string {
+	var b strings.Builder
+	b.WriteString("## Session kickoff\n\n")
+	fmt.Fprintf(&b, "Project: %s\n\n", project)
+	if len(items) == 0 {
+		b.WriteString("Scope: (no items)\n\n")
+	} else {
+		fmt.Fprintf(&b, "Scope (%d items):\n", len(items))
+		for _, item := range items {
+			fmt.Fprintf(&b, "- %s (%s) %s\n", item.ID, item.Kind, item.Title)
+		}
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(&b, "Write the report to: %s\n", reportPath)
+	fmt.Fprintf(&b, "Write the deferred questions to: %s\n\n", deferredPath)
+	fmt.Fprintf(&b, "Report sections, in order: %s\n", strings.Join(ReportSections(), ", "))
+	fmt.Fprintf(&b, "Deferred-questions sections, in order: %s\n", strings.Join(DeferredQuestionsSections(), ", "))
+	return b.String()
+}

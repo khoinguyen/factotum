@@ -104,6 +104,56 @@ func fencedBlock(t *testing.T, body, firstLine string) string {
 	return ""
 }
 
+func TestSessionPathsAreDeterministicUnderDataDir(t *testing.T) {
+	dir := SessionDir("/data", "groom-1")
+	if want := filepath.Join("/data", "grooming-sessions", "groom-1"); dir != want {
+		t.Fatalf("SessionDir = %q, want %q", dir, want)
+	}
+	if got, want := ReportPath("/data", "groom-1"), filepath.Join(dir, "report.md"); got != want {
+		t.Fatalf("ReportPath = %q, want %q", got, want)
+	}
+	if got, want := DeferredQuestionsPath("/data", "groom-1"), filepath.Join(dir, "deferred-questions.md"); got != want {
+		t.Fatalf("DeferredQuestionsPath = %q, want %q", got, want)
+	}
+}
+
+// TestKickoffNamesScopeAndOutputs pins the acceptance contract: the kickoff the
+// session prompt carries names every scoped item and the absolute output paths,
+// so the harness never has to guess where to write.
+func TestKickoffNamesScopeAndOutputs(t *testing.T) {
+	report := filepath.Join("data", "grooming-sessions", "groom-1", "report.md")
+	deferred := filepath.Join("data", "grooming-sessions", "groom-1", "deferred-questions.md")
+	kick := Kickoff("factotum", []ScopeItem{
+		{ID: "t-1", Kind: "task", Title: "Add widget"},
+		{ID: "t-2", Kind: "idea", Title: "Maybe cache"},
+	}, report, deferred)
+
+	for _, want := range []string{"factotum", "t-1", "Add widget", "t-2", "Maybe cache", report, deferred} {
+		if !strings.Contains(kick, want) {
+			t.Errorf("kickoff does not name %q:\n%s", want, kick)
+		}
+	}
+}
+
+// TestKickoffStatesSectionContract pins the templates' section contract into the
+// kickoff, in order, so the harness writes files whose headings match the
+// versioned templates.
+func TestKickoffStatesSectionContract(t *testing.T) {
+	kick := Kickoff("p", nil, "/r", "/d")
+	sections := append(append([]string{}, ReportSections()...), DeferredQuestionsSections()...)
+	last := -1
+	for _, section := range sections {
+		idx := strings.Index(kick, section)
+		if idx < 0 {
+			t.Fatalf("kickoff does not state section %q:\n%s", section, kick)
+		}
+		if idx <= last {
+			t.Fatalf("kickoff section %q is out of order:\n%s", section, kick)
+		}
+		last = idx
+	}
+}
+
 // sectionTitles returns the level-2 section titles of a markdown document, in
 // order.
 func sectionTitles(body string) []string {

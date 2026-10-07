@@ -270,6 +270,18 @@ an existing database predates the binary, the file is backed up first to
 changed, so a failed migration leaves the original intact. A database written by
 a newer binary is rejected with a clear error rather than modified.
 
+To move an existing single-document `jsonfile` store into a `jsondir`, point the
+new backend at the legacy document with `migrate_from`:
+
+```sh
+ft --store jsondir --store-opt path=<dir> --store-opt migrate_from=<old.json> task list
+```
+
+The one-time migration writes each entity as a markdown document, then renames
+the original to `<old.json>.bak-<UTC timestamp>`. It refuses to overwrite a
+non-empty target directory and is a no-op once the source is gone, so the option
+is safe to leave in place.
+
 ## Performance
 
 Two tiers, both exposed as `mise` tasks:

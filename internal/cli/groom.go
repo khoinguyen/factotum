@@ -41,8 +41,9 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 			"run service, and records the two outputs as doc artifacts. With --unattended the kickoff\n" +
 			"tells the session there is no product owner: it defers every product question and still\n" +
 			"finishes agent-ready, and the run fails if any scoped item is left neither agent-ready\n" +
-			"nor deferred. The backend and harness are selected explicitly, by flag or by the [run]\n" +
-			"config table; there is no default backend.",
+			"nor deferred. The sandbox and harness resolve like `ft run`: --sandbox/--harness, then\n" +
+			"FACTOTUM_RUN_*, then the [run] config table (project over user), prompting once on a\n" +
+			"terminal when unset.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return deps.runGroom(cmd, args, opts)
 		},
@@ -50,10 +51,10 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVarP(&opts.project, "project", "p", "", "project id (defaults to the configured project)")
 	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "session prompt file (default "+groom.PromptPath+")")
 	cmd.Flags().BoolVar(&opts.unattended, "unattended", false, "run with no product owner: defer product questions and still finish agent-ready")
-	cmd.Flags().StringVar(&opts.run.sandbox, "sandbox", "", "isolation backend name (required; e.g. local, openshell, docker)")
+	cmd.Flags().StringVar(&opts.run.sandbox, "sandbox", "", "isolation backend name (defaults to run.sandbox; e.g. local, openshell, docker)")
 	cmd.Flags().StringVar(&opts.run.sandbox, "backend", "", "deprecated alias for --sandbox")
 	_ = cmd.Flags().MarkHidden("backend")
-	cmd.Flags().StringVar(&opts.run.harness, "harness", "", "harness name (required; e.g. opencode)")
+	cmd.Flags().StringVar(&opts.run.harness, "harness", "", "harness name (defaults to run.harness; e.g. opencode)")
 	cmd.Flags().StringVar(&opts.run.workspace, "workspace", "", "workspace root directory (default under the config dir)")
 	cmd.Flags().StringVar(&opts.run.model, "model", "", "model override passed to the harness")
 	cmd.Flags().StringArrayVar(&opts.run.args, "arg", nil, "extra argument passed to the harness (repeatable)")

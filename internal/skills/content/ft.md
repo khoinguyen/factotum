@@ -341,10 +341,11 @@ harness with the task as its prompt, captures the output, and reflects progress
 back into the store.
 
 ```sh
-ft run t-abc123 --backend local --harness opencode --workspace ~/.factotum/workspaces
 ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt-in
 ```
 
+- `--prompt-file <path>` or `--prompt-artifact <id>` replaces the task prompt with stored
+  content; mutually exclusive, single task runs only, and a missing or empty source errors.
 - The backend and harness are selected explicitly, by flag or the machine-scoped
   `[run]` table (`backend`, `harness`, `workspace`, `model`, `args`, `allow_host`,
   `refresh`, `provider`, `credential_env`) or `FACTOTUM_RUN_*` overrides; there is no
@@ -368,9 +369,8 @@ ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt
   leaves the task's status untouched and records only a failure note and event, so
   a broken run never corrupts the graph.
 
-`ft run --goal <task|milestone>` drives the graph toward a goal: it repeatedly selects
-the highest-ranked agent-ready task on the path, runs it, and re-reads the graph until
-the goal is reached, no work is ready, on-path work is blocked, or the budget runs out.
+`ft run --goal <task|milestone>` drives the graph toward a goal: it repeatedly runs the
+highest-ranked agent-ready on-path task until the goal is reached, work stalls, or the budget is exhausted.
 
 ```sh
 ft run --goal t-abc123 --backend local --harness opencode --allow-host --max-tasks 5

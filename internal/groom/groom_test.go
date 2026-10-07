@@ -126,7 +126,7 @@ func TestKickoffNamesScopeAndOutputs(t *testing.T) {
 	kick := Kickoff("factotum", []ScopeItem{
 		{ID: "t-1", Kind: "task", Title: "Add widget"},
 		{ID: "t-2", Kind: "idea", Title: "Maybe cache"},
-	}, report, deferred)
+	}, report, deferred, false)
 
 	for _, want := range []string{"factotum", "t-1", "Add widget", "t-2", "Maybe cache", report, deferred} {
 		if !strings.Contains(kick, want) {
@@ -139,7 +139,7 @@ func TestKickoffNamesScopeAndOutputs(t *testing.T) {
 // kickoff, in order, so the harness writes files whose headings match the
 // versioned templates.
 func TestKickoffStatesSectionContract(t *testing.T) {
-	kick := Kickoff("p", nil, "/r", "/d")
+	kick := Kickoff("p", nil, "/r", "/d", false)
 	sections := append(append([]string{}, ReportSections()...), DeferredQuestionsSections()...)
 	last := -1
 	for _, section := range sections {
@@ -151,6 +151,55 @@ func TestKickoffStatesSectionContract(t *testing.T) {
 			t.Fatalf("kickoff section %q is out of order:\n%s", section, kick)
 		}
 		last = idx
+	}
+}
+
+// TestKickoffUnattendedMode pins the defer-and-complete contract: an unattended
+// kickoff tells the session there is no product owner, to defer every product
+// question instead of blocking, and to still finish agent-ready; an interactive
+// kickoff must not carry that override.
+func TestKickoffUnattendedMode(t *testing.T) {
+	tests := []struct {
+		name       string
+		unattended bool
+		want       []string
+		notWant    []string
+	}{
+		{
+			name:       "interactive omits the unsolicited override",
+			unattended: false,
+			want:       []string{"## Session kickoff", "Write the report to: "},
+			notWant:    []string{"## Unattended mode", "No product owner", "timing guard"},
+		},
+		{
+			name:       "unattended defers and completes",
+			unattended: true,
+			want: []string{
+				"## Unattended mode",
+				"No product owner",
+				"never ask",
+				"Defer every product question",
+				"deferred-questions",
+				"groomed",
+				"assigned",
+				"timing guard",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kick := Kickoff("p", nil, "/r", "/d", tt.unattended)
+			for _, want := range tt.want {
+				if !strings.Contains(kick, want) {
+					t.Errorf("kickoff missing %q:\n%s", want, kick)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(kick, notWant) {
+					t.Errorf("kickoff unexpectedly contains %q:\n%s", notWant, kick)
+				}
+			}
+		})
 	}
 }
 

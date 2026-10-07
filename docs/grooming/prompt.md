@@ -45,7 +45,8 @@ ft run --prompt-file docs/grooming/prompt.md --backend local --harness opencode 
 5. Decompose: produce small, focused, independently-reviewable tasks (1 task = 1 PR). Add dependencies
    that express real blocking. Add verification gates per task. Optionally phase/roll out.
 6. Apply agent-owned changes: notes, task decomposition, acceptance criteria directly implied. Do NOT
-   promote an idea, split, or mark a task groomed until the PO answers the product grill.
+   promote an idea, split, or mark a task groomed until the PO answers the product grill. (In
+   unattended mode this guard is suspended; see "Unattended mode" below.)
 7. After answers: apply outcomes (acceptance criteria, new ideas for future possibilities, new tasks),
    promote/split the ready items and mark every produced task groomed and assigned to an agent, build
    the DAG, and run hygiene.
@@ -61,6 +62,20 @@ Promoting an idea creates a linked task that is groomed and assigned in the same
 produced work ungroomed or unassigned for a human - that is what put session 1's work in the human
 bucket. Genuinely human items (product decisions, human testing and review) stay human on purpose and
 are named in the report.
+
+## Unattended mode
+
+When the kickoff carries an "Unattended mode" block there is no PO in the loop and no interactive
+channel: never ask a question or wait for an answer. Instead:
+
+- Defer every product question to the deferred-questions file, for stakeholders to answer later.
+- Decide the engineering calls yourself, record each as a note, and move on.
+- Suspend the step 6 timing guard: promote, split, and mark every produced task groomed and assigned
+  to an agent, so the session still ends agent-ready. Name any item you cannot complete - and every
+  deferred question - in the report and the deferred-questions file.
+
+`ft groom --unattended` supplies that kickoff. An unattended run that leaves a scoped item neither
+agent-ready nor deferred is rejected, so the session must resolve every item one way or the other.
 
 ## Deterministic grooming report template
 

@@ -16,6 +16,7 @@ project, and captures the two outputs.
 ```sh
 ft groom --backend local --harness opencode --allow-host
 ft groom t-abc t-def --backend local --harness opencode --allow-host
+ft groom --unattended --backend local --harness opencode --allow-host
 ```
 
 The prompt is durable repo data at `docs/grooming/prompt.md` - never an
@@ -34,6 +35,17 @@ and records them as `doc` artifacts (`ft doc list`); a session that writes
 neither fails with a clear error. The files are written on the host under the
 project data dir, so the selected backend must give the session write access
 there; the isolating backends mount only the resolved workspace today.
+
+## Unattended mode
+
+`ft groom --unattended` runs with no product owner and no interactive channel. The
+kickoff tells the session to defer every product question to the
+deferred-questions file, record engineering calls as notes, and suspend the
+pre-answer timing guard so it still promotes, splits, and marks produced tasks
+groomed and assigned. After the run `ft groom` requires every scoped item to be
+agent-ready or named in the deferred-questions file; an item left neither fails
+the run. Use it for an automated loop; a human session omits the flag and grills
+the PO as usual.
 
 ## Who decides what
 

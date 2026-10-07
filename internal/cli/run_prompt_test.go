@@ -86,8 +86,11 @@ func TestRunCommandPromptFileMissingErrorsClearly(t *testing.T) {
 
 	err := r.runErr("run", taskID, "--prompt-file", missing,
 		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
-	if !errors.Is(err, ErrUsage) {
-		t.Fatalf("missing prompt file error = %v, want usage", err)
+	if errors.Is(err, ErrUsage) {
+		t.Fatalf("missing prompt file error = %v, want a non-usage input error", err)
+	}
+	if code := ExitCode(err); code != 1 {
+		t.Fatalf("missing prompt file exit = %d, want 1", code)
 	}
 	if !strings.Contains(err.Error(), missing) {
 		t.Fatalf("error does not name the missing file: %v", err)
@@ -109,8 +112,11 @@ func TestRunCommandPromptFileEmptyErrorsClearly(t *testing.T) {
 
 	err := r.runErr("run", taskID, "--prompt-file", empty,
 		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
-	if !errors.Is(err, ErrUsage) {
-		t.Fatalf("empty prompt file error = %v, want usage", err)
+	if errors.Is(err, ErrUsage) {
+		t.Fatalf("empty prompt file error = %v, want a non-usage input error", err)
+	}
+	if code := ExitCode(err); code != 1 {
+		t.Fatalf("empty prompt file exit = %d, want 1", code)
 	}
 }
 

@@ -45,7 +45,9 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			"progress back into the store. With --goal the launcher repeatedly selects the\n" +
 			"highest-ranked agent-ready (groomed) task on the path to the goal, runs it, and re-reads the\n" +
 			"graph until the goal is reached, no work is ready, on-path work is blocked, or the\n" +
-			"--max-tasks budget is exhausted. The backend and harness are selected explicitly,\n" +
+			"--max-tasks budget is exhausted. With a prompt source and no task id, `ft run`\n" +
+			"runs the prompt once over every repository of the configured project, writing\n" +
+			"nothing to the task graph. The backend and harness are selected explicitly,\n" +
 			"by flag or by the [run] config table; there is no default backend. The local backend\n" +
 			"is unsandboxed and requires --allow-host (or run.allow_host).",
 		Args: cobra.MaximumNArgs(1),
@@ -53,8 +55,8 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			if opts.goal != "" && len(args) > 0 {
 				return usageError(cmd, "give either a task id or --goal, not both")
 			}
-			if opts.goal == "" && len(args) == 0 {
-				return usageError(cmd, "a task id or --goal is required")
+			if opts.goal == "" && len(args) == 0 && opts.promptFile == "" && opts.promptArtifact == "" {
+				return usageError(cmd, "a task id, --goal, or a prompt source (--prompt-file/--prompt-artifact) is required")
 			}
 			if opts.maxTasks < 0 {
 				return usageError(cmd, "--max-tasks must not be negative")
@@ -65,6 +67,9 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			}
 			if opts.goal != "" {
 				return deps.runGoal(cmd, opts.goal, opts)
+			}
+			if len(args) == 0 {
+				return deps.runProject(cmd, prompt, opts)
 			}
 			return deps.runTask(cmd, args[0], prompt, opts)
 		},
@@ -78,30 +83,31 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "fetch and reset a reused workspace checkout to its upstream before running")
 	cmd.Flags().StringVar(&opts.goal, "goal", "", "drive the DAG loop toward this goal task or milestone")
 	cmd.Flags().IntVar(&opts.maxTasks, "max-tasks", 0, "stop the loop after this many task runs (0 = no budget)")
-	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "use this file's content as the harness prompt (single task runs)")
-	cmd.Flags().StringVar(&opts.promptArtifact, "prompt-artifact", "", "use this artifact's body as the harness prompt (single task runs)")
+	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "use this file's content as the harness prompt (single task or task-less run)")
+	cmd.Flags().StringVar(&opts.promptArtifact, "prompt-artifact", "", "use this artifact's body as the harness prompt (single task or task-less run)")
 	return cmd
 }
 
 // resolveRunPrompt resolves the optional prompt override for a run from a file
 // or an artifact body. An empty result means the run uses the task-derived
-// prompt. The two sources are mutually exclusive and apply only to a single
-// task run, so a --goal loop (whose prompt differs per task) rejects them.
+// prompt (a task-less run always has a source). The two sources are mutually
+// exclusive and apply to a single task run or a task-less run, so a --goal loop
+// (whose prompt differs per task) rejects them.
 func (d *Deps) resolveRunPrompt(cmd *cobra.Command, opts runOptions) (string, error) {
 	if opts.promptFile != "" && opts.promptArtifact != "" {
 		return "", usageError(cmd, "give either --prompt-file or --prompt-artifact, not both")
 	}
 	if opts.goal != "" && (opts.promptFile != "" || opts.promptArtifact != "") {
-		return "", usageError(cmd, "--prompt-file and --prompt-artifact apply to a single task run, not --goal")
+		return "", usageError(cmd, "--prompt-file and --prompt-artifact apply to a single task or task-less run, not --goal")
 	}
 	switch {
 	case opts.promptFile != "":
 		data, err := os.ReadFile(opts.promptFile)
 		if err != nil {
-			return "", usageError(cmd, "read prompt file %s: %v", opts.promptFile, err)
+			return "", fmt.Errorf("read prompt file %s: %w", opts.promptFile, err)
 		}
 		if strings.TrimSpace(string(data)) == "" {
-			return "", usageError(cmd, "prompt file %s is empty", opts.promptFile)
+			return "", fmt.Errorf("prompt file %s is empty", opts.promptFile)
 		}
 		return string(data), nil
 	case opts.promptArtifact != "":
@@ -224,6 +230,45 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		return runErr
 	}
 	if err := d.printRunOutcome(task, outcome, runErr); err != nil {
+		return err
+	}
+	return runErr
+}
+
+// runProject runs one stored prompt over all of the configured project's repos
+// with no task: a task-less prompt run (a grooming session, for example). It
+// materializes every project repo and writes nothing to the task graph.
+func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) error {
+	sel, err := d.prepareRun(cmd, opts)
+	if err != nil {
+		return err
+	}
+	projectID := d.resolveProject("")
+	if err := requireProject(cmd, projectID); err != nil {
+		return err
+	}
+	project, err := d.Projects.Get(cmd.Context(), projectID)
+	if err != nil {
+		return err
+	}
+
+	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).RunProject(cmd.Context(), app.ProjectRunInput{
+		ProjectID:        project.ID,
+		Backend:          sel.backend,
+		Harness:          sel.harness,
+		WorkspaceRoot:    sel.workspace,
+		WorkspaceRefresh: sel.refresh,
+		Model:            sel.model,
+		Args:             sel.args,
+		Prompt:           prompt,
+	})
+	if errors.Is(runErr, local.ErrNotOptedIn) {
+		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
+	}
+	if outcome == nil {
+		return runErr
+	}
+	if err := d.printProjectRunOutcome(project, outcome, runErr); err != nil {
 		return err
 	}
 	return runErr
@@ -361,6 +406,58 @@ func (d *Deps) runHints(task *core.Task, runErr error) []hint {
 		{Command: fmt.Sprintf("ft task get %s", id), About: "inspect the task"},
 		{Command: fmt.Sprintf("ft task note create %s --body \"PR: <url>\" --link pr=<url>", id), About: "attach the PR link"},
 	}
+}
+
+// runProjectDoc is the lossless structured shape of a task-less `ft run`.
+type runProjectDoc struct {
+	Run      string   `json:"run" yaml:"run"`
+	ExitCode int      `json:"exit_code" yaml:"exit_code"`
+	Complete bool     `json:"complete" yaml:"complete"`
+	Repos    []string `json:"repos" yaml:"repos"`
+	Output   string   `json:"output,omitempty" yaml:"output,omitempty"`
+	Project  string   `json:"project" yaml:"project"`
+	Repo     string   `json:"repo" yaml:"repo"`
+}
+
+func (d *Deps) printProjectRunOutcome(project *core.Project, outcome *app.ProjectRunOutcome, runErr error) error {
+	state := "finished"
+	if runErr != nil {
+		state = "failed"
+	}
+	repos := make([]string, 0, len(outcome.Checkouts))
+	for _, checkout := range outcome.Checkouts {
+		repos = append(repos, checkout.Name)
+	}
+	doc := runProjectDoc{
+		Run:      state,
+		ExitCode: outcome.ExitCode,
+		Complete: outcome.Complete,
+		Repos:    repos,
+		Output:   outcome.Output,
+		Project:  string(project.ID),
+		Repo:     "",
+	}
+	return d.emit(doc, func() {
+		d.printFields(
+			f("run", state),
+			f("exit_code", outcome.ExitCode),
+			f("complete", outcome.Complete),
+			f("repos", strings.Join(repos, ", ")),
+			f("project", project.ID),
+			f("repo", d.repoValue("")),
+		)
+		if output := strings.TrimSpace(outcome.Output); output != "" {
+			d.printf("\n%s\n", output)
+		}
+	}, d.runProjectHints(project, runErr)...)
+}
+
+func (d *Deps) runProjectHints(project *core.Project, runErr error) []hint {
+	id := string(project.ID)
+	if runErr != nil {
+		return []hint{{Command: fmt.Sprintf("ft project get %s", id), About: "inspect the failed project run"}}
+	}
+	return []hint{{Command: fmt.Sprintf("ft task list --project %s", id), About: "see the project's tasks"}}
 }
 
 // runLoopStepDoc is one iteration of `ft run --goal` in structured output.

@@ -106,39 +106,200 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		return nil, err
 	}
 
+	res, err := s.runHarness(ctx, harnessRun{
+		backend: in.Backend,
+		harness: in.Harness,
+		plan:    plan,
+		prompt:  runPrompt(project, task, in.Prompt),
+		model:   in.Model,
+		args:    in.Args,
+		labels:  map[string]string{"project": string(project.ID), "task": string(task.ID)},
+		// The run is about to start: record it before Exec so a harness or wait
+		// failure is observable, and abort if the event cannot be written.
+		onStart: func() error {
+			return s.appendRunEvent(ctx, task, core.EventTaskRunStarted,
+				fmt.Sprintf("run started for %s with %s/%s", task.ID, in.Backend.Name(), in.Harness.Name()),
+				map[string]any{"backend": in.Backend.Name(), "harness": in.Harness.Name()})
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	outcome := &RunOutcome{
+		TaskID:    task.ID,
+		Status:    task.Status,
+		Output:    res.output,
+		ExitCode:  res.exitCode,
+		Complete:  res.complete,
+		Workspace: plan.Root,
+	}
+
+	if res.exitCode != 0 {
+		if err := s.recordRunNote(ctx, task, in, runReport("failed", res.exitCode, res.output, in.OutputLimit)); err != nil {
+			return outcome, err
+		}
+		if err := s.finishRunEvent(ctx, task, res.exitCode, false); err != nil {
+			return outcome, err
+		}
+		return outcome, fmt.Errorf("%w: exit code %d", ErrRunFailed, res.exitCode)
+	}
+
+	updated, err := s.tasks.SetStatus(ctx, task.ID, core.StatusReadyForReview)
+	if err != nil {
+		return outcome, err
+	}
+	outcome.Status = updated.Status
+	if err := s.recordRunNote(ctx, task, in, runReport("finished", res.exitCode, res.output, in.OutputLimit)); err != nil {
+		return outcome, err
+	}
+	if err := s.finishRunEvent(ctx, task, res.exitCode, true); err != nil {
+		return outcome, err
+	}
+	return outcome, nil
+}
+
+// ProjectRunInput is one task-less run: a prompt run over every repository of a
+// project, with no task to reflect progress into.
+type ProjectRunInput struct {
+	ProjectID        core.ProjectID
+	Backend          isolation.IsolationBackend
+	Harness          harnesspkg.Harness
+	WorkspaceRoot    string
+	WorkspaceRefresh bool
+	// Git and Token are the workspace's clone ports; nil uses the host git and
+	// anonymous clones.
+	Git   workspace.Git
+	Token workspace.TokenProvider
+	Model string
+	Args  []string
+	// Prompt is the instruction the harness receives, used verbatim.
+	Prompt string
+}
+
+// ProjectRunOutcome records what a task-less run did. There is no task status:
+// the run never touches the task graph.
+type ProjectRunOutcome struct {
+	ProjectID core.ProjectID
+	Output    string
+	ExitCode  int
+	Complete  bool
+	Workspace string
+	// Checkouts are the project's repos materialized for the run.
+	Checkouts []workspace.Checkout
+}
+
+// RunProject runs one prompt over all of a project's repositories without a
+// task. It writes nothing to the task graph: no task note and no status change,
+// because there is no task. A failed harness still returns the captured outcome
+// alongside ErrRunFailed.
+func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*ProjectRunOutcome, error) {
+	if in.Backend == nil {
+		return nil, errors.New("run: no isolation backend selected")
+	}
+	if in.Harness == nil {
+		return nil, errors.New("run: no harness selected")
+	}
+
+	project, err := s.backend.Projects().Get(ctx, in.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+
+	// An empty task names no repo, so resolution spans every project repo.
+	plan, err := workspace.Resolve(ctx, *project, core.Task{}, workspace.Options{
+		Root:    in.WorkspaceRoot,
+		Git:     in.Git,
+		Token:   in.Token,
+		Refresh: in.WorkspaceRefresh,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := s.runHarness(ctx, harnessRun{
+		backend: in.Backend,
+		harness: in.Harness,
+		plan:    plan,
+		prompt:  in.Prompt,
+		model:   in.Model,
+		args:    in.Args,
+		labels:  map[string]string{"project": string(project.ID)},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	outcome := &ProjectRunOutcome{
+		ProjectID: project.ID,
+		Output:    res.output,
+		ExitCode:  res.exitCode,
+		Complete:  res.complete,
+		Workspace: plan.Root,
+		Checkouts: plan.Checkouts,
+	}
+	if res.exitCode != 0 {
+		return outcome, fmt.Errorf("%w: exit code %d", ErrRunFailed, res.exitCode)
+	}
+	return outcome, nil
+}
+
+// harnessRun is one harness invocation, shared by the task and project run
+// paths.
+type harnessRun struct {
+	backend isolation.IsolationBackend
+	harness harnesspkg.Harness
+	plan    *workspace.Plan
+	prompt  string
+	model   string
+	args    []string
+	labels  map[string]string
+	// onStart runs after the command is built and before Exec; a task run uses
+	// it to record the run-started event and abort if it cannot be written. Nil
+	// means no pre-exec hook.
+	onStart func() error
+}
+
+// harnessResult is what a harness returned from one run.
+type harnessResult struct {
+	exitCode int
+	output   string
+	complete bool
+}
+
+// runHarness prepares the selected backend, runs the harness command in the
+// resolved workspace, and parses its output. Cleanup always runs.
+func (s *RunService) runHarness(ctx context.Context, r harnessRun) (harnessResult, error) {
 	req := harnesspkg.Request{
-		Prompt:  runPrompt(project, task, in.Prompt),
-		Model:   in.Model,
-		Workdir: runWorkdir(plan),
-		Args:    in.Args,
-		Labels:  map[string]string{"project": string(project.ID), "task": string(task.ID)},
+		Prompt:  r.prompt,
+		Model:   r.model,
+		Workdir: runWorkdir(r.plan),
+		Args:    r.args,
+		Labels:  r.labels,
 	}
-	spec, err := in.Harness.Spec(req)
+	spec, err := r.harness.Spec(req)
 	if err != nil {
-		return nil, err
+		return harnessResult{}, err
 	}
-	handle, err := in.Backend.Prepare(ctx, spec)
+	handle, err := r.backend.Prepare(ctx, spec)
 	if err != nil {
-		return nil, err
+		return harnessResult{}, err
 	}
-	defer func() { _ = in.Backend.Delete(context.WithoutCancel(ctx), handle) }()
+	defer func() { _ = r.backend.Delete(context.WithoutCancel(ctx), handle) }()
 
-	command, err := in.Harness.Command(req)
+	command, err := r.harness.Command(req)
 	if err != nil {
-		return nil, err
+		return harnessResult{}, err
 	}
-
-	// The run is about to start: record it before Exec so a harness or wait
-	// failure is observable, and abort if the event cannot be written.
-	if err := s.appendRunEvent(ctx, task, core.EventTaskRunStarted,
-		fmt.Sprintf("run started for %s with %s/%s", task.ID, in.Backend.Name(), in.Harness.Name()),
-		map[string]any{"backend": in.Backend.Name(), "harness": in.Harness.Name()}); err != nil {
-		return nil, err
+	if r.onStart != nil {
+		if err := r.onStart(); err != nil {
+			return harnessResult{}, err
+		}
 	}
 
-	execution, err := in.Backend.Exec(ctx, handle, command)
+	execution, err := r.backend.Exec(ctx, handle, command)
 	if err != nil {
-		return nil, err
+		return harnessResult{}, err
 	}
 
 	// Drain events so a streamed backend is never blocked; Wait still returns the
@@ -147,44 +308,13 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 	}
 	result, err := execution.Wait(ctx)
 	if err != nil {
-		return nil, err
+		return harnessResult{}, err
 	}
-	parsed, err := in.Harness.Result(result.Stdout)
+	parsed, err := r.harness.Result(result.Stdout)
 	if err != nil {
-		return nil, err
+		return harnessResult{}, err
 	}
-
-	outcome := &RunOutcome{
-		TaskID:    task.ID,
-		Status:    task.Status,
-		Output:    parsed.Output,
-		ExitCode:  result.ExitCode,
-		Complete:  parsed.Complete,
-		Workspace: plan.Root,
-	}
-
-	if result.ExitCode != 0 {
-		if err := s.recordRunNote(ctx, task, in, runReport("failed", result.ExitCode, parsed.Output, in.OutputLimit)); err != nil {
-			return outcome, err
-		}
-		if err := s.finishRunEvent(ctx, task, result.ExitCode, false); err != nil {
-			return outcome, err
-		}
-		return outcome, fmt.Errorf("%w: exit code %d", ErrRunFailed, result.ExitCode)
-	}
-
-	updated, err := s.tasks.SetStatus(ctx, task.ID, core.StatusReadyForReview)
-	if err != nil {
-		return outcome, err
-	}
-	outcome.Status = updated.Status
-	if err := s.recordRunNote(ctx, task, in, runReport("finished", result.ExitCode, parsed.Output, in.OutputLimit)); err != nil {
-		return outcome, err
-	}
-	if err := s.finishRunEvent(ctx, task, result.ExitCode, true); err != nil {
-		return outcome, err
-	}
-	return outcome, nil
+	return harnessResult{exitCode: result.ExitCode, output: parsed.Output, complete: parsed.Complete}, nil
 }
 
 // runPrompt returns the prompt a harness receives: the caller-supplied override

@@ -335,17 +335,18 @@ egress but never weaken the identity, filesystem, or credential defaults. `ft ru
 loads the policy next to the active project config (a custom `-c` uses its sibling
 `openshell-policy.yaml`); with no policy file present it warns that egress is deny-all.
 
-`ft run <task>` drives one task end-to-end: it resolves the task's repositories
-into a workspace, prepares the selected isolation backend, runs the selected
-harness with the task as its prompt, captures the output, and reflects progress
-back into the store.
+`ft run <task>` drives one task end-to-end: it resolves the task's repositories into a
+workspace, runs the harness with the task as its prompt, and reflects progress into the store.
 
 ```sh
 ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt-in
+ft run --prompt-file grooming.md --backend local --harness opencode --allow-host  # task-less
 ```
 
-- `--prompt-file <path>` or `--prompt-artifact <id>` replaces the task prompt with stored
-  content; mutually exclusive, single task runs only, and a missing or empty source errors.
+- `--prompt-file <path>` or `--prompt-artifact <id>` supplies a stored prompt: with a task it
+  replaces the task prompt, and with no task id it runs the prompt once over every repository
+  of the configured project (a task-less session such as grooming), writing nothing to the task
+  graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error (exit 1).
 - The backend and harness are selected explicitly, by flag or the machine-scoped
   `[run]` table (`backend`, `harness`, `workspace`, `model`, `args`, `allow_host`,
   `refresh`, `provider`, `credential_env`) or `FACTOTUM_RUN_*` overrides; there is no
@@ -369,8 +370,7 @@ ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt
   leaves the task's status untouched and records only a failure note and event, so
   a broken run never corrupts the graph.
 
-`ft run --goal <task|milestone>` drives the graph toward a goal: it repeatedly runs the
-highest-ranked agent-ready on-path task until the goal is reached, work stalls, or the budget is exhausted.
+`ft run --goal <task|milestone>` drives the graph toward a goal: it repeatedly runs the highest-ranked agent-ready on-path task until the goal is reached, work stalls, or the budget is exhausted.
 
 ```sh
 ft run --goal t-abc123 --backend local --harness opencode --allow-host --max-tasks 5

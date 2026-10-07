@@ -58,8 +58,14 @@ configured project; `--project` selects another.
 
 `ft groom show <session>` prints the session metadata, the captured report, the
 deferred questions, and the tasks the session produced, read live from the graph
-(their current kind, status, and title). As `-o json|yaml` it adds `report_body`,
-`deferred_body`, and a `produced` list of `{task_id, kind, title, status}`.
+(their current kind, status, and title; a task since deleted is named by id
+alone). As `-o json|yaml` it adds `report_body`, `deferred_body`, and a
+`produced` list of `{task_id, kind, title, status}`.
+
+The produced set is a window diff - the tasks that appeared in the project while
+the session ran - not strict authorship. In a single-operator session that is
+the session's own work; if another writer creates a task concurrently, it is
+included too.
 
 ## Unattended mode
 

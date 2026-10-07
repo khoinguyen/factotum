@@ -18,7 +18,8 @@ const SessionManifestFileName = "session.json"
 
 // SessionRecord is the durable summary of one grooming session: what it scoped,
 // which artifacts hold its outputs, and which tasks it produced. `ft groom`
-// writes it at capture; the read surface lists and shows it.
+// writes it at capture; the read surface lists and shows it. Produced is a
+// window diff (tasks that appeared during the run), not strict authorship.
 type SessionRecord struct {
 	ID        string      `json:"id" yaml:"id"`
 	Project   string      `json:"project" yaml:"project"`
@@ -41,6 +42,14 @@ func WriteSession(dataDir string, rec SessionRecord) error {
 	path := SessionManifestPath(dataDir, rec.ID)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create grooming session dir: %w", err)
+	}
+	// Normalize nil slices to empty ones, so the manifest serializes them as
+	// `[]` and a reader can iterate without a nil check.
+	if rec.Scope == nil {
+		rec.Scope = []ScopeItem{}
+	}
+	if rec.Produced == nil {
+		rec.Produced = []string{}
 	}
 	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {

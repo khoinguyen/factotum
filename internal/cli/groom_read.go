@@ -150,8 +150,17 @@ func groomSessionListDocFrom(session groom.SessionRecord) groomSessionListDoc {
 		Mode:     session.Mode,
 		Project:  session.Project,
 		Scope:    scopeItemIDs(session.Scope),
-		Produced: session.Produced,
+		Produced: nonNilStrings(session.Produced),
 	}
+}
+
+// nonNilStrings returns values, or an empty slice when it is nil, so JSON and
+// YAML render an empty array rather than null.
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 // groomTaskDoc is one produced task as `ft groom show` reports it.
@@ -245,7 +254,11 @@ func (d *Deps) projectTaskIDs(ctx context.Context, projectID core.ProjectID) (ma
 }
 
 // producedTaskIDs returns the ids present after a session that were absent
-// before it, sorted for a deterministic manifest.
+// before it, sorted for a deterministic manifest. It is a window diff, not
+// authorship: a task any other writer creates in the project while the session
+// runs is indistinguishable from one the session made and is also included.
+// This is deliberate for a single-operator tool; if exact attribution is ever
+// needed the session must record its own produced ids.
 func producedTaskIDs(ctx context.Context, tasks *app.TaskService, projectID core.ProjectID, before map[core.TaskID]bool) ([]string, error) {
 	after, err := tasks.List(ctx, store.TaskFilter{ProjectID: projectID})
 	if err != nil {

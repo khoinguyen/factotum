@@ -33,13 +33,16 @@ resolve your own refs once and pass them explicitly.
   `cmux workspace-group add --group <group> --workspace <ws>`. Resolve your group once with
   `cmux workspace-group list --json` (the group whose `member_workspace_refs` include your workspace
   ref).
-- Deliver a message: `cmux set-buffer --name <n> "<one line>"`, then
-  `cmux paste-buffer --name <n> --surface <ref>`, then `cmux send-key --surface <ref> enter`.
-  **Flatten the text to a single line first** — an embedded newline submits early, so a multi-line
-  paste arrives as several messages. Longer content goes in a temp file whose path you send.
-- Waking: pasting text into a surface and sending Enter delivers it as input, which starts a new turn
-  in that agent's session. So a subagent "reporting to the chief" is simply it pasting into your
-  `chief` surface; you wake on your next turn. You wake them the same way.
+- Deliver an agent-to-agent message with the shared wrapper
+  `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>`: it resolves a tab or workspace title
+  (or takes a `surface:N`/`workspace:N` ref) and calls `cmux agent message`, which delivers through
+  the target agent's hooks and never types into its terminal — so a message can't land in a
+  half-typed prompt and needs no newline-flattening. Set `CMUX_MSG_FROM=<name>` to identify the
+  sender. **Do not use `set-buffer`/`paste-buffer`/`send-key` to message an agent**; keep
+  `paste-buffer` only for input that genuinely needs a terminal (a slash command, a raw keystroke).
+- Waking: `cmux agent message` wakes an idle agent (it reads the message at its next step), so a
+  subagent "reporting to the chief" is it messaging your `chief` surface; you wake on your next turn.
+  You wake them the same way.
 
 ## The loop
 
@@ -65,17 +68,18 @@ resolve your own refs once and pass them explicitly.
    - Agent: **opencode**. Its positional arg is a project path, not a prompt, so pass the kickoff via
      `--prompt`; `--auto` runs it unattended. Start it with `cd <worktree> && opencode …` so the agent
      works in the right directory.
-4. **Wire them**, each message a single line, with explicit refs. Tell each the other's name, the task,
-   and how to reach the chief. Your pane is named `chief`; give them that name and your surface ref.
+4. **Wire them** with `cmux-msg.sh` (tab/workspace titles or explicit refs). Tell each the other's
+   name, the task, and how to reach the chief. Your pane is named `chief`; give them that name and
+   your surface ref.
    - to the builder: the task id, the branch `ft/<t>-<short-brief>`, that `reviewer-<t>` will review
      the PR, and that the chief is `chief` (find it with `cmux find-window --content chief`, or use the
      ref you give them).
    - to the reviewer: the task id, that `builder-<t>` will send the hand-off, and the same chief note.
 5. **Wait.** They run the build → hand-off → triage → verdict loop between themselves. Do not read
    their diffs. Wait for the builder (or reviewer) to report back to you. They run unattended and must
-   never block on an interactive prompt; if one stalls on a question, nudge it (paste `proceed without
-   asking: decide and document, or report the blocker to the chief and stop`) and file a skill-bug
-   task if it repeats.
+   never block on an interactive prompt; if one stalls on a question, nudge it with `cmux-msg.sh
+   <agent> "proceed without asking: decide and document, or report the blocker to the chief and
+   stop"`, and file a skill-bug task if it repeats.
 6. **Briefly check.** Confirm: PR approved, `mise run ci` green, task status. That is the whole
    check — the reviewer did the deep verification. Then `gh pr merge <n> --rebase --delete-branch`,
    sync `main`, and `ft task done <t>`.

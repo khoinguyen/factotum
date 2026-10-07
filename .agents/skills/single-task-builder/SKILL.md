@@ -25,21 +25,25 @@ blocker to the chief (see Channel) and stop your turn. The **chief** files any f
 
 ## Channel
 
-- Your shell does **not** inherit `CMUX_*`, so pass explicit refs to every cmux command
-  (`--workspace <ws>`, `--surface <ref>`, `--pane <ref>`); a bare command fails with `not_found`. Get
-  your own refs from `cmux identify --id-format both`. Enumerate with `cmux tree --all` or
-  `cmux list-pane-surfaces` (there is no `list-surfaces`).
+- Your shell does **not** inherit `CMUX_*`. Agent-to-agent messaging goes through the shared wrapper
+  `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (run from your worktree root): it
+  resolves a tab or workspace title, or takes a `surface:N`/`workspace:N` ref, and calls
+  `cmux agent message`. That delivers via the target agent's hooks and never types into its terminal,
+  so your message can't land in a half-typed prompt. Set `CMUX_MSG_FROM=builder-<task-id>` to identify
+  yourself. **Do not use `set-buffer`/`paste-buffer`/`send-key` to message the reviewer or chief**;
+  keep `paste-buffer` only for input that genuinely needs a terminal.
+- Structural cmux commands (`rename-tab`, `new-split`, …) likewise need explicit refs: get your own
+  from `cmux identify --id-format both`, pass `--workspace <ws>` / `--surface <ref>`, and enumerate
+  with `cmux tree --all` (there is no `list-surfaces`).
 - Prefix messages to the reviewer with `From builder-<task-id>: ...`. He replies
   `From reviewer-<task-id>, regarding PR #N: ...`.
-- The reviewer is a peer agent in another cmux surface; the chief tells you his name and ref. Find him
-  with `cmux find-window --content reviewer-<task-id>`.
-- Deliver with `cmux set-buffer --name <n> "<one line>"`, `cmux paste-buffer --name <n> --surface <ref>`,
-  then `cmux send-key --surface <ref> enter`. **Flatten the text to a single line first** — an embedded
-  newline submits early, so a multi-line paste arrives as several messages. Keep messages small;
-  longer text goes in a temp file whose path you send.
-- **After sending, read the screen once to confirm receipt, then stop and wait.** Do not poll.
-- Reporting to the chief wakes it: you paste into the `chief` surface and press Enter, and that input
-  starts its next turn.
+- The reviewer is a peer agent in another cmux surface; the chief tells you his name. Find him
+  with `cmux tree --all` or `cmux find-window --content reviewer-<task-id>`; pass either his title or
+  `surface:N` to `cmux-msg.sh`.
+- **After sending, confirm delivery, then stop and wait.** `cmux agent message` wakes an idle agent;
+  do not poll.
+- Reporting to the chief wakes it the same way: `CMUX_MSG_FROM=builder-<task-id>
+  .agents/skills/chief/scripts/cmux-msg.sh chief "<report>"`.
 
 ## The task
 
@@ -67,7 +71,8 @@ From builder-<task-id>: Please review PR #<n> (task <t>, branch <b>) - <title>. 
 CI green; Exercise in the PR body. Focus: <the 1-3 riskiest things>.
 ```
 
-Then `ft task review <t>` and a note linking the PR.
+Send it with `CMUX_MSG_FROM=builder-<task-id> .agents/skills/chief/scripts/cmux-msg.sh
+reviewer-<task-id> "<the line above>"`, then `ft task review <t>` and a note linking the PR.
 
 ## Triage
 
@@ -87,9 +92,9 @@ is the chief's call.
 ## Report to the chief and stop
 
 When the reviewer approves — or you and he cannot agree — report the outcome to the chief: task id,
-PR number, verdict, and anything unresolved. The chief gave you its name (`chief`) and surface ref at
-spawn; message it the same way you message the reviewer (`cmux set-buffer` + `cmux paste-buffer
---surface <chief-ref>` + `cmux send-key --surface <chief-ref> enter`), or find it with
+PR number, verdict, and anything unresolved. The chief gave you its name (`chief`); message it the
+same way you message the reviewer — `CMUX_MSG_FROM=builder-<task-id>
+.agents/skills/chief/scripts/cmux-msg.sh chief "<report>"` — or find it with
 `cmux find-window --content chief`. Then stop; the chief decides what happens next.
 - **Escalation:** if after three rounds you and the reviewer cannot align, tell the chief and leave
   the PR open for Khoi.

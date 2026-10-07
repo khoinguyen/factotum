@@ -23,7 +23,30 @@ func TestServeCommandSurface(t *testing.T) {
 	if bind := cmd.Flags().Lookup("bind").DefValue; !strings.HasPrefix(bind, "127.0.0.1") {
 		t.Fatalf("default bind = %q, want a loopback address", bind)
 	}
-	if !strings.Contains(strings.ToLower(cmd.Long), "read-only") {
-		t.Fatalf("serve help does not state it is read-only:\n%s", cmd.Long)
+	lower := strings.ToLower(cmd.Long)
+	for _, want := range []string{"capture", "token"} {
+		if !strings.Contains(lower, want) {
+			t.Fatalf("serve help does not mention %q:\n%s", want, cmd.Long)
+		}
+	}
+}
+
+func TestServeModeReportsCaptureState(t *testing.T) {
+	cases := []struct {
+		name        string
+		allProjects bool
+		token       string
+		want        string
+	}{
+		{"all projects", true, "s3cret", "capture off"},
+		{"no token", false, "", "capture off"},
+		{"scoped with token", false, "s3cret", "capture on"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := serveMode(tc.allProjects, tc.token); !strings.Contains(got, tc.want) {
+				t.Fatalf("serveMode(%v, %q) = %q, want %q", tc.allProjects, tc.token, got, tc.want)
+			}
+		})
 	}
 }

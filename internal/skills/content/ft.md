@@ -46,11 +46,11 @@ lists each excluded task with its reason, applying the same
 ## Watch the factory
 
 ```sh
-ft serve                        # read-only live dashboard; also -p <project>, --all, --bind <host:port>
+ft serve                        # live dashboard + token-gated capture; also -p <project>, --all, --bind <host:port>
 ```
-
-`ft serve` is an idea-centric dashboard: ideas roll up their promoted tasks as
-finished/active/blocked/captured, with a grouped work board, drill-down (`/idea`, `/task`, `/memory`, `/doc`), and live SSE figures; read-only.
+`ft serve` is an idea-centric live dashboard: ideas roll up their promoted tasks as
+finished/active/blocked/captured, grouped board, drill-down; reads open, SSE live. Its write
+side: `/capture` stores a sentence as an idea, gated by `serve.token` / `FACTOTUM_SERVE_TOKEN` (no token or `--all` disables); grooming enriches it later.
 
 ## Move work through its lifecycle
 

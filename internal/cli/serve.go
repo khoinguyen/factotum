@@ -26,11 +26,14 @@ func newServeCommand(deps *Deps) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Serve a read-only, auto-reloading factory dashboard",
-		Long: "Serve a local, read-only dashboard of project and task graph state.\n" +
-			"The page reloads itself over Server-Sent Events as tasks change; it has no\n" +
-			"mutating endpoints and binds to localhost by default. Pass --bind 0.0.0.0:PORT\n" +
-			"to reach it from another device on the network (there is no authentication).",
+		Short: "Serve the live PO dashboard and token-gated idea capture",
+		Long: "Serve a local dashboard of project and task graph state, with a capture write side.\n" +
+			"The read side reloads itself over Server-Sent Events as tasks change; the read pages\n" +
+			"have no mutating endpoints. The /capture page turns a natural-language idea into a\n" +
+			"stored idea, gated by a shared token (machine config serve.token, or\n" +
+			"FACTOTUM_SERVE_TOKEN). With no token configured, capture is disabled and the read side\n" +
+			"stays open. It binds to localhost by default; pass --bind 0.0.0.0:PORT to reach it from\n" +
+			"another device on the network.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			project := deps.resolveProject(projectID)
 			serveAll := all || project == ""
@@ -49,6 +52,8 @@ func newServeCommand(deps *Deps) *cobra.Command {
 				Ranker:  ranker,
 				Project: project,
 				All:     serveAll,
+				Token:   deps.Config.Serve.Token,
+				Tasks:   deps.Tasks,
 			})
 			if err != nil {
 				return err
@@ -61,7 +66,7 @@ func newServeCommand(deps *Deps) *cobra.Command {
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			_, _ = fmt.Fprintf(deps.Err, "factotum dashboard: http://%s (read-only; Ctrl-C to stop)\n", listener.Addr().String())
+			_, _ = fmt.Fprintf(deps.Err, "factotum dashboard: http://%s (reads live; %s; Ctrl-C to stop)\n", listener.Addr().String(), serveMode(serveAll, deps.Config.Serve.Token))
 
 			go func() {
 				<-ctx.Done()
@@ -79,4 +84,18 @@ func newServeCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVarP(&projectID, "project", "p", "", "project id (defaults to the configured project, else all)")
 	cmd.Flags().BoolVar(&all, "all", false, "serve every registered project")
 	return cmd
+}
+
+// serveMode describes the write side in the startup line: capture needs both a
+// scoped project and a configured token, so all-projects serving or a missing
+// token reports capture off rather than implying it is reachable.
+func serveMode(allProjects bool, token string) string {
+	switch {
+	case allProjects:
+		return "capture off (all projects)"
+	case token == "":
+		return "capture off (set serve.token)"
+	default:
+		return "capture on at /capture"
+	}
 }

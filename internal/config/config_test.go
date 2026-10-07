@@ -635,3 +635,51 @@ command = "from-file"
 		t.Fatalf("Agent.Options[command] = %q, want from-env", cfg.Agent.Options["command"])
 	}
 }
+
+// TestServeTokenIsMachineScoped proves the shared capture token is read from the
+// user (machine-scoped) config: it is a secret, so a committed project file must
+// never carry it.
+func TestServeTokenIsMachineScoped(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[serve]
+token = "s3cret"
+`)
+	project := writeConfig(t, dir, "project.toml", `
+project = "factotum"
+
+[serve]
+token = "committed-should-be-ignored"
+`)
+	cfg, err := Load(Input{UserPath: user, ProjectPath: project, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Serve.Token != "s3cret" {
+		t.Fatalf("Serve.Token = %q, want s3cret from the user file", cfg.Serve.Token)
+	}
+}
+
+func TestServeTokenEnvOverridesFile(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[serve]
+token = "from-file"
+`)
+	cfg, err := Load(Input{
+		UserPath:    user,
+		ProjectPath: filepath.Join(dir, "none.toml"),
+		Getenv: func(key string) string {
+			if key == "FACTOTUM_SERVE_TOKEN" {
+				return "from-env"
+			}
+			return ""
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Serve.Token != "from-env" {
+		t.Fatalf("Serve.Token = %q, want from-env", cfg.Serve.Token)
+	}
+}

@@ -55,6 +55,16 @@ type Config struct {
 	// unsandboxed local backend. It is machine-scoped (the user file): backend and
 	// harness availability and the opt-in are host properties, never committed.
 	Run Run
+	// Serve configures the dashboard's write side. The token is a shared secret
+	// that gates idea capture; the read side is always open. It is machine-scoped
+	// (the user file) so a committed project file never carries the secret.
+	Serve Serve
+}
+
+// Serve configures `ft serve`. An empty Token disables capture: writes fail
+// closed rather than allowing an anonymous write.
+type Serve struct {
+	Token string
 }
 
 // Run configures the `ft run` launcher. An empty Backend or Harness means the
@@ -142,7 +152,15 @@ type userFile struct {
 	Store          fileStore               `toml:"store"`
 	Judge          judgeFile               `toml:"judge"`
 	Run            runFile                 `toml:"run"`
+	Serve          serveFile               `toml:"serve"`
 	Projects       map[string]projectEntry `toml:"projects"`
+}
+
+// serveFile is the machine-scoped [serve] table. It is deliberately absent from
+// projectFile: the capture token is a secret, so a committed file must never
+// carry it.
+type serveFile struct {
+	Token string `toml:"token"`
 }
 
 // runFile is the machine-scoped [run] table. It is deliberately absent from
@@ -236,6 +254,8 @@ func Load(in Input) (Config, error) {
 		CredentialEnvVar: user.Run.CredentialEnvVar,
 	}
 	applyRunEnv(&cfg.Run, getenv)
+	cfg.Serve = Serve{Token: user.Serve.Token}
+	applyServeEnv(&cfg.Serve, getenv)
 	cfg.DefaultActor = firstNonEmpty(project.DefaultActor, entry.DefaultActor, user.DefaultActor)
 	cfg.NoHints = boolAt(user.NoHints, false)
 	cfg.NoHints = boolAt(entry.NoHints, cfg.NoHints)
@@ -433,6 +453,14 @@ func applyRunEnv(run *Run, getenv func(string) string) {
 	}
 	if credEnv := getenv("FACTOTUM_RUN_CREDENTIAL_ENV"); credEnv != "" {
 		run.CredentialEnvVar = credEnv
+	}
+}
+
+// applyServeEnv overlays FACTOTUM_SERVE_TOKEN on the [serve] table, so the
+// capture token can be supplied from the environment instead of a file.
+func applyServeEnv(serve *Serve, getenv func(string) string) {
+	if token := getenv("FACTOTUM_SERVE_TOKEN"); token != "" {
+		serve.Token = token
 	}
 }
 

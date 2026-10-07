@@ -1,13 +1,25 @@
 # serve dashboard checks
 
-`internal/serve` is the read-only `ft serve` dashboard. Its tests are layered:
+`internal/serve` is the `ft serve` app: open, live reads plus a token-gated
+capture write (`/capture`). Its tests are layered:
 
-- `serve_test.go` and `broker_test.go` assert behavior and structure: read-only
-  routing, page/fragment rendering, the reason chip's class and wrapping rule,
-  SSE freshness, and the shared poll fan-out. These run in `mise run test`.
+- `serve_test.go`, `po_test.go`, `capture_test.go`, and `broker_test.go` assert
+  behavior and structure: read-only routing, page/fragment rendering, the reason
+  chip's class and wrapping rule, SSE freshness, the shared poll fan-out, and the
+  capture write path (token required, unauthorised writes rejected, sentence
+  split).
 - Visual layout is not asserted in Go because Go has no layout engine. The
   reason-chip fix was verified out of band in headless Chrome; the procedure is
   recorded here so the CSS test has a reproducible reference.
+
+## Capture auth
+
+Writes need a shared token from the machine config (`[serve] token`) or
+`FACTOTUM_SERVE_TOKEN`; the read side is never gated. A missing token disables
+capture (writes return 403), and `--all` mode has no single target so it disables
+capture too. Comparison is constant-time. Capture stores the first line as the
+title and the rest as the body, so the raw sentence survives; enrichment is the
+later grooming step, not part of the write.
 
 ## Reason-chip wrapping (t-mw2k6rwonj)
 

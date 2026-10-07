@@ -1,8 +1,13 @@
-// Package serve hosts the read-only, auto-reloading PO dashboard behind
-// `ft serve`. It is a delivery adapter: it loads project state through pkg/app
-// (which reuses pkg/graph readiness), ranks startable work through pkg/rank, and
-// watches the event log to push live updates over SSE. It exposes no mutating
-// endpoint.
+// Package serve hosts the PO dashboard behind `ft serve`. It is a delivery
+// adapter: it loads project state through pkg/app (which reuses pkg/graph
+// readiness), ranks startable work through pkg/rank, and watches the event log
+// to push live updates over SSE. Reads are open.
+//
+// It is one app with a write side too: /capture stores a natural-language idea
+// through the same pkg/app TaskService, gated by a shared token. The token is
+// the only authentication; the read side stays open and live. Enrichment of a
+// captured idea is deferred to the grooming step, so a capture stores the raw
+// sentence immediately.
 //
 // The dashboard is idea-centric: ideas are the primary unit, rolled up from the
 // tasks promoted from them (the origin edge), with drill-down to a task, idea,
@@ -27,10 +32,10 @@ import (
 	"github.com/khoinguyen/factotum/pkg/store"
 )
 
-//go:embed dashboard.html detail.html dashboard.css
+//go:embed dashboard.html detail.html capture.html dashboard.css
 var templateFS embed.FS
 
-var templates = template.Must(template.ParseFS(templateFS, "dashboard.html", "detail.html"))
+var templates = template.Must(template.ParseFS(templateFS, "dashboard.html", "detail.html", "capture.html"))
 
 // dashboardCSS is injected verbatim into each page's <style>. It is served from
 // the same embedded file so the index and detail pages cannot drift.
@@ -66,6 +71,12 @@ type Options struct {
 	// All widens the dashboard to every registered project. With neither a
 	// project nor All, the dashboard serves all projects.
 	All bool
+	// Token gates the write side. Empty disables capture (writes fail closed).
+	// The read side is never gated by it.
+	Token string
+	// Tasks is the app service that stores a captured idea. Nil disables
+	// capture. It is required only for writes, so a read-only server may omit it.
+	Tasks *app.TaskService
 	// Poll is how often the event log is checked for a change. It defaults to
 	// 500ms, comfortably under the one-second freshness target.
 	Poll time.Duration
@@ -73,7 +84,8 @@ type Options struct {
 	Recent int
 }
 
-// Server is the read-only dashboard HTTP handler.
+// Server is the dashboard HTTP handler: open reads plus the token-gated
+// capture write.
 type Server struct {
 	options Options
 	broker  *eventBroker
@@ -108,8 +120,9 @@ func New(opts Options) (*Server, error) {
 	return server, nil
 }
 
-// Handler returns the read-only HTTP handler. Only GET (and HEAD, for the page)
-// is accepted; every other method is rejected with 405.
+// Handler returns the dashboard HTTP handler. The read pages accept GET and
+// HEAD; the capture page accepts GET/HEAD and POST, and every other method is
+// rejected with 405.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.route)
@@ -125,6 +138,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.getOrHead(s.handleFragment)(w, r)
 	case path == "/events":
 		s.getOnly(s.handleEvents)(w, r)
+	case path == "/capture":
+		s.routeCapture(w, r)
 	case strings.HasPrefix(path, "/idea/"):
 		s.getOrHead(s.handleIdea)(w, r)
 	case strings.HasPrefix(path, "/task/"):

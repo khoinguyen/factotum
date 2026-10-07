@@ -91,3 +91,13 @@ footer { margin-top:8px; padding-top:16px; border-top:1px solid var(--line); fon
 .crumbs a:hover { text-decoration:underline; }
 ul.list { margin:0 0 16px; padding-left:18px; }
 ul.list li { margin:0 0 4px; overflow-wrap:anywhere; }
+.nav { margin:8px 0 0; font-size:14px; }
+.nav a { color:var(--signal); text-decoration:none; }
+.nav a:hover { text-decoration:underline; }
+.capture { display:flex; flex-direction:column; gap:6px; }
+.capture label { font-size:12px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-faint); margin-top:6px; }
+.capture textarea, .capture input { font:inherit; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:var(--radius); padding:10px 12px; width:100%; }
+.capture textarea { resize:vertical; }
+.capture button { margin-top:10px; font:inherit; font-weight:600; color:var(--surface); background:var(--signal); border:1px solid var(--signal); border-radius:var(--radius); padding:10px 14px; cursor:pointer; }
+.capture button:hover { filter:brightness(1.05); }
+.capture .hint { margin:6px 0 0; font-size:12px; color:var(--ink-faint); }

@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -47,6 +48,31 @@ func TestSessionWriteReadRoundTrip(t *testing.T) {
 	}
 	if len(got.Produced) != 1 || got.Produced[0] != "t-b" {
 		t.Fatalf("produced = %v, want [t-b]", got.Produced)
+	}
+}
+
+// TestWriteSessionNormalizesEmptySlices pins the manifest shape: a session with
+// no scope or produced tasks serializes both as `[]`, not `null`, so a reader
+// can iterate them without a nil check.
+func TestWriteSessionNormalizesEmptySlices(t *testing.T) {
+	dir := t.TempDir()
+	rec := SessionRecord{ID: "groom-empty", Project: "factotum", Mode: "interactive", CreatedAt: time.Now().UTC()}
+	if err := WriteSession(dir, rec); err != nil {
+		t.Fatalf("WriteSession error = %v", err)
+	}
+	got, err := ReadSession(dir, rec.ID)
+	if err != nil {
+		t.Fatalf("ReadSession error = %v", err)
+	}
+	if got.Scope == nil || got.Produced == nil {
+		t.Fatalf("scope/produced = %v/%v, want non-nil empty slices", got.Scope, got.Produced)
+	}
+	data, err := os.ReadFile(SessionManifestPath(dir, rec.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"produced": []`) || !strings.Contains(string(data), `"scope": []`) {
+		t.Fatalf("manifest did not serialize empty slices as arrays:\n%s", data)
 	}
 }
 

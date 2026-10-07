@@ -2,10 +2,12 @@ package cli
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/khoinguyen/factotum/internal/groom"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
@@ -38,7 +40,9 @@ func seedGroomSession(t *testing.T, r *runner, projectID, cfgPath, producedTitle
 				"## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n")
 		mustWrite(t, kickoffPath(prompt, "Write the deferred questions to: "),
 			"# Deferred questions\n\n## Questions\n\n- Which cache? (item: t-x, owner: PO)\n\n## Resolved\n")
-		producedID = firstField(t, r.run("task", "create", "-p", projectID, "-t", producedTitle))
+		if producedTitle != "" {
+			producedID = firstField(t, r.run("task", "create", "-p", projectID, "-t", producedTitle))
+		}
 	}}
 	r.runBackend = backend
 	r.runHarness = harnessfake.New("opencode")
@@ -165,6 +169,84 @@ func TestGroomShowJSONCarriesBodiesAndTasks(t *testing.T) {
 	}
 	if len(doc.Produced) != 1 || doc.Produced[0].TaskID != producedID || doc.Produced[0].Title != "Extract cache module" {
 		t.Fatalf("produced = %+v, want the task %s", doc.Produced, producedID)
+	}
+}
+
+// TestGroomListJSONNormalizesEmptyProduced pins the machine shape: a session
+// that produced nothing must serialize `produced` as an empty array, not null,
+// so a JSON consumer can iterate it without a nil check.
+func TestGroomListJSONNormalizesEmptyProduced(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("idea", "create", "-p", projectID, "-t", "Maybe cache")
+	seedGroomSession(t, r, projectID, cfgPath, "")
+
+	out := r.run("--config", cfgPath, "-o", "json", "groom", "list", "-p", projectID)
+	if strings.Contains(out, "\"produced\": null") {
+		t.Fatalf("groom list -o json emitted a null produced:\n%s", out)
+	}
+	if !strings.Contains(out, "\"produced\": []") {
+		t.Fatalf("groom list -o json produced is not an empty array:\n%s", out)
+	}
+}
+
+// TestGroomShowDeletedProducedTaskIsIdOnly pins that show still names a produced
+// task that has since been deleted, rather than dropping it or failing.
+func TestGroomShowDeletedProducedTaskIsIdOnly(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("idea", "create", "-p", projectID, "-t", "Maybe cache")
+	sessionID, producedID := seedGroomSession(t, r, projectID, cfgPath, "Extract cache module")
+
+	r.run("task", "delete", producedID)
+
+	out := r.run("--config", cfgPath, "groom", "show", sessionID)
+	if !strings.Contains(out, producedID) {
+		t.Fatalf("groom show dropped a deleted produced task's id:\n%s", out)
+	}
+
+	var doc struct {
+		Produced []struct {
+			TaskID string `json:"task_id"`
+			Title  string `json:"title"`
+		} `json:"produced"`
+	}
+	if err := json.Unmarshal([]byte(r.run("--config", cfgPath, "-o", "json", "groom", "show", sessionID)), &doc); err != nil {
+		t.Fatalf("groom show -o json: %v", err)
+	}
+	if len(doc.Produced) != 1 || doc.Produced[0].TaskID != producedID || doc.Produced[0].Title != "" {
+		t.Fatalf("produced = %+v, want the deleted task %s by id alone", doc.Produced, producedID)
+	}
+}
+
+// TestGroomShowFallsBackToSessionFiles pins sessionOutputBody's fallback: when
+// the recorded output artifact is gone but the session file survives, show reads
+// the file rather than failing.
+func TestGroomShowFallsBackToSessionFiles(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	dataDir := filepath.Dir(r.path)
+	sessionID := "groom-manual"
+	rec := groom.SessionRecord{
+		ID:        sessionID,
+		Project:   projectID,
+		Mode:      "interactive",
+		CreatedAt: time.Now().UTC(),
+		Scope:     []groom.ScopeItem{{ID: "t-x", Kind: "idea", Title: "x"}},
+		Report:    "art-missing",
+		Deferred:  "art-missing-too",
+	}
+	if err := groom.WriteSession(dataDir, rec); err != nil {
+		t.Fatalf("WriteSession error = %v", err)
+	}
+	mustWrite(t, groom.ReportPath(dataDir, sessionID), "# Grooming report - manual\n\n## Summary\n")
+	mustWrite(t, groom.DeferredQuestionsPath(dataDir, sessionID), "# Deferred questions\n\n## Questions\n")
+
+	out := r.run("--config", cfgPath, "groom", "show", sessionID)
+	for _, want := range []string{"# Grooming report - manual", "# Deferred questions"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("groom show did not fall back to the session file %q:\n%s", want, out)
+		}
 	}
 }
 

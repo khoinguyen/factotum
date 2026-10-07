@@ -26,7 +26,7 @@ mise run build
 # Install it to ~/.local/bin/ft (explicit; build never touches the installed CLI)
 mise run install
 
-# Use the in-memory backend, or pick jsonfile / sqlite
+# Use the in-memory backend, or pick jsondir / jsonfile / sqlite
 ./bin/ft --store sqlite --store-opt path=.factotum/factotum.db project create "Acme"
 ```
 
@@ -258,6 +258,7 @@ Every backend passes the shared contract suite in `pkg/store/conformance`.
 | --- | --- | --- |
 | Memory | `--store memory` | Ephemeral; the default. |
 | JSON file | `--store jsonfile --store-opt path=...` | Single document, atomic writes. |
+| JSON dir | `--store jsondir --store-opt path=...` | Directory of markdown + YAML frontmatter; per-file atomic writes. |
 | SQLite | `--store sqlite --store-opt path=...` | Pure-Go driver (`modernc.org/sqlite`). |
 
 ### Schema migrations

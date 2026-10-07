@@ -31,7 +31,9 @@ kickoff to the prompt. The kickoff names:
 Write the report to the report path and the deferred questions to the
 deferred-questions path. When the session finishes, `ft groom` reads both files
 and records them as `doc` artifacts (`ft doc list`); a session that writes
-neither fails with a clear error.
+neither fails with a clear error. The files are written on the host under the
+project data dir, so the selected backend must give the session write access
+there; the isolating backends mount only the resolved workspace today.
 
 ## Who decides what
 

@@ -189,7 +189,7 @@ func TestPrepareRunResolvesProjectPolicyPath(t *testing.T) {
 	}
 
 	if _, err := deps.prepareRun(&cobra.Command{Use: "run"}, runOptions{
-		backend:   "capture",
+		sandbox:   "capture",
 		harness:   "fake",
 		workspace: t.TempDir(),
 	}); err != nil {
@@ -222,7 +222,7 @@ func TestPrepareRunResolvesPolicyFromCustomConfigLocation(t *testing.T) {
 	}
 
 	if _, err := deps.prepareRun(&cobra.Command{Use: "run"}, runOptions{
-		backend:   "capture",
+		sandbox:   "capture",
 		harness:   "fake",
 		workspace: t.TempDir(),
 	}); err != nil {

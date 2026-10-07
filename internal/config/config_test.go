@@ -531,7 +531,7 @@ func TestLoadReadsRunOptions(t *testing.T) {
 default_project = "acme"
 
 [run]
-backend = "local"
+sandbox = "local"
 harness = "opencode"
 workspace = "~/ws/{project}"
  model = "openrouter/x"
@@ -545,7 +545,7 @@ workspace = "~/ws/{project}"
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Run.Backend != "local" || cfg.Run.Harness != "opencode" {
+	if cfg.Run.Sandbox != "local" || cfg.Run.Harness != "opencode" {
 		t.Fatalf("Run = %+v, want local/opencode", cfg.Run)
 	}
 	if !cfg.Run.Refresh {
@@ -583,7 +583,7 @@ harness = "opencode"
 		ProjectPath: filepath.Join(dir, "none.toml"),
 		Getenv: func(key string) string {
 			switch key {
-			case "FACTOTUM_RUN_BACKEND":
+			case "FACTOTUM_RUN_SANDBOX":
 				return "openshell"
 			case "FACTOTUM_RUN_HARNESS":
 				return "pi"
@@ -605,7 +605,7 @@ harness = "opencode"
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Run.Backend != "openshell" || cfg.Run.Harness != "pi" || cfg.Run.Model != "openrouter/y" || !cfg.Run.AllowHost || !cfg.Run.Refresh {
+	if cfg.Run.Sandbox != "openshell" || cfg.Run.Harness != "pi" || cfg.Run.Model != "openrouter/y" || !cfg.Run.AllowHost || !cfg.Run.Refresh {
 		t.Fatalf("Run = %+v, want env overrides", cfg.Run)
 	}
 	if cfg.Run.Provider != "openrouter" || cfg.Run.CredentialEnvVar != "OPENROUTER_API_KEY" {
@@ -629,8 +629,8 @@ allow_host = true
 	if cfg.Run.AllowHost {
 		t.Fatal("AllowHost from the committed project file must be ignored")
 	}
-	if cfg.Run.Backend != "" {
-		t.Fatalf("Run.Backend = %q, want empty (project file must not select a backend)", cfg.Run.Backend)
+	if cfg.Run.Sandbox != "" {
+		t.Fatalf("Run.Sandbox = %q, want empty (project file must not select a sandbox)", cfg.Run.Sandbox)
 	}
 }
 

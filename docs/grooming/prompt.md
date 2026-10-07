@@ -7,7 +7,7 @@ This file is durable repo data (not code): launch the session from it, task-less
 repository of the project.
 
 ```sh
-ft run --prompt-file docs/grooming/prompt.md --backend local --harness opencode --allow-host
+ft run --prompt-file docs/grooming/prompt.md --sandbox local --harness opencode --allow-host
 ```
 
 ## Mindset

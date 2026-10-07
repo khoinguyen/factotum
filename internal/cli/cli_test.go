@@ -46,7 +46,7 @@ type runner struct {
 	// the name "fake" so a test can prove the command is transport-agnostic.
 	feedbackFactory feedback.Factory
 	// runBackend and runHarness, when set, register fake ft run adapters under
-	// the name "fake" so `ft run --backend fake --harness fake` runs in-process.
+	// the name "fake" so `ft run --sandbox fake --harness fake` runs in-process.
 	runBackend isolation.IsolationBackend
 	runHarness harness.Harness
 }

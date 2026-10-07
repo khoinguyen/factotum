@@ -339,8 +339,8 @@ loads the policy next to the active project config (a custom `-c` uses its sibli
 workspace, runs the harness with the task as its prompt, and reflects progress into the store.
 
 ```sh
-ft run t-abc123 --backend local --harness opencode --allow-host   # dev-only opt-in
-ft run --prompt-file grooming.md --backend local --harness opencode --allow-host  # task-less
+ft run t-abc123 --sandbox local --harness opencode --allow-host   # dev-only opt-in
+ft run --prompt-file grooming.md --sandbox local --harness opencode --allow-host  # task-less
 ```
 
 - `--prompt-file <path>` or `--prompt-artifact <id>` supplies a stored prompt: with a task it
@@ -348,7 +348,7 @@ ft run --prompt-file grooming.md --backend local --harness opencode --allow-host
   of the configured project (a task-less session such as grooming), writing nothing to the task
   graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error (exit 1).
 - The backend and harness are selected explicitly, by flag or the machine-scoped
-  `[run]` table (`backend`, `harness`, `workspace`, `model`, `args`, `allow_host`,
+  `[run]` table (`sandbox`, `harness`, `workspace`, `model`, `args`, `allow_host`,
   `refresh`, `provider`, `credential_env`) or `FACTOTUM_RUN_*` overrides; there is no
   default backend. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
 - `provider` and `credential_env` name the credential a harness may use and the
@@ -373,7 +373,7 @@ ft run --prompt-file grooming.md --backend local --harness opencode --allow-host
 `ft run --goal <task|milestone>` drives the graph toward a goal: it repeatedly runs the highest-ranked agent-ready on-path task until the goal is reached, work stalls, or the budget is exhausted.
 
 ```sh
-ft run --goal t-abc123 --backend local --harness opencode --allow-host --max-tasks 5
+ft run --goal t-abc123 --sandbox local --harness opencode --allow-host --max-tasks 5
 ```
 
 - The goal is a task or a milestone: a task resolves, a milestone is a human gate, so the

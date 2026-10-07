@@ -271,6 +271,84 @@ func TestPageProjectsReadinessAndRank(t *testing.T) {
 	}
 }
 
+// omitRanker drops one ready task from its ranking, reproducing a ranker that
+// omits a startable task the readiness buckets still count.
+type omitRanker struct{ omit core.TaskID }
+
+func (r omitRanker) Name() string { return "omit" }
+
+func (r omitRanker) Rank(_ context.Context, req rank.Request) ([]rank.Scored, error) {
+	var out []rank.Scored
+	for _, id := range req.Graph.ReadySet() {
+		if id == r.omit {
+			continue
+		}
+		out = append(out, rank.Scored{TaskID: id, Score: 1})
+	}
+	return out, nil
+}
+
+// TestNextUpStatsMatchListedRows guards the dashboard bug where the "Agent
+// next"/"Human next" stats counted the full ready buckets while the sections
+// listed only the ranker's scored subset, so a count exceeded its rows whenever
+// the ranker omitted a ready task.
+func TestNextUpStatsMatchListedRows(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	agent, err := f.actors.Add(context.Background(), core.ActorAgent, "claude")
+	if err != nil {
+		t.Fatalf("Add(agent) error = %v", err)
+	}
+	humanListed, err := f.tasks.Add(context.Background(), app.TaskInput{ProjectID: project.ID, Title: "Human listed"})
+	if err != nil {
+		t.Fatalf("Add(human listed) error = %v", err)
+	}
+	humanOmitted, err := f.tasks.Add(context.Background(), app.TaskInput{ProjectID: project.ID, Title: "Human omitted"})
+	if err != nil {
+		t.Fatalf("Add(human omitted) error = %v", err)
+	}
+	agentTask, err := f.tasks.Add(context.Background(), app.TaskInput{
+		ProjectID:          project.ID,
+		Title:              "Agent task",
+		AssigneeID:         &agent.ID,
+		Groomed:            true,
+		AcceptanceCriteria: []string{"works"},
+	})
+	if err != nil {
+		t.Fatalf("Add(agent task) error = %v", err)
+	}
+
+	server, err := New(Options{
+		Backend: f.backend,
+		Clock:   f.clock,
+		Project: project.ID,
+		Ranker:  omitRanker{omit: humanOmitted.ID},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(context.Background())
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+
+	if !hasTask(page.NextHuman, humanListed.ID) {
+		t.Fatalf("NextHuman = %v, want %s", taskIDs(page.NextHuman), humanListed.ID)
+	}
+	if hasTask(page.NextHuman, humanOmitted.ID) {
+		t.Fatalf("NextHuman = %v, omitted task %s must not be listed", taskIDs(page.NextHuman), humanOmitted.ID)
+	}
+	if !hasTask(page.NextAgent, agentTask.ID) {
+		t.Fatalf("NextAgent = %v, want %s", taskIDs(page.NextAgent), agentTask.ID)
+	}
+	if page.Stats.ReadyHuman != len(page.NextHuman) {
+		t.Fatalf("ReadyHuman stat = %d, want len(NextHuman) = %d", page.Stats.ReadyHuman, len(page.NextHuman))
+	}
+	if page.Stats.ReadyAgent != len(page.NextAgent) {
+		t.Fatalf("ReadyAgent stat = %d, want len(NextAgent) = %d", page.Stats.ReadyAgent, len(page.NextAgent))
+	}
+}
+
 func TestPageShowsInFlight(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")

@@ -1,6 +1,8 @@
 package groom
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -32,6 +34,32 @@ func TestTemplatesAreMarkdown(t *testing.T) {
 		}
 		if !strings.HasPrefix(body, "#") {
 			t.Fatalf("%s template is not markdown:\n%s", name, body)
+		}
+	}
+}
+
+// TestSessionPromptIsDurableRepoData guards the committed grooming-session
+// prompt: it must live at PromptPath in the repo, be markdown, and carry the
+// protocol so a session launched from it behaves. The prompt is data, so this
+// test reads the file from the tree rather than an embedded copy.
+func TestSessionPromptIsDurableRepoData(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", PromptPath))
+	if err != nil {
+		t.Fatalf("read durable session prompt %q: %v", PromptPath, err)
+	}
+	body := string(data)
+	if strings.TrimSpace(body) == "" {
+		t.Fatal("session prompt is empty")
+	}
+	if !strings.HasPrefix(strings.TrimSpace(body), "#") {
+		t.Fatalf("session prompt is not markdown:\n%s", body)
+	}
+	lower := strings.ToLower(body)
+	for _, want := range []string{
+		"team lead", "product owner", "defer", "groomed", "assigned", "agent-ready",
+	} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("session prompt does not mention %q", want)
 		}
 	}
 }

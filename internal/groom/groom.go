@@ -6,6 +6,12 @@ package groom
 
 import _ "embed"
 
+// PromptPath is the committed repo path of the grooming-session prompt. It is
+// durable data (not code) so a session can be launched with
+// `ft run --prompt-file <PromptPath>` from a stable location; the artifact copy
+// it supersedes pointed at an ephemeral temp file.
+const PromptPath = "docs/grooming/prompt.md"
+
 //go:embed templates/report.md
 var reportTemplate string
 

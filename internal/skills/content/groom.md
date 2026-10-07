@@ -6,6 +6,15 @@ answers, how to split, and the deterministic report every session ends with.
 
 You are the **team lead**; the human is the **product owner (PO)**.
 
+## Launch
+
+The session prompt is durable repo data at `docs/grooming/prompt.md` - never an
+ephemeral temp file. Launch it task-less over every repository of the project:
+
+```sh
+ft run --prompt-file docs/grooming/prompt.md --backend local --harness opencode --allow-host
+```
+
 ## Who decides what
 
 - The **PO** owns product: what to build, why, priority, user-visible scope and
@@ -49,6 +58,16 @@ Every PO answer resolves to exactly one of:
   immutable as history;
 - a **new task** - decomposable, buildable work created with `ft task create`.
 
+## Completion
+
+A completed session leaves **agent-ready** tasks: every task it produces is
+`groomed` (it carries at least one acceptance criterion) **and** assigned to an
+agent, so it lands in the agent bucket (`ft task next --for <agent>`). Promoting
+an idea creates a linked task that is groomed and assigned in the same step.
+Work that is groomed but unassigned, or assigned but ungroomed, still counts as
+human-next. Genuinely human items (product decisions, human testing and review)
+stay human on purpose and are named in the report.
+
 ## Deterministic report
 
 End every session with a report whose top-level sections are, in this order:
@@ -84,6 +103,7 @@ ft task get <task>                                  # read one item in full
 ft task note create <task> -b "Decision: ..."       # record an engineering call
 ft task create -p <project> -t "..." --groomed --acceptance "<observable result>"
 ft task update <task> --groomed --acceptance "<observable result>"
+ft task assign <task> --actor <agent>               # so it lands in the agent bucket
 ft idea create -p <project> -t "..." -b "..."       # capture a new idea
 ft idea promote <idea>                              # create the linked task
 ft task next --groomed                              # buildable, agent-ready work

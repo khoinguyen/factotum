@@ -199,6 +199,76 @@ func TestMigrateFromJSONFileMissingSource(t *testing.T) {
 	}
 }
 
+func TestMigrateEmptyDocumentIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "legacy.json")
+	root := filepath.Join(dir, "jsondir")
+	if err := os.WriteFile(source, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write empty fixture: %v", err)
+	}
+
+	if _, err := MigrateFromJSONFile(ctx, source, root); err != nil {
+		t.Fatalf("first migrate error = %v", err)
+	}
+	backup, err := MigrateFromJSONFile(ctx, source, root)
+	if err != nil {
+		t.Fatalf("second migrate error = %v, want a no-op", err)
+	}
+	if backup != "" {
+		t.Fatalf("second migrate backup = %q, want empty", backup)
+	}
+}
+
+func TestOpenMigratesEmptyDocumentTwice(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "legacy.json")
+	root := filepath.Join(dir, "jsondir")
+	if err := os.WriteFile(source, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write empty fixture: %v", err)
+	}
+	cfg := store.Config{Backend: "jsondir", Options: map[string]string{"path": root, "migrate_from": source}}
+
+	first, err := Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+
+	second, err := Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("second Open() error = %v, want a no-op", err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+}
+
+func TestMigrateIsNoOpAfterTargetRemoved(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "legacy.json")
+	root := filepath.Join(dir, "jsondir")
+	seedJSONFile(t, source, seedLegacy(t))
+
+	if _, err := MigrateFromJSONFile(ctx, source, root); err != nil {
+		t.Fatalf("first migrate error = %v", err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatalf("remove target: %v", err)
+	}
+	backup, err := MigrateFromJSONFile(ctx, source, root)
+	if err != nil {
+		t.Fatalf("migrate after target removed error = %v, want a no-op", err)
+	}
+	if backup != "" {
+		t.Fatalf("migrate after target removed backup = %q, want empty", backup)
+	}
+}
+
 func TestMigratedFixturePassesConformance(t *testing.T) {
 	conformance.Run(t, func(t *testing.T) store.Backend {
 		dir := t.TempDir()

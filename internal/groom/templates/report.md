@@ -1,7 +1,7 @@
 # Grooming report - <session date>
 
 Scope: <items groomed>
-Session: <prompt artifact id or source>
+Session: <prompt file or source>
 
 ## Summary
 

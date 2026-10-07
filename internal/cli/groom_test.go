@@ -310,6 +310,25 @@ func TestGroomUnattendedCompletesOrDefers(t *testing.T) {
 				return []string{ready, idea}, emptyDeferred
 			},
 		},
+		{
+			name: "a resolved item is handled",
+			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
+				done := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Add widget"))
+				r.run("task", "set", done, "status=ready_for_review")
+				return []string{done}, emptyDeferred
+			},
+		},
+		{
+			name: "a groomed task assigned to a human is not agent-ready",
+			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
+				r.run("actor", "create", "khoi", "--kind", "human")
+				id := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Add widget"))
+				r.run("task", "update", id, "--groomed", "--acceptance", "works")
+				r.run("task", "assign", id, "--actor", "khoi")
+				return []string{id}, emptyDeferred
+			},
+			wantErr: "neither agent-ready nor deferred",
+		},
 	}
 
 	for _, tt := range tests {
@@ -351,5 +370,39 @@ func TestGroomUnattendedCompletesOrDefers(t *testing.T) {
 				t.Fatalf("groom output missing the mode:\n%s", out)
 			}
 		})
+	}
+}
+
+// TestGroomUnattendedReadsSessionWrites guards the store refresh: the session
+// mutates the graph in its own process (here a second backend over the same
+// jsonfile store), so the guard must re-read the store rather than serve the
+// snapshot the parent loaded before the run. A caching backend (jsonfile,
+// jsondir) would otherwise report the item unresolved even though the session
+// groomed it.
+func TestGroomUnattendedReadsSessionWrites(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("actor", "create", "builder", "--kind", "agent")
+	taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Add widget"))
+
+	promptPath := filepath.Join(t.TempDir(), "prompt.md")
+	mustWrite(t, promptPath, "# Grooming session prompt\n")
+
+	base := isofake.New("sandbox")
+	base.Program(isolation.ExecResult{Stdout: []byte("groomed\n"), ExitCode: 0})
+	backend := groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
+		prompt := cmd.Argv[len(cmd.Argv)-1]
+		// The session edits the graph through its own ft process.
+		groomAssign(t, r, taskID)
+		mustWrite(t, kickoffPath(prompt, "Write the report to: "), "# Grooming report\n\n## Summary\n\n## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n")
+		mustWrite(t, kickoffPath(prompt, "Write the deferred questions to: "), "# Deferred questions\n\n## Questions\n\n## Resolved\n")
+	}}
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out, err := runGroomCapture(r, "--config", cfgPath, "groom", "-p", projectID, "--unattended",
+		"--prompt-file", promptPath, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if err != nil {
+		t.Fatalf("groom did not see the session's writes: %v\n%s", err, out)
 	}
 }

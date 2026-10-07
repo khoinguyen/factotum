@@ -27,9 +27,9 @@ case "$target" in
     ref="$(cmux tree --all | awk -v n="$target" '
       /surface:/ && index($0, "\"" n "\"")>0 { match($0,/surface:[0-9]+/); print substr($0,RSTART,RLENGTH); exit }')"
     if [ -z "$ref" ]; then
-      # fall back to a workspace title
+      # fall back to a workspace title (match the quoted title literally)
       ref="$(cmux tree --all | awk -v n="$target" '
-        $0 ~ "workspace .* \"" n "\"" { match($0,/workspace:[0-9]+/); print substr($0,RSTART,RLENGTH); exit }')"
+        /workspace / && index($0, "\"" n "\"")>0 { match($0,/workspace:[0-9]+/); print substr($0,RSTART,RLENGTH); exit }')"
     fi
     [ -n "$ref" ] || { echo "cmux-msg: no surface/workspace named '$target'" >&2; exit 1; }
     ;;

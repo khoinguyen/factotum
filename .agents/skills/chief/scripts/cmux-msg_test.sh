@@ -32,6 +32,12 @@ window window:1 [current]
 ├── workspace workspace:10 "chief"
 │   └── pane pane:21
 │       └── surface surface:37 [terminal] "chief" [selected]
+├── workspace workspace:2 "a1"
+│   └── pane pane:9
+│       └── surface surface:9 [terminal] "one" [selected]
+├── workspace workspace:9 "a[1]"
+│   └── pane pane:8
+│       └── surface surface:8 [terminal] "two" [selected]
 └── workspace workspace:52 "t-demo"
     └── pane pane:262
         └── surface surface:463 [terminal] "builder-t-demo" [selected]
@@ -98,6 +104,10 @@ assert_run "tab title resolves to surface" \
 assert_run "workspace title falls back" \
   "agent message workspace:52 -- ping" \
   -- t-demo ping
+
+assert_run "workspace title with regex metachars stays literal" \
+  "agent message workspace:9 -- ping" \
+  -- 'a[1]' ping
 
 export CMUX_MSG_FROM=builder-t-demo
 assert_run "CMUX_MSG_FROM becomes --from" \

@@ -125,13 +125,23 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		return runErr
 	}
 
-	report, err := d.captureGroomOutput(ctx, project.ID, items, sessionID, reportPath,
+	// Read both outputs before recording either, so a session that wrote only
+	// one of them fails without leaving a partial artifact behind.
+	reportBody, err := readGroomOutput(sessionID, reportPath)
+	if err != nil {
+		return err
+	}
+	deferredBody, err := readGroomOutput(sessionID, deferredPath)
+	if err != nil {
+		return err
+	}
+	report, err := d.addGroomArtifact(ctx, project.ID, items, sessionID, reportPath, reportBody,
 		"Grooming report "+sessionID,
 		fmt.Sprintf("Deterministic report for grooming session %s", sessionID))
 	if err != nil {
 		return err
 	}
-	deferred, err := d.captureGroomOutput(ctx, project.ID, items, sessionID, deferredPath,
+	deferred, err := d.addGroomArtifact(ctx, project.ID, items, sessionID, deferredPath, deferredBody,
 		"Grooming deferred questions "+sessionID,
 		fmt.Sprintf("Product questions deferred by grooming session %s", sessionID))
 	if err != nil {
@@ -236,24 +246,29 @@ func scopeIDs(tasks []*core.Task) []string {
 	return ids
 }
 
-// captureGroomOutput reads one session output and records it as a doc artifact
-// linked to the session directory, and to the sole item when the scope is one
-// item. A missing or empty output is an error: a session that produces nothing
-// durable must fail loudly, not look finished.
-func (d *Deps) captureGroomOutput(ctx context.Context, projectID core.ProjectID, items []*core.Task, sessionID, path, title, brief string) (*core.Artifact, error) {
+// readGroomOutput reads one session output. A missing or empty output is an
+// error: a session that produces nothing durable must fail loudly, not look
+// finished.
+func readGroomOutput(sessionID, path string) (string, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("groom session %s produced no output at %s: %w", sessionID, path, err)
+		return "", fmt.Errorf("groom session %s produced no output at %s: %w", sessionID, path, err)
 	}
 	if strings.TrimSpace(string(body)) == "" {
-		return nil, fmt.Errorf("groom session %s wrote an empty output at %s", sessionID, path)
+		return "", fmt.Errorf("groom session %s wrote an empty output at %s", sessionID, path)
 	}
+	return string(body), nil
+}
+
+// addGroomArtifact records one session output as a doc artifact linked to the
+// session directory, and to the sole item when the scope is one item.
+func (d *Deps) addGroomArtifact(ctx context.Context, projectID core.ProjectID, items []*core.Task, sessionID, path, body, title, brief string) (*core.Artifact, error) {
 	input := app.ArtifactInput{
 		ProjectID: projectID,
 		Kind:      core.ArtifactDoc,
 		Title:     title,
 		Brief:     brief,
-		Body:      string(body),
+		Body:      body,
 		Path:      path,
 		Links:     []core.Link{{Kind: core.LinkURL, URL: filepath.Dir(path), Title: "session " + sessionID}},
 	}
@@ -265,10 +280,23 @@ func (d *Deps) captureGroomOutput(ctx context.Context, projectID core.ProjectID,
 }
 
 // projectDataDir resolves where a project's session outputs live: the directory
-// of the configured store file, else the per-user default beside the config.
+// of the configured store, else the per-user default beside the config. The path
+// is made absolute because the session runs with a different working directory
+// than ft, so a relative path would name different places.
 func projectDataDir(cfg config.Config) (string, error) {
-	if path := cfg.Store.Options["path"]; path != "" && path != ":memory:" {
-		return filepath.Dir(path), nil
+	path := cfg.Store.Options["path"]
+	if path != "" && path != ":memory:" {
+		// jsondir roots a document tree at its path; every other file-backed
+		// backend stores one file whose parent is the data dir.
+		dir := filepath.Dir(path)
+		if cfg.Store.Backend == "jsondir" {
+			dir = path
+		}
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return "", fmt.Errorf("resolve project data dir from %s: %w", path, err)
+		}
+		return abs, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

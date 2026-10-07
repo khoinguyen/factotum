@@ -8,10 +8,55 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/khoinguyen/factotum/internal/config"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
 )
+
+// TestProjectDataDirIsAbsolutePerBackend pins that the session data dir is
+// always absolute, even when the store path is relative, and that a directory
+// backend (jsondir) is used as the dir rather than its parent. A relative dir
+// would make the kickoff name a relative path the harness resolves against its
+// own CWD, not ft's, so capture would miss the files the session wrote.
+func TestProjectDataDirIsAbsolutePerBackend(t *testing.T) {
+	tests := []struct {
+		name    string
+		backend string
+		path    string
+		want    string
+	}{
+		{"file backend uses the parent", "jsonfile", "sub/db.json", "sub"},
+		{"sqlite uses the parent", "sqlite", "sub/db.sqlite", "sub"},
+		{"jsondir uses the directory", "jsondir", "sub/tree", "sub/tree"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := projectDataDir(config.Config{Store: config.Store{
+				Backend: tt.backend,
+				Options: map[string]string{"path": tt.path},
+			}})
+			if err != nil {
+				t.Fatalf("projectDataDir error = %v", err)
+			}
+			if !filepath.IsAbs(got) {
+				t.Fatalf("projectDataDir = %q, want an absolute path", got)
+			}
+			if want := filepath.Join(mustAbs(t, "."), filepath.FromSlash(tt.want)); got != want {
+				t.Fatalf("projectDataDir = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func mustAbs(t *testing.T, path string) string {
+	t.Helper()
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
+}
 
 // groomBackend is the fake isolation backend `ft groom` runs against. On Exec it
 // hands the harness command to onExec, so a test can observe the injected prompt
@@ -109,6 +154,9 @@ func TestGroomCommandInjectsKickoffAndCapturesOutputs(t *testing.T) {
 	// Both outputs exist at the deterministic session path and are doc artifacts.
 	reportPath := kickoffPath(prompt, "Write the report to: ")
 	deferredPath := kickoffPath(prompt, "Write the deferred questions to: ")
+	if !filepath.IsAbs(reportPath) || !filepath.IsAbs(deferredPath) {
+		t.Fatalf("kickoff paths must be absolute, got report=%q deferred=%q", reportPath, deferredPath)
+	}
 	if _, err := os.Stat(reportPath); err != nil {
 		t.Fatalf("report not captured at %s: %v", reportPath, err)
 	}
@@ -120,6 +168,35 @@ func TestGroomCommandInjectsKickoffAndCapturesOutputs(t *testing.T) {
 		if !strings.Contains(docs, want) {
 			t.Fatalf("doc list missing %q:\n%s", want, docs)
 		}
+	}
+}
+
+// TestGroomCommandLeavesNoPartialArtifactWhenOneOutputMissing guards the capture
+// order: a session that wrote only the report must not leave a report artifact
+// behind when the deferred file is missing.
+func TestGroomCommandLeavesNoPartialArtifactWhenOneOutputMissing(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("task", "create", "-p", projectID, "-t", "Add widget")
+
+	promptPath := filepath.Join(t.TempDir(), "prompt.md")
+	mustWrite(t, promptPath, "# Grooming session prompt\n")
+
+	base := isofake.New("sandbox")
+	base.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
+		prompt := cmd.Argv[len(cmd.Argv)-1]
+		report := kickoffPath(prompt, "Write the report to: ")
+		mustWrite(t, report, "# Grooming report\n")
+	}}
+	r.runHarness = harnessfake.New("opencode")
+
+	if err := r.runErr("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
+		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir()); err == nil {
+		t.Fatal("groom with only the report error = nil, want a missing-output error")
+	}
+	if docs := r.run("doc", "list", "-p", projectID); strings.Contains(docs, "Grooming report") {
+		t.Fatalf("a missing deferred file left a partial report artifact:\n%s", docs)
 	}
 }
 

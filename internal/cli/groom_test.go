@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/internal/config"
+	"github.com/khoinguyen/factotum/pkg/app"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
@@ -129,7 +131,7 @@ func TestGroomCommandInjectsKickoffAndCapturesOutputs(t *testing.T) {
 
 	out := r.run("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
 		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
-	for _, want := range []string{"session: groom-", "scope:", "report: art-", "deferred: art-", "run: finished", "project: " + projectID} {
+	for _, want := range []string{"session: groom-", "scope:", "report: art-", "deferred: art-", "run: finished", "mode: interactive", "project: " + projectID} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("groom output missing %q:\n%s", want, out)
 		}
@@ -223,5 +225,131 @@ func TestGroomCommandFailsWhenOutputsMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "report.md") {
 		t.Fatalf("error does not name the missing report: %v", err)
+	}
+}
+
+// runGroomCapture executes the groom command and returns stdout plus the error
+// without failing the test, so a table can drive both clean and rejected runs.
+func runGroomCapture(r *runner, args ...string) (string, error) {
+	var out bytes.Buffer
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &out, &out, nil)
+	base := r.setup(deps)
+	root := NewRoot(deps)
+	root.SetArgs(append(append([]string{}, base...), args...))
+	root.SetOut(&out)
+	root.SetErr(&out)
+	err := root.Execute()
+	return out.String(), err
+}
+
+// groomAssign makes a task agent-ready: groomed with a criterion, assigned to an
+// agent actor.
+func groomAssign(t *testing.T, r *runner, taskID string) {
+	t.Helper()
+	r.run("task", "update", taskID, "--groomed", "--acceptance", "works")
+	r.run("task", "assign", taskID, "--actor", "builder")
+}
+
+// agentReadyTask creates a task and leaves it in the agent bucket.
+func agentReadyTask(t *testing.T, r *runner, projectID, title string) string {
+	t.Helper()
+	id := firstField(t, r.run("task", "create", "-p", projectID, "-t", title))
+	groomAssign(t, r, id)
+	return id
+}
+
+// TestGroomUnattendedCompletesOrDefers is the acceptance table for unattended
+// mode: a session with no product owner must leave every scoped item either
+// agent-ready (groomed and assigned to an agent) or named in the
+// deferred-questions file. The table seeds the graph state a session would
+// leave, the fake harness writes the two outputs it would, and the command
+// accepts the run only when every item resolves.
+func TestGroomUnattendedCompletesOrDefers(t *testing.T) {
+	const reportBody = "# Grooming report - 2026-10-07\n\n## Summary\n\n## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n"
+	const emptyDeferred = "# Deferred questions\n\n## Questions\n\n## Resolved\n"
+
+	tests := []struct {
+		name    string
+		build   func(t *testing.T, r *runner, projectID string) (scope []string, deferred string)
+		wantErr string
+	}{
+		{
+			name: "both items agent-ready",
+			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
+				return []string{
+					agentReadyTask(t, r, projectID, "Add widget"),
+					agentReadyTask(t, r, projectID, "Add gadget"),
+				}, emptyDeferred
+			},
+		},
+		{
+			name: "an unresolved item deferred to the PO",
+			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
+				ready := agentReadyTask(t, r, projectID, "Add widget")
+				open := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Add gadget"))
+				deferred := "# Deferred questions\n\n## Questions\n\n- Which scope? (item: " + open + ", owner: PO)\n\n## Resolved\n"
+				return []string{ready, open}, deferred
+			},
+		},
+		{
+			name: "an item neither agent-ready nor deferred",
+			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
+				ready := agentReadyTask(t, r, projectID, "Add widget")
+				open := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Add gadget"))
+				return []string{ready, open}, emptyDeferred
+			},
+			wantErr: "neither agent-ready nor deferred",
+		},
+		{
+			name: "a promoted idea is agent-ready",
+			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
+				ready := agentReadyTask(t, r, projectID, "Add widget")
+				idea := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "Maybe cache"))
+				promoted := firstField(t, r.run("task", "create", "-p", projectID, "-t", "From idea", "--dep", idea))
+				groomAssign(t, r, promoted)
+				return []string{ready, idea}, emptyDeferred
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRunner(t)
+			projectID, cfgPath := tasklessContext(t, r)
+			r.run("actor", "create", "builder", "--kind", "agent")
+			scope, deferredBody := tt.build(t, r, projectID)
+
+			promptPath := filepath.Join(t.TempDir(), "prompt.md")
+			mustWrite(t, promptPath, "# Grooming session prompt\n\nYou are the team lead.\n")
+
+			base := isofake.New("sandbox")
+			base.Program(isolation.ExecResult{Stdout: []byte("groomed\n"), ExitCode: 0})
+			backend := groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
+				prompt := cmd.Argv[len(cmd.Argv)-1]
+				if !strings.Contains(prompt, "## Unattended mode") {
+					t.Errorf("unattended kickoff is missing the override:\n%s", prompt)
+				}
+				mustWrite(t, kickoffPath(prompt, "Write the report to: "), reportBody)
+				mustWrite(t, kickoffPath(prompt, "Write the deferred questions to: "), deferredBody)
+			}}
+			r.runBackend = backend
+			r.runHarness = harnessfake.New("opencode")
+
+			args := append([]string{"--config", cfgPath, "groom", "-p", projectID, "--unattended",
+				"--prompt-file", promptPath, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir()}, scope...)
+			out, err := runGroomCapture(r, args...)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("groom error = %v, want %q\n%s", err, tt.wantErr, out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("groom error = %v\n%s", err, out)
+			}
+			if !strings.Contains(out, "mode: unattended") {
+				t.Fatalf("groom output missing the mode:\n%s", out)
+			}
+		})
 	}
 }

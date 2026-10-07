@@ -24,6 +24,7 @@ import (
 type groomOptions struct {
 	project    string
 	promptFile string
+	unattended bool
 	run        runOptions
 }
 
@@ -37,15 +38,18 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 			"resolves the scope - the named items, or by default every open idea plus every open\n" +
 			"ungroomed task - injects a session kickoff naming the scope and the absolute paths of\n" +
 			"the report and deferred-questions files, runs the durable grooming prompt through the\n" +
-			"run service, and records the two outputs as doc artifacts. The backend and harness\n" +
-			"are selected explicitly, by flag or by the [run] config table; there is no default\n" +
-			"backend.",
+			"run service, and records the two outputs as doc artifacts. With --unattended the kickoff\n" +
+			"tells the session there is no product owner: it defers every product question and still\n" +
+			"finishes agent-ready, and the run fails if any scoped item is left neither agent-ready\n" +
+			"nor deferred. The backend and harness are selected explicitly, by flag or by the [run]\n" +
+			"config table; there is no default backend.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return deps.runGroom(cmd, args, opts)
 		},
 	}
 	cmd.Flags().StringVarP(&opts.project, "project", "p", "", "project id (defaults to the configured project)")
 	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "session prompt file (default "+groom.PromptPath+")")
+	cmd.Flags().BoolVar(&opts.unattended, "unattended", false, "run with no product owner: defer product questions and still finish agent-ready")
 	cmd.Flags().StringVar(&opts.run.backend, "backend", "", "isolation backend name (required; e.g. local, openshell, docker)")
 	cmd.Flags().StringVar(&opts.run.harness, "harness", "", "harness name (required; e.g. opencode)")
 	cmd.Flags().StringVar(&opts.run.workspace, "workspace", "", "workspace root directory (default under the config dir)")
@@ -101,7 +105,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	deferredPath := groom.DeferredQuestionsPath(dataDir, sessionID)
 
 	prompt := strings.TrimRight(string(promptBytes), "\n") + "\n\n" +
-		groom.Kickoff(string(projectID), groomScopeItems(items), reportPath, deferredPath)
+		groom.Kickoff(string(projectID), groomScopeItems(items), reportPath, deferredPath, opts.unattended)
 
 	sel, err := d.prepareRun(cmd, opts.run)
 	if err != nil {
@@ -148,12 +152,31 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		return err
 	}
 
+	// Unattended runs must not leave work silently stranded: every scoped item
+	// is either agent-ready or named in the deferred file by the time the
+	// session ends.
+	if opts.unattended {
+		unresolved, err := d.unattendedUnresolved(ctx, project.ID, items, deferredBody)
+		if err != nil {
+			return err
+		}
+		if len(unresolved) > 0 {
+			return fmt.Errorf("groom: unattended session %s left items neither agent-ready nor deferred: %s (see %s)",
+				sessionID, joinTaskIDs(unresolved), deferredPath)
+		}
+	}
+
+	mode := "interactive"
+	if opts.unattended {
+		mode = "unattended"
+	}
 	doc := groomDoc{
 		Session:  sessionID,
 		Scope:    scopeIDs(items),
 		Report:   string(report.ID),
 		Deferred: string(deferred.ID),
 		Run:      "finished",
+		Mode:     mode,
 		Project:  string(project.ID),
 		Repo:     "",
 	}
@@ -164,6 +187,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 			f("report", report.ID),
 			f("deferred", deferred.ID),
 			f("run", "finished"),
+			f("mode", mode),
 			f("project", project.ID),
 			f("repo", d.repoValue("")),
 		)
@@ -312,8 +336,97 @@ type groomDoc struct {
 	Report   string   `json:"report" yaml:"report"`
 	Deferred string   `json:"deferred" yaml:"deferred"`
 	Run      string   `json:"run" yaml:"run"`
+	Mode     string   `json:"mode" yaml:"mode"`
 	Project  string   `json:"project" yaml:"project"`
 	Repo     string   `json:"repo" yaml:"repo"`
+}
+
+// unattendedUnresolved returns the scoped items an unattended session left
+// neither agent-ready nor named in the deferred-questions file. Agent-ready is
+// the completion contract: a task groomed and assigned to an agent, or - for an
+// idea - a promoted task that is. An item matching neither means the session
+// stalled or lost work, which unattended mode must never do silently.
+func (d *Deps) unattendedUnresolved(ctx context.Context, projectID core.ProjectID, items []*core.Task, deferredBody string) ([]core.TaskID, error) {
+	var unresolved []core.TaskID
+	var projectTasks []*core.Task
+	for _, item := range items {
+		if strings.Contains(deferredBody, string(item.ID)) {
+			continue
+		}
+		task, err := d.Tasks.Get(ctx, item.ID)
+		if err != nil {
+			return nil, err
+		}
+		handled, err := d.itemHandled(ctx, projectID, task, &projectTasks)
+		if err != nil {
+			return nil, err
+		}
+		if !handled {
+			unresolved = append(unresolved, item.ID)
+		}
+	}
+	return unresolved, nil
+}
+
+// itemHandled reports whether an unattended session handled one scoped item: an
+// executable task is handled when it is agent-ready or resolved (the session
+// judged it unnecessary), an idea when a promoted task of it is agent-ready.
+func (d *Deps) itemHandled(ctx context.Context, projectID core.ProjectID, item *core.Task, cache *[]*core.Task) (bool, error) {
+	if item.Kind.Executable() {
+		if item.Resolves(core.DefaultResolutionPolicy()) {
+			return true, nil
+		}
+		return d.agentReady(ctx, item)
+	}
+	if *cache == nil {
+		tasks, err := d.Tasks.List(ctx, store.TaskFilter{ProjectID: projectID})
+		if err != nil {
+			return false, err
+		}
+		*cache = tasks
+	}
+	for _, candidate := range *cache {
+		if !candidate.Kind.Executable() || !dependsOn(candidate, item.ID) {
+			continue
+		}
+		ready, err := d.agentReady(ctx, candidate)
+		if err != nil {
+			return false, err
+		}
+		if ready {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// agentReady is the agent-bucket rule: groomed and assigned to an agent actor.
+func (d *Deps) agentReady(ctx context.Context, task *core.Task) (bool, error) {
+	if !task.Groomed || task.AssigneeID == nil {
+		return false, nil
+	}
+	actor, err := d.Actors.Get(ctx, *task.AssigneeID)
+	if err != nil {
+		return false, err
+	}
+	return actor.Kind == core.ActorAgent, nil
+}
+
+func dependsOn(task *core.Task, dep core.TaskID) bool {
+	for _, id := range task.Deps {
+		if id == dep {
+			return true
+		}
+	}
+	return false
+}
+
+func joinTaskIDs(ids []core.TaskID) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = string(id)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func groomHints(projectID core.ProjectID, reportID core.ArtifactID) []hint {

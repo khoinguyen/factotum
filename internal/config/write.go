@@ -192,12 +192,11 @@ func upsertRunKeys(text string, keys map[string]string) string {
 	lines := strings.Split(text, "\n")
 	start, end := -1, len(lines)
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "[run]" {
+		if isRunHeader(line) {
 			start = i
 			continue
 		}
-		if start >= 0 && strings.HasPrefix(trimmed, "[") {
+		if start >= 0 && strings.HasPrefix(strings.TrimSpace(line), "[") {
 			end = i
 			break
 		}
@@ -242,6 +241,21 @@ func upsertRunKeys(text string, keys map[string]string) string {
 	}
 	lines = append(lines[:end], append(add, lines[end:]...)...)
 	return strings.Join(lines, "\n")
+}
+
+// isRunHeader reports whether a line is the [run] table header, tolerating the
+// TOML variants that name the same table: an inline comment ('[run] # note') or
+// inner whitespace ('[ run ]'). A dotted child table ('[run.x]') or an array of
+// tables ('[[run]]') is not the header and returns false.
+func isRunHeader(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if i := strings.IndexByte(trimmed, '#'); i >= 0 {
+		trimmed = strings.TrimSpace(trimmed[:i])
+	}
+	if len(trimmed) < 2 || trimmed[0] != '[' || trimmed[len(trimmed)-1] != ']' {
+		return false
+	}
+	return strings.TrimSpace(trimmed[1:len(trimmed)-1]) == "run"
 }
 
 // keyName returns the bare key of a simple `key = value` TOML line, ignoring

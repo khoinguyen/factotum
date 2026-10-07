@@ -62,11 +62,21 @@ type Backend struct {
 	events    []core.Event
 }
 
-func Open(_ context.Context, cfg store.Config) (store.Backend, error) {
+func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
 	root := cfg.Option("path")
 	if root == "" {
 		root = DefaultPath
 	}
+	if err := migrateFromOption(ctx, cfg, root); err != nil {
+		return nil, err
+	}
+	return open(ctx, root)
+}
+
+// open loads the directory store at root without running any migration. It is
+// the shared entry point for Open and the migration writer, so a migration does
+// not recurse back into itself.
+func open(_ context.Context, root string) (store.Backend, error) {
 	b := &Backend{
 		root:      root,
 		tasks:     make(map[core.TaskID]*taskRecord),
@@ -78,6 +88,24 @@ func Open(_ context.Context, cfg store.Config) (store.Backend, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+// migrateFromOption runs a one-time jsonfile migration when the store is
+// configured with migrate_from=<path>. The migration is idempotent, so a source
+// that was already consumed is a silent no-op.
+func migrateFromOption(ctx context.Context, cfg store.Config, root string) error {
+	source := cfg.Option("migrate_from")
+	if source == "" {
+		return nil
+	}
+	backup, err := MigrateFromJSONFile(ctx, source, root)
+	if err != nil {
+		return err
+	}
+	if backup != "" && cfg.Noticef != nil {
+		cfg.Noticef("migrated jsonfile %s to jsondir %s; original backed up to %s", source, root, backup)
+	}
+	return nil
 }
 
 func (b *Backend) Close() error { return nil }

@@ -54,6 +54,22 @@ func TestGroomSkillNamesDurablePrompt(t *testing.T) {
 	}
 }
 
+// TestGroomSkillDocumentsKickoffAndOutputs pins the `ft groom` surface: the
+// skill names the command, the kickoff it injects, and the two durable outputs
+// it captures under the session path.
+func TestGroomSkillDocumentsKickoffAndOutputs(t *testing.T) {
+	skill, err := Get("groom")
+	if err != nil {
+		t.Fatalf("Get(groom) error = %v", err)
+	}
+	body := strings.ToLower(skill.Body)
+	for _, want := range []string{"ft groom", "kickoff", "grooming-sessions", "report.md", "deferred-questions.md"} {
+		if !strings.Contains(body, strings.ToLower(want)) {
+			t.Errorf("groom skill body does not mention %q", want)
+		}
+	}
+}
+
 func TestGroomSkillListsReportSectionsInOrder(t *testing.T) {
 	skill, err := Get("groom")
 	if err != nil {

@@ -29,10 +29,11 @@ evidence" below, which you file yourself.
 - Your shell does **not** inherit `CMUX_*`. Agent-to-agent messaging goes through the shared wrapper
   `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (run from your worktree root): it
   resolves a tab or workspace title, or takes a `surface:N`/`workspace:N` ref, and calls
-  `cmux agent message`. That delivers via the target agent's hooks and never types into its terminal,
-  so your message can't land in a half-typed prompt. Set `CMUX_MSG_FROM=reviewer-<task-id>` to identify
-  yourself. **Do not use `set-buffer`/`paste-buffer`/`send-key` to message the builder or chief**;
-  keep `paste-buffer` only for input that genuinely needs a terminal.
+  `cmux agent message`. That delivers via the recipient's hooks when it has an agent; otherwise the
+  wrapper pastes once into the recipient's surface and submits (so that fallback does type, unlike the
+  hook path). Set `CMUX_MSG_FROM=reviewer-<task-id>` to identify yourself. **Do not use
+  `set-buffer`/`paste-buffer`/`send-key` to message the builder or chief**; keep `paste-buffer` only
+  for input that genuinely needs a terminal.
 - Structural cmux commands (`rename-tab`, `move-surface`, …) likewise need explicit refs: get your own
   from `cmux identify --id-format both`, pass `--workspace <ws>` / `--surface <ref>`, and enumerate
   with `cmux tree --all` (there is no `list-surfaces`).

@@ -29,6 +29,12 @@ if [ "${1:-}" = agent ] && [ "${2:-}" = message ]; then
   else
     printf '%s\n' '{"recipient_has_agent" : true, "recipient_surface_ref" : "surface:463"}'
   fi
+elif [ "${1:-}" = paste ]; then
+  if [ -n "${CMUX_STUB_PASTE_WARN:-}" ]; then
+    printf '%s\n' "$CMUX_STUB_PASTE_WARN"
+  else
+    printf 'OK %s %s\n' 11111111-1111-1111-1111-111111111111 22222222-2222-2222-2222-222222222222
+  fi
 fi
 STUB
 chmod +x "$tmp/bin/cmux"
@@ -122,6 +128,32 @@ assert_run "no recipient agent falls back to paste" \
 paste --surface surface:463 --submit -- ping
 agent inbox --surface surface:463 --state queued --mark-read" \
   -- t-demo ping
+
+: >"$CMUX_STUB_LOG"
+if out="$("$script" t-demo ping 2>&1)" && ! printf '%s' "$out" | grep -q 'OK '; then
+  pass=$((pass + 1))
+else
+  echo "FAIL fallback stdout hides paste confirmation: $out"
+  fail=$((fail + 1))
+fi
+
+export CMUX_STUB_PASTE_WARN="warning: text was pasted but the submit key was not sent (surface_changed)"
+: >"$CMUX_STUB_LOG"
+rc=0
+out="$("$script" t-demo ping 2>&1)" || rc=$?
+if [ "$rc" -eq 0 ]; then
+  echo "FAIL failed submit exits non-zero"
+  fail=$((fail + 1))
+elif ! printf '%s' "$out" | grep -q 'submit key was not sent'; then
+  echo "FAIL failed submit not surfaced: $out"
+  fail=$((fail + 1))
+elif grep -q 'agent inbox' "$CMUX_STUB_LOG"; then
+  echo "FAIL failed submit still marked the queued copy read"
+  fail=$((fail + 1))
+else
+  pass=$((pass + 1))
+fi
+unset CMUX_STUB_PASTE_WARN
 unset CMUX_STUB_HAS_AGENT
 
 export CMUX_MSG_FROM=builder-t-demo

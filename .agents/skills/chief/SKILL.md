@@ -36,10 +36,11 @@ resolve your own refs once and pass them explicitly.
 - Deliver an agent-to-agent message with the shared wrapper
   `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>`: it resolves a tab or workspace title
   (or takes a `surface:N`/`workspace:N` ref) and calls `cmux agent message`, which delivers through
-  the target agent's hooks and never types into its terminal — so a message can't land in a
-  half-typed prompt and needs no newline-flattening. Set `CMUX_MSG_FROM=<name>` to identify the
-  sender. **Do not use `set-buffer`/`paste-buffer`/`send-key` to message an agent**; keep
-  `paste-buffer` only for input that genuinely needs a terminal (a slash command, a raw keystroke).
+  the recipient's hooks when it has an agent; otherwise the wrapper pastes once into the recipient's
+  surface and submits (so that fallback does type, unlike the hook path). Set `CMUX_MSG_FROM=<name>`
+  to identify the sender. **Do not use `set-buffer`/`paste-buffer`/`send-key` to message an agent**;
+  keep `paste-buffer` only for input that genuinely needs a terminal (a slash command, a raw
+  keystroke).
 - Waking: `cmux agent message` wakes an idle agent (it reads the message at its next step), so a
   subagent "reporting to the chief" is it messaging your `chief` surface; you wake on your next turn.
   You wake them the same way.

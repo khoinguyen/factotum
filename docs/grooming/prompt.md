@@ -24,7 +24,13 @@ ft run --prompt-file docs/grooming/prompt.md --backend local --harness opencode 
 
 ## Inputs
 
-- Target items: the ideas/tasks named in your kickoff.
+- A **kickoff** appended to this prompt by `ft groom` (or supplied by the human).
+  It names the scope (every item id, kind, and title), the absolute paths of the
+  report and deferred-questions files, and the section contract both must follow.
+- Write the report to the kickoff's report path and the deferred questions to
+  its deferred-questions path. Both live under the project data dir at
+  `grooming-sessions/<session-id>/`; `ft groom` reads them when the session ends
+  and records each as a doc artifact.
 - Context: read the repo (code, specs, docs) and `ft memory` / `ft doc`.
 
 ## Method (per idea)
@@ -43,7 +49,7 @@ ft run --prompt-file docs/grooming/prompt.md --backend local --harness opencode 
 7. After answers: apply outcomes (acceptance criteria, new ideas for future possibilities, new tasks),
    promote/split the ready items and mark every produced task groomed and assigned to an agent, build
    the DAG, and run hygiene.
-8. Deterministic report (template below).
+8. Write the deterministic report (template below) to the report path in your kickoff.
 
 ## Completion
 

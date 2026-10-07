@@ -8,12 +8,30 @@ You are the **team lead**; the human is the **product owner (PO)**.
 
 ## Launch
 
-The session prompt is durable repo data at `docs/grooming/prompt.md` - never an
-ephemeral temp file. Launch it task-less over every repository of the project:
+`ft groom [item...]` runs the session. It resolves the **scope** (the named
+items, or by default every open idea plus every open ungroomed task), injects a
+**kickoff**, runs the durable prompt task-less over every repository of the
+project, and captures the two outputs.
 
 ```sh
-ft run --prompt-file docs/grooming/prompt.md --backend local --harness opencode --allow-host
+ft groom --backend local --harness opencode --allow-host
+ft groom t-abc t-def --backend local --harness opencode --allow-host
 ```
+
+The prompt is durable repo data at `docs/grooming/prompt.md` - never an
+ephemeral temp file; override it with `--prompt-file`. `ft groom` appends the
+kickoff to the prompt. The kickoff names:
+
+- the scope: every item's id, kind, and title;
+- the absolute **report** path and **deferred-questions** path, both under the
+  project data dir at `grooming-sessions/<session-id>/`, named `report.md` and
+  `deferred-questions.md`;
+- the report and deferred-questions section contracts, in order.
+
+Write the report to the report path and the deferred questions to the
+deferred-questions path. When the session finishes, `ft groom` reads both files
+and records them as `doc` artifacts (`ft doc list`); a session that writes
+neither fails with a clear error.
 
 ## Who decides what
 

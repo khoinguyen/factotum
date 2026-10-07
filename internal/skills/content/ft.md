@@ -78,20 +78,20 @@ ft task unsnooze <task>
 A snoozed task leaves ranking until its condition passes (a date or task
 condition clears itself; indefinite waits for `unsnooze`).
 
-## Capture an idea before it is work
+## Capture and manage ideas
 
 ```sh
-ft task create -p <project> -k idea -t "A half-formed thought" -b "context"  # capture, not execution
-ft task list -p <project> -k idea      # review captures
-ft task promote <idea>                 # create an executable task linked to the idea
+ft idea create -p <project> -t "A half-formed thought" -b "context"  # capture, not execution
+ft idea list -p <project>               # review; `ft idea search <query>` searches them
+ft idea get <idea>                      # full detail; its Next: block points at promote
+ft idea promote <idea>                  # create an executable task linked to the idea
 ```
 
-An `idea` is a non-executable capture: it never appears in `ft task next` or the
-ready set, and it is not assignable. Its only statuses are `todo`, `done`, and
-`cancelled`. Promotion creates a `task` carrying the idea's title and body and
-links it back to the idea as its origin (a dependency, which never blocks); the
-idea is retained unchanged as history, so `ft graph render` shows it under a
-separate `capture:` section.
+`ft idea` is a distinct surface over the same storage as `ft task list -k idea`. An
+`idea` is a non-executable capture: it never appears in `ft task next` or the
+ready set, is not assignable or groomable, and only has `todo`, `done`, and
+`cancelled`. Promotion creates a linked `task` carrying the idea's content and
+keeps the idea as history; `ft task promote` remains as an alias.
 
 ## Gauge whether a task is ready
 

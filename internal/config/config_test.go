@@ -619,18 +619,22 @@ func TestRunAllowHostIgnoredFromProjectFile(t *testing.T) {
 project = "acme"
 
 [run]
-backend = "local"
+sandbox = "local"
 allow_host = true
+workspace = "/host/path/{project}"
 `)
 	cfg, err := Load(Input{UserPath: filepath.Join(dir, "none.toml"), ProjectPath: project, Getenv: emptyEnv})
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
+	if cfg.Run.Sandbox != "local" {
+		t.Fatalf("Run.Sandbox = %q, want local (project may select the sandbox)", cfg.Run.Sandbox)
+	}
 	if cfg.Run.AllowHost {
 		t.Fatal("AllowHost from the committed project file must be ignored")
 	}
-	if cfg.Run.Sandbox != "" {
-		t.Fatalf("Run.Sandbox = %q, want empty (project file must not select a sandbox)", cfg.Run.Sandbox)
+	if cfg.Run.Workspace != "" {
+		t.Fatalf("Run.Workspace = %q, want empty (machine-scoped field must be ignored)", cfg.Run.Workspace)
 	}
 }
 

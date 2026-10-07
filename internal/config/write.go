@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -127,6 +128,143 @@ func WriteProjectConfig(path, id string) (bool, error) {
 		return false, fmt.Errorf("write config %s: %w", path, err)
 	}
 	return true, nil
+}
+
+// RunDefaults are the harness and sandbox a run resolves when neither a flag nor
+// config supplies them. An empty field is left unwritten.
+type RunDefaults struct {
+	Sandbox string
+	Harness string
+}
+
+// WriteRunDefaults persists the resolved harness and sandbox into the [run]
+// table of the config at path, creating the file when missing. project selects
+// the scope: a project config pins projectID (the committable subset only),
+// while a machine config is created from its template. The rest of the file -
+// comments, tables, and existing keys - is preserved.
+func WriteRunDefaults(path string, project bool, projectID string, defaults RunDefaults) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("config path is empty")
+	}
+	mode := os.FileMode(0o600)
+	if project {
+		mode = 0o644
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create config dir: %w", err)
+		}
+		switch {
+		case project && projectID != "":
+			data = []byte(projectConfigTemplate + fmt.Sprintf("project = %q\n", projectID))
+		case project:
+			data = []byte(projectConfigTemplate)
+		default:
+			data = []byte(machineConfigTemplate)
+		}
+	} else if err != nil {
+		return fmt.Errorf("read config %s: %w", path, err)
+	}
+
+	keys := map[string]string{}
+	if defaults.Sandbox != "" {
+		keys["sandbox"] = defaults.Sandbox
+	}
+	if defaults.Harness != "" {
+		keys["harness"] = defaults.Harness
+	}
+	text := upsertRunKeys(string(data), keys)
+	if err := os.WriteFile(path, []byte(text), mode); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
+}
+
+// upsertRunKeys sets key = "value" entries inside the [run] table of a TOML
+// document, creating the table at the end when absent. It preserves every other
+// line, so hand-written comments and tables survive. Missing keys are inserted
+// in sorted order so the write is deterministic.
+func upsertRunKeys(text string, keys map[string]string) string {
+	if len(keys) == 0 {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	start, end := -1, len(lines)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "[run]" {
+			start = i
+			continue
+		}
+		if start >= 0 && strings.HasPrefix(trimmed, "[") {
+			end = i
+			break
+		}
+	}
+	if start < 0 {
+		if text != "" && !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		var b strings.Builder
+		b.WriteString(text)
+		b.WriteString("\n[run]\n")
+		for _, key := range sortedKeys(keys) {
+			fmt.Fprintf(&b, "%s = %q\n", key, keys[key])
+		}
+		return b.String()
+	}
+
+	present := map[string]bool{}
+	for i := start + 1; i < end; i++ {
+		key, ok := keyName(lines[i])
+		if !ok {
+			continue
+		}
+		if value, ok := keys[key]; ok {
+			lines[i] = fmt.Sprintf("%s = %q", key, value)
+			present[key] = true
+		}
+	}
+	var missing []string
+	for key := range keys {
+		if !present[key] {
+			missing = append(missing, key)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) == 0 {
+		return strings.Join(lines, "\n")
+	}
+	add := make([]string, 0, len(missing))
+	for _, key := range missing {
+		add = append(add, fmt.Sprintf("%s = %q", key, keys[key]))
+	}
+	lines = append(lines[:end], append(add, lines[end:]...)...)
+	return strings.Join(lines, "\n")
+}
+
+// keyName returns the bare key of a simple `key = value` TOML line, ignoring
+// comments, blank lines, and table headers. ok is false for anything else.
+func keyName(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "[") {
+		return "", false
+	}
+	key, _, found := strings.Cut(trimmed, "=")
+	if !found {
+		return "", false
+	}
+	return strings.TrimSpace(key), true
+}
+
+func sortedKeys(keys map[string]string) []string {
+	out := make([]string, 0, len(keys))
+	for key := range keys {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // insertTopLevel inserts a top-level key line after any leading comment/blank

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -22,11 +24,12 @@ var nowFunc = time.Now
 // rather than the JSON shape.
 //
 // It is idempotent: when the source is already gone and root holds the migrated
-// data it is a no-op. It refuses to write into a target directory that already
-// holds data, with a clear error, rather than clobber it. On success the
-// original document is moved next to itself as <source>.bak-<UTC timestamp>
-// (the backup path is returned) and the source is removed, which is what makes
-// a re-run a no-op.
+// data it is a no-op, and the backup left next to the source marks the migration
+// done even when the source held no entities (so root was never populated). It
+// refuses to write into a target directory that already holds data, with a clear
+// error, rather than clobber it. On success the original document is moved next
+// to itself as <source>.bak-<UTC timestamp> (the backup path is returned) and
+// the source is removed, which is what makes a re-run a no-op.
 func MigrateFromJSONFile(ctx context.Context, source, root string) (string, error) {
 	if source == "" || root == "" {
 		return "", fmt.Errorf("%w: migration needs a source document and a target directory", core.ErrInvalid)
@@ -40,7 +43,11 @@ func MigrateFromJSONFile(ctx context.Context, source, root string) (string, erro
 		return "", err
 	}
 	if !sourceExists {
-		if targetExists {
+		migrated, err := migrationBackupExists(source)
+		if err != nil {
+			return "", err
+		}
+		if migrated || targetExists {
 			return "", nil
 		}
 		return "", fmt.Errorf("%w: no jsonfile document at %s", core.ErrNotFound, source)
@@ -63,6 +70,12 @@ func MigrateFromJSONFile(ctx context.Context, source, root string) (string, erro
 
 	if err := copyState(ctx, legacy, target); err != nil {
 		return "", err
+	}
+
+	// Ensure the target directory exists even when the document was empty, so
+	// the configured store path is real and the migration leaves a trace.
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", fmt.Errorf("create target %s: %w", root, err)
 	}
 
 	backup := fmt.Sprintf("%s.bak-%s", source, nowFunc().UTC().Format("20060102T150405Z"))
@@ -151,4 +164,26 @@ func dirHasEntries(path string) (bool, error) {
 		return false, fmt.Errorf("read %s: %w", path, err)
 	}
 	return len(entries) > 0, nil
+}
+
+// migrationBackupExists reports whether a completed migration left its backup
+// next to source. The backup is the durable marker of a finished migration: it
+// is what makes a re-run a no-op even when the source held no entities (so the
+// target directory was never populated) or the target has since been removed.
+func migrationBackupExists(source string) (bool, error) {
+	dir := filepath.Dir(source)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", dir, err)
+	}
+	prefix := filepath.Base(source) + ".bak-"
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

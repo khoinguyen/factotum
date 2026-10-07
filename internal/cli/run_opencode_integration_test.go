@@ -47,7 +47,7 @@ func TestRealRunSmoke(t *testing.T) {
 
 	workspace := t.TempDir()
 	out := r.run("--full", "run", taskID,
-		"--backend", "local",
+		"--sandbox", "local",
 		"--harness", "opencode",
 		"--allow-host",
 		"--model", model,

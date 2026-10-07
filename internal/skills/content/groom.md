@@ -14,9 +14,9 @@ items, or by default every open idea plus every open ungroomed task), injects a
 project, and captures the two outputs.
 
 ```sh
-ft groom --backend local --harness opencode --allow-host
-ft groom t-abc t-def --backend local --harness opencode --allow-host
-ft groom --unattended --backend local --harness opencode --allow-host
+ft groom --sandbox local --harness opencode --allow-host
+ft groom t-abc t-def --sandbox local --harness opencode --allow-host
+ft groom --unattended --sandbox local --harness opencode --allow-host
 ```
 
 The prompt is durable repo data at `docs/grooming/prompt.md` - never an

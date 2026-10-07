@@ -44,7 +44,7 @@ func TestRunCommandPromptFileOverridesTaskPrompt(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 
 	r.run("run", taskID, "--prompt-file", promptPath,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 
 	prompt := lastPrompt(t, backend)
 	if got := strings.TrimSpace(prompt); got != "You are the grooming agent." {
@@ -66,7 +66,7 @@ func TestRunCommandPromptArtifactOverridesTaskPrompt(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 
 	r.run("run", taskID, "--prompt-artifact", docID,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 
 	prompt := lastPrompt(t, backend)
 	if got := strings.TrimSpace(prompt); got != "You are the grooming agent." {
@@ -85,7 +85,7 @@ func TestRunCommandPromptFileMissingErrorsClearly(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope.md")
 
 	err := r.runErr("run", taskID, "--prompt-file", missing,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if errors.Is(err, ErrUsage) {
 		t.Fatalf("missing prompt file error = %v, want a non-usage input error", err)
 	}
@@ -111,7 +111,7 @@ func TestRunCommandPromptFileEmptyErrorsClearly(t *testing.T) {
 	}
 
 	err := r.runErr("run", taskID, "--prompt-file", empty,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if errors.Is(err, ErrUsage) {
 		t.Fatalf("empty prompt file error = %v, want a non-usage input error", err)
 	}
@@ -127,7 +127,7 @@ func TestRunCommandPromptArtifactMissingErrorsClearly(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 
 	err := r.runErr("run", taskID, "--prompt-artifact", "doc-nope",
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("missing prompt artifact error = %v, want not_found", err)
 	}
@@ -144,7 +144,7 @@ func TestRunCommandPromptArtifactEmptyErrorsClearly(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 
 	err := r.runErr("run", taskID, "--prompt-artifact", docID,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("empty prompt artifact error = %v, want usage", err)
 	}
@@ -161,7 +161,7 @@ func TestRunCommandPromptSourceIsExclusive(t *testing.T) {
 	}
 
 	err := r.runErr("run", taskID, "--prompt-file", path, "--prompt-artifact", "doc-x",
-		"--backend", "fake", "--harness", "fake", "--workspace", workspace)
+		"--sandbox", "fake", "--harness", "fake", "--workspace", workspace)
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("both prompt sources error = %v, want usage", err)
 	}
@@ -177,7 +177,7 @@ func TestRunCommandPromptOverrideRejectsGoal(t *testing.T) {
 	}
 
 	err := r.runErr("run", "--goal", goal, "--prompt-file", path,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("--goal with a prompt override error = %v, want usage", err)
 	}

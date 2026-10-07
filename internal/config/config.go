@@ -67,10 +67,10 @@ type Serve struct {
 	Token string
 }
 
-// Run configures the `ft run` launcher. An empty Backend or Harness means the
-// command must be told which to use; there is no safe default backend.
+// Run configures the `ft run` launcher. An empty Sandbox or Harness means the
+// command must be told which to use; there is no safe default sandbox.
 type Run struct {
-	Backend   string
+	Sandbox   string
 	Harness   string
 	Workspace string
 	Model     string
@@ -164,9 +164,12 @@ type serveFile struct {
 }
 
 // runFile is the machine-scoped [run] table. It is deliberately absent from
-// projectFile: a committed file must never select a backend or opt into the
+// projectFile: a committed file must never select a sandbox or opt into the
 // unsandboxed host backend.
 type runFile struct {
+	Sandbox string `toml:"sandbox"`
+	// Backend is the deprecated one-release alias for Sandbox. Sandbox wins when
+	// both are set.
 	Backend          string   `toml:"backend"`
 	Harness          string   `toml:"harness"`
 	Workspace        string   `toml:"workspace"`
@@ -243,7 +246,7 @@ func Load(in Input) (Config, error) {
 	cfg.Agent.Provider = firstNonEmpty(strings.TrimSpace(agentOptions["provider"]), Default().Agent.Provider)
 	applyAgentEnv(&cfg.Agent, getenv)
 	cfg.Run = Run{
-		Backend:          user.Run.Backend,
+		Sandbox:          firstNonEmpty(user.Run.Sandbox, user.Run.Backend),
 		Harness:          user.Run.Harness,
 		Workspace:        expand(user.Run.Workspace, cfg.Project),
 		Model:            user.Run.Model,
@@ -450,8 +453,11 @@ func applyAgentEnv(agent *Agent, getenv func(string) string) {
 // applyRunEnv overlays the FACTOTUM_RUN_* environment variables on the [run]
 // table, so a launcher can be selected without editing a config file.
 func applyRunEnv(run *Run, getenv func(string) string) {
-	if backend := getenv("FACTOTUM_RUN_BACKEND"); backend != "" {
-		run.Backend = backend
+	if sandbox := getenv("FACTOTUM_RUN_SANDBOX"); sandbox != "" {
+		run.Sandbox = sandbox
+	} else if backend := getenv("FACTOTUM_RUN_BACKEND"); backend != "" {
+		// FACTOTUM_RUN_BACKEND is the deprecated one-release alias.
+		run.Sandbox = backend
 	}
 	if harness := getenv("FACTOTUM_RUN_HARNESS"); harness != "" {
 		run.Harness = harness

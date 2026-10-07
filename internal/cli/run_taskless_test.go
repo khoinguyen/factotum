@@ -35,7 +35,7 @@ func TestRunCommandTasklessPromptFileRunsAllRepos(t *testing.T) {
 	workspace := t.TempDir()
 
 	out := r.run("--config", cfgPath, "run", "--prompt-file", promptPath,
-		"--backend", "fake", "--harness", "fake", "--workspace", workspace)
+		"--sandbox", "fake", "--harness", "fake", "--workspace", workspace)
 	for _, want := range []string{"run: finished", "exit_code: 0", "repos: backend, web", "project: " + projectID} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("task-less run output missing %q:\n%s", want, out)
@@ -64,7 +64,7 @@ func TestRunCommandTasklessPromptArtifactRunsAllRepos(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 
 	r.run("--config", cfgPath, "run", "--prompt-artifact", docID,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if got := strings.TrimSpace(lastPrompt(t, backend)); got != "You are the grooming agent." {
 		t.Fatalf("prompt = %q, want the artifact body verbatim", got)
 	}
@@ -74,7 +74,7 @@ func TestRunCommandTasklessRequiresPromptSource(t *testing.T) {
 	r := newRunner(t)
 	r.runHarness = harnessfake.New("opencode")
 
-	err := r.runErr("run", "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	err := r.runErr("run", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("no task, goal, or prompt error = %v, want usage", err)
 	}
@@ -88,7 +88,7 @@ func TestRunCommandTasklessRequiresProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := r.runErr("run", "--prompt-file", path, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	err := r.runErr("run", "--prompt-file", path, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("task-less run with no project error = %v, want usage", err)
 	}
@@ -103,7 +103,7 @@ func TestRunCommandTasklessPromptFileMissingExitsOne(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope.md")
 
 	err := r.runErr("--config", cfgPath, "run", "--prompt-file", missing,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if errors.Is(err, ErrUsage) {
 		t.Fatalf("missing prompt file error = %v, want a non-usage input error", err)
 	}

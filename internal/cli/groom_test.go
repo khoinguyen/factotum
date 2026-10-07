@@ -130,7 +130,7 @@ func TestGroomCommandInjectsKickoffAndCapturesOutputs(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 
 	out := r.run("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	for _, want := range []string{"session: groom-", "scope:", "report: art-", "deferred: art-", "run: finished", "mode: interactive", "project: " + projectID} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("groom output missing %q:\n%s", want, out)
@@ -194,7 +194,7 @@ func TestGroomCommandLeavesNoPartialArtifactWhenOneOutputMissing(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 
 	if err := r.runErr("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir()); err == nil {
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir()); err == nil {
 		t.Fatal("groom with only the report error = nil, want a missing-output error")
 	}
 	if docs := r.run("doc", "list", "-p", projectID); strings.Contains(docs, "Grooming report") {
@@ -216,7 +216,7 @@ func TestGroomCommandFailsWhenOutputsMissing(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 
 	err := r.runErr("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
-		"--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if err == nil {
 		t.Fatal("groom with no outputs error = nil, want a missing-output error")
 	}
@@ -355,7 +355,7 @@ func TestGroomUnattendedCompletesOrDefers(t *testing.T) {
 			r.runHarness = harnessfake.New("opencode")
 
 			args := append([]string{"--config", cfgPath, "groom", "-p", projectID, "--unattended",
-				"--prompt-file", promptPath, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir()}, scope...)
+				"--prompt-file", promptPath, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir()}, scope...)
 			out, err := runGroomCapture(r, args...)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
@@ -401,7 +401,7 @@ func TestGroomUnattendedReadsSessionWrites(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 
 	out, err := runGroomCapture(r, "--config", cfgPath, "groom", "-p", projectID, "--unattended",
-		"--prompt-file", promptPath, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+		"--prompt-file", promptPath, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if err != nil {
 		t.Fatalf("groom did not see the session's writes: %v\n%s", err, out)
 	}

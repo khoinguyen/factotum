@@ -21,7 +21,7 @@ import (
 
 // runOptions are the per-invocation overrides of the [run] config.
 type runOptions struct {
-	backend        string
+	sandbox        string
 	harness        string
 	workspace      string
 	model          string
@@ -75,7 +75,9 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			return deps.runTask(cmd, args[0], prompt, opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.backend, "backend", "", "isolation backend name (required; e.g. local, openshell, docker)")
+	cmd.Flags().StringVar(&opts.sandbox, "sandbox", "", "isolation backend name (required; e.g. local, openshell, docker)")
+	cmd.Flags().StringVar(&opts.sandbox, "backend", "", "deprecated alias for --sandbox")
+	_ = cmd.Flags().MarkHidden("backend")
 	cmd.Flags().StringVar(&opts.harness, "harness", "", "harness name (required; e.g. opencode)")
 	cmd.Flags().StringVar(&opts.workspace, "workspace", "", "workspace root directory (default under the config dir)")
 	cmd.Flags().StringVar(&opts.model, "model", "", "model override passed to the harness")
@@ -87,6 +89,20 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "use this file's content as the harness prompt (single task or task-less run)")
 	cmd.Flags().StringVar(&opts.promptArtifact, "prompt-artifact", "", "use this artifact's body as the harness prompt (single task or task-less run)")
 	return cmd
+}
+
+// resolveSandboxFlag returns the backend named by --sandbox, accepting the
+// deprecated --backend alias for one release. The two flags bind the same value;
+// naming both is rejected, and the alias warns so the user migrates.
+func (d *Deps) resolveSandboxFlag(cmd *cobra.Command, opts runOptions) (string, error) {
+	alias := cmd.Flags().Changed("backend")
+	if alias && cmd.Flags().Changed("sandbox") {
+		return "", usageError(cmd, "give either --sandbox or its deprecated alias --backend, not both")
+	}
+	if alias {
+		d.warnf("--backend is deprecated; use --sandbox instead")
+	}
+	return opts.sandbox, nil
 }
 
 // resolveRunPrompt resolves the optional prompt override for a run from a file
@@ -142,8 +158,12 @@ type runSelection struct {
 // default backend, and an unknown name is a usage error.
 func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, error) {
 	cfg := d.Config.Run
-	if opts.backend != "" {
-		cfg.Backend = opts.backend
+	sandbox, err := d.resolveSandboxFlag(cmd, opts)
+	if err != nil {
+		return nil, err
+	}
+	if sandbox != "" {
+		cfg.Sandbox = sandbox
 	}
 	if opts.harness != "" {
 		cfg.Harness = opts.harness
@@ -165,8 +185,8 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 	}
 	cfg.PolicyPath = projectPolicyPath(d.ProjectConfigPath)
 
-	if cfg.Backend == "" {
-		return nil, usageError(cmd, "--backend is required (set run.backend or FACTOTUM_RUN_BACKEND); available: %s", strings.Join(d.RunBackends.Names(), ", "))
+	if cfg.Sandbox == "" {
+		return nil, usageError(cmd, "--sandbox is required (set run.sandbox or FACTOTUM_RUN_SANDBOX); available: %s", strings.Join(d.RunBackends.Names(), ", "))
 	}
 	if cfg.Harness == "" {
 		return nil, usageError(cmd, "--harness is required (set run.harness or FACTOTUM_RUN_HARNESS); available: %s", strings.Join(d.RunHarnesses.Names(), ", "))
@@ -176,9 +196,9 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 		return nil, usageError(cmd, "%v", err)
 	}
 
-	backendFactory, err := d.RunBackends.MustLookup(cfg.Backend)
+	backendFactory, err := d.RunBackends.MustLookup(cfg.Sandbox)
 	if err != nil {
-		return nil, usageError(cmd, "unknown isolation backend %q; available: %s", cfg.Backend, strings.Join(d.RunBackends.Names(), ", "))
+		return nil, usageError(cmd, "unknown isolation backend %q; available: %s", cfg.Sandbox, strings.Join(d.RunBackends.Names(), ", "))
 	}
 	backend, err := backendFactory(cfg, d.Err)
 	if err != nil {

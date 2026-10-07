@@ -34,7 +34,7 @@ func TestRunCommandDrivesTaskToReview(t *testing.T) {
 	r.runBackend = backend
 	r.runHarness = harnessfake.New("opencode")
 
-	out := r.run("run", taskID, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	out := r.run("run", taskID, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	for _, want := range []string{"task_id: " + taskID, "run: finished", "status: ready_for_review", "exit_code: 0"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("run output missing %q:\n%s", want, out)
@@ -83,7 +83,7 @@ func TestRunCommandResolvesRelativeRepoPathFromProjectConfigRoot(t *testing.T) {
 	r.runBackend = backend
 	r.runHarness = harnessfake.New("opencode")
 
-	out := r.run("--config", cfgPath, "run", taskID, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	out := r.run("--config", cfgPath, "run", taskID, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if !strings.Contains(out, "run: finished") {
 		t.Fatalf("relative-path run did not finish:\n%s", out)
 	}
@@ -104,10 +104,10 @@ func TestRunCommandRequiresExplicitSelection(t *testing.T) {
 	if err := r.runErr("run", "t-anything", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
 		t.Fatalf("missing backend error = %v, want usage", err)
 	}
-	if err := r.runErr("run", "t-anything", "--backend", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
+	if err := r.runErr("run", "t-anything", "--sandbox", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
 		t.Fatalf("missing harness error = %v, want usage", err)
 	}
-	if err := r.runErr("run", "t-anything", "--backend", "nope", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
+	if err := r.runErr("run", "t-anything", "--sandbox", "nope", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
 		t.Fatalf("unknown backend error = %v, want usage", err)
 	}
 }
@@ -117,7 +117,7 @@ func TestRunCommandLocalBackendRequiresOptIn(t *testing.T) {
 	_, taskID := runContext(t, r)
 	r.runHarness = harnessfake.New("opencode")
 
-	err := r.runErr("run", taskID, "--backend", "local", "--harness", "fake", "--workspace", t.TempDir())
+	err := r.runErr("run", taskID, "--sandbox", "local", "--harness", "fake", "--workspace", t.TempDir())
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("local without opt-in error = %v, want usage", err)
 	}
@@ -134,7 +134,7 @@ func TestRunCommandLoopLocalBackendRequiresOptIn(t *testing.T) {
 	_, _, goal := loopContext(t, r)
 	r.runHarness = harnessfake.New("opencode")
 
-	err := r.runErr("run", "--goal", goal, "--backend", "local", "--harness", "fake", "--workspace", t.TempDir())
+	err := r.runErr("run", "--goal", goal, "--sandbox", "local", "--harness", "fake", "--workspace", t.TempDir())
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("local loop without opt-in error = %v, want usage", err)
 	}
@@ -173,7 +173,7 @@ func TestRunCommandLoopDrivesToGoal(t *testing.T) {
 	r.runBackend = backend
 	r.runHarness = harnessfake.New("opencode")
 
-	out := r.run("run", "--goal", goal, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	out := r.run("run", "--goal", goal, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	for _, want := range []string{"goal: " + goal, "stop: goal_reached", "iterations: 2", prereq} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("run loop output missing %q:\n%s", want, out)
@@ -199,7 +199,7 @@ func TestRunCommandLoopStopsOnBudget(t *testing.T) {
 	r.runBackend = backend
 	r.runHarness = harnessfake.New("opencode")
 
-	out := r.run("run", "--goal", goal, "--max-tasks", "1", "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	out := r.run("run", "--goal", goal, "--max-tasks", "1", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if !strings.Contains(out, "stop: budget_exhausted") {
 		t.Fatalf("run loop output missing budget stop:\n%s", out)
 	}
@@ -232,7 +232,7 @@ func TestRunCommandLoopReportsUngroomedTaskNotRun(t *testing.T) {
 	r.runBackend = backend
 	r.runHarness = harnessfake.New("opencode")
 
-	out := r.run("run", "--goal", goal, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	out := r.run("run", "--goal", goal, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if !strings.Contains(out, "stop: no_ready_work") {
 		t.Fatalf("loop should stall on ungroomed work:\n%s", out)
 	}
@@ -252,10 +252,10 @@ func TestRunCommandLoopGoalSelectionIsExclusive(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 	workspace := t.TempDir()
 
-	if err := r.runErr("run", "t-anything", "--goal", "t-other", "--backend", "fake", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
+	if err := r.runErr("run", "t-anything", "--goal", "t-other", "--sandbox", "fake", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
 		t.Fatalf("task-id + --goal error = %v, want usage", err)
 	}
-	if err := r.runErr("run", "--backend", "fake", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
+	if err := r.runErr("run", "--sandbox", "fake", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
 		t.Fatalf("neither task-id nor --goal error = %v, want usage", err)
 	}
 }
@@ -283,7 +283,7 @@ func TestRunCommandRefreshUpdatesReusedCheckout(t *testing.T) {
 	workspace := t.TempDir()
 	checkout := filepath.Join(workspace, "web")
 	args := func(extra ...string) []string {
-		return append([]string{"run", taskID, "--backend", "fake", "--harness", "fake", "--workspace", workspace}, extra...)
+		return append([]string{"run", taskID, "--sandbox", "fake", "--harness", "fake", "--workspace", workspace}, extra...)
 	}
 
 	r.run(args()...)
@@ -343,7 +343,7 @@ func TestRunCommandFailureLeavesTaskIntact(t *testing.T) {
 	r.runBackend = backend
 	r.runHarness = harnessfake.New("opencode")
 
-	err := r.runErr("run", taskID, "--backend", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	err := r.runErr("run", taskID, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if !errors.Is(err, app.ErrRunFailed) {
 		t.Fatalf("run error = %v, want ErrRunFailed", err)
 	}

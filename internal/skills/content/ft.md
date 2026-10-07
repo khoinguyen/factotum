@@ -347,10 +347,10 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode --allow-host
   replaces the task prompt, and with no task id it runs the prompt once over every repository
   of the configured project (a task-less session such as grooming), writing nothing to the task
   graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error (exit 1).
-- The backend and harness are selected explicitly, by flag or the machine-scoped
-  `[run]` table (`sandbox`, `harness`, `workspace`, `model`, `args`, `allow_host`,
-  `refresh`, `provider`, `credential_env`) or `FACTOTUM_RUN_*` overrides; there is no
-  default backend. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
+- `--sandbox`/`--harness` are optional: they resolve flag > `FACTOTUM_RUN_*` > committed
+  project `[run]` > machine `[run]`. On a terminal an unset one prompts once and saves to
+  the chosen config; without a terminal it is an error. A committed project `[run]` may set
+  only `sandbox`/`harness`; the machine table also holds workspace/model/args/allow_host/credential_env. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
 - `provider` and `credential_env` name the credential a harness may use and the
   variable it arrives under, e.g. `provider = "openrouter"` with
   `credential_env = "OPENROUTER_API_KEY"`; the value is read from the host

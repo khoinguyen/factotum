@@ -19,6 +19,10 @@ ft groom t-abc t-def --sandbox local --harness opencode --allow-host
 ft groom --unattended --sandbox local --harness opencode --allow-host
 ```
 
+`--sandbox` and `--harness` are optional: `ft groom` resolves them like `ft run`
+(flag, env, project `[run]`, machine `[run]`), prompting once on a terminal when
+unset; a machine `[run]` table lets a bare `ft groom` run with no flags.
+
 The prompt is durable repo data at `docs/grooming/prompt.md` - never an
 ephemeral temp file; override it with `--prompt-file`. `ft groom` appends the
 kickoff to the prompt. The kickoff names:

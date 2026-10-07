@@ -44,6 +44,10 @@ func (d *Deps) taskGetHints(ctx context.Context, task *core.Task) []hint {
 	id := string(task.ID)
 	project := string(task.ProjectID)
 
+	if task.Kind == core.KindIdea {
+		return ideaGetHints(task)
+	}
+
 	if waiting := d.unresolvedDeps(ctx, task); len(waiting) > 0 {
 		hints := make([]hint, 0, len(waiting))
 		for _, dep := range waiting {
@@ -241,6 +245,49 @@ func taskSearchHints(tasks []*core.Task, projectID string) []hint {
 	}
 	if projectID != "" {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft task list --project %s", projectID), About: "browse all tasks"})
+	}
+	return hints
+}
+
+// ideaGetHints guides the viewer from an idea back to the idea surface: an idea
+// has no lifecycle, so task verbs like start or assign do not apply.
+func ideaGetHints(idea *core.Task) []hint {
+	switch idea.Status {
+	case core.StatusDone, core.StatusCancelled:
+		return []hint{{Command: fmt.Sprintf("ft idea list --project %s", idea.ProjectID), About: "review the remaining ideas"}}
+	default:
+		return []hint{
+			{Command: fmt.Sprintf("ft idea promote %s", idea.ID), About: "turn it into an executable task"},
+			{Command: fmt.Sprintf("ft idea list --project %s", idea.ProjectID), About: "review the remaining ideas"},
+		}
+	}
+}
+
+func ideaCreateHints(idea *core.Task) []hint {
+	return []hint{
+		{Command: fmt.Sprintf("ft idea get %s", idea.ID), About: "revisit the idea"},
+		{Command: fmt.Sprintf("ft idea promote %s", idea.ID), About: "turn it into an executable task"},
+	}
+}
+
+func ideaListHints(projectID string, ideas []*core.Task) []hint {
+	var hints []hint
+	if projectID != "" {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft idea create --project %s --title \"...\"", projectID), About: "capture an idea"})
+	}
+	if len(ideas) > 0 {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft idea get %s", ideas[0].ID), About: "inspect the first idea"})
+	}
+	return hints
+}
+
+func ideaSearchHints(ideas []*core.Task, projectID string) []hint {
+	var hints []hint
+	if len(ideas) > 0 {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft idea get %s", ideas[0].ID), About: "inspect the top match"})
+	}
+	if projectID != "" {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft idea list --project %s", projectID), About: "browse all ideas"})
 	}
 	return hints
 }

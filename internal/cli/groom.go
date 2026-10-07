@@ -130,6 +130,15 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		return runErr
 	}
 
+	// The session mutates the graph in its own process, so re-read the caller's
+	// store before capturing or judging: a backend that caches at open (jsondir,
+	// jsonfile) would otherwise serve the pre-session snapshot.
+	post, err := d.reopenStore(ctx)
+	if err != nil {
+		return err
+	}
+	defer post.close()
+
 	// Read both outputs before recording either, so a session that wrote only
 	// one of them fails without leaving a partial artifact behind.
 	reportBody, err := readGroomOutput(sessionID, reportPath)
@@ -140,13 +149,13 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	if err != nil {
 		return err
 	}
-	report, err := d.addGroomArtifact(ctx, project.ID, items, sessionID, reportPath, reportBody,
+	report, err := addGroomArtifact(ctx, post.artifacts, project.ID, items, sessionID, reportPath, reportBody,
 		"Grooming report "+sessionID,
 		fmt.Sprintf("Deterministic report for grooming session %s", sessionID))
 	if err != nil {
 		return err
 	}
-	deferred, err := d.addGroomArtifact(ctx, project.ID, items, sessionID, deferredPath, deferredBody,
+	deferred, err := addGroomArtifact(ctx, post.artifacts, project.ID, items, sessionID, deferredPath, deferredBody,
 		"Grooming deferred questions "+sessionID,
 		fmt.Sprintf("Product questions deferred by grooming session %s", sessionID))
 	if err != nil {
@@ -157,7 +166,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	// is either agent-ready or named in the deferred file by the time the
 	// session ends.
 	if opts.unattended {
-		unresolved, err := d.unattendedUnresolved(ctx, project.ID, items, deferredBody)
+		unresolved, err := unattendedUnresolved(ctx, post.tasks, post.actors, project.ID, items, deferredBody)
 		if err != nil {
 			return err
 		}
@@ -287,7 +296,7 @@ func readGroomOutput(sessionID, path string) (string, error) {
 
 // addGroomArtifact records one session output as a doc artifact linked to the
 // session directory, and to the sole item when the scope is one item.
-func (d *Deps) addGroomArtifact(ctx context.Context, projectID core.ProjectID, items []*core.Task, sessionID, path, body, title, brief string) (*core.Artifact, error) {
+func addGroomArtifact(ctx context.Context, artifacts *app.ArtifactService, projectID core.ProjectID, items []*core.Task, sessionID, path, body, title, brief string) (*core.Artifact, error) {
 	input := app.ArtifactInput{
 		ProjectID: projectID,
 		Kind:      core.ArtifactDoc,
@@ -301,7 +310,42 @@ func (d *Deps) addGroomArtifact(ctx context.Context, projectID core.ProjectID, i
 		id := items[0].ID
 		input.TaskID = &id
 	}
-	return d.Artifacts.Add(ctx, input)
+	return artifacts.Add(ctx, input)
+}
+
+// groomStore is the post-run view of the caller's store: the services bound to a
+// backend re-read from disk after the session finished.
+type groomStore struct {
+	tasks     *app.TaskService
+	actors    *app.ActorService
+	artifacts *app.ArtifactService
+	close     func()
+}
+
+// reopenStore returns the caller's store re-read from disk, so the capture and
+// the unattended guard see the graph the session mutated in its own process. A
+// backend that caches at open (jsondir, jsonfile) would otherwise serve the
+// pre-session snapshot. A memory store is returned as-is: reopening would lose
+// it, and no other process can share it.
+func (d *Deps) reopenStore(ctx context.Context) (groomStore, error) {
+	path := d.Config.Store.Options["path"]
+	if path == "" || path == ":memory:" {
+		return groomStore{tasks: d.Tasks, actors: d.Actors, artifacts: d.Artifacts, close: func() {}}, nil
+	}
+	factory, err := d.StoreFactories.MustLookup(d.Config.Store.Backend)
+	if err != nil {
+		return groomStore{}, err
+	}
+	backend, err := factory(ctx, store.Config{Backend: d.Config.Store.Backend, Options: d.Config.Store.Options})
+	if err != nil {
+		return groomStore{}, err
+	}
+	return groomStore{
+		tasks:     app.NewTaskService(backend, d.Clock, d.IDs),
+		actors:    app.NewActorService(backend, d.Clock, d.IDs),
+		artifacts: app.NewArtifactService(backend, d.Clock, d.IDs),
+		close:     func() { _ = backend.Close() },
+	}, nil
 }
 
 // projectDataDir resolves where a project's session outputs live: the directory
@@ -347,18 +391,18 @@ type groomDoc struct {
 // the completion contract: a task groomed and assigned to an agent, or - for an
 // idea - a promoted task that is. An item matching neither means the session
 // stalled or lost work, which unattended mode must never do silently.
-func (d *Deps) unattendedUnresolved(ctx context.Context, projectID core.ProjectID, items []*core.Task, deferredBody string) ([]core.TaskID, error) {
+func unattendedUnresolved(ctx context.Context, tasks *app.TaskService, actors *app.ActorService, projectID core.ProjectID, items []*core.Task, deferredBody string) ([]core.TaskID, error) {
 	var unresolved []core.TaskID
 	var projectTasks []*core.Task
 	for _, item := range items {
 		if strings.Contains(deferredBody, string(item.ID)) {
 			continue
 		}
-		task, err := d.Tasks.Get(ctx, item.ID)
+		task, err := tasks.Get(ctx, item.ID)
 		if err != nil {
 			return nil, err
 		}
-		handled, err := d.itemHandled(ctx, projectID, task, &projectTasks)
+		handled, err := itemHandled(ctx, tasks, actors, projectID, task, &projectTasks)
 		if err != nil {
 			return nil, err
 		}
@@ -372,25 +416,25 @@ func (d *Deps) unattendedUnresolved(ctx context.Context, projectID core.ProjectI
 // itemHandled reports whether an unattended session handled one scoped item: an
 // executable task is handled when it is agent-ready or resolved (the session
 // judged it unnecessary), an idea when a promoted task of it is agent-ready.
-func (d *Deps) itemHandled(ctx context.Context, projectID core.ProjectID, item *core.Task, cache *[]*core.Task) (bool, error) {
+func itemHandled(ctx context.Context, tasks *app.TaskService, actors *app.ActorService, projectID core.ProjectID, item *core.Task, cache *[]*core.Task) (bool, error) {
 	if item.Kind.Executable() {
 		if item.Resolves(core.DefaultResolutionPolicy()) {
 			return true, nil
 		}
-		return d.agentReady(ctx, item)
+		return agentReady(ctx, actors, item)
 	}
 	if *cache == nil {
-		tasks, err := d.Tasks.List(ctx, store.TaskFilter{ProjectID: projectID})
+		listed, err := tasks.List(ctx, store.TaskFilter{ProjectID: projectID})
 		if err != nil {
 			return false, err
 		}
-		*cache = tasks
+		*cache = listed
 	}
 	for _, candidate := range *cache {
 		if !candidate.Kind.Executable() || !dependsOn(candidate, item.ID) {
 			continue
 		}
-		ready, err := d.agentReady(ctx, candidate)
+		ready, err := agentReady(ctx, actors, candidate)
 		if err != nil {
 			return false, err
 		}
@@ -402,11 +446,11 @@ func (d *Deps) itemHandled(ctx context.Context, projectID core.ProjectID, item *
 }
 
 // agentReady is the agent-bucket rule: groomed and assigned to an agent actor.
-func (d *Deps) agentReady(ctx context.Context, task *core.Task) (bool, error) {
+func agentReady(ctx context.Context, actors *app.ActorService, task *core.Task) (bool, error) {
 	if !task.Groomed || task.AssigneeID == nil {
 		return false, nil
 	}
-	actor, err := d.Actors.Get(ctx, *task.AssigneeID)
+	actor, err := actors.Get(ctx, *task.AssigneeID)
 	if err != nil {
 		return false, err
 	}

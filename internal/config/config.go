@@ -3,7 +3,8 @@
 //   - the machine-scoped user file (~/.factotum/config.toml): a registry of
 //     projects plus machine-local paths (database, checkouts);
 //   - the project-scoped file (./.factotum/config.toml): committable project
-//     intent (which project this directory belongs to, actor, hints).
+//     intent (which project this directory belongs to, actor, hints, and the
+//     run harness/sandbox selection).
 //
 // Precedence is env > project file > user file > built-in defaults. The
 // entrypoint may apply flag overrides on top of the resolved result.
@@ -52,8 +53,10 @@ type Config struct {
 	Agent Agent
 	// Run configures the `ft run` launcher: which isolation backend and harness
 	// to select, where to materialize workspaces, and the explicit opt-in to the
-	// unsandboxed local backend. It is machine-scoped (the user file): backend and
-	// harness availability and the opt-in are host properties, never committed.
+	// unsandboxed local backend. The harness and sandbox may be set in either
+	// scope (project intent, then machine default); the host-scoped fields
+	// (workspace, allow_host, credentials) come from the user file only, so a
+	// committed file never carries host paths or opts into the unsandboxed backend.
 	Run Run
 	// Serve configures the dashboard's write side. The token is a shared secret
 	// that gates idea capture; the read side is always open. It is machine-scoped
@@ -68,7 +71,8 @@ type Serve struct {
 }
 
 // Run configures the `ft run` launcher. An empty Sandbox or Harness means the
-// command must be told which to use; there is no safe default sandbox.
+// command must be told which to use (a flag, config, or an interactive prompt);
+// there is no safe default sandbox.
 type Run struct {
 	Sandbox   string
 	Harness   string
@@ -163,9 +167,9 @@ type serveFile struct {
 	Token string `toml:"token"`
 }
 
-// runFile is the machine-scoped [run] table. It is deliberately absent from
-// projectFile: a committed file must never select a sandbox or opt into the
-// unsandboxed host backend.
+// runFile is the machine-scoped [run] table: the full set of launcher settings.
+// A committed project file may carry only the committable subset (harness and
+// sandbox, see projectRunFile); the rest are host properties, so they live here.
 type runFile struct {
 	Sandbox string `toml:"sandbox"`
 	// Backend is the deprecated one-release alias for Sandbox. Sandbox wins when
@@ -181,12 +185,26 @@ type runFile struct {
 	CredentialEnvVar string   `toml:"credential_env"`
 }
 
+// projectRunFile is the project-scoped [run] subset: the harness and sandbox a
+// project commits as intent, so a company project can pin one harness while a
+// personal project pins another. The host-scoped fields (workspace, allow_host,
+// credentials) are deliberately absent: a committed file must never carry a
+// host path or opt into the unsandboxed backend.
+type projectRunFile struct {
+	Sandbox string `toml:"sandbox"`
+	// Backend is the deprecated one-release alias for Sandbox. Sandbox wins when
+	// both are set.
+	Backend string `toml:"backend"`
+	Harness string `toml:"harness"`
+}
+
 type projectFile struct {
-	Project      string    `toml:"project"`
-	DefaultActor string    `toml:"default_actor"`
-	NoHints      *bool     `toml:"no_hints"`
-	Store        fileStore `toml:"store"`
-	Judge        judgeFile `toml:"judge"`
+	Project      string         `toml:"project"`
+	DefaultActor string         `toml:"default_actor"`
+	NoHints      *bool          `toml:"no_hints"`
+	Store        fileStore      `toml:"store"`
+	Judge        judgeFile      `toml:"judge"`
+	Run          projectRunFile `toml:"run"`
 }
 
 // Default returns the built-in configuration. TypeSafe is the default judge provider.
@@ -245,9 +263,11 @@ func Load(in Input) (Config, error) {
 	cfg.Agent.Options = agentOptions
 	cfg.Agent.Provider = firstNonEmpty(strings.TrimSpace(agentOptions["provider"]), Default().Agent.Provider)
 	applyAgentEnv(&cfg.Agent, getenv)
+	// Harness and sandbox are two-scope (project over user); the remaining run
+	// settings are machine-scoped and read from the user file only.
 	cfg.Run = Run{
-		Sandbox:          firstNonEmpty(user.Run.Sandbox, user.Run.Backend),
-		Harness:          user.Run.Harness,
+		Sandbox:          firstNonEmpty(project.Run.Sandbox, project.Run.Backend, user.Run.Sandbox, user.Run.Backend),
+		Harness:          firstNonEmpty(project.Run.Harness, user.Run.Harness),
 		Workspace:        expand(user.Run.Workspace, cfg.Project),
 		Model:            user.Run.Model,
 		AllowHost:        user.Run.AllowHost,

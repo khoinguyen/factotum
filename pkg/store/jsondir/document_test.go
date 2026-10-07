@@ -200,6 +200,60 @@ func TestNoteBodyMayContainHeadings(t *testing.T) {
 	}
 }
 
+func TestDescriptionMayContainDelimiterLines(t *testing.T) {
+	description := "before\n<!-- ft:notes -->\n<!-- ft:note: {\"id\":\"fake\"} -->\nafter"
+	task := core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, Description: description}
+	data, err := encodeTask(task, nil)
+	if err != nil {
+		t.Fatalf("encodeTask() error = %v", err)
+	}
+	got, _, err := decodeTask(data)
+	if err != nil {
+		t.Fatalf("decodeTask() error = %v\n%s", err, data)
+	}
+	if got.Description != description {
+		t.Fatalf("Description = %q, want %q", got.Description, description)
+	}
+	if len(got.Notes) != 0 {
+		t.Fatalf("Notes = %#v, want none", got.Notes)
+	}
+}
+
+func TestNoteBodyMayContainDelimiterLines(t *testing.T) {
+	body := "<!-- ft:note: {\"id\":\"fake\"} -->\nand\n<!-- ft:notes -->\ntail"
+	task := core.Task{
+		ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo,
+		Notes: []core.Note{{ID: "note-1", Body: body}},
+	}
+	data, err := encodeTask(task, nil)
+	if err != nil {
+		t.Fatalf("encodeTask() error = %v", err)
+	}
+	got, _, err := decodeTask(data)
+	if err != nil {
+		t.Fatalf("decodeTask() error = %v\n%s", err, data)
+	}
+	if !reflect.DeepEqual(got.Notes, task.Notes) {
+		t.Fatalf("notes = %#v, want %#v", got.Notes, task.Notes)
+	}
+}
+
+func TestBodyMayContainBackslashLines(t *testing.T) {
+	description := `\a literal backslash line`
+	task := core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, Description: description}
+	data, err := encodeTask(task, nil)
+	if err != nil {
+		t.Fatalf("encodeTask() error = %v", err)
+	}
+	got, _, err := decodeTask(data)
+	if err != nil {
+		t.Fatalf("decodeTask() error = %v\n%s", err, data)
+	}
+	if got.Description != description {
+		t.Fatalf("Description = %q, want %q", got.Description, description)
+	}
+}
+
 func TestProjectDocumentRoundTrip(t *testing.T) {
 	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	project := core.Project{

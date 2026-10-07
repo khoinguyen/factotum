@@ -456,13 +456,13 @@ func composeDocument(frontmatter []byte, description string, notes []core.Note) 
 	b.Write(frontmatter)
 	b.WriteString("---\n")
 
-	body := strings.TrimRight(description, "\n")
+	body := escapeBody(strings.TrimRight(description, "\n"))
 	if len(notes) > 0 {
 		body += "\n\n" + notesMarker + "\n"
 		for _, note := range notes {
 			meta, _ := json.Marshal(noteMetadataFrom(note))
 			body += "\n" + notePrefix + string(meta) + noteSuffix + "\n"
-			body += strings.TrimRight(note.Body, "\n") + "\n"
+			body += escapeBody(strings.TrimRight(note.Body, "\n")) + "\n"
 		}
 	}
 	document := b.String() + "\n" + body
@@ -564,13 +564,21 @@ func decodeFrontmatter(frontmatter []byte, out any, known map[string]bool) (map[
 
 // parseBody splits a markdown body into its description and any note sections.
 func parseBody(body []byte) (string, []core.Note, error) {
-	text := string(body)
-	descPart, notesPart := text, ""
-	if idx := strings.Index(text, notesMarker); idx >= 0 {
-		descPart, notesPart = text[:idx], text[idx+len(notesMarker):]
+	lines := strings.Split(string(body), "\n")
+	separator := -1
+	for i, line := range lines {
+		if line == notesMarker {
+			separator = i
+			break
+		}
+	}
+	descPart, notesPart := string(body), ""
+	if separator >= 0 {
+		descPart = strings.Join(lines[:separator], "\n")
+		notesPart = strings.Join(lines[separator+1:], "\n")
 	}
 	descPart = strings.TrimPrefix(descPart, "\n")
-	description := strings.TrimRight(descPart, "\n")
+	description := unescapeBody(strings.TrimRight(descPart, "\n"))
 	notes, err := parseNotes(notesPart)
 	if err != nil {
 		return "", nil, err
@@ -598,13 +606,41 @@ func parseNotes(part string) ([]core.Note, error) {
 			bodyLines = append(bodyLines, lines[i])
 			i++
 		}
-		notes = append(notes, meta.note(strings.TrimRight(strings.Join(bodyLines, "\n"), "\n")))
+		notes = append(notes, meta.note(unescapeBody(strings.TrimRight(strings.Join(bodyLines, "\n"), "\n"))))
 	}
 	return notes, nil
 }
 
 func isNoteHeader(line string) bool {
 	return strings.HasPrefix(line, notePrefix) && strings.HasSuffix(line, noteSuffix)
+}
+
+func isDelimiterLine(line string) bool {
+	return line == notesMarker || isNoteHeader(line)
+}
+
+// escapeBody guards body lines that would otherwise be read as structural
+// markup: the notes separator, a note header, or any line already starting with
+// the escape backslash. unescapeBody is its exact inverse, so a description or
+// note body round-trips even when it contains the delimiters verbatim.
+func escapeBody(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if isDelimiterLine(line) || strings.HasPrefix(line, `\`) {
+			lines[i] = `\` + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func unescapeBody(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, `\`) {
+			lines[i] = line[1:]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func cloneNode(node *yaml.Node) *yaml.Node {

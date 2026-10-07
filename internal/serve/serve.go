@@ -467,10 +467,8 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		CSS:      dashboardCSS,
 	}
 	page.Stats = pageStats{
-		Scope:      len(vs.ids),
-		ReadyAgent: len(snapshot.Ready.Agent),
-		ReadyHuman: len(snapshot.Ready.Human),
-		Cycles:     len(vs.cycles),
+		Scope:  len(vs.ids),
+		Cycles: len(vs.cycles),
 	}
 	if deep, err := snapshot.Graph.WavesDeep(); err == nil {
 		page.Stats.Waves = deep
@@ -497,6 +495,10 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 			page.NextHuman = append(page.NextHuman, view)
 		}
 	}
+	// The header stats count the rows the sections actually list, so a ranker
+	// that omits a ready task cannot make a count exceed its list.
+	page.Stats.ReadyAgent = len(page.NextAgent)
+	page.Stats.ReadyHuman = len(page.NextHuman)
 
 	for _, id := range vs.ids {
 		task := vs.byID[id]

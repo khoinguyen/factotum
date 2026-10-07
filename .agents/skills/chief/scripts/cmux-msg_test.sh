@@ -20,8 +20,15 @@ cat >"$tmp/bin/cmux" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = tree ]; then
   cat "$CMUX_STUB_TREE"
-else
-  printf '%s\n' "$*" >>"$CMUX_STUB_LOG"
+  exit 0
+fi
+printf '%s\n' "$*" >>"$CMUX_STUB_LOG"
+if [ "${1:-}" = agent ] && [ "${2:-}" = message ]; then
+  if [ "${CMUX_STUB_HAS_AGENT:-true}" = "false" ]; then
+    printf '%s\n' '{"recipient_has_agent" : false, "recipient_surface_ref" : "surface:463"}'
+  else
+    printf '%s\n' '{"recipient_has_agent" : true, "recipient_surface_ref" : "surface:463"}'
+  fi
 fi
 STUB
 chmod +x "$tmp/bin/cmux"
@@ -90,28 +97,36 @@ assert_fail() {
 }
 
 assert_run "explicit surface ref" \
-  "agent message surface:999 -- hello world" \
+  "agent message surface:999 --json -- hello world" \
   -- surface:999 hello world
 
 assert_run "explicit workspace ref" \
-  "agent message workspace:52 -- hi" \
+  "agent message workspace:52 --json -- hi" \
   -- workspace:52 hi
 
 assert_run "tab title resolves to surface" \
-  "agent message surface:463 -- ping" \
+  "agent message surface:463 --json -- ping" \
   -- builder-t-demo ping
 
 assert_run "workspace title falls back" \
-  "agent message workspace:52 -- ping" \
+  "agent message workspace:52 --json -- ping" \
   -- t-demo ping
 
 assert_run "workspace title with regex metachars stays literal" \
-  "agent message workspace:9 -- ping" \
+  "agent message workspace:9 --json -- ping" \
   -- 'a[1]' ping
+
+export CMUX_STUB_HAS_AGENT=false
+assert_run "no recipient agent falls back to paste" \
+  "agent message workspace:52 --json -- ping
+paste --surface surface:463 --submit -- ping
+agent inbox --surface surface:463 --state queued --mark-read" \
+  -- t-demo ping
+unset CMUX_STUB_HAS_AGENT
 
 export CMUX_MSG_FROM=builder-t-demo
 assert_run "CMUX_MSG_FROM becomes --from" \
-  "agent message surface:463 --from builder-t-demo -- ping" \
+  "agent message surface:463 --from builder-t-demo --json -- ping" \
   -- builder-t-demo ping
 unset CMUX_MSG_FROM
 

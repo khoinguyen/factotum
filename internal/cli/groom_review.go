@@ -164,20 +164,22 @@ func recordReviewFindings(ctx context.Context, tasks *app.TicketService, session
 	return nil
 }
 
-// applyReviewGate enforces the build gate. A needs-rework verdict blocks every
-// still-open task the session produced and returns the ids now blocked; an
-// approving verdict unblocks exactly the tasks a prior failing review blocked.
+// applyReviewGate enforces the build gate. A needs-rework verdict re-asserts the
+// block on every task the session produced and returns the ids this review is
+// holding blocked now; an approving verdict unblocks exactly the tasks a prior
+// failing review blocked. It re-evaluates each produced id every pass, so a task
+// moved out of blocked (started or reopened) is blocked again rather than
+// reported blocked while the gate is silently open. A task someone else blocked
+// is never claimed, and a task since deleted is dropped.
 func (d *Deps) applyReviewGate(ctx context.Context, session groom.SessionRecord, verdict groom.ReviewVerdict) ([]string, error) {
+	previouslyBlocked := make(map[string]bool, len(session.Blocked))
+	for _, id := range session.Blocked {
+		previouslyBlocked[id] = true
+	}
+
 	if verdict.BlocksBuild() {
-		blocked := append([]string(nil), session.Blocked...)
-		seen := make(map[string]bool, len(blocked))
-		for _, id := range blocked {
-			seen[id] = true
-		}
+		var blocked []string
 		for _, id := range session.Produced {
-			if seen[id] {
-				continue
-			}
 			task, err := d.Tasks.Get(ctx, core.TicketID(id))
 			if errors.Is(err, core.ErrNotFound) {
 				continue
@@ -185,14 +187,21 @@ func (d *Deps) applyReviewGate(ctx context.Context, session groom.SessionRecord,
 			if err != nil {
 				return nil, err
 			}
-			if task.Status != core.StatusTodo && task.Status != core.StatusInProgress {
-				continue
+			switch task.Status {
+			case core.StatusTodo, core.StatusInProgress:
+				if _, err := d.Tasks.SetStatus(ctx, task.ID, core.StatusBlocked); err != nil {
+					return nil, err
+				}
+				blocked = append(blocked, id)
+			case core.StatusBlocked:
+				// Keep a block this gate set before; never claim another's.
+				if previouslyBlocked[id] {
+					blocked = append(blocked, id)
+				}
+			default:
+				// Terminal or past build (done, cancelled, ready_for_review):
+				// not buildable work, so the gate no longer holds it.
 			}
-			if _, err := d.Tasks.SetStatus(ctx, task.ID, core.StatusBlocked); err != nil {
-				return nil, err
-			}
-			blocked = append(blocked, id)
-			seen[id] = true
 		}
 		return blocked, nil
 	}

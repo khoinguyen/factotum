@@ -104,7 +104,7 @@ Configuration has two scopes, merged `env > project file > user file > defaults`
 
 `ft init` wires both up and registers the project. Add the repositories it spans with
 `ft project repo` (a project created outside a git checkout uses `ft project create <name> --repo
-"name=url,brief=..."` instead):
+"name=<repo>,url=<url>,brief=<brief>"` instead):
 
 ```sh
 ft project repo create acme backend --url git@github.com:acme/backend.git --brief "Go API service"

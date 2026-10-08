@@ -182,6 +182,53 @@ func TestRunPromptOverrideReplacesTaskPrompt(t *testing.T) {
 	}
 }
 
+// TestRunCompleteReportsSuccess pins that the run's `complete` flag means the
+// run succeeded, not that a harness completion sentinel fired. A harness with
+// no sentinel exits zero on success; reporting complete:false there reads as a
+// failure alongside run:finished and exit_code:0.
+func TestRunCompleteReportsSuccess(t *testing.T) {
+	tests := []struct {
+		name       string
+		exitCode   int
+		wantErr    bool
+		wantStatus core.TicketStatus
+		wantOutput string
+	}{
+		{name: "success exit zero", exitCode: 0, wantErr: false, wantStatus: core.StatusReadyForReview, wantOutput: "all done"},
+		{name: "failure nonzero exit", exitCode: 2, wantErr: true, wantStatus: core.StatusTodo, wantOutput: "all done"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRunFixture(t)
+			f.backend.Program(isolation.ExecResult{Stdout: []byte("all done\n"), ExitCode: tc.exitCode})
+
+			outcome, err := f.run(t, RunInput{})
+			if tc.wantErr {
+				if !errors.Is(err, ErrRunFailed) {
+					t.Fatalf("Run() error = %v, want ErrRunFailed", err)
+				}
+			} else if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if outcome == nil {
+				t.Fatal("outcome = nil")
+			}
+			if outcome.Complete != !tc.wantErr {
+				t.Fatalf("outcome.Complete = %v, want %v", outcome.Complete, !tc.wantErr)
+			}
+			if outcome.Status != tc.wantStatus {
+				t.Fatalf("outcome.Status = %q, want %q", outcome.Status, tc.wantStatus)
+			}
+			if outcome.ExitCode != tc.exitCode {
+				t.Fatalf("outcome.ExitCode = %d, want %d", outcome.ExitCode, tc.exitCode)
+			}
+			if outcome.Output != tc.wantOutput {
+				t.Fatalf("outcome.Output = %q, want %q", outcome.Output, tc.wantOutput)
+			}
+		})
+	}
+}
+
 func TestRunFailureLeavesTaskStateIntact(t *testing.T) {
 	f := newRunFixture(t)
 	f.backend.Program(isolation.ExecResult{Stdout: []byte("boom"), ExitCode: 2})

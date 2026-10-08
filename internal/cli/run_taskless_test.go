@@ -36,7 +36,7 @@ func TestRunCommandTasklessPromptFileRunsAllRepos(t *testing.T) {
 
 	out := r.run("--config", cfgPath, "run", "--prompt-file", promptPath,
 		"--sandbox", "fake", "--harness", "fake", "--workspace", workspace)
-	for _, want := range []string{"run: finished", "exit_code: 0", "repos: backend, web", "project: " + projectID} {
+	for _, want := range []string{"run: finished", "exit_code: 0", "complete: true", "repos: backend, web", "project: " + projectID} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("task-less run output missing %q:\n%s", want, out)
 		}

@@ -365,10 +365,10 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode --allow-host
   harness's image, mounting only the resolved workspace at its same absolute
   path. It needs the `docker` CLI and a daemon, refuses a policy it cannot
   enforce, and injects credentials per-exec so no secret enters argv or metadata.
-- A successful run moves the task to `ready_for_review` and records a note with the
-  agent's output plus `task.run_started`/`task.run_finished` events. A failed run
-  leaves the task's status untouched and records only a failure note and event, so
-  a broken run never corrupts the graph.
+- A successful run moves the task to `ready_for_review`, reports `run: finished`,
+  `exit_code: 0`, `complete: true`, and records a note with the agent's output plus
+  `task.run_started`/`task.run_finished` events. A failed run leaves the status
+  untouched, reports `run: failed`/`complete: false`, and records only a failure note.
 
 `ft run --goal <task|milestone>` drives the graph toward a goal: it repeatedly runs the highest-ranked agent-ready on-path task until the goal is reached, work stalls, or the budget is exhausted.
 

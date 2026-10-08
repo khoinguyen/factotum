@@ -80,10 +80,13 @@ type RunInput struct {
 // RunOutcome records what a run did. It is populated even when the harness fails
 // so the caller can report the captured output alongside the error.
 type RunOutcome struct {
-	TicketID  core.TicketID
-	Status    core.TicketStatus
-	Output    string
-	ExitCode  int
+	TicketID core.TicketID
+	Status   core.TicketStatus
+	Output   string
+	ExitCode int
+	// Complete reports whether the run finished successfully, which for a
+	// harness is a zero exit code. It is true exactly when the run does not
+	// return ErrRunFailed, so it never reads as failure next to run:finished.
 	Complete  bool
 	Workspace string
 }
@@ -149,7 +152,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		Status:    task.Status,
 		Output:    res.output,
 		ExitCode:  res.exitCode,
-		Complete:  res.complete,
+		Complete:  res.exitCode == 0,
 		Workspace: plan.Root,
 	}
 
@@ -214,6 +217,8 @@ type ProjectRunOutcome struct {
 	ProjectID core.ProjectID
 	Output    string
 	ExitCode  int
+	// Complete reports whether the run finished successfully, which for a
+	// harness is a zero exit code.
 	Complete  bool
 	Workspace string
 	// Checkouts are the project's repos materialized for the run.
@@ -271,7 +276,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		ProjectID: project.ID,
 		Output:    res.output,
 		ExitCode:  res.exitCode,
-		Complete:  res.complete,
+		Complete:  res.exitCode == 0,
 		Workspace: plan.Root,
 		Checkouts: plan.Checkouts,
 		Captured:  res.captured,
@@ -310,7 +315,6 @@ type harnessRun struct {
 type harnessResult struct {
 	exitCode int
 	output   string
-	complete bool
 	// captured holds the requested capture paths' contents, keyed by the path as
 	// requested. Nil when the run requested no capture.
 	captured map[string][]byte
@@ -369,7 +373,7 @@ func (s *RunService) runHarness(ctx context.Context, r harnessRun) (harnessResul
 	if err != nil {
 		return harnessResult{}, err
 	}
-	return harnessResult{exitCode: result.ExitCode, output: parsed.Output, complete: parsed.Complete, captured: captured}, nil
+	return harnessResult{exitCode: result.ExitCode, output: parsed.Output, captured: captured}, nil
 }
 
 // captureFiles reads the requested workspace-relative paths out of the

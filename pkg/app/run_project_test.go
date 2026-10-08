@@ -86,6 +86,9 @@ func TestRunProjectMaterializesAllReposAndDeliversPromptVerbatim(t *testing.T) {
 	if outcome.ExitCode != 0 || outcome.Output != "done" {
 		t.Fatalf("outcome = %+v, want exit 0 and output %q", outcome, "done")
 	}
+	if !outcome.Complete {
+		t.Fatalf("outcome.Complete = false, want true for a successful run")
+	}
 	if len(outcome.Checkouts) != 2 || outcome.Checkouts[0].Name != "backend" || outcome.Checkouts[1].Name != "web" {
 		t.Fatalf("checkouts = %+v, want backend and web", outcome.Checkouts)
 	}
@@ -162,6 +165,9 @@ func TestRunProjectFailureReportsExitCode(t *testing.T) {
 	}
 	if outcome == nil || outcome.ExitCode != 3 {
 		t.Fatalf("outcome = %+v, want exit code 3", outcome)
+	}
+	if outcome.Complete {
+		t.Fatalf("outcome.Complete = true, want false for a failed run")
 	}
 }
 

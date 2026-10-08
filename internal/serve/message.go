@@ -21,8 +21,9 @@ const maxMsgBytes = 64 << 10
 // The message transport is a thin wrapper over app.MessageService: one endpoint
 // per protocol verb, JSON in and out. Reads and writes both require the shared
 // serve token, because private agent comms must not be world-readable to anyone
-// who can reach the dashboard. The wire keys mirror the `ft msg ...` machine
-// output, so the CLI and the transport are one interface with two transports.
+// who can reach the dashboard. The request keys (address, body, run_id, ...)
+// match the `ft msg` flags, and an item is a superset of the `ft msg inbox`
+// list entry (see msgWire); the envelopes match design section 9.
 
 type msgLink struct {
 	Kind string `json:"kind"`
@@ -53,6 +54,11 @@ type msgReadResponse struct {
 	Project string `json:"project"`
 }
 
+// msgWire is the item shape for inbox/get/claim. It is a superset of the
+// `ft msg inbox` list entry: it carries the same id/from/to/state/created_at/
+// project plus body/task_id/reply_to, which claim needs and which a remote
+// reader should not have to fetch separately. (The CLI's own get -o json is
+// deliberately richer still to come; see t-ovcacn224s.)
 type msgWire struct {
 	ID        string `json:"id"`
 	From      string `json:"from,omitempty"`
@@ -62,6 +68,7 @@ type msgWire struct {
 	ReplyTo   string `json:"reply_to,omitempty"`
 	State     string `json:"state"`
 	CreatedAt string `json:"created_at"`
+	Project   string `json:"project"`
 }
 
 type msgInboxResponse struct {
@@ -213,6 +220,10 @@ func msgMethod(w http.ResponseWriter, r *http.Request, want string) bool {
 func (s *Server) handleMsgSend(w http.ResponseWriter, r *http.Request) {
 	var req msgSendRequest
 	if !decodeMsgBody(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.To) == "" {
+		s.msgError(w, fmt.Errorf("%w: to is required", core.ErrInvalid))
 		return
 	}
 	input := app.SendMessageInput{
@@ -497,6 +508,7 @@ func msgWireOf(message *core.Message) msgWire {
 		Body:      message.Body,
 		State:     string(message.State),
 		CreatedAt: message.CreatedAt.UTC().Format(time.RFC3339),
+		Project:   string(message.ProjectID),
 	}
 	if message.From != nil {
 		out.From = string(*message.From)

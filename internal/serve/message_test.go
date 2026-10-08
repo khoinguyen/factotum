@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -258,6 +260,7 @@ func TestMsgSendRejectsBadRequests(t *testing.T) {
 	}{
 		{"unknown address kind", `{"to":"bogus:bob","body":"x"}`},
 		{"empty address id", `{"to":"actor:","body":"x"}`},
+		{"empty target", `{"to":"   ","body":"x"}`},
 		{"empty body", `{"to":"actor:bob","body":"   "}`},
 		{"malformed json", `not json`},
 	}
@@ -312,4 +315,53 @@ func TestMsgMethodNotAllowed(t *testing.T) {
 	if got := resp.Header.Get("Allow"); !strings.Contains(got, "POST") {
 		t.Fatalf("Allow = %q, want POST", got)
 	}
+}
+
+// TestMsgItemShapePinsKeys pins the inbox/get item JSON to the documented
+// superset, so dropping a key (project, body, ...) or drifting from the shape a
+// remote client parses fails loudly instead of only in the server's decoders.
+func TestMsgItemShapePinsKeys(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	task := f.addTask(t, project.ID, "work")
+	ts := msgServer(t, f, project.ID)
+
+	root := decodeMsg[msgSendResponse](t, postMsg(t, ts.URL+"/api/msg/send", testToken,
+		`{"from":"alice","to":"actor:bob","body":"root"}`))
+	sent := decodeMsg[msgSendResponse](t, postMsg(t, ts.URL+"/api/msg/send", testToken,
+		`{"from":"alice","to":"task:`+string(task.ID)+`","body":"child","reply_to":"`+root.ID+`"}`))
+
+	want := []string{"body", "created_at", "from", "id", "project", "reply_to", "state", "task_id", "to"}
+
+	inbox := decodeMsg[struct {
+		Messages []map[string]any `json:"messages"`
+	}](t, getMsg(t, ts.URL+"/api/msg/inbox", testToken))
+	var item map[string]any
+	for _, message := range inbox.Messages {
+		if message["id"] == sent.ID {
+			item = message
+		}
+	}
+	if item == nil {
+		t.Fatalf("inbox did not contain %s: %+v", sent.ID, inbox.Messages)
+	}
+	if keys := sortedKeys(item); !slices.Equal(keys, want) {
+		t.Fatalf("inbox item keys = %v, want %v", keys, want)
+	}
+
+	get := decodeMsg[struct {
+		Message map[string]any `json:"message"`
+	}](t, getMsg(t, ts.URL+"/api/msg/get/"+sent.ID, testToken))
+	if keys := sortedKeys(get.Message); !slices.Equal(keys, want) {
+		t.Fatalf("get item keys = %v, want %v", keys, want)
+	}
+}
+
+func sortedKeys(obj map[string]any) []string {
+	keys := make([]string, 0, len(obj))
+	for key := range obj {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

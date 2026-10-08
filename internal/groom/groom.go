@@ -1,7 +1,8 @@
 // Package groom holds the versioned data that scaffolds a grooming session: the
-// deterministic report template and the deferred-questions file format. The data
-// lives in templates/*.md so changing a template is separate from changing code;
-// the groom skill documents the protocol around it.
+// report template, the deferred-questions file format, and the feature spec,
+// plan, and tech-design templates. The data lives in templates/*.md so changing
+// a template is separate from changing code; the groom skill documents the
+// protocol around it.
 package groom
 
 import (

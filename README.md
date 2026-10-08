@@ -209,15 +209,15 @@ live CLI, so a skill never names a command or flag that no longer exists (`ft sk
 ## Groom a project
 
 `ft groom` runs a task-less session over the project's open ideas and ungroomed tasks, using the
-durable prompt at `docs/grooming/prompt.md`, and records its report and deferred questions as doc
-artifacts. It resolves sandbox and harness exactly like `ft run`.
+durable prompt at `docs/grooming/prompt.md`, and records its report, deferred questions, and feature
+spec, plan, and tech design as doc artifacts. It resolves sandbox and harness exactly like `ft run`.
 
 ```sh
 ft groom                 # every open idea + ungroomed task
 ft groom <idea|task>...  # a specific scope
 ft groom --unattended    # no product owner: defer product questions, still finish agent-ready
 ft groom list            # past sessions
-ft groom show <session>  # a session's report, deferred questions, and produced tasks
+ft groom show <session>  # a session's report, deferred questions, feature docs, and produced tasks
 ```
 
 ## Serve the dashboard

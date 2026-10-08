@@ -37,8 +37,9 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 		Long: "Run a task-less grooming session over every repository of the project. `ft groom`\n" +
 			"resolves the scope - the named items, or by default every open idea plus every open\n" +
 			"ungroomed task - injects a session kickoff naming the scope and the workspace-relative\n" +
-			"paths of the report and deferred-questions files, runs the durable grooming prompt through the\n" +
-			"run service, and records the two outputs as doc artifacts. With --unattended the kickoff\n" +
+			"paths of the report, deferred-questions, feature spec, plan, and tech-design files, runs the\n" +
+			"durable grooming prompt through the run service, and records the five outputs as doc\n" +
+			"artifacts. With --unattended the kickoff\n" +
 			"tells the session there is no product owner: it defers every product question and still\n" +
 			"finishes agent-ready, and the run fails if any scoped item is left neither agent-ready\n" +
 			"nor deferred. On a terminal the session runs attached to it (the agent's TUI) so the\n" +
@@ -68,7 +69,7 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 }
 
 // runGroom resolves the scope, runs the durable session prompt with the kickoff
-// appended, and captures the two outputs.
+// appended, and captures the five outputs.
 func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) error {
 	ctx := cmd.Context()
 	projectID := d.resolveProject(opts.project)
@@ -608,7 +609,7 @@ func joinTaskIDs(ids []core.TicketID) string {
 
 func groomHints(projectID core.ProjectID, sessionID string, reportID core.ArtifactID) []hint {
 	return []hint{
-		{Command: fmt.Sprintf("ft groom show %s", sessionID), About: "read the session report and deferred questions"},
+		{Command: fmt.Sprintf("ft groom show %s", sessionID), About: "read the session report, deferred questions, and feature docs"},
 		{Command: fmt.Sprintf("ft doc get %s", reportID), About: "read the grooming report artifact"},
 		{Command: fmt.Sprintf("ft doc list -p %s", projectID), About: "see the session artifacts"},
 	}

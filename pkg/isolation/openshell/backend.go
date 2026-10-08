@@ -634,8 +634,9 @@ func (b *Backend) AttachCredential(ctx context.Context, h isolation.Handle, c is
 // A fresh gateway does not carry every provider profile. When the gateway
 // rejects the create because the profile is missing, the profile is imported
 // from the catalog and the create is retried once, so a fresh gateway can run
-// with a provider without an out-of-band import. If it still cannot be created,
-// the error names the exact import command to run by hand.
+// with a provider without an out-of-band import. If the profile is still
+// missing the error names the exact import command to run by hand; if the retry
+// failed for a different reason, that reason is surfaced.
 func (b *Backend) createProvider(ctx context.Context, sandbox string, c isolation.Credential) (string, error) {
 	if c.EnvVar == "" {
 		return "", errors.New("isolation/openshell: credential has no EnvVar")
@@ -658,10 +659,20 @@ func (b *Backend) createProvider(ctx context.Context, sandbox string, c isolatio
 	}
 
 	importErr := b.importProviderProfile(ctx, c.Provider)
-	if _, err := b.run.Run(ctx, b.cmd(args...), env); err == nil {
+	_, retryErr := b.run.Run(ctx, b.cmd(args...), env)
+	switch {
+	case retryErr == nil:
 		return provider, nil
+	case providerProfileMissing(retryErr):
+		// The import did not provision a usable profile, so the manual
+		// import command is still the action.
+		return "", b.missingProfileError(c.Provider, importErr)
+	default:
+		// The import ran but the create failed for another reason (for
+		// example, the credential is not declared by the imported profile).
+		// Surface that cause instead of repeating "not imported".
+		return "", fmt.Errorf("openshell: create provider %q after importing profile %q: %w", provider, c.Provider, retryErr)
 	}
-	return "", b.missingProfileError(c.Provider, importErr)
 }
 
 // importProviderProfile imports a provider profile from the catalog so a fresh

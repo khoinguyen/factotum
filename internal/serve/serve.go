@@ -52,9 +52,11 @@ const ReasonDepUnresolved = string(graph.ReasonDepUnresolved)
 // plain `ft serve` does. The daemon (`ft up`) supplies the controller and gates
 // it with its auto_groom opt-out.
 type CaptureController interface {
-	// Submit is called after a capture is stored. It runs on the request
-	// goroutine, so an implementation that starts long work must do so
-	// asynchronously and must not block the response.
+	// Submit is called after a capture is stored. It runs synchronously on the
+	// request goroutine, so an implementation that starts long work must do so
+	// asynchronously and must not block the response. The context is detached
+	// from the request, so an async continuation may retain it after the handler
+	// returns; it carries request values but is never canceled by the request.
 	Submit(ctx context.Context, capture *core.Ticket)
 }
 

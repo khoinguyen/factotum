@@ -46,6 +46,20 @@ detail URL. It stores the first line as the title and the rest as the body, so
 the raw sentence survives; enrichment is the later grooming step, not part of the
 write.
 
+## Message transport
+
+`ft serve` exposes the message port at `/api/msg/*`, a thin JSON wrapper over
+`app.MessageService` so a receiver on another host can message through the same
+project backend the dashboard reads. The verbs mirror the CLI: `POST send`,
+`GET inbox`, `GET get/<id>`, `POST read`, and the receiver protocol `POST
+ack|nack|register|claim|heartbeat|deregister`. Sends and reads both require the
+shared serve token (`[serve] token` or `FACTOTUM_SERVE_TOKEN`) in the
+`Authorization: Bearer` header - private agent comms are not world-readable -
+and the transport is off when no token or no scoped project is configured
+(403), so an unauthenticated request never reaches the store. The claim
+endpoint returns `{"found":false}` with 200 for an empty long-poll, so a receiver
+loop distinguishes "nothing yet" from an error.
+
 ## Reason-chip wrapping (t-mw2k6rwonj)
 
 That regression lived in the retired server-rendered dashboard HTML. The read

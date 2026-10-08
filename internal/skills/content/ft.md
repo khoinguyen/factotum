@@ -50,7 +50,7 @@ ft serve                        # live dashboard + token-gated capture; also -p 
 ```
 `ft serve` is an idea-centric live dashboard: ideas roll up promoted tasks, a kanban groups by
 origin idea, idea/task/memory/doc drill down; reads open and SSE-live. The whole app is the
-shadcn/ui app (`mise run build-web` → `web/dist`, embedded) at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` posts a sentence to the token-gated `/api/capture` as an idea or a bug.
+shadcn/ui app (`mise run build-web` → `web/dist`, embedded) at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` posts a sentence to the token-gated `/api/capture` as an idea or a bug. The message port rides the same token at `/api/msg/*` (`send`,`inbox`,`get`,`read`,`ack`,`nack`,`register`,`claim`,`heartbeat`,`deregister`) so a receiver on another host can message through the project backend; no token leaves it off.
 
 ## Move work through its lifecycle
 
@@ -247,7 +247,7 @@ ft msg send <address|ticket-id> <text> -p <project>; ft msg inbox -p <project> [
 ft msg agent register|claim|ack|nack|heartbeat|deregister ...   # receiver protocol, JSON in/out
 ```
 
-A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`); `ft msg read` is idempotent and `--from` defaults to the configured actor. A receiver registers with `ft msg agent register`, long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode harness stages that plugin (per the `FACTOTUM_*` env it sets) when the run has an actor.
+A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`); `ft msg read` is idempotent and `--from` defaults to the configured actor. A receiver registers with `ft msg agent register`, long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode harness stages that plugin (per the `FACTOTUM_*` env it sets) when the run has an actor. For a receiver on another host, the same protocol rides `ft serve` at `/api/msg/*` (token-gated by `serve.token`); a local `ft msg ...` and a remote HTTP client are two transports over one store.
 
 ## Diagnose the optional subsystems
 

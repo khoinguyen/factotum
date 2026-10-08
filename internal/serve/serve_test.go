@@ -35,6 +35,7 @@ type fixture struct {
 	tasks     *app.TicketService
 	actors    *app.ActorService
 	artifacts *app.ArtifactService
+	messages  *app.MessageService
 	clock     fixedClock
 }
 
@@ -50,6 +51,7 @@ func newFixture(t *testing.T) *fixture {
 		tasks:     app.NewTicketService(backend, clock, ids),
 		actors:    app.NewActorService(backend, clock, ids),
 		artifacts: app.NewArtifactService(backend, clock, ids),
+		messages:  app.NewMessageService(backend, clock, ids),
 		clock:     clock,
 	}
 }

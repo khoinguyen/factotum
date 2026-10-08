@@ -104,12 +104,10 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		return err
 	}
 	sessionID := d.IDs.NewID("groom")
-	reportPath := groom.ReportPath(dataDir, sessionID)
-	deferredPath := groom.DeferredQuestionsPath(dataDir, sessionID)
-	// The session writes inside its workspace (a sandboxed backend denies any
-	// other path); ft copies the staged files out to the durable session dir.
-	stagedReport := groom.StagedReportPath(sessionID)
-	stagedDeferred := groom.StagedDeferredQuestionsPath(sessionID)
+	// Every session emits five deterministic documents. The session writes them
+	// inside its workspace (a sandboxed backend denies any other path); ft
+	// copies the staged files out to the durable session dir.
+	outputs := groomOutputs(dataDir, sessionID)
 
 	// Snapshot the graph and start time before the session runs, so the
 	// manifest can name the tasks the session produced.
@@ -119,8 +117,15 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	}
 	started := d.Clock.Now()
 
+	// The session stages its outputs at the workspace-relative paths the kickoff
+	// names; the run service captures exactly those files.
+	capture := make([]string, 0, len(outputs))
+	for _, o := range outputs {
+		capture = append(capture, o.staged)
+	}
+
 	prompt := strings.TrimRight(string(promptBytes), "\n") + "\n\n" +
-		groom.Kickoff(string(projectID), groomScopeItems(items), stagedReport, stagedDeferred, opts.unattended)
+		groom.Kickoff(string(projectID), groomScopeItems(items), groom.StagedPaths(sessionID), opts.unattended)
 
 	sel, err := d.prepareRun(cmd, opts.run)
 	if err != nil {
@@ -139,7 +144,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		Model:            sel.model,
 		Args:             sel.args,
 		Prompt:           prompt,
-		Capture:          []string{stagedReport, stagedDeferred},
+		Capture:          capture,
 		Interactive:      interactive,
 	})
 	progress.stop()
@@ -162,34 +167,31 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	}
 	defer post.close()
 
-	// Read both outputs before recording either, so a session that wrote only
-	// one of them fails without leaving a partial artifact behind.
-	reportBody, err := captureGroomOutput(sessionID, stagedReport, outcome.Captured)
-	if err != nil {
-		return err
+	// Read every output before recording any, so a session that wrote only some
+	// of them fails without leaving a partial artifact behind.
+	bodies := make(map[string]string, len(outputs))
+	for _, o := range outputs {
+		body, err := captureGroomOutput(sessionID, o.staged, outcome.Captured)
+		if err != nil {
+			return err
+		}
+		bodies[o.key] = body
 	}
-	deferredBody, err := captureGroomOutput(sessionID, stagedDeferred, outcome.Captured)
-	if err != nil {
-		return err
+	for _, o := range outputs {
+		if err := writeGroomOutput(o.path, bodies[o.key]); err != nil {
+			return err
+		}
 	}
-	if err := writeGroomOutput(reportPath, reportBody); err != nil {
-		return err
+	artifacts := make(map[string]core.ArtifactID, len(outputs))
+	for _, o := range outputs {
+		artifact, err := addGroomArtifact(ctx, post.artifacts, project.ID, items, sessionID, o.path, bodies[o.key], o.kind, o.title, o.brief)
+		if err != nil {
+			return err
+		}
+		artifacts[o.key] = artifact.ID
 	}
-	if err := writeGroomOutput(deferredPath, deferredBody); err != nil {
-		return err
-	}
-	report, err := addGroomArtifact(ctx, post.artifacts, project.ID, items, sessionID, reportPath, reportBody,
-		"Grooming report "+sessionID,
-		fmt.Sprintf("Deterministic report for grooming session %s", sessionID))
-	if err != nil {
-		return err
-	}
-	deferred, err := addGroomArtifact(ctx, post.artifacts, project.ID, items, sessionID, deferredPath, deferredBody,
-		"Grooming deferred questions "+sessionID,
-		fmt.Sprintf("Product questions deferred by grooming session %s", sessionID))
-	if err != nil {
-		return err
-	}
+	report, deferred := artifacts["report"], artifacts["deferred"]
+	deferredBody := bodies["deferred"]
 
 	// Unattended runs must not leave work silently stranded: every scoped item
 	// is either agent-ready or named in the deferred file by the time the
@@ -201,7 +203,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		}
 		if len(unresolved) > 0 {
 			return fmt.Errorf("groom: unattended session %s left items neither agent-ready nor deferred: %s (see %s)",
-				sessionID, joinTaskIDs(unresolved), deferredPath)
+				sessionID, joinTaskIDs(unresolved), groom.DeferredQuestionsPath(dataDir, sessionID))
 		}
 	}
 
@@ -212,41 +214,50 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		return err
 	}
 	record := groom.SessionRecord{
-		ID:        sessionID,
-		Project:   string(project.ID),
-		Mode:      mode,
-		CreatedAt: started,
-		Scope:     groomScopeItems(items),
-		Report:    string(report.ID),
-		Deferred:  string(deferred.ID),
-		Produced:  produced,
+		ID:         sessionID,
+		Project:    string(project.ID),
+		Mode:       mode,
+		CreatedAt:  started,
+		Scope:      groomScopeItems(items),
+		Report:     string(report),
+		Deferred:   string(deferred),
+		Spec:       string(artifacts["spec"]),
+		Plan:       string(artifacts["plan"]),
+		TechDesign: string(artifacts["tech_design"]),
+		Produced:   produced,
 	}
 	if err := groom.WriteSession(dataDir, record); err != nil {
 		return err
 	}
 
 	doc := groomDoc{
-		Session:  sessionID,
-		Scope:    scopeIDs(items),
-		Report:   string(report.ID),
-		Deferred: string(deferred.ID),
-		Run:      "finished",
-		Mode:     mode,
-		Project:  string(project.ID),
-		Repo:     "",
+		Session:    sessionID,
+		Scope:      scopeIDs(items),
+		Report:     string(report),
+		Deferred:   string(deferred),
+		Spec:       string(artifacts["spec"]),
+		Plan:       string(artifacts["plan"]),
+		TechDesign: string(artifacts["tech_design"]),
+		Run:        "finished",
+		Mode:       mode,
+		Project:    string(project.ID),
+		Repo:       "",
 	}
 	return d.emit(doc, func() {
 		d.printFields(
 			f("session", sessionID),
 			f("scope", strings.Join(doc.Scope, ", ")),
-			f("report", report.ID),
-			f("deferred", deferred.ID),
+			f("report", report),
+			f("deferred", deferred),
+			f("spec", artifacts["spec"]),
+			f("plan", artifacts["plan"]),
+			f("tech_design", artifacts["tech_design"]),
 			f("run", "finished"),
 			f("mode", mode),
 			f("project", project.ID),
 			f("repo", d.repoValue("")),
 		)
-	}, groomHints(project.ID, sessionID, report.ID)...)
+	}, groomHints(project.ID, sessionID, report)...)
 }
 
 // groomMode names a session's mode for its manifest and output. A session is
@@ -366,12 +377,58 @@ func writeGroomOutput(path, body string) error {
 	return nil
 }
 
-// addGroomArtifact records one session output as a doc artifact linked to the
+// groomOutput names one deterministic session document: the key that identifies
+// it, where the session stages it, where ft captures it, the artifact kind it is
+// recorded as, and the title and brief used when recording it.
+type groomOutput struct {
+	key    string
+	staged string
+	path   string
+	kind   core.ArtifactKind
+	title  string
+	brief  string
+}
+
+// groomOutputs returns the five documents every session emits, in capture order:
+// the report and deferred questions, then the feature spec, plan, and tech
+// design.
+func groomOutputs(dataDir, sessionID string) []groomOutput {
+	staged := groom.StagedPaths(sessionID)
+	return []groomOutput{
+		{
+			key: "report", staged: staged.Report, path: groom.ReportPath(dataDir, sessionID),
+			kind: core.ArtifactDoc, title: "Grooming report " + sessionID,
+			brief: fmt.Sprintf("Deterministic report for grooming session %s", sessionID),
+		},
+		{
+			key: "deferred", staged: staged.Deferred, path: groom.DeferredQuestionsPath(dataDir, sessionID),
+			kind: core.ArtifactDoc, title: "Grooming deferred questions " + sessionID,
+			brief: fmt.Sprintf("Product questions deferred by grooming session %s", sessionID),
+		},
+		{
+			key: "spec", staged: staged.Spec, path: groom.SpecPath(dataDir, sessionID),
+			kind: core.ArtifactSpec, title: "Feature spec " + sessionID,
+			brief: fmt.Sprintf("Feature spec produced by grooming session %s", sessionID),
+		},
+		{
+			key: "plan", staged: staged.Plan, path: groom.PlanPath(dataDir, sessionID),
+			kind: core.ArtifactDoc, title: "Feature plan " + sessionID,
+			brief: fmt.Sprintf("Feature plan produced by grooming session %s", sessionID),
+		},
+		{
+			key: "tech_design", staged: staged.TechDesign, path: groom.TechDesignPath(dataDir, sessionID),
+			kind: core.ArtifactDoc, title: "Feature tech design " + sessionID,
+			brief: fmt.Sprintf("Feature tech design produced by grooming session %s", sessionID),
+		},
+	}
+}
+
+// addGroomArtifact records one session output as an artifact linked to the
 // session directory, and to the sole item when the scope is one item.
-func addGroomArtifact(ctx context.Context, artifacts *app.ArtifactService, projectID core.ProjectID, items []*core.Ticket, sessionID, path, body, title, brief string) (*core.Artifact, error) {
+func addGroomArtifact(ctx context.Context, artifacts *app.ArtifactService, projectID core.ProjectID, items []*core.Ticket, sessionID, path, body string, kind core.ArtifactKind, title, brief string) (*core.Artifact, error) {
 	input := app.ArtifactInput{
 		ProjectID: projectID,
-		Kind:      core.ArtifactDoc,
+		Kind:      kind,
 		Title:     title,
 		Brief:     brief,
 		Body:      body,
@@ -448,14 +505,17 @@ func projectDataDir(cfg config.Config) (string, error) {
 
 // groomDoc is the lossless structured shape of `ft groom`.
 type groomDoc struct {
-	Session  string   `json:"session" yaml:"session"`
-	Scope    []string `json:"scope" yaml:"scope"`
-	Report   string   `json:"report" yaml:"report"`
-	Deferred string   `json:"deferred" yaml:"deferred"`
-	Run      string   `json:"run" yaml:"run"`
-	Mode     string   `json:"mode" yaml:"mode"`
-	Project  string   `json:"project" yaml:"project"`
-	Repo     string   `json:"repo" yaml:"repo"`
+	Session    string   `json:"session" yaml:"session"`
+	Scope      []string `json:"scope" yaml:"scope"`
+	Report     string   `json:"report" yaml:"report"`
+	Deferred   string   `json:"deferred" yaml:"deferred"`
+	Spec       string   `json:"spec" yaml:"spec"`
+	Plan       string   `json:"plan" yaml:"plan"`
+	TechDesign string   `json:"tech_design" yaml:"tech_design"`
+	Run        string   `json:"run" yaml:"run"`
+	Mode       string   `json:"mode" yaml:"mode"`
+	Project    string   `json:"project" yaml:"project"`
+	Repo       string   `json:"repo" yaml:"repo"`
 }
 
 // unattendedUnresolved returns the scoped items an unattended session left

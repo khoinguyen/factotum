@@ -28,7 +28,12 @@ type SessionRecord struct {
 	Scope     []ScopeItem `json:"scope" yaml:"scope"`
 	Report    string      `json:"report" yaml:"report"`
 	Deferred  string      `json:"deferred" yaml:"deferred"`
-	Produced  []string    `json:"produced" yaml:"produced"`
+	// Spec, Plan, and TechDesign are the artifact ids of the session's feature
+	// documents; the durable files are named from the session id.
+	Spec       string   `json:"spec" yaml:"spec"`
+	Plan       string   `json:"plan" yaml:"plan"`
+	TechDesign string   `json:"tech_design" yaml:"tech_design"`
+	Produced   []string `json:"produced" yaml:"produced"`
 }
 
 // SessionManifestPath returns the path of a session's manifest.

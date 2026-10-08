@@ -2,6 +2,7 @@
 
 Scope: <items groomed>
 Session: <prompt file or source>
+Feature docs: spec.md, plan.md, tech-design.md
 
 ## Summary
 

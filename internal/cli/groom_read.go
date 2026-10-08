@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"sort"
 	"strings"
@@ -66,11 +67,11 @@ func newGroomListCommand(deps *Deps) *cobra.Command {
 func newGroomShowCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <session>",
-		Short: "Show a grooming session's report, deferred questions, and produced tasks",
+		Short: "Show a grooming session's report, deferred questions, feature docs, and produced tasks",
 		Long: "Print one recorded grooming session: its scope and mode, the captured report, the\n" +
-			"deferred questions, and the tasks the session produced. The report and deferred bodies\n" +
-			"come from the doc artifacts `ft groom` recorded; the produced tasks are read live from\n" +
-			"the graph.",
+			"deferred questions, the feature spec, plan, and tech design, and the tasks the session\n" +
+			"produced. The bodies come from the doc artifacts `ft groom` recorded; the produced tasks\n" +
+			"are read live from the graph.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dataDir, err := projectDataDir(deps.Config)
@@ -89,21 +90,39 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			specBody, err := deps.optionalSessionOutputBody(cmd.Context(), session.Spec, groom.SpecPath(dataDir, session.ID))
+			if err != nil {
+				return err
+			}
+			planBody, err := deps.optionalSessionOutputBody(cmd.Context(), session.Plan, groom.PlanPath(dataDir, session.ID))
+			if err != nil {
+				return err
+			}
+			techDesignBody, err := deps.optionalSessionOutputBody(cmd.Context(), session.TechDesign, groom.TechDesignPath(dataDir, session.ID))
+			if err != nil {
+				return err
+			}
 			produced, err := deps.producedTaskDocs(cmd.Context(), session.Produced)
 			if err != nil {
 				return err
 			}
 			doc := groomSessionDoc{
-				Session:      session.ID,
-				Created:      session.CreatedAt.UTC().Format(time.RFC3339),
-				Mode:         session.Mode,
-				Project:      session.Project,
-				Scope:        scopeItemIDs(session.Scope),
-				Report:       session.Report,
-				Deferred:     session.Deferred,
-				ReportBody:   reportBody,
-				DeferredBody: deferredBody,
-				Produced:     produced,
+				Session:        session.ID,
+				Created:        session.CreatedAt.UTC().Format(time.RFC3339),
+				Mode:           session.Mode,
+				Project:        session.Project,
+				Scope:          scopeItemIDs(session.Scope),
+				Report:         session.Report,
+				Deferred:       session.Deferred,
+				Spec:           session.Spec,
+				Plan:           session.Plan,
+				TechDesign:     session.TechDesign,
+				ReportBody:     reportBody,
+				DeferredBody:   deferredBody,
+				SpecBody:       specBody,
+				PlanBody:       planBody,
+				TechDesignBody: techDesignBody,
+				Produced:       produced,
 			}
 			return deps.emit(doc, func() {
 				deps.printFields(
@@ -114,9 +133,15 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 					f("scope", strings.Join(doc.Scope, ", ")),
 					f("report", doc.Report),
 					f("deferred", doc.Deferred),
+					f("spec", doc.Spec),
+					f("plan", doc.Plan),
+					f("tech_design", doc.TechDesign),
 				)
 				deps.printf("\n=== Report ===\n%s\n", strings.TrimRight(doc.ReportBody, "\n"))
 				deps.printf("\n=== Deferred questions ===\n%s\n", strings.TrimRight(doc.DeferredBody, "\n"))
+				deps.printf("\n=== Feature spec ===\n%s\n", strings.TrimRight(doc.SpecBody, "\n"))
+				deps.printf("\n=== Feature plan ===\n%s\n", strings.TrimRight(doc.PlanBody, "\n"))
+				deps.printf("\n=== Feature tech design ===\n%s\n", strings.TrimRight(doc.TechDesignBody, "\n"))
 				deps.printf("\n=== Produced tasks ===\n")
 				if len(doc.Produced) == 0 {
 					deps.printf("(none)\n")
@@ -173,16 +198,22 @@ type groomTaskDoc struct {
 
 // groomSessionDoc is the lossless structured shape of `ft groom show`.
 type groomSessionDoc struct {
-	Session      string         `json:"session" yaml:"session"`
-	Created      string         `json:"created" yaml:"created"`
-	Mode         string         `json:"mode" yaml:"mode"`
-	Project      string         `json:"project" yaml:"project"`
-	Scope        []string       `json:"scope" yaml:"scope"`
-	Report       string         `json:"report" yaml:"report"`
-	Deferred     string         `json:"deferred" yaml:"deferred"`
-	ReportBody   string         `json:"report_body" yaml:"report_body"`
-	DeferredBody string         `json:"deferred_body" yaml:"deferred_body"`
-	Produced     []groomTaskDoc `json:"produced" yaml:"produced"`
+	Session        string         `json:"session" yaml:"session"`
+	Created        string         `json:"created" yaml:"created"`
+	Mode           string         `json:"mode" yaml:"mode"`
+	Project        string         `json:"project" yaml:"project"`
+	Scope          []string       `json:"scope" yaml:"scope"`
+	Report         string         `json:"report" yaml:"report"`
+	Deferred       string         `json:"deferred" yaml:"deferred"`
+	Spec           string         `json:"spec" yaml:"spec"`
+	Plan           string         `json:"plan" yaml:"plan"`
+	TechDesign     string         `json:"tech_design" yaml:"tech_design"`
+	ReportBody     string         `json:"report_body" yaml:"report_body"`
+	DeferredBody   string         `json:"deferred_body" yaml:"deferred_body"`
+	SpecBody       string         `json:"spec_body" yaml:"spec_body"`
+	PlanBody       string         `json:"plan_body" yaml:"plan_body"`
+	TechDesignBody string         `json:"tech_design_body" yaml:"tech_design_body"`
+	Produced       []groomTaskDoc `json:"produced" yaml:"produced"`
 }
 
 func scopeItemIDs(items []groom.ScopeItem) []string {
@@ -213,6 +244,18 @@ func (d *Deps) sessionOutputBody(ctx context.Context, artifactID, path string) (
 		return "", err
 	}
 	return string(body), nil
+}
+
+// optionalSessionOutputBody reads one captured feature document, returning an
+// empty body when neither the artifact nor the session file exists. A session
+// recorded before the feature documents existed has no artifact id and no file,
+// and must still be readable.
+func (d *Deps) optionalSessionOutputBody(ctx context.Context, artifactID, path string) (string, error) {
+	body, err := d.sessionOutputBody(ctx, artifactID, path)
+	if artifactID == "" && errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	return body, err
 }
 
 // producedTaskDocs reads the produced task ids live from the graph, so a task

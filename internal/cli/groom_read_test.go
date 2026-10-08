@@ -24,7 +24,7 @@ func tableRow(out, needle string) string {
 }
 
 // seedGroomSession runs one grooming session with the fake backend, which writes
-// the two outputs and creates one produced task, and returns the session id and
+// the five outputs and creates one produced task, and returns the session id and
 // the produced task id.
 func seedGroomSession(t *testing.T, r *runner, projectID, cfgPath, producedTitle string) (sessionID, producedID string) {
 	t.Helper()
@@ -35,10 +35,14 @@ func seedGroomSession(t *testing.T, r *runner, projectID, cfgPath, producedTitle
 	base.Program(isolation.ExecResult{Stdout: []byte("groomed\n"), ExitCode: 0})
 	backend := groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
 		prompt := cmd.Argv[len(cmd.Argv)-1]
-		stageGroomOutputs(t, base, prompt,
-			"# Grooming report - 2026-10-08\n\n## Summary\n\n- items groomed: 1\n\n"+
-				"## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n",
-			"# Deferred questions\n\n## Questions\n\n- Which cache? (item: t-x, owner: PO)\n\n## Resolved\n")
+		docs := defaultGroomDocs()
+		docs.report = "# Grooming report - 2026-10-08\n\n## Summary\n\n- items groomed: 1\n\n" +
+			"## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n"
+		docs.deferred = "# Deferred questions\n\n## Questions\n\n- Which cache? (item: t-x, owner: PO)\n\n## Resolved\n"
+		docs.spec = "# Feature spec - cache\n\n## Summary\n\nCache the parsed config.\n\n## Problem\n\n## Goals\n\n## Non-goals\n\n## Requirements\n\n## Acceptance\n"
+		docs.plan = "# Feature plan - cache\n\n## Summary\n\n## Milestones\n\n## Tasks\n\n## Dependencies\n\n## Verification\n\n## Rollout\n"
+		docs.techDesign = "# Feature tech design - cache\n\n## Summary\n\n## Context\n\n## Design\n\n## Interfaces\n\n## Data\n\n## Cross-cutting impact\n\n## Risks\n"
+		stageGroomOutputs(t, base, prompt, docs)
 		if producedTitle != "" {
 			producedID = firstField(t, r.run("task", "create", "-p", projectID, "-t", producedTitle))
 		}
@@ -123,10 +127,17 @@ func TestGroomShowPrintsReportDeferredAndProduced(t *testing.T) {
 		"session: " + sessionID,
 		"report: art-",
 		"deferred: art-",
+		"spec: art-",
+		"plan: art-",
+		"tech_design: art-",
 		"## Summary",
 		"items groomed: 1",
 		"## Questions",
 		"Which cache?",
+		"=== Feature spec ===",
+		"Cache the parsed config.",
+		"=== Feature plan ===",
+		"=== Feature tech design ===",
 		producedID,
 		"Extract cache module",
 	} {
@@ -143,12 +154,20 @@ func TestGroomShowJSONCarriesBodiesAndTasks(t *testing.T) {
 	sessionID, producedID := seedGroomSession(t, r, projectID, cfgPath, "Extract cache module")
 
 	var doc struct {
-		Session      string `json:"session"`
-		Mode         string `json:"mode"`
-		Project      string `json:"project"`
-		ReportBody   string `json:"report_body"`
-		DeferredBody string `json:"deferred_body"`
-		Produced     []struct {
+		Session        string `json:"session"`
+		Mode           string `json:"mode"`
+		Project        string `json:"project"`
+		Report         string `json:"report"`
+		Deferred       string `json:"deferred"`
+		Spec           string `json:"spec"`
+		Plan           string `json:"plan"`
+		TechDesign     string `json:"tech_design"`
+		ReportBody     string `json:"report_body"`
+		DeferredBody   string `json:"deferred_body"`
+		SpecBody       string `json:"spec_body"`
+		PlanBody       string `json:"plan_body"`
+		TechDesignBody string `json:"tech_design_body"`
+		Produced       []struct {
 			TicketID string `json:"task_id"`
 			Title    string `json:"title"`
 			Status   string `json:"status"`
@@ -165,6 +184,20 @@ func TestGroomShowJSONCarriesBodiesAndTasks(t *testing.T) {
 	}
 	if !strings.Contains(doc.DeferredBody, "## Questions") {
 		t.Fatalf("deferred_body missing deferred content:\n%s", doc.DeferredBody)
+	}
+	if !strings.Contains(doc.SpecBody, "## Problem") {
+		t.Fatalf("spec_body missing the feature spec content:\n%s", doc.SpecBody)
+	}
+	if !strings.Contains(doc.PlanBody, "## Milestones") {
+		t.Fatalf("plan_body missing the feature plan content:\n%s", doc.PlanBody)
+	}
+	if !strings.Contains(doc.TechDesignBody, "## Cross-cutting impact") {
+		t.Fatalf("tech_design_body missing the feature tech design content:\n%s", doc.TechDesignBody)
+	}
+	for name, id := range map[string]string{"spec": doc.Spec, "plan": doc.Plan, "tech_design": doc.TechDesign} {
+		if !strings.HasPrefix(id, "art-") {
+			t.Fatalf("%s artifact id = %q, want an art- id", name, id)
+		}
 	}
 	if len(doc.Produced) != 1 || doc.Produced[0].TicketID != producedID || doc.Produced[0].Title != "Extract cache module" {
 		t.Fatalf("produced = %+v, want the task %s", doc.Produced, producedID)
@@ -220,16 +253,57 @@ func TestGroomShowDeletedProducedTaskIsIdOnly(t *testing.T) {
 
 // TestGroomShowFallsBackToSessionFiles pins sessionOutputBody's fallback: when
 // the recorded output artifact is gone but the session file survives, show reads
-// the file rather than failing.
+// the file rather than failing. It covers all five outputs, feature docs
+// included.
 func TestGroomShowFallsBackToSessionFiles(t *testing.T) {
 	r := newRunner(t)
 	projectID, cfgPath := tasklessContext(t, r)
 	dataDir := filepath.Dir(r.path)
 	sessionID := "groom-manual"
 	rec := groom.SessionRecord{
+		ID:         sessionID,
+		Project:    projectID,
+		Mode:       "interactive",
+		CreatedAt:  time.Now().UTC(),
+		Scope:      []groom.ScopeItem{{ID: "t-x", Kind: "idea", Title: "x"}},
+		Report:     "art-missing",
+		Deferred:   "art-missing-too",
+		Spec:       "art-missing-spec",
+		Plan:       "art-missing-plan",
+		TechDesign: "art-missing-design",
+	}
+	if err := groom.WriteSession(dataDir, rec); err != nil {
+		t.Fatalf("WriteSession error = %v", err)
+	}
+	mustWrite(t, groom.ReportPath(dataDir, sessionID), "# Grooming report - manual\n\n## Summary\n")
+	mustWrite(t, groom.DeferredQuestionsPath(dataDir, sessionID), "# Deferred questions\n\n## Questions\n")
+	mustWrite(t, groom.SpecPath(dataDir, sessionID), "# Feature spec - manual\n\n## Problem\n")
+	mustWrite(t, groom.PlanPath(dataDir, sessionID), "# Feature plan - manual\n\n## Milestones\n")
+	mustWrite(t, groom.TechDesignPath(dataDir, sessionID), "# Feature tech design - manual\n\n## Risks\n")
+
+	out := r.run("--config", cfgPath, "groom", "show", sessionID)
+	for _, want := range []string{
+		"# Grooming report - manual", "# Deferred questions",
+		"# Feature spec - manual", "# Feature plan - manual", "# Feature tech design - manual",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("groom show did not fall back to the session file %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestGroomShowOldSessionWithoutFeatureDocs pins backward compatibility: a
+// session recorded before the feature documents existed (no artifact ids, no
+// files) is still readable; its feature sections are simply empty.
+func TestGroomShowOldSessionWithoutFeatureDocs(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	dataDir := filepath.Dir(r.path)
+	sessionID := "groom-legacy"
+	rec := groom.SessionRecord{
 		ID:        sessionID,
 		Project:   projectID,
-		Mode:      "interactive",
+		Mode:      "headless",
 		CreatedAt: time.Now().UTC(),
 		Scope:     []groom.ScopeItem{{ID: "t-x", Kind: "idea", Title: "x"}},
 		Report:    "art-missing",
@@ -238,14 +312,12 @@ func TestGroomShowFallsBackToSessionFiles(t *testing.T) {
 	if err := groom.WriteSession(dataDir, rec); err != nil {
 		t.Fatalf("WriteSession error = %v", err)
 	}
-	mustWrite(t, groom.ReportPath(dataDir, sessionID), "# Grooming report - manual\n\n## Summary\n")
-	mustWrite(t, groom.DeferredQuestionsPath(dataDir, sessionID), "# Deferred questions\n\n## Questions\n")
+	mustWrite(t, groom.ReportPath(dataDir, sessionID), "# Grooming report - legacy\n")
+	mustWrite(t, groom.DeferredQuestionsPath(dataDir, sessionID), "# Deferred questions\n")
 
 	out := r.run("--config", cfgPath, "groom", "show", sessionID)
-	for _, want := range []string{"# Grooming report - manual", "# Deferred questions"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("groom show did not fall back to the session file %q:\n%s", want, out)
-		}
+	if !strings.Contains(out, "# Grooming report - legacy") {
+		t.Fatalf("groom show failed on a legacy session:\n%s", out)
 	}
 }
 

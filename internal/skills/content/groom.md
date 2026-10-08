@@ -11,7 +11,7 @@ You are the **team lead**; the human is the **product owner (PO)**.
 `ft groom [item...]` runs the session. It resolves the **scope** (the named
 items, or by default every open idea plus every open ungroomed task), injects a
 **kickoff**, runs the durable prompt task-less over every repository of the
-project, and captures the two outputs.
+project, and captures the five outputs.
 
 ```sh
 ft groom --sandbox local --harness opencode --allow-host
@@ -47,17 +47,20 @@ kickoff to the prompt. The kickoff names:
 - the scope: every item's id, kind, and title;
 - the workspace-relative **report** path and **deferred-questions** path, under
   `.ft-groom/<session-id>/`, named `report.md` and `deferred-questions.md`;
-- the report and deferred-questions section contracts, in order.
+- the workspace-relative **feature spec**, **plan**, and **tech-design** paths,
+  under the same directory, named `spec.md`, `plan.md`, and `tech-design.md`;
+- the section contract of each document, in order.
 
-Write the report to the report path and the deferred questions to the
-deferred-questions path, relative to your working directory. When the session
-finishes, `ft groom` reads both files back out of the workspace and copies them
-to the durable session dir under the project data dir
-(`grooming-sessions/<session-id>/`), recording each as a `doc` artifact
-(`ft doc list`); a session that writes neither fails with a clear error. The
-paths are inside the workspace on purpose: a sandboxed backend (openshell,
-docker) allows writes only there, and `ft groom` captures them before the
-environment is torn down.
+Write the report to the report path, the deferred questions to the
+deferred-questions path, and the feature documents to the spec, plan, and
+tech-design paths, relative to your working directory. When the session
+finishes, `ft groom` reads all five files back out of the workspace and copies
+them to the durable session dir under the project data dir
+(`grooming-sessions/<session-id>/`), recording each as an artifact (`ft doc
+list`; the spec is kind `spec`, the rest `doc`); a session that misses any
+output fails with a clear error. The paths are inside the workspace on purpose:
+a sandboxed backend (openshell, docker) allows writes only there, and `ft groom`
+captures them before the environment is torn down.
 
 ## Read a session
 
@@ -76,10 +79,11 @@ as `-o json|yaml`, a list of objects with `session`, `created` (RFC3339), `mode`
 configured project; `--project` selects another.
 
 `ft groom show <session>` prints the session metadata, the captured report, the
-deferred questions, and the tasks the session produced, read live from the graph
-(their current kind, status, and title; a task since deleted is named by id
-alone). As `-o json|yaml` it adds `report_body`, `deferred_body`, and a
-`produced` list of `{task_id, kind, title, status}`.
+deferred questions, the feature spec, plan, and tech design, and the tasks the
+session produced, read live from the graph (their current kind, status, and
+title; a task since deleted is named by id alone). As `-o json|yaml` it adds
+`report_body`, `deferred_body`, `spec_body`, `plan_body`, `tech_design_body`,
+and a `produced` list of `{task_id, kind, title, status}`.
 
 The produced set is a window diff - the tasks that appeared in the project while
 the session ran - not strict authorship. In a single-operator session that is
@@ -170,6 +174,45 @@ The deferred-questions file has two sections, in this order:
 1. `Questions` - one entry per deferred product question, with its item, options,
    owner, and the date it was raised.
 2. `Resolved` - questions stakeholders have since answered.
+
+## Feature documents
+
+Alongside the report, every session emits three feature documents from fixed
+templates: a **spec** (what and why), a **plan** (how it lands), and a **tech
+design** (how it is built). Like the report, each is versioned data embedded in
+`ft` - its sections and ordering are fixed and asserted by a test - and the
+session writes it to the matching path in the kickoff. They cover the feature
+the session defines and are the input to the independent architecture review,
+which reads them (`ft doc` artifacts or the session dir) and judges consistency,
+contradiction, overcomplication, and cross-cutting impact.
+
+The feature spec sections, in this order:
+
+1. `Summary`
+2. `Problem`
+3. `Goals`
+4. `Non-goals`
+5. `Requirements`
+6. `Acceptance`
+
+The feature plan sections, in this order:
+
+1. `Summary`
+2. `Milestones`
+3. `Tasks`
+4. `Dependencies`
+5. `Verification`
+6. `Rollout`
+
+The feature tech-design sections, in this order:
+
+1. `Summary`
+2. `Context`
+3. `Design`
+4. `Interfaces`
+5. `Data`
+6. `Cross-cutting impact`
+7. `Risks`
 
 ## DAG hygiene
 

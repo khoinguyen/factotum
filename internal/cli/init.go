@@ -20,9 +20,10 @@ import (
 
 // initOptions is the resolved set of `ft init` flags and arguments.
 type initOptions struct {
-	userOnly bool
-	project  bool
-	name     string
+	userOnly  bool
+	project   bool
+	name      string
+	techStack string
 }
 
 // initResult is the machine-readable shape of `ft init`.
@@ -30,6 +31,7 @@ type initResult struct {
 	UserConfig    string `json:"user_config" yaml:"user_config"`
 	ProjectConfig string `json:"project_config,omitempty" yaml:"project_config,omitempty"`
 	Created       bool   `json:"created" yaml:"created"`
+	TechStack     string `json:"tech_stack,omitempty" yaml:"tech_stack,omitempty"`
 	Project       string `json:"project,omitempty" yaml:"project,omitempty"`
 	Repo          string `json:"repo,omitempty" yaml:"repo,omitempty"`
 }
@@ -119,6 +121,7 @@ func (p *terminalPrompter) Confirm(label string, def bool) (bool, error) {
 
 func newInitCommand(deps *Deps) *cobra.Command {
 	var userOnly, project bool
+	var techStack string
 	cmd := &cobra.Command{
 		Use:   "init [project-name]",
 		Short: "Set up machine and project config for first-run use",
@@ -127,9 +130,11 @@ func newInitCommand(deps *Deps) *cobra.Command {
 			"when missing, and, inside a git repository on a terminal, offer to register\n" +
 			"this directory as a project. --user-only (-u) never touches project scope.\n" +
 			"--project (-p) registers this directory, deriving the project id and name from\n" +
-			"the git remote or the directory name unless a name is given. Without a terminal\n" +
-			"there are no prompts: ft init only creates the machine config, and ft init -p\n" +
-			"registers using the derived defaults.",
+			"the git remote or the directory name unless a name is given. On a greenfield\n" +
+			"directory it asks for the tech stack and records it in the project config, or\n" +
+			"takes --tech-stack when there is no terminal. Without a terminal there are no\n" +
+			"prompts: ft init only creates the machine config, and ft init -p registers\n" +
+			"using the derived defaults.",
 		Args: cobra.MaximumNArgs(1),
 		Annotations: map[string]string{
 			annotationNoCallerStore: "true",
@@ -145,11 +150,12 @@ func newInitCommand(deps *Deps) *cobra.Command {
 				}
 				name = args[0]
 			}
-			return deps.runInit(cmd, initOptions{userOnly: userOnly, project: project, name: name})
+			return deps.runInit(cmd, initOptions{userOnly: userOnly, project: project, name: name, techStack: techStack})
 		},
 	}
 	cmd.Flags().BoolVarP(&userOnly, "user-only", "u", false, "initialize only the machine-scoped config")
 	cmd.Flags().BoolVarP(&project, "project", "p", false, "register the current directory as a project")
+	cmd.Flags().StringVar(&techStack, "tech-stack", "", "record the project's language/framework choice (non-interactive)")
 	return cmd
 }
 
@@ -208,11 +214,12 @@ func (d *Deps) runInit(cmd *cobra.Command, opts initOptions) error {
 	var hints []hint
 	switch {
 	case register:
-		project, created, err := d.registerProject(cmd, p, interactive, userPath, projectPath, cwd, repo, inRepo, opts.name)
+		project, techStack, created, err := d.registerProject(cmd, p, interactive, userPath, projectPath, cwd, repo, inRepo, opts)
 		if err != nil {
 			return err
 		}
 		result.ProjectConfig = projectPath
+		result.TechStack = techStack
 		result.Project = string(project.ID)
 		if len(project.Repos) > 0 {
 			result.Repo = project.Repos[0].Name
@@ -232,6 +239,9 @@ func (d *Deps) runInit(cmd *cobra.Command, opts initOptions) error {
 			fields = append(fields, f("project_config", result.ProjectConfig))
 		}
 		fields = append(fields, f("created", result.Created))
+		if result.TechStack != "" {
+			fields = append(fields, f("tech_stack", result.TechStack))
+		}
 		if result.Project != "" {
 			fields = append(fields, f("project", result.Project))
 		}
@@ -245,24 +255,24 @@ func (d *Deps) runInit(cmd *cobra.Command, opts initOptions) error {
 
 // registerProject writes the machine and project config for a project and makes
 // sure the project entity exists in its store. It prompts only when interactive.
-func (d *Deps) registerProject(cmd *cobra.Command, p Prompter, interactive bool, userPath, projectPath, cwd string, repo gitRepo, inRepo bool, given string) (*core.Project, bool, error) {
-	name, id := deriveProjectName(given, cwd, repo, inRepo)
+func (d *Deps) registerProject(cmd *cobra.Command, p Prompter, interactive bool, userPath, projectPath, cwd string, repo gitRepo, inRepo bool, opts initOptions) (*core.Project, string, bool, error) {
+	name, id := deriveProjectName(opts.name, cwd, repo, inRepo)
 	if interactive {
 		value, err := p.Input("Project id", id)
 		if err != nil {
-			return nil, false, err
+			return nil, "", false, err
 		}
 		id = app.Slug(value)
 		value, err = p.Input("Project name", name)
 		if err != nil {
-			return nil, false, err
+			return nil, "", false, err
 		}
 		if strings.TrimSpace(value) != "" {
 			name = strings.TrimSpace(value)
 		}
 	}
 	if id == "" {
-		return nil, false, usageError(cmd, "project id must contain a letter or digit")
+		return nil, "", false, usageError(cmd, "project id must contain a letter or digit")
 	}
 	if name == "" {
 		name = id
@@ -273,7 +283,7 @@ func (d *Deps) registerProject(cmd *cobra.Command, p Prompter, interactive bool,
 	if interactive {
 		value, err := p.Input("Database path", dbPath)
 		if err != nil {
-			return nil, false, err
+			return nil, "", false, err
 		}
 		if strings.TrimSpace(value) != "" {
 			dbPath = strings.TrimSpace(value)
@@ -287,7 +297,7 @@ func (d *Deps) registerProject(cmd *cobra.Command, p Prompter, interactive bool,
 		if interactive {
 			value, err := p.Input("Repository name", repoName)
 			if err != nil {
-				return nil, false, err
+				return nil, "", false, err
 			}
 			if strings.TrimSpace(value) != "" {
 				repoName = strings.TrimSpace(value)
@@ -296,18 +306,62 @@ func (d *Deps) registerProject(cmd *cobra.Command, p Prompter, interactive bool,
 		repos = append(repos, core.Repository{Name: repoName, URL: repo.Remote, Path: repo.Root})
 	}
 
+	techStack := strings.TrimSpace(opts.techStack)
+	if techStack == "" && interactive && greenfieldDir(projectDir(cwd, repo, inRepo)) {
+		value, err := p.Input("Tech stack (language/framework)", "")
+		if err != nil {
+			return nil, "", false, err
+		}
+		techStack = strings.TrimSpace(value)
+	}
+
 	if _, err := config.WriteProjectConfig(projectPath, id); err != nil {
-		return nil, false, err
+		return nil, "", false, err
+	}
+	if techStack != "" {
+		if _, err := config.WriteProjectTechStack(projectPath, techStack); err != nil {
+			return nil, "", false, err
+		}
 	}
 	createdEntry, err := config.AddProjectEntry(userPath, id, dbPath)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	project, createdProject, err := d.ensureProject(cmd, id, name, repos, dbFS)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
-	return project, createdEntry || createdProject, nil
+	return project, techStack, createdEntry || createdProject, nil
+}
+
+// projectDir is the directory `ft init` registers and inspects for greenfield:
+// the git root when there is one, else the current directory.
+func projectDir(cwd string, repo gitRepo, inRepo bool) string {
+	if inRepo && repo.Root != "" {
+		return repo.Root
+	}
+	return cwd
+}
+
+// greenfieldDir reports whether dir looks like a fresh project with no source
+// files yet: it holds no visible entries. A missing or unreadable directory is
+// treated as greenfield, so a git root that does not exist locally still offers
+// the setup question.
+func greenfieldDir(dir string) bool {
+	if dir == "" {
+		return true
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return true
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // ensureProject opens the project's store and creates the project entity when it

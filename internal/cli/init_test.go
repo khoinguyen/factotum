@@ -193,7 +193,7 @@ func TestInitBareInRepoInteractiveYes(t *testing.T) {
 	r := newRunner(t)
 	r.gitDetect = fakeRepo
 	r.isTerminal = terminal
-	p := &scriptedPrompter{t: t, confirms: []bool{true}, inputs: []string{"", "", "", ""}}
+	p := &scriptedPrompter{t: t, confirms: []bool{true}, inputs: []string{"", "", "", "", "go"}}
 	r.prompt = p
 
 	out := r.run("init")
@@ -203,8 +203,96 @@ func TestInitBareInRepoInteractiveYes(t *testing.T) {
 	if project := readFile(t, r.projectPath); !strings.Contains(project, `project = "widget"`) {
 		t.Fatalf("project config missing the pin:\n%s", project)
 	}
-	if len(p.asked) != 5 || !strings.HasPrefix(p.asked[0], "confirm:") {
-		t.Fatalf("prompt sequence = %v, want a confirm then four inputs", p.asked)
+	if len(p.asked) != 6 || !strings.HasPrefix(p.asked[0], "confirm:") {
+		t.Fatalf("prompt sequence = %v, want a confirm then five inputs", p.asked)
+	}
+	if !strings.HasPrefix(p.asked[5], "input:Tech stack") {
+		t.Fatalf("last prompt = %q, want the tech-stack question", p.asked[5])
+	}
+	if project := readFile(t, r.projectPath); !strings.Contains(project, `tech_stack = "go"`) {
+		t.Fatalf("greenfield init did not record the tech stack:\n%s", project)
+	}
+}
+
+// TestInitGreenfieldAsksTechStack pins the acceptance behavior: registering a
+// greenfield directory interactively asks a tech-stack question and records the
+// answer in the committed project config.
+func TestInitGreenfieldAsksTechStack(t *testing.T) {
+	r := newRunner(t)
+	root := t.TempDir()
+	r.gitDetect = func(string) (gitRepo, bool) {
+		return gitRepo{Root: root, Remote: "git@github.com:acme/widget.git"}, true
+	}
+	r.isTerminal = terminal
+	p := &scriptedPrompter{t: t, confirms: []bool{true}, inputs: []string{"", "", "", "", "rust"}}
+	r.prompt = p
+
+	out := r.run("init", "-p")
+	if !strings.Contains(out, "tech_stack: rust") {
+		t.Fatalf("init output missing the recorded tech stack:\n%s", out)
+	}
+	if project := readFile(t, r.projectPath); !strings.Contains(project, `tech_stack = "rust"`) {
+		t.Fatalf("project config missing the tech stack:\n%s", project)
+	}
+}
+
+// TestInitGreenfieldNonInteractiveDefault pins the non-interactive default: no
+// prompt runs, and with no --tech-stack nothing is recorded.
+func TestInitGreenfieldNonInteractiveDefault(t *testing.T) {
+	r := newRunner(t)
+	root := t.TempDir()
+	r.gitDetect = func(string) (gitRepo, bool) {
+		return gitRepo{Root: root, Remote: "git@github.com:acme/widget.git"}, true
+	}
+
+	out := r.run("init", "-p")
+	if strings.Contains(out, "tech_stack") {
+		t.Fatalf("non-interactive init with no flag should record no tech stack:\n%s", out)
+	}
+	if project := readFile(t, r.projectPath); strings.Contains(project, "tech_stack") {
+		t.Fatalf("non-interactive init should not write a tech stack:\n%s", project)
+	}
+}
+
+// TestInitTechStackFlagNonInteractive pins the non-interactive channel: the flag
+// records the choice without a terminal.
+func TestInitTechStackFlagNonInteractive(t *testing.T) {
+	r := newRunner(t)
+	root := t.TempDir()
+	r.gitDetect = func(string) (gitRepo, bool) {
+		return gitRepo{Root: root, Remote: "git@github.com:acme/widget.git"}, true
+	}
+
+	out := r.run("init", "-p", "--tech-stack", "go")
+	if !strings.Contains(out, "tech_stack: go") {
+		t.Fatalf("init --tech-stack output missing the choice:\n%s", out)
+	}
+	if project := readFile(t, r.projectPath); !strings.Contains(project, `tech_stack = "go"`) {
+		t.Fatalf("project config missing the flagged tech stack:\n%s", project)
+	}
+}
+
+// TestInitNonGreenfieldSkipsTechStack pins that the question is only asked for a
+// greenfield directory: a checkout that already holds source files is left alone.
+func TestInitNonGreenfieldSkipsTechStack(t *testing.T) {
+	r := newRunner(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	r.gitDetect = func(string) (gitRepo, bool) {
+		return gitRepo{Root: root, Remote: "git@github.com:acme/widget.git"}, true
+	}
+	r.isTerminal = terminal
+	p := &scriptedPrompter{t: t, confirms: []bool{true}, inputs: []string{"", "", "", ""}}
+	r.prompt = p
+
+	r.run("init", "-p")
+	if len(p.asked) != 5 {
+		t.Fatalf("prompt sequence = %v, want a confirm then four inputs (no tech stack)", p.asked)
+	}
+	if project := readFile(t, r.projectPath); strings.Contains(project, "tech_stack") {
+		t.Fatalf("non-greenfield init should not record a tech stack:\n%s", project)
 	}
 }
 
@@ -297,7 +385,7 @@ func TestInitProjectMissingMachineConfigAsks(t *testing.T) {
 	r := newRunner(t)
 	r.gitDetect = fakeRepo
 	r.isTerminal = terminal
-	p := &scriptedPrompter{t: t, confirms: []bool{true}, inputs: []string{"", "", "", ""}}
+	p := &scriptedPrompter{t: t, confirms: []bool{true}, inputs: []string{"", "", "", "", ""}}
 	r.prompt = p
 
 	out := r.run("init", "-p")

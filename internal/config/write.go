@@ -131,6 +131,63 @@ func WriteProjectConfig(path, id string) (bool, error) {
 	return true, nil
 }
 
+// WriteProjectTechStack records the project's tech-stack choice in the
+// project-scoped config at path, creating the file when missing. It is
+// idempotent when the same stack is already recorded and replaces a differing
+// one in place, preserving the rest of the file. It reports whether it wrote.
+func WriteProjectTechStack(path, stack string) (bool, error) {
+	if strings.TrimSpace(path) == "" {
+		return false, errors.New("project config path is empty")
+	}
+	if strings.TrimSpace(stack) == "" {
+		return false, errors.New("tech stack is required")
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return false, fmt.Errorf("create config dir: %w", err)
+		}
+		body := projectConfigTemplate + fmt.Sprintf("tech_stack = %q\n", stack)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			return false, fmt.Errorf("write config %s: %w", path, err)
+		}
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read config %s: %w", path, err)
+	}
+	var existing projectFile
+	if err := toml.Unmarshal(data, &existing); err != nil {
+		return false, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if existing.TechStack == stack {
+		return false, nil
+	}
+	text := setTopLevelKey(string(data), "tech_stack", strconv.Quote(stack))
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		return false, fmt.Errorf("write config %s: %w", path, err)
+	}
+	return true, nil
+}
+
+// setTopLevelKey sets a simple `key = value` (value already a TOML token) in the
+// leading top-level region of a document, before any table header. It replaces
+// an existing line or inserts one after the header comment, so it never lands
+// inside a table and never duplicates the key.
+func setTopLevelKey(text, key, value string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			break
+		}
+		if name, ok := keyName(line); ok && name == key {
+			lines[i] = fmt.Sprintf("%s = %s", key, value)
+			return strings.Join(lines, "\n")
+		}
+	}
+	return insertTopLevel(text, fmt.Sprintf("%s = %s", key, value))
+}
+
 // RunDefaults are the harness and sandbox a run resolves when neither a flag nor
 // config supplies them, plus the host-scoped allow_host opt-in. An empty field
 // (and a false AllowHost) is left unwritten.

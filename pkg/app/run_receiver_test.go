@@ -35,7 +35,9 @@ func TestRunCarriesReceiverEnv(t *testing.T) {
 }
 
 // TestRunWithoutActorHasNoReceiverEnv proves a run that names no actor installs
-// no receiver: the plugin is then not staged and the session is unmanaged.
+// no receiver: the plugin is then not staged and the session is unmanaged. The
+// run's project is still pinned, so the session's child ft resolves that project
+// rather than one the checkout pins.
 func TestRunWithoutActorHasNoReceiverEnv(t *testing.T) {
 	f := newRunFixture(t)
 	f.backend.Program(isolation.ExecResult{Stdout: []byte("ok\n"), ExitCode: 0})
@@ -46,6 +48,9 @@ func TestRunWithoutActorHasNoReceiverEnv(t *testing.T) {
 	env := f.backend.Prepared()[0].Env
 	if harnesspkg.MessagingEnabled(env) {
 		t.Fatalf("env %v enables messaging, want disabled without an actor", env)
+	}
+	if env[harnesspkg.EnvProject] != string(f.project.ID) {
+		t.Errorf("env %s = %q, want the run's project pinned", harnesspkg.EnvProject, env[harnesspkg.EnvProject])
 	}
 }
 
@@ -70,6 +75,52 @@ func TestRunCarriesHubReceiverEnv(t *testing.T) {
 	}
 	if env[harnesspkg.EnvServeToken] != "tok" {
 		t.Errorf("env %s = %q, want the configured serve token", harnesspkg.EnvServeToken, env[harnesspkg.EnvServeToken])
+	}
+}
+
+// TestRunCarriesStoreEnv proves a task run hands the harness the caller's
+// resolved store (backend and options) so the session's child ft reads the same
+// store, never falling back to a project or user config it finds in the
+// checkout. It must coexist with the receiver env a task run already carries.
+func TestRunCarriesStoreEnv(t *testing.T) {
+	f := newRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("ok\n"), ExitCode: 0})
+
+	actor := core.ActorID("act-agent")
+	storeEnv := map[string]string{
+		harnesspkg.EnvStore:     "jsonfile",
+		harnesspkg.EnvStoreOpts: "path=/tmp/lab/db.json",
+	}
+	if _, err := f.run(t, RunInput{Actor: &actor, StoreEnv: storeEnv}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	env := f.backend.Prepared()[0].Env
+	if env[harnesspkg.EnvStore] != "jsonfile" {
+		t.Errorf("env %s = %q, want the configured backend", harnesspkg.EnvStore, env[harnesspkg.EnvStore])
+	}
+	if env[harnesspkg.EnvStoreOpts] != "path=/tmp/lab/db.json" {
+		t.Errorf("env %s = %q, want the configured options", harnesspkg.EnvStoreOpts, env[harnesspkg.EnvStoreOpts])
+	}
+	if env[harnesspkg.EnvProject] != string(f.project.ID) {
+		t.Errorf("env %s = %q, want the receiver project retained", harnesspkg.EnvProject, env[harnesspkg.EnvProject])
+	}
+}
+
+// TestRunWithoutStoreEnvOmitsIt proves a run with no store env configured does
+// not set a bogus empty store: the caller only injects what it resolved.
+func TestRunWithoutStoreEnvOmitsIt(t *testing.T) {
+	f := newRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("ok\n"), ExitCode: 0})
+
+	if _, err := f.run(t, RunInput{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	env := f.backend.Prepared()[0].Env
+	if _, ok := env[harnesspkg.EnvStore]; ok {
+		t.Errorf("env %s = %q, want no store backend when unset", harnesspkg.EnvStore, env[harnesspkg.EnvStore])
+	}
+	if _, ok := env[harnesspkg.EnvStoreOpts]; ok {
+		t.Errorf("env %s = %q, want no store options when unset", harnesspkg.EnvStoreOpts, env[harnesspkg.EnvStoreOpts])
 	}
 }
 

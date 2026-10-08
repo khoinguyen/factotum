@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -525,6 +526,26 @@ func applyServeEnv(serve *Serve, getenv func(string) string) {
 	if url := getenv("FACTOTUM_MSG_URL"); url != "" {
 		serve.URL = url
 	}
+}
+
+// FormatStoreOptions renders store options as the comma-separated key=value
+// list applyStoreOptions parses, with keys sorted so the result is deterministic
+// and safe to hand to a child ft as FACTOTUM_STORE_OPTS. An empty map renders
+// empty, so a caller injects no variable.
+func FormatStoreOptions(options map[string]string) string {
+	if len(options) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(options))
+	for key := range options {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, key := range keys {
+		pairs = append(pairs, key+"="+options[key])
+	}
+	return strings.Join(pairs, ",")
 }
 
 func applyStoreOptions(store *Store, raw string) {

@@ -336,7 +336,7 @@ resolves it next to the active project config (a custom `-c` uses its sibling
 `openshell-policy.yaml`); with no policy file it warns that egress is deny-all.
 
 `ft run <task>` drives one task end-to-end: it resolves the task's repositories into a
-workspace, runs the harness with the task as its prompt, and reflects progress into the store. A repo registered with a local `Path` (not a `URL`) is used **in place** — it is not copied into the workspace, so a backend on the workdir (`local`, `docker`) can modify the source checkout; `ft run` warns on stderr naming the resolved checkout, and registering a `URL` runs in an isolated copy. `ft groom` resolves the same way and emits the same warning.
+workspace, runs the harness with the task as its prompt, and reflects progress into the store. A repo registered with a local `Path` (not a `URL`) is used **in place** — it is not copied into the workspace, so a backend on the workdir (`local`, `docker`) can modify the source checkout; `ft run` warns on stderr naming the resolved checkout, and registering a `URL` runs in an isolated copy. `ft groom` resolves the same way and emits the same warning. The launched session inherits the run's project and store (`FACTOTUM_PROJECT`, `FACTOTUM_STORE`, `FACTOTUM_STORE_OPTS`), so the `ft` it runs reads — and writes — the same store, never falling back to a store the checkout's config would resolve (for example your real `~/.factotum` database).
 
 ```sh
 ft run t-abc123 --sandbox local --harness opencode --allow-host   # dev-only opt-in

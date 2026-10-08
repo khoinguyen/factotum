@@ -220,6 +220,28 @@ backend = "jsonfile"
 	}
 }
 
+// TestFormatStoreOptionsRoundTrips pins the env form a caller forwards to a
+// child ft: the rendered string is the comma-separated key=value list
+// applyStoreOptions parses, keys are sorted for determinism, and an empty map
+// renders empty so a caller injects no variable.
+func TestFormatStoreOptionsRoundTrips(t *testing.T) {
+	options := map[string]string{"path": "/tmp/lab/db.json", "cache": "shared"}
+	rendered := FormatStoreOptions(options)
+	if rendered != "cache=shared,path=/tmp/lab/db.json" {
+		t.Fatalf("FormatStoreOptions() = %q, want sorted key=value list", rendered)
+	}
+	store := Store{Options: map[string]string{"other": "keep"}}
+	applyStoreOptions(&store, rendered)
+	for key, want := range options {
+		if store.Options[key] != want {
+			t.Fatalf("round-trip option %q = %q, want %q", key, store.Options[key], want)
+		}
+	}
+	if got := FormatStoreOptions(nil); got != "" {
+		t.Fatalf("FormatStoreOptions(nil) = %q, want empty", got)
+	}
+}
+
 func TestNoHintsFalseyEnv(t *testing.T) {
 	for _, value := range []string{"", "0", "false", "no"} {
 		cfg, err := Load(Input{

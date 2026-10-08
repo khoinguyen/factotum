@@ -30,6 +30,12 @@ const (
 	EnvTask    = "FACTOTUM_TASK_ID"
 	EnvBin     = "FACTOTUM_BIN"
 	EnvHarness = "FACTOTUM_HARNESS"
+	// EnvStore and EnvStoreOpts carry the caller's resolved storage backend and
+	// its options into the launched session, so the session's child ft reads the
+	// same store instead of resolving one from the checkout's config. EnvStoreOpts
+	// is the comma-separated key=value form config.Load parses.
+	EnvStore     = "FACTOTUM_STORE"
+	EnvStoreOpts = "FACTOTUM_STORE_OPTS"
 	// EnvMsgURL is the base URL of a remote `ft serve` hub a receiver speaks the
 	// token-gated HTTP transport to. With it unset the receiver falls back to the
 	// local ft store.

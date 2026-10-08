@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
+	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
@@ -224,6 +225,33 @@ func TestRunProjectCapturesRequestedFiles(t *testing.T) {
 	}
 	if _, ok := outcome.Captured["out/deferred.md"]; ok {
 		t.Fatalf("captured a path the session never wrote: %+v", outcome.Captured)
+	}
+}
+
+// TestRunProjectCarriesStoreEnvAndPinsProject proves a task-less run (a groom
+// session) hands the harness the caller's resolved store and the project id, so
+// the session's child ft reads that store instead of a project or user config it
+// finds in the checkout.
+func TestRunProjectCarriesStoreEnvAndPinsProject(t *testing.T) {
+	f := newProjectRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+
+	storeEnv := map[string]string{
+		harnesspkg.EnvStore:     "jsonfile",
+		harnesspkg.EnvStoreOpts: "path=/tmp/lab/db.json",
+	}
+	if _, err := f.run(t, ProjectRunInput{Prompt: "groom", StoreEnv: storeEnv}); err != nil {
+		t.Fatalf("RunProject() error = %v", err)
+	}
+	env := f.backend.Prepared()[0].Env
+	if env[harnesspkg.EnvProject] != string(f.project.ID) {
+		t.Errorf("env %s = %q, want the run's project %q", harnesspkg.EnvProject, env[harnesspkg.EnvProject], f.project.ID)
+	}
+	if env[harnesspkg.EnvStore] != "jsonfile" {
+		t.Errorf("env %s = %q, want the configured backend", harnesspkg.EnvStore, env[harnesspkg.EnvStore])
+	}
+	if env[harnesspkg.EnvStoreOpts] != "path=/tmp/lab/db.json" {
+		t.Errorf("env %s = %q, want the configured options", harnesspkg.EnvStoreOpts, env[harnesspkg.EnvStoreOpts])
 	}
 }
 

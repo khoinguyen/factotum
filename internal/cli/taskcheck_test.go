@@ -227,7 +227,8 @@ func TestTaskCheckGatesContradictingRefinementAndEmitsDelta(t *testing.T) {
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	ideaID := firstField(t, r.run("task", "create", "-p", projectID, "-k", "idea",
 		"-t", "ship a --json flag", "-b", "ship a --json flag"))
-	taskID := firstField(t, r.run("task", "promote", ideaID))
+	r.run("actor", "create", "claude", "-k", "agent")
+	taskID := firstField(t, r.run("task", "promote", ideaID, "--actor", "claude", "--acceptance", "the flag works"))
 	r.run("task", "update", taskID, "--body", "remove the --json flag entirely")
 
 	r.judge = fake.New(map[string]judge.Answer{
@@ -264,7 +265,8 @@ func TestTaskCheckJSONCarriesOriginAndDelta(t *testing.T) {
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	ideaID := firstField(t, r.run("task", "create", "-p", projectID, "-k", "idea",
 		"-t", "spark", "-b", "ship it"))
-	taskID := firstField(t, r.run("task", "promote", ideaID))
+	r.run("actor", "create", "claude", "-k", "agent")
+	taskID := firstField(t, r.run("task", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
 	r.run("task", "update", taskID, "--body", "ship it well")
 
 	r.judge = readyJudge()

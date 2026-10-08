@@ -80,8 +80,9 @@ func TestBugCommandTriageLinksOrigin(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	bugID := firstField(t, r.run("bug", "create", "-p", projectID, "-t", "it crashes", "-b", "context"))
+	r.run("actor", "create", "claude", "-k", "agent")
 
-	out := r.run("bug", "triage", bugID)
+	out := r.run("bug", "triage", bugID, "--actor", "claude", "--acceptance", "it stops crashing")
 	taskID := firstField(t, out)
 	if taskID == bugID || !strings.Contains(out, "kind: task") || !strings.Contains(out, "from: "+bugID) {
 		t.Fatalf("bug triage should create a task from the bug:\n%s", out)
@@ -102,8 +103,9 @@ func TestTaskPromoteAcceptsBug(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	bugID := firstField(t, r.run("bug", "create", "-p", projectID, "-t", "it crashes"))
+	r.run("actor", "create", "claude", "-k", "agent")
 
-	out := r.run("task", "promote", bugID)
+	out := r.run("task", "promote", bugID, "--actor", "claude", "--acceptance", "it stops crashing")
 	taskID := firstField(t, out)
 	if !strings.Contains(out, "from: "+bugID) {
 		t.Fatalf("task promote should accept a bug capture:\n%s", out)

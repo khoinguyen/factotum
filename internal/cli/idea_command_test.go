@@ -80,8 +80,9 @@ func TestIdeaCommandPromoteLinksOrigin(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "a spark", "-b", "context"))
+	r.run("actor", "create", "claude", "-k", "agent")
 
-	out := r.run("idea", "promote", ideaID)
+	out := r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works")
 	taskID := firstField(t, out)
 	if taskID == ideaID || !strings.Contains(out, "kind: task") || !strings.Contains(out, "from: "+ideaID) {
 		t.Fatalf("idea promote should create a task from the idea:\n%s", out)
@@ -95,6 +96,28 @@ func TestIdeaCommandPromoteLinksOrigin(t *testing.T) {
 	}
 	if next := r.run("task", "next", "-p", projectID); !strings.Contains(next, taskID) {
 		t.Fatalf("the promoted task should be ready:\n%s", next)
+	}
+}
+
+func TestIdeaCommandPromoteRequiresGroomingData(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "a spark"))
+
+	if err := r.runErr("idea", "promote", ideaID); err == nil {
+		t.Fatal("promote with no grooming data should fail, not create a raw todo")
+	}
+	if err := r.runErr("idea", "promote", ideaID, "--acceptance", "it works"); err == nil {
+		t.Fatal("promote without an assignee should fail")
+	}
+
+	r.run("actor", "create", "claude", "-k", "agent")
+	r.run("actor", "create", "Khoi", "-k", "human")
+	if err := r.runErr("idea", "promote", ideaID, "--actor", "Khoi", "--acceptance", "it works"); err == nil {
+		t.Fatal("promote assigned to a human should fail; grooming targets an agent")
+	}
+	if err := r.runErr("idea", "promote", ideaID, "--actor", "claude"); err == nil {
+		t.Fatal("promote without an acceptance criterion should fail")
 	}
 }
 

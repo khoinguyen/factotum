@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/store"
 )
 
 func newIdea(t *testing.T, h *harness, project *core.Project, title string) *core.Ticket {
@@ -16,6 +17,20 @@ func newIdea(t *testing.T, h *harness, project *core.Project, title string) *cor
 		t.Fatalf("Add(idea) error = %v", err)
 	}
 	return idea
+}
+
+func newAgent(t *testing.T, h *harness, name string) *core.Actor {
+	t.Helper()
+	actor, err := h.actors.Add(context.Background(), core.ActorAgent, name)
+	if err != nil {
+		t.Fatalf("Add(agent %s) error = %v", name, err)
+	}
+	return actor
+}
+
+// groomedPromote is the grooming data a promotion needs to land agent-ready.
+func groomedPromote(agent *core.Actor) PromoteInput {
+	return PromoteInput{AssigneeID: &agent.ID, AcceptanceCriteria: []string{"it works"}}
 }
 
 func TestAddIdeaIsValid(t *testing.T) {
@@ -82,8 +97,9 @@ func TestPromoteCreatesLinkedTaskAndKeepsIdea(t *testing.T) {
 	if _, err := h.tasks.Set(ctx, idea.ID, TicketSet{Description: &idea.Description, Labels: []string{"groomed"}}); err != nil {
 		t.Fatalf("Set(idea) error = %v", err)
 	}
+	agent := newAgent(t, h, "claude")
 
-	task, err := h.tasks.Promote(ctx, idea.ID)
+	task, err := h.tasks.Promote(ctx, idea.ID, groomedPromote(agent))
 	if err != nil {
 		t.Fatalf("Promote() error = %v", err)
 	}
@@ -158,7 +174,99 @@ func TestPromoteRejectsNonIdea(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
-	if _, err := h.tasks.Promote(ctx, task.ID); !errors.Is(err, core.ErrInvalid) {
+	agent := newAgent(t, h, "claude")
+	if _, err := h.tasks.Promote(ctx, task.ID, groomedPromote(agent)); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Promote(task) error = %v, want ErrInvalid", err)
+	}
+}
+
+func TestPromoteCreatesGroomedAssignedTask(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := newIdea(t, h, project, "a spark")
+	agent := newAgent(t, h, "claude")
+
+	task, err := h.tasks.Promote(ctx, idea.ID, PromoteInput{
+		AssigneeID:         &agent.ID,
+		AcceptanceCriteria: []string{"the widget renders", "the test passes"},
+	})
+	if err != nil {
+		t.Fatalf("Promote() error = %v", err)
+	}
+	if !task.Groomed {
+		t.Fatalf("Promote() Groomed = false, want a groomed task")
+	}
+	if task.AssigneeID == nil || *task.AssigneeID != agent.ID {
+		t.Fatalf("Promote() AssigneeID = %v, want %s", task.AssigneeID, agent.ID)
+	}
+	if len(task.AcceptanceCriteria) != 2 {
+		t.Fatalf("Promote() AcceptanceCriteria = %v, want both criteria", task.AcceptanceCriteria)
+	}
+	if task.Status != core.StatusTodo {
+		t.Fatalf("Promote() Status = %q, want todo", task.Status)
+	}
+	if !equalIDs(task.Deps, []core.TicketID{idea.ID}) {
+		t.Fatalf("Promote().Deps = %v, want origin edge to %s", task.Deps, idea.ID)
+	}
+}
+
+func TestPromoteRequiresAcceptance(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := newIdea(t, h, project, "a spark")
+	agent := newAgent(t, h, "claude")
+
+	_, err := h.tasks.Promote(ctx, idea.ID, PromoteInput{AssigneeID: &agent.ID})
+	if !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Promote(no acceptance) error = %v, want ErrInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "acceptance") {
+		t.Fatalf("Promote(no acceptance) error = %q, want it to name the missing acceptance criterion", err)
+	}
+	// A rejected promotion must not leave a half-created task behind.
+	tasks, err := h.tasks.List(ctx, store.TicketFilter{ProjectID: project.ID})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	for _, candidate := range tasks {
+		if candidate.Kind == core.KindTask {
+			t.Fatalf("Promote(no acceptance) created %s; want no task", candidate.ID)
+		}
+	}
+}
+
+func TestPromoteRequiresAssignee(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := newIdea(t, h, project, "a spark")
+
+	_, err := h.tasks.Promote(ctx, idea.ID, PromoteInput{AcceptanceCriteria: []string{"it works"}})
+	if !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Promote(no assignee) error = %v, want ErrInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "assignee") {
+		t.Fatalf("Promote(no assignee) error = %q, want it to name the missing assignee", err)
+	}
+}
+
+func TestPromoteRejectsNonAgentAssignee(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := newIdea(t, h, project, "a spark")
+	human, err := h.actors.Add(ctx, core.ActorHuman, "Khoi")
+	if err != nil {
+		t.Fatalf("Add(human) error = %v", err)
+	}
+
+	_, err = h.tasks.Promote(ctx, idea.ID, PromoteInput{
+		AssigneeID:         &human.ID,
+		AcceptanceCriteria: []string{"it works"},
+	})
+	if !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Promote(human assignee) error = %v, want ErrInvalid", err)
 	}
 }

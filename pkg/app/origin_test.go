@@ -14,12 +14,13 @@ func TestOriginResolvesTheCaptureRefinedFrom(t *testing.T) {
 
 	idea := newIdea(t, h, project, "an idea")
 	bug := newBug(t, h, project, "a bug")
+	agent := newAgent(t, h, "claude")
 
-	promotedFromIdea, err := h.tasks.Promote(ctx, idea.ID)
+	promotedFromIdea, err := h.tasks.Promote(ctx, idea.ID, groomedPromote(agent))
 	if err != nil {
 		t.Fatalf("Promote(idea) error = %v", err)
 	}
-	promotedFromBug, err := h.tasks.Promote(ctx, bug.ID)
+	promotedFromBug, err := h.tasks.Promote(ctx, bug.ID, groomedPromote(agent))
 	if err != nil {
 		t.Fatalf("Promote(bug) error = %v", err)
 	}
@@ -77,7 +78,8 @@ func TestOriginSkipsADanglingCapture(t *testing.T) {
 	ctx := context.Background()
 	project := h.newProject(t)
 	idea := newIdea(t, h, project, "an idea")
-	task, err := h.tasks.Promote(ctx, idea.ID)
+	agent := newAgent(t, h, "claude")
+	task, err := h.tasks.Promote(ctx, idea.ID, groomedPromote(agent))
 	if err != nil {
 		t.Fatalf("Promote() error = %v", err)
 	}

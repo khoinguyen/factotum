@@ -79,7 +79,7 @@ func (c *Command) Breakdown(ctx context.Context, req agent.Request) (agent.Plan,
 // must return, and the user's request.
 func instruction(req agent.Request) string {
 	var b strings.Builder
-	b.WriteString("You are a planning agent for the Factotum task graph.\n")
+	b.WriteString("You are a planning agent for the project's task graph.\n")
 	fmt.Fprintf(&b, "Break the request below into a set of tasks for project %q.\n\n", req.Project)
 	b.WriteString("Reply with a single JSON object and nothing else, in this shape:\n")
 	b.WriteString(`{"tasks":[{"kind":"task","title":"...","description":"...","repo":"...","priority":0,"labels":["..."]}]}` + "\n\n")

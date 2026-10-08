@@ -38,10 +38,13 @@ type runner struct {
 	agent       agent.Agent
 	getenv      func(string) string
 	isTerminal  func(io.Writer) bool
-	prompt      Prompter
-	gitDetect   func(string) (gitRepo, bool)
-	doctorProbe doctor.Prober
-	fixRunner   func(context.Context, []string, io.Writer) error
+	// stdinTerminal, when set, reports the simulated stdin terminal state so a
+	// test can drive interactive-mode selection.
+	stdinTerminal func(io.Reader) bool
+	prompt        Prompter
+	gitDetect     func(string) (gitRepo, bool)
+	doctorProbe   doctor.Prober
+	fixRunner     func(context.Context, []string, io.Writer) error
 	// feedbackFactory, when set, registers a fake feedback sink transport under
 	// the name "fake" so a test can prove the command is transport-agnostic.
 	feedbackFactory feedback.Factory
@@ -77,6 +80,9 @@ func (r *runner) setup(deps *Deps) []string {
 	deps.DoctorFixRunner = r.fixRunner
 	if r.isTerminal != nil {
 		deps.IsTerminal = r.isTerminal
+	}
+	if r.stdinTerminal != nil {
+		deps.IsTerminalReader = r.stdinTerminal
 	}
 	if r.embedModel != "" {
 		body := "[embed]\nmodel = \"" + r.embedModel + "\"\n"

@@ -103,3 +103,13 @@ func isTerminalWriter(w io.Writer) bool {
 	}
 	return isatty.IsTerminal(file.Fd()) || isatty.IsCygwinTerminal(file.Fd())
 }
+
+// isTerminalReader reports whether a reader is a terminal. Non-file readers
+// (buffers, strings in tests) are not.
+func isTerminalReader(r io.Reader) bool {
+	file, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	return isatty.IsTerminal(file.Fd()) || isatty.IsCygwinTerminal(file.Fd())
+}

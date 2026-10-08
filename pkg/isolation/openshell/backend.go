@@ -288,7 +288,7 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 		return nil, errors.New("isolation/openshell: empty argv")
 	}
 	if cmd.TTY {
-		return nil, fmt.Errorf("%w: interactive tty over the openShell CLI", isolation.ErrUnsupported)
+		return nil, fmt.Errorf("%w: interactive tty over the openShell CLI", isolation.ErrNoTerminal)
 	}
 
 	var runCtx context.Context

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -126,6 +127,28 @@ func TestRunProjectWritesNoTaskProgress(t *testing.T) {
 	}
 	if len(events) != 0 {
 		t.Fatalf("task-less run wrote %d run event(s): %+v", len(events), events)
+	}
+}
+
+// TestRunProjectInteractiveRequestsTTY proves an interactive selection reaches
+// the harness: the harness (the fake translates Interactive into Command.TTY)
+// marks the command as needing a terminal, and a headless run does not.
+func TestRunProjectInteractiveRequestsTTY(t *testing.T) {
+	for _, interactive := range []bool{true, false} {
+		t.Run(fmt.Sprintf("interactive=%v", interactive), func(t *testing.T) {
+			f := newProjectRunFixture(t)
+			f.backend.Program(isolation.ExecResult{Stdout: []byte("done"), ExitCode: 0})
+			if _, err := f.run(t, ProjectRunInput{Prompt: "groom", Interactive: interactive}); err != nil {
+				t.Fatalf("RunProject() error = %v", err)
+			}
+			cmds := f.backend.Commands()
+			if len(cmds) != 1 {
+				t.Fatalf("Exec called %d times, want 1", len(cmds))
+			}
+			if cmds[0].TTY != interactive {
+				t.Fatalf("TTY = %v, want %v", cmds[0].TTY, interactive)
+			}
+		})
 	}
 }
 

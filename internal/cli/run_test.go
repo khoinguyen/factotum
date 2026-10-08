@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,17 @@ import (
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
 )
+
+// ttyRefusingBackend refuses only interactive commands, like an isolating
+// backend that cannot attach a terminal, while running headless ones normally.
+type ttyRefusingBackend struct{ *isofake.Backend }
+
+func (b ttyRefusingBackend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Command) (isolation.Execution, error) {
+	if cmd.TTY {
+		return nil, isolation.ErrNoTerminal
+	}
+	return b.Backend.Exec(ctx, h, cmd)
+}
 
 // runContext creates a project whose one repo is an existing local checkout, so
 // `ft run`'s workspace resolution needs no git, and returns its task id.
@@ -56,6 +69,81 @@ func TestRunCommandDrivesTaskToReview(t *testing.T) {
 	prompt := commands[0].Argv[len(commands[0].Argv)-1]
 	if !strings.Contains(prompt, "Add widget") || !strings.Contains(prompt, "Do the work.") {
 		t.Fatalf("prompt did not carry the task:\n%s", prompt)
+	}
+}
+
+// TestRunCommandInteractiveOnTerminal pins `ft run`'s mode selection: on a
+// terminal a task run attaches the agent (the harness command requests a TTY);
+// --unattended or a non-terminal stays headless.
+func TestRunCommandInteractiveOnTerminal(t *testing.T) {
+	tests := []struct {
+		name       string
+		terminal   bool
+		unattended bool
+		wantTTY    bool
+	}{
+		{"terminal attaches", true, false, true},
+		{"terminal with unattended stays headless", true, true, false},
+		{"non-terminal stays headless", false, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			r.isTerminal = func(io.Writer) bool { return tc.terminal }
+			r.stdinTerminal = func(io.Reader) bool { return tc.terminal }
+			_, taskID := runContext(t, r)
+
+			backend := isofake.New("sandbox")
+			backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+			r.runBackend = backend
+			r.runHarness = harnessfake.New("opencode")
+
+			args := []string{"run", taskID, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir()}
+			if tc.unattended {
+				args = append(args, "--unattended")
+			}
+			out := r.run(args...)
+			if !strings.Contains(out, "run: finished") {
+				t.Fatalf("run output:\n%s", out)
+			}
+			cmds := backend.Commands()
+			if len(cmds) != 1 {
+				t.Fatalf("Exec called %d times, want 1", len(cmds))
+			}
+			if cmds[0].TTY != tc.wantTTY {
+				t.Fatalf("TTY = %v, want %v", cmds[0].TTY, tc.wantTTY)
+			}
+		})
+	}
+}
+
+// TestRunInteractiveBackendWithoutTerminalGuidesToUnattended proves the mode is
+// recoverable: when an interactive run's backend cannot attach a terminal, the
+// command fails with guidance to rerun headless, and --unattended then runs it.
+func TestRunInteractiveBackendWithoutTerminalGuidesToUnattended(t *testing.T) {
+	r := newRunner(t)
+	r.isTerminal = func(io.Writer) bool { return true }
+	r.stdinTerminal = func(io.Reader) bool { return true }
+	_, taskID := runContext(t, r)
+
+	base := isofake.New("sandbox")
+	base.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = ttyRefusingBackend{Backend: base}
+	r.runHarness = harnessfake.New("opencode")
+
+	err := r.runErr("run", taskID, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, ErrUsage) || !strings.Contains(err.Error(), "cannot attach an interactive terminal") {
+		t.Fatalf("interactive run error = %v, want usage error naming the terminal limit", err)
+	}
+
+	headless := newRunner(t)
+	_, taskID = runContext(t, headless)
+	base = isofake.New("sandbox")
+	base.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	headless.runBackend = ttyRefusingBackend{Backend: base}
+	headless.runHarness = harnessfake.New("opencode")
+	if out := headless.run("run", taskID, "--unattended", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir()); !strings.Contains(out, "run: finished") {
+		t.Fatalf("headless rerun did not finish:\n%s", out)
 	}
 }
 

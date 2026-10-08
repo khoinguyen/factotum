@@ -63,6 +63,11 @@ type RunInput struct {
 	// OutputLimit caps the agent output stored in the run note; 0 uses the
 	// service default.
 	OutputLimit int
+	// Interactive attaches the agent to a terminal instead of running it
+	// headless: the harness builds its TUI invocation and the backend must
+	// provide a terminal. A backend that cannot attach one reports
+	// isolation.ErrNoTerminal.
+	Interactive bool
 }
 
 // RunOutcome records what a run did. It is populated even when the harness fails
@@ -111,13 +116,14 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 	}
 
 	res, err := s.runHarness(ctx, harnessRun{
-		backend: in.Backend,
-		harness: in.Harness,
-		plan:    plan,
-		prompt:  runPrompt(project, task, in.Prompt),
-		model:   in.Model,
-		args:    in.Args,
-		labels:  map[string]string{"project": string(project.ID), "task": string(task.ID)},
+		backend:     in.Backend,
+		harness:     in.Harness,
+		plan:        plan,
+		prompt:      runPrompt(project, task, in.Prompt),
+		model:       in.Model,
+		args:        in.Args,
+		interactive: in.Interactive,
+		labels:      map[string]string{"project": string(project.ID), "task": string(task.ID)},
 		// The run is about to start: record it before Exec so a harness or wait
 		// failure is observable, and abort if the event cannot be written.
 		onStart: func() error {
@@ -187,6 +193,11 @@ type ProjectRunInput struct {
 	// The files are returned in ProjectRunOutcome.Captured. A path the run
 	// never wrote is omitted, so the caller decides how to report it.
 	Capture []string
+	// Interactive attaches the agent to a terminal instead of running it
+	// headless: the harness builds its TUI invocation and the backend must
+	// provide a terminal. A backend that cannot attach one reports
+	// isolation.ErrNoTerminal.
+	Interactive bool
 }
 
 // ProjectRunOutcome records what a task-less run did. There is no task status:
@@ -234,14 +245,15 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 	}
 
 	res, err := s.runHarness(ctx, harnessRun{
-		backend: in.Backend,
-		harness: in.Harness,
-		plan:    plan,
-		prompt:  in.Prompt,
-		model:   in.Model,
-		args:    in.Args,
-		labels:  map[string]string{"project": string(project.ID)},
-		capture: in.Capture,
+		backend:     in.Backend,
+		harness:     in.Harness,
+		plan:        plan,
+		prompt:      in.Prompt,
+		model:       in.Model,
+		args:        in.Args,
+		interactive: in.Interactive,
+		labels:      map[string]string{"project": string(project.ID)},
+		capture:     in.Capture,
 	})
 	if err != nil {
 		return nil, err
@@ -272,6 +284,8 @@ type harnessRun struct {
 	model   string
 	args    []string
 	labels  map[string]string
+	// interactive builds the harness's TUI invocation and asks for a terminal.
+	interactive bool
 	// capture names workspace-relative paths read out of the environment after
 	// the command exits and before the environment is deleted.
 	capture []string
@@ -295,11 +309,12 @@ type harnessResult struct {
 // resolved workspace, and parses its output. Cleanup always runs.
 func (s *RunService) runHarness(ctx context.Context, r harnessRun) (harnessResult, error) {
 	req := harnesspkg.Request{
-		Prompt:  r.prompt,
-		Model:   r.model,
-		Workdir: runWorkdir(r.plan),
-		Args:    r.args,
-		Labels:  r.labels,
+		Prompt:      r.prompt,
+		Model:       r.model,
+		Workdir:     runWorkdir(r.plan),
+		Args:        r.args,
+		Labels:      r.labels,
+		Interactive: r.interactive,
 	}
 	spec, err := r.harness.Spec(req)
 	if err != nil {

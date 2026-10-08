@@ -19,6 +19,15 @@ ft groom <item> <item> --sandbox local --harness opencode --allow-host
 ft groom --unattended --sandbox local --harness opencode --allow-host
 ```
 
+On a terminal the session runs **interactive**: `ft groom` launches the agent
+attached to the terminal (the OpenCode TUI) with the kickoff, so the PO can
+answer the grill in the session. `--unattended`, or a piped or redirected
+stdin/stdout, runs it **headless** instead. The recorded `mode` reflects this:
+`interactive` (attached, a PO is present), `unattended` (no PO), or `headless`
+(no terminal). Interactive mode needs a backend that can attach a terminal:
+`local` does; `openshell` and `docker` report it unsupported and `ft groom`
+tells you to rerun with `--unattended`.
+
 `--sandbox` and `--harness` are optional: `ft groom` resolves them like `ft run`
 (flag, env, project `[run]`, machine `[run]`), prompting once on a terminal when
 unset; choosing `local` in that prompt asks to opt in (default no) and records
@@ -79,8 +88,8 @@ deferred-questions file, record engineering calls as notes, and suspend the
 pre-answer timing guard so it still promotes, splits, and marks produced tasks
 groomed and assigned. After the run `ft groom` requires every scoped item to be
 agent-ready or named in the deferred-questions file; an item left neither fails
-the run. Use it for an automated loop; a human session omits the flag and grills
-the PO as usual.
+the run. Use it for an automated loop; a human session omits the flag, runs
+attached on a terminal, and grills the PO as usual.
 
 ## Who decides what
 

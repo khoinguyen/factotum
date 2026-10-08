@@ -20,6 +20,7 @@ package isolation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -35,6 +36,13 @@ import (
 // considering whether the operation is supported, so ErrUnsupported never
 // disguises a failed handle check.
 var ErrUnsupported = errors.New("isolation: unsupported by backend")
+
+// ErrNoTerminal means the backend cannot attach an interactive terminal to a
+// command that requested one (Command.TTY). It wraps ErrUnsupported, so a caller
+// that only cares whether the operation is supported still matches, while a
+// caller that offered an attached session can tell this apart from any other
+// unsupported request and point the user at a headless rerun.
+var ErrNoTerminal = fmt.Errorf("%w: no interactive terminal", ErrUnsupported)
 
 // Image is the base the backend provisions the environment from. Container,
 // microVM, and cluster backends use it; a host backend ignores it.
@@ -124,7 +132,9 @@ type Command struct {
 	Env     map[string]string
 	Workdir string
 	Stdin   []byte
-	// TTY requests an interactive terminal where the backend supports one.
+	// TTY requests an interactive terminal where the backend supports one. A
+	// backend that cannot attach one fails Exec with ErrNoTerminal rather than
+	// running the command without a terminal.
 	TTY     bool
 	Timeout time.Duration
 }

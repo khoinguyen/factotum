@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +30,7 @@ type runOptions struct {
 	allowHost      bool
 	refresh        bool
 	goal           string
+	unattended     bool
 	maxTasks       int
 	promptFile     string
 	promptArtifact string
@@ -53,7 +55,11 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			"on a terminal an unset one prompts once and is saved, while a non-interactive\n" +
 			"unset one is an error. Choosing the local backend in that prompt asks to opt in\n" +
 			"(default no) and records run.allow_host in the user config; the local backend is\n" +
-			"unsandboxed and otherwise requires --allow-host (or run.allow_host).",
+			"unsandboxed and otherwise requires --allow-host (or run.allow_host). On a\n" +
+			"terminal, a single-task run or a task-less prompt run attaches the agent to\n" +
+			"the terminal (for example the OpenCode TUI) so a human can answer it;\n" +
+			"--unattended, or a pipe or redirect, keeps the run headless. The --goal loop\n" +
+			"always runs headless.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.goal != "" && len(args) > 0 {
@@ -88,6 +94,7 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.allowHost, "allow-host", false, "opt in to the unsandboxed local backend (dev-only)")
 	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "fetch and reset a reused workspace checkout to its upstream before running")
 	cmd.Flags().StringVar(&opts.goal, "goal", "", "drive the DAG loop toward this goal task or milestone")
+	cmd.Flags().BoolVar(&opts.unattended, "unattended", false, "run headless on a terminal (no attached agent); the agent runs attached to the terminal by default")
 	cmd.Flags().IntVar(&opts.maxTasks, "max-tasks", 0, "stop the loop after this many task runs (0 = no budget)")
 	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "use this file's content as the harness prompt (single task or task-less run)")
 	cmd.Flags().StringVar(&opts.promptArtifact, "prompt-artifact", "", "use this artifact's body as the harness prompt (single task or task-less run)")
@@ -382,11 +389,42 @@ func (d *Deps) userConfigPath() (string, error) {
 	return path, nil
 }
 
+// runInteractive reports whether a run should attach the agent to the terminal:
+// an interactive session (both stdin and stdout a terminal) that did not opt
+// into unattended mode. Every other combination runs headless, so a pipe, a
+// redirect, or an explicit --unattended is unchanged.
+func (d *Deps) runInteractive(cmd *cobra.Command, unattended bool) bool {
+	if unattended || d.IsTerminal == nil || !d.IsTerminal(d.Out) {
+		return false
+	}
+	return d.stdinTerminal(cmd.InOrStdin())
+}
+
+// stdinTerminal reports whether a reader is a terminal, honoring the injected
+// check in tests.
+func (d *Deps) stdinTerminal(r io.Reader) bool {
+	if d.IsTerminalReader != nil {
+		return d.IsTerminalReader(r)
+	}
+	return isTerminalReader(r)
+}
+
+// interactiveUnsupported reports whether an interactive run failed because its
+// backend cannot attach a terminal, naming the way out. It matches the
+// dedicated sentinel, so an unrelated unsupported request is reported as-is.
+func (d *Deps) interactiveUnsupported(cmd *cobra.Command, interactive bool, backendName string, runErr error) error {
+	if !interactive || !errors.Is(runErr, isolation.ErrNoTerminal) {
+		return nil
+	}
+	return usageError(cmd, "backend %q cannot attach an interactive terminal; rerun with --unattended for a headless run, or use --sandbox local --allow-host", backendName)
+}
+
 func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
 	}
+	interactive := d.runInteractive(cmd, opts.unattended)
 
 	task, err := d.Tasks.Get(cmd.Context(), core.TaskID(taskID))
 	if err != nil {
@@ -404,9 +442,13 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		Args:             sel.args,
 		Prompt:           prompt,
 		Actor:            d.currentActorID(cmd.Context()),
+		Interactive:      interactive,
 	})
 	if errors.Is(runErr, local.ErrNotOptedIn) {
 		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
+	}
+	if err := d.interactiveUnsupported(cmd, interactive, sel.backendName, runErr); err != nil {
+		return err
 	}
 	if outcome == nil {
 		return runErr
@@ -425,6 +467,7 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 	if err != nil {
 		return err
 	}
+	interactive := d.runInteractive(cmd, opts.unattended)
 	projectID := d.resolveProject("")
 	if err := requireProject(cmd, projectID); err != nil {
 		return err
@@ -444,9 +487,13 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 		Model:            sel.model,
 		Args:             sel.args,
 		Prompt:           prompt,
+		Interactive:      interactive,
 	})
 	if errors.Is(runErr, local.ErrNotOptedIn) {
 		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
+	}
+	if err := d.interactiveUnsupported(cmd, interactive, sel.backendName, runErr); err != nil {
+		return err
 	}
 	if outcome == nil {
 		return runErr

@@ -107,6 +107,27 @@ func TestCommandDeliversPrompt(t *testing.T) {
 	}
 }
 
+// TestCommandRequestsTTYWhenInteractive pins the port contract the run service
+// relies on: an interactive request marks the command as needing a terminal, so
+// the backend attaches one; a headless request does not.
+func TestCommandRequestsTTYWhenInteractive(t *testing.T) {
+	h := fake.New("agent")
+	interactive, err := h.Command(harness.Request{Prompt: "hi", Interactive: true})
+	if err != nil {
+		t.Fatalf("Command() error = %v", err)
+	}
+	if !interactive.TTY {
+		t.Error("TTY = false for an interactive request, want true")
+	}
+	headless, err := h.Command(harness.Request{Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Command() error = %v", err)
+	}
+	if headless.TTY {
+		t.Error("TTY = true for a headless request, want false")
+	}
+}
+
 func TestCommandCarriesModelFlag(t *testing.T) {
 	h := fake.New("agent")
 	cmd, err := h.Command(harness.Request{Prompt: "hi", Model: "vendor/model"})

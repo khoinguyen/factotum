@@ -343,6 +343,26 @@ func TestRunRefreshesWorkspaceOnRerun(t *testing.T) {
 	}
 }
 
+// TestRunInteractiveRequestsTTY proves a task run's interactive selection
+// reaches the harness: an interactive request builds a terminal command, a
+// headless one does not.
+func TestRunInteractiveRequestsTTY(t *testing.T) {
+	for _, interactive := range []bool{true, false} {
+		f := newRunFixture(t)
+		f.backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+		if _, err := f.run(t, RunInput{Interactive: interactive}); err != nil {
+			t.Fatalf("Run(interactive=%v) error = %v", interactive, err)
+		}
+		cmds := f.backend.Commands()
+		if len(cmds) != 1 {
+			t.Fatalf("Exec called %d times, want 1", len(cmds))
+		}
+		if cmds[0].TTY != interactive {
+			t.Fatalf("TTY = %v, want %v", cmds[0].TTY, interactive)
+		}
+	}
+}
+
 // TestRunThroughRealLocalBackend drives the orchestration through the real
 // unsandboxed local backend and a real subprocess, so the wiring is proven
 // beyond the in-memory fakes.

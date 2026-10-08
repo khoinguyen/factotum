@@ -35,6 +35,11 @@ type Request struct {
 	Args []string
 	// Labels are backend-agnostic identifiers (project, task) for the run.
 	Labels map[string]string
+	// Interactive requests the harness's conversational mode: the harness builds
+	// its TUI invocation, for a human to converse with the agent, and marks the
+	// command as needing a terminal (isolation.Command.TTY). A headless run
+	// leaves it false and builds the one-shot invocation instead.
+	Interactive bool
 }
 
 // Result is what a harness extracts from a completed run.
@@ -56,7 +61,9 @@ type Harness interface {
 	// working directory, and any files staged before the run.
 	Spec(req Request) (isolation.Spec, error)
 	// Command returns the invocation for req, with the model flag and prompt
-	// delivery already resolved into the isolation.Command.
+	// delivery already resolved into the isolation.Command. An interactive
+	// request builds the harness's TUI invocation and sets Command.TTY so the
+	// backend attaches a terminal.
 	Command(req Request) (isolation.Command, error)
 	// Done reports whether an event marks the run complete. A harness with no
 	// completion sentinel returns false; the run then completes on process exit.

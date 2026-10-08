@@ -6,7 +6,8 @@
 // It implements the harness port (pkg/harness) and speaks only the isolation
 // vocabulary: Spec names the base image, entrypoint, and working identity;
 // Command builds the headless invocation (opencode run with the model flag and
-// the prompt as the final positional); Done and Result read the agent's output.
+// the prompt as the final positional) or, for an interactive request, the
+// terminal-attached TUI invocation; Done and Result read the agent's output.
 //
 // The model and its credentials are never hardcoded. The model comes from the
 // configured provider (Options.Model, overridden by Request.Model) and is passed
@@ -131,14 +132,34 @@ func (h *Harness) Spec(req harness.Request) (isolation.Spec, error) {
 	return spec, nil
 }
 
-// Command builds the headless invocation: `opencode run`, the model flag, any
-// passthrough arguments, then `--` and the prompt as the final positional. The
-// separator keeps a prompt that begins with a dash from being parsed as an
-// option.
+// Command builds the invocation for req. A headless run is `opencode run`, the
+// model flag, any passthrough arguments, then `--` and the prompt as the final
+// positional; the separator keeps a prompt that begins with a dash from being
+// parsed as an option. An interactive run drops `run`, delivers the kickoff
+// through `--prompt`, and marks the command as needing a terminal so the backend
+// attaches the OpenCode TUI to it.
 func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 	if req.Prompt == "" {
 		return isolation.Command{}, ErrNoPrompt
 	}
+	if req.Interactive {
+		argv := make([]string, 0, len(h.args)+len(req.Args)+5)
+		argv = append(argv, h.binary)
+		if model := firstNonEmpty(req.Model, h.model); model != "" {
+			argv = append(argv, "--model", model)
+		}
+		argv = append(argv, h.args...)
+		argv = append(argv, req.Args...)
+		argv = append(argv, "--prompt", req.Prompt)
+
+		return isolation.Command{
+			Argv:    argv,
+			Env:     clone(req.Env),
+			Workdir: req.Workdir,
+			TTY:     true,
+		}, nil
+	}
+
 	argv := make([]string, 0, len(h.args)+len(req.Args)+5)
 	argv = append(argv, h.binary, "run")
 	if model := firstNonEmpty(req.Model, h.model); model != "" {

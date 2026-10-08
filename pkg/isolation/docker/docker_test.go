@@ -757,6 +757,26 @@ func TestAttachCredential(t *testing.T) {
 			}
 		}
 	})
+	t.Run("multiline value rejected", func(t *testing.T) {
+		for _, value := range []string{"line1\nline2", "line1\r\nline2", "trailing\r"} {
+			be := docker.New(docker.Options{
+				Runner:      &fakeRunner{},
+				NewName:     func() string { return "fttest" },
+				Credentials: resolverFunc(func(context.Context, isolation.Credential) (string, error) { return value, nil }),
+			})
+			h := prepared(t, be, isolation.Spec{})
+			err := be.AttachCredential(context.Background(), h, isolation.Credential{Provider: "p", Ref: "r", EnvVar: "KEY"})
+			if err == nil {
+				t.Fatalf("AttachCredential(%q) error = nil, want a loud rejection (env-file cannot carry a newline)", value)
+			}
+			if strings.Contains(err.Error(), "line1") {
+				t.Errorf("error leaks the credential value: %v", err)
+			}
+			if delErr := be.Delete(context.Background(), h); delErr != nil {
+				t.Fatalf("Delete() error = %v", delErr)
+			}
+		}
+	})
 	t.Run("no env var", func(t *testing.T) {
 		be := docker.New(docker.Options{
 			Runner:      &fakeRunner{},

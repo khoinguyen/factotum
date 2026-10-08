@@ -34,8 +34,10 @@
 // a later Exec starts it again. The workload gets a writable HOME (DefaultHome,
 // overridable through Spec.Env), since a non-root uid with no passwd entry
 // otherwise gets HOME=/ and cannot write it. Download surfaces a daemon or
-// container fault and only omits a path that is genuinely absent. One known
-// limitation: a workspace path containing a comma is not supported by `--mount`.
+// container fault and only omits a path that is genuinely absent. Known
+// limitations: a workspace path containing a comma is not supported by `--mount`,
+// and a multi-line credential value is rejected rather than silently truncated,
+// since the env-file format cannot carry one.
 package docker
 
 import (
@@ -642,9 +644,11 @@ func (b *Backend) ApplyPolicy(_ context.Context, h isolation.Handle, p isolation
 }
 
 // AttachCredential resolves c through the configured resolver and makes the
-// value available to later execs through the docker client's environment.
-// Without a resolver the backend refuses (ErrUnsupported) rather than reading
-// the value from the host.
+// value available to later execs: it is staged in a 0600 file and passed with
+// `docker exec --env-file`, so the value is never in argv or the CLI's
+// environment. A multi-line value is rejected, since the env-file format cannot
+// carry one. Without a resolver the backend refuses (ErrUnsupported) rather than
+// reading the value from the host.
 func (b *Backend) AttachCredential(ctx context.Context, h isolation.Handle, c isolation.Credential) error {
 	env, err := b.lookup(h)
 	if err != nil {
@@ -654,8 +658,9 @@ func (b *Backend) AttachCredential(ctx context.Context, h isolation.Handle, c is
 }
 
 // attach is the shared credential path for Prepare (Spec.Credentials) and
-// AttachCredential: resolve the provider reference and store the value under
-// the credential's EnvVar, or refuse when no resolver is configured.
+// AttachCredential: resolve the provider reference, reject a value the env-file
+// transport cannot carry, and store it under the credential's EnvVar, or refuse
+// when no resolver is configured.
 func (b *Backend) attach(ctx context.Context, env *environment, c isolation.Credential) error {
 	if c.EnvVar == "" {
 		return errors.New("isolation/docker: credential has no EnvVar")
@@ -666,6 +671,12 @@ func (b *Backend) attach(ctx context.Context, env *environment, c isolation.Cred
 	value, err := b.opts.Credentials.Resolve(ctx, c)
 	if err != nil {
 		return fmt.Errorf("isolation/docker: resolve credential %q: %w", c.Provider, err)
+	}
+	// `docker exec --env-file` cannot carry a newline in a value: it ends the
+	// line and silently truncates. Reject it loudly rather than pass a partial
+	// secret, and never echo the value itself.
+	if strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("isolation/docker: credential %q is multi-line, which docker exec --env-file cannot carry; use a single-line value", c.EnvVar)
 	}
 	env.setSecret(c.EnvVar, value)
 	return nil

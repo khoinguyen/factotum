@@ -268,7 +268,7 @@ func TestKickoffNamesScopeAndOutputs(t *testing.T) {
 	kick := Kickoff("factotum", []ScopeItem{
 		{ID: "t-1", Kind: "task", Title: "Add widget"},
 		{ID: "t-2", Kind: "idea", Title: "Maybe cache"},
-	}, out, false)
+	}, out, "groom-1", false)
 
 	for _, want := range []string{
 		"factotum", "t-1", "Add widget", "t-2", "Maybe cache",
@@ -288,7 +288,7 @@ func TestKickoffNamesScopeAndOutputs(t *testing.T) {
 // and its section contract, so a session cannot silently skip a document.
 func TestKickoffNamesFeatureDocOutputs(t *testing.T) {
 	out := StagedPaths("groom-1")
-	kick := Kickoff("factotum", nil, out, false)
+	kick := Kickoff("factotum", nil, out, "groom-1", false)
 	for _, doc := range []struct {
 		label string
 		path  string
@@ -307,7 +307,7 @@ func TestKickoffNamesFeatureDocOutputs(t *testing.T) {
 // kickoff, in order per document, so the harness writes files whose headings
 // match the versioned templates.
 func TestKickoffStatesSectionContract(t *testing.T) {
-	kick := Kickoff("p", nil, StagedPaths("groom-1"), false)
+	kick := Kickoff("p", nil, StagedPaths("groom-1"), "groom-1", false)
 	for _, doc := range []struct {
 		label    string
 		sections []string
@@ -377,7 +377,7 @@ func TestKickoffUnattendedMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			kick := Kickoff("p", nil, StagedPaths("groom-1"), tt.unattended)
+			kick := Kickoff("p", nil, StagedPaths("groom-1"), "groom-1", tt.unattended)
 			for _, want := range tt.want {
 				if !strings.Contains(kick, want) {
 					t.Errorf("kickoff missing %q:\n%s", want, kick)
@@ -403,4 +403,53 @@ func sectionTitles(body string) []string {
 		}
 	}
 	return out
+}
+
+// TestParseReviewVerdict pins the verdict contract: the three verdicts parse, an
+// unknown one is rejected, and only needs-rework blocks the build.
+func TestParseReviewVerdict(t *testing.T) {
+	for _, v := range ReviewVerdicts() {
+		got, err := ParseReviewVerdict(string(v))
+		if err != nil || got != v {
+			t.Fatalf("ParseReviewVerdict(%q) = %q, %v; want %q, nil", v, got, err, v)
+		}
+	}
+	if _, err := ParseReviewVerdict("lgtm"); err == nil {
+		t.Fatal("ParseReviewVerdict(lgtm) error = nil, want an unknown-verdict error")
+	}
+	if !VerdictNeedsRework.BlocksBuild() {
+		t.Fatal("needs-rework must block the build")
+	}
+	for _, v := range []ReviewVerdict{VerdictApprove, VerdictApproveWithChanges} {
+		if v.BlocksBuild() {
+			t.Fatalf("%s must not block the build", v)
+		}
+	}
+}
+
+// TestReviewPath pins where a session's architecture review is captured.
+func TestReviewPath(t *testing.T) {
+	got := ReviewPath("/data", "groom-1")
+	want := filepath.Join("/data", SessionsDirName, "groom-1", ReviewFileName)
+	if got != want {
+		t.Fatalf("ReviewPath = %q, want %q", got, want)
+	}
+}
+
+// TestKickoffNamesArchitectureReview pins the review step wired into grooming:
+// the kickoff names the reviewer role, the origin item(s), the recording command
+// and its verdicts, and the build gate.
+func TestKickoffNamesArchitectureReview(t *testing.T) {
+	kick := Kickoff("factotum", []ScopeItem{
+		{ID: "t-idea", Kind: "idea", Title: "Maybe cache"},
+	}, StagedPaths("groom-9"), "groom-9", false)
+	for _, want := range []string{
+		"architecture-reviewer", "ft groom review groom-9",
+		string(VerdictApprove), string(VerdictApproveWithChanges), string(VerdictNeedsRework),
+		"t-idea", "blocks the feature from build",
+	} {
+		if !strings.Contains(kick, want) {
+			t.Errorf("kickoff does not wire the architecture review (%q missing):\n%s", want, kick)
+		}
+	}
 }

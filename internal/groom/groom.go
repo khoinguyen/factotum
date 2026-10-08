@@ -34,6 +34,9 @@ const (
 	// TechDesignFileName is the deterministic name of a session's feature tech
 	// design.
 	TechDesignFileName = "tech-design.md"
+	// ReviewFileName is the deterministic name of a session's architecture
+	// review, recorded by `ft groom review`.
+	ReviewFileName = "review.md"
 )
 
 // PromptPath is the committed repo path of the grooming-session prompt. It is
@@ -145,6 +148,51 @@ func TechDesignPath(dataDir, sessionID string) string {
 	return filepath.Join(SessionDir(dataDir, sessionID), TechDesignFileName)
 }
 
+// ReviewPath returns the absolute durable path of a session's architecture
+// review.
+func ReviewPath(dataDir, sessionID string) string {
+	return filepath.Join(SessionDir(dataDir, sessionID), ReviewFileName)
+}
+
+// ReviewVerdict is the architecture reviewer's tech-design verdict for a
+// feature. It gates the build: a needs-rework verdict blocks the feature until a
+// later review approves.
+type ReviewVerdict string
+
+const (
+	VerdictApprove            ReviewVerdict = "approve"
+	VerdictApproveWithChanges ReviewVerdict = "approve-with-changes"
+	VerdictNeedsRework        ReviewVerdict = "needs-rework"
+)
+
+// ReviewVerdicts returns every verdict, in the order the help text lists them.
+func ReviewVerdicts() []ReviewVerdict {
+	return []ReviewVerdict{VerdictApprove, VerdictApproveWithChanges, VerdictNeedsRework}
+}
+
+// ParseReviewVerdict validates a verdict string, returning an error naming the
+// accepted set.
+func ParseReviewVerdict(s string) (ReviewVerdict, error) {
+	for _, v := range ReviewVerdicts() {
+		if string(v) == s {
+			return v, nil
+		}
+	}
+	return "", fmt.Errorf("unknown architecture-review verdict %q; want one of %s", s, strings.Join(verdictStrings(), ", "))
+}
+
+// BlocksBuild reports whether the verdict keeps the feature from being built.
+func (v ReviewVerdict) BlocksBuild() bool { return v == VerdictNeedsRework }
+
+// verdictStrings returns the verdicts as plain strings, in order.
+func verdictStrings() []string {
+	names := make([]string, 0, len(ReviewVerdicts()))
+	for _, v := range ReviewVerdicts() {
+		names = append(names, string(v))
+	}
+	return names
+}
+
 // OutputPaths names the workspace-relative path of each deterministic session
 // document. It is the bundle Kickoff names and the CLI captures, so the set of
 // outputs lives in one place.
@@ -230,7 +278,7 @@ neither agent-ready nor deferred is incomplete.
 // sandboxed harness writes inside its own workspace and `ft groom` captures the
 // files from there. When unattended is set it also carries the no-product-owner
 // override.
-func Kickoff(project string, items []ScopeItem, out OutputPaths, unattended bool) string {
+func Kickoff(project string, items []ScopeItem, out OutputPaths, sessionID string, unattended bool) string {
 	var b strings.Builder
 	b.WriteString("## Session kickoff\n\n")
 	fmt.Fprintf(&b, "Project: %s\n\n", project)
@@ -254,9 +302,42 @@ func Kickoff(project string, items []ScopeItem, out OutputPaths, unattended bool
 	fmt.Fprintf(&b, "Feature spec sections, in order: %s\n", strings.Join(SpecSections(), ", "))
 	fmt.Fprintf(&b, "Feature plan sections, in order: %s\n", strings.Join(PlanSections(), ", "))
 	fmt.Fprintf(&b, "Feature tech design sections, in order: %s\n", strings.Join(TechDesignSections(), ", "))
+	b.WriteString("\n")
+	b.WriteString(ReviewKickoff(sessionID, items))
 	if unattended {
 		b.WriteString("\n")
 		b.WriteString(unattendedOverride)
 	}
 	return b.String()
+}
+
+// ReviewKickoff returns the block `ft groom` appends to the session prompt after
+// the output contract: it names the independent architecture review that follows
+// the session, the reviewer role the loop dispatches, the origin item(s) whose
+// findings the review lands on, and the verdict contract that gates the build.
+func ReviewKickoff(sessionID string, items []ScopeItem) string {
+	var b strings.Builder
+	b.WriteString("## Post-session: architecture review\n\n")
+	b.WriteString("The feature this session defines gets an independent architecture review before it is\n")
+	b.WriteString("built; it is not optional. The loop dispatches the architecture-reviewer on the documents\n")
+	b.WriteString("above (`architecture-reviewer-<session>`; the architecture-reviewer skill). The reviewer\n")
+	b.WriteString("reads only the report, spec, plan, and tech design, records its findings as notes/tasks on\n")
+	fmt.Fprintf(&b, "the origin item(s) below, and records exactly one verdict with `ft groom review %s\n", sessionID)
+	fmt.Fprintf(&b, "--verdict <%s>`. A needs-rework verdict blocks the feature from build until\n", strings.Join(verdictStrings(), "|"))
+	b.WriteString("a later review approves.\n")
+	fmt.Fprintf(&b, "Origin item(s): %s\n", originIDs(items))
+	return b.String()
+}
+
+// originIDs joins the scoped item ids the review lands its findings on, or
+// "(none)" when the session has no items.
+func originIDs(items []ScopeItem) string {
+	if len(items) == 0 {
+		return "(none)"
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return strings.Join(ids, ", ")
 }

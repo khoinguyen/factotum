@@ -12,14 +12,17 @@ import (
 
 func sampleSession(id string, created time.Time) SessionRecord {
 	return SessionRecord{
-		ID:        id,
-		Project:   "factotum",
-		Mode:      "interactive",
-		CreatedAt: created,
-		Scope:     []ScopeItem{{ID: "t-a", Kind: "idea", Title: "Maybe cache"}},
-		Report:    "art-report",
-		Deferred:  "art-deferred",
-		Produced:  []string{"t-b"},
+		ID:            id,
+		Project:       "factotum",
+		Mode:          "interactive",
+		CreatedAt:     created,
+		Scope:         []ScopeItem{{ID: "t-a", Kind: "idea", Title: "Maybe cache"}},
+		Report:        "art-report",
+		Deferred:      "art-deferred",
+		Produced:      []string{"t-b"},
+		Review:        "art-review",
+		ReviewVerdict: string(VerdictNeedsRework),
+		Blocked:       []string{"t-b"},
 	}
 }
 
@@ -49,6 +52,12 @@ func TestSessionWriteReadRoundTrip(t *testing.T) {
 	if len(got.Produced) != 1 || got.Produced[0] != "t-b" {
 		t.Fatalf("produced = %v, want [t-b]", got.Produced)
 	}
+	if got.Review != want.Review || got.ReviewVerdict != want.ReviewVerdict {
+		t.Fatalf("review = %q/%q, want %q/%q", got.Review, got.ReviewVerdict, want.Review, want.ReviewVerdict)
+	}
+	if len(got.Blocked) != 1 || got.Blocked[0] != "t-b" {
+		t.Fatalf("blocked = %v, want [t-b]", got.Blocked)
+	}
 }
 
 // TestWriteSessionNormalizesEmptySlices pins the manifest shape: a session with
@@ -64,14 +73,14 @@ func TestWriteSessionNormalizesEmptySlices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadSession error = %v", err)
 	}
-	if got.Scope == nil || got.Produced == nil {
-		t.Fatalf("scope/produced = %v/%v, want non-nil empty slices", got.Scope, got.Produced)
+	if got.Scope == nil || got.Produced == nil || got.Blocked == nil {
+		t.Fatalf("scope/produced/blocked = %v/%v/%v, want non-nil empty slices", got.Scope, got.Produced, got.Blocked)
 	}
 	data, err := os.ReadFile(SessionManifestPath(dir, rec.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"produced": []`) || !strings.Contains(string(data), `"scope": []`) {
+	if !strings.Contains(string(data), `"produced": []`) || !strings.Contains(string(data), `"scope": []`) || !strings.Contains(string(data), `"blocked": []`) {
 		t.Fatalf("manifest did not serialize empty slices as arrays:\n%s", data)
 	}
 }

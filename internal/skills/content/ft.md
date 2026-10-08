@@ -247,7 +247,7 @@ ft msg send <address|ticket-id> <text> -p <project>; ft msg inbox -p <project> [
 ft msg agent register|claim|ack|nack|heartbeat|deregister ...   # receiver protocol, JSON in/out
 ```
 
-A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`); `ft msg read` is idempotent and `--from` defaults to the configured actor. A receiver registers with `ft msg agent register`, long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode harness stages that plugin (per the `FACTOTUM_*` env it sets) when the run has an actor. For a receiver on another host, the same protocol rides `ft serve` at `/api/msg/*` (token-gated by `serve.token`); the shipped receivers take the HTTP transport when `FACTOTUM_MSG_URL` points at a hub (auth via `FACTOTUM_SERVE_TOKEN`) and fall back to the local `ft` binary when it is unset. `ft run` sets both from `serve.url`/`serve.token` (or their `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` env), so a launched remote agent receives over the hub. A local `ft msg ...` and a remote HTTP client are two transports over one store.
+A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`); `ft msg read` is idempotent and `--from` defaults to the configured actor. A receiver registers with `ft msg agent register`, long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode and pi harnesses stage that receiver (per the `FACTOTUM_*` env it sets) when the run has an actor. For a receiver on another host, the same protocol rides `ft serve` at `/api/msg/*` (token-gated by `serve.token`); the shipped receivers take the HTTP transport when `FACTOTUM_MSG_URL` points at a hub (auth via `FACTOTUM_SERVE_TOKEN`) and fall back to the local `ft` binary when it is unset. `ft run` sets both from `serve.url`/`serve.token` (or their `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` env), so a launched remote agent receives over the hub. A local `ft msg ...` and a remote HTTP client are two transports over one store.
 
 ## Diagnose the optional subsystems
 
@@ -301,16 +301,16 @@ network, and mutate files, so never use it for untrusted work. Isolating backend
 (for example OpenShell and docker) are separate registrations of the same port
 and are the only ones fit for untrusted input.
 
-A harness describes one agent CLI end to end: its image, entrypoint, invocation,
-model flag, prompt delivery, completion detection, and output parsing. The first
-harness is OpenCode (image `ghcr.io/anomalyco/opencode`, binary `opencode`). A
-headless run is `opencode run --model <provider/model> <prompt>`: the prompt is
-the final positional argument, the agent's answer is read from stdout, and
-progress and the banner go to stderr; an interactive run instead launches the OpenCode TUI (`opencode --model <m> --prompt <prompt>`) attached to a terminal so a human can converse. The model and its credentials come from the
-configured provider, never hardcoded: the model is passed through as the model
-flag, and a configured credential is declared as a provider reference that the
-isolation backend resolves. A local run uses the host `opencode` binary
-(dev-only); an isolating backend runs the shipped image as a non-root user.
+A harness describes one agent CLI end to end: image, entrypoint, invocation,
+model flag, prompt delivery, completion, and output parsing. Two ship: OpenCode
+(`opencode`, image `ghcr.io/anomalyco/opencode`) and pi (`pi`, an npm package
+with no published image). Each builds a headless invocation that passes the
+prompt as the final message and reads the answer from stdout; an interactive run
+attaches the agent's TUI instead. Model and credentials come from the configured
+provider, never hardcoded (a credential is a provider reference the backend
+resolves). A local run uses the host binary (dev-only); an isolating pi backend
+needs an explicit image. The pi harness trusts project-local files, so its
+staged receiver extension loads.
 
 An isolating backend imposes a policy on the run. The OpenShell policy
 (`pkg/isolation/openshell`, checked-in template `policy.yaml`) is deny-by-default:

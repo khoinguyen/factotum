@@ -23,6 +23,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/feedback"
 	"github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/harness/opencode"
+	"github.com/khoinguyen/factotum/pkg/harness/pi"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	"github.com/khoinguyen/factotum/pkg/isolation/docker"
 	"github.com/khoinguyen/factotum/pkg/isolation/local"
@@ -256,14 +257,22 @@ func (r envCredentialResolver) Resolve(_ context.Context, c isolation.Credential
 	return value, nil
 }
 
-// runHarnesses registers the built-in harnesses. The OpenCode harness targets
-// the host `opencode` binary, which the dev-only local backend runs in place.
-// The configured provider and credential variable are forwarded so an isolating
-// backend can attach the credential as a provider placeholder.
+// runHarnesses registers the built-in harnesses. The OpenCode and pi harnesses
+// target the host `opencode`/`pi` binaries, which the dev-only local backend runs
+// in place. The configured provider and credential variable are forwarded so an
+// isolating backend can attach the credential as a provider placeholder.
 func runHarnesses() *registry.Registry[HarnessFactory] {
 	reg := registry.New[HarnessFactory]()
 	registerRunHarness(reg, opencode.Name, func(cfg config.Run) (harness.Harness, error) {
 		return opencode.New(opencode.Options{
+			Model:            cfg.Model,
+			Args:             cfg.Args,
+			Provider:         cfg.Provider,
+			CredentialEnvVar: cfg.CredentialEnvVar,
+		}), nil
+	})
+	registerRunHarness(reg, pi.Name, func(cfg config.Run) (harness.Harness, error) {
+		return pi.New(pi.Options{
 			Model:            cfg.Model,
 			Args:             cfg.Args,
 			Provider:         cfg.Provider,

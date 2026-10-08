@@ -1,7 +1,3 @@
-// Package pi holds artifacts for driving the pi coding agent as a harness. Its
-// message receiver extension is the structural mirror of the opencode plugin:
-// the same register/claim/inject/ack protocol client, adapted to pi's extension
-// and sendUserMessage APIs.
 package pi
 
 import (
@@ -11,6 +7,10 @@ import (
 	"github.com/khoinguyen/factotum/pkg/isolation"
 )
 
+// msgExtension is the pi message receiver: the structural mirror of the
+// OpenCode plugin, the same register/claim/inject/ack protocol client adapted
+// to pi's extension and sendUserMessage APIs.
+//
 //go:embed extension/factotum-msg.js
 var msgExtension []byte
 

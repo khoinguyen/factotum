@@ -17,6 +17,8 @@ import (
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/harness"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
+	"github.com/khoinguyen/factotum/pkg/harness/opencode"
+	"github.com/khoinguyen/factotum/pkg/harness/pi"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	"github.com/khoinguyen/factotum/pkg/isolation/docker"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
@@ -190,6 +192,45 @@ func TestRunHarnessOpenCodeDeclaresConfiguredCredential(t *testing.T) {
 	}
 	if len(bareSpec.Credentials) != 0 {
 		t.Fatalf("bare Spec.Credentials = %v, want none without a configured provider", bareSpec.Credentials)
+	}
+}
+
+// TestRunHarnessesIncludePi pins that pi is a registered, selectable `ft run`
+// harness and that its factory forwards the configured model and credential, so
+// `ft run --harness pi` resolves the same way OpenCode does.
+func TestRunHarnessesIncludePi(t *testing.T) {
+	reg := runHarnesses()
+	names := map[string]bool{}
+	for _, name := range reg.Names() {
+		names[name] = true
+	}
+	for _, want := range []string{opencode.Name, pi.Name} {
+		if !names[want] {
+			t.Fatalf("run harnesses %v missing %q", reg.Names(), want)
+		}
+	}
+
+	factory, err := reg.MustLookup(pi.Name)
+	if err != nil {
+		t.Fatalf("lookup %q: %v", pi.Name, err)
+	}
+	if h, err := factory(config.Run{Model: "openai/gpt-5"}); err != nil || h.Name() != pi.Name {
+		t.Fatalf("build pi harness = (%v, %v), want name %q", h, err, pi.Name)
+	}
+
+	h, err := factory(config.Run{Model: "openrouter/x", Provider: "openrouter", CredentialEnvVar: "OPENROUTER_API_KEY"})
+	if err != nil {
+		t.Fatalf("build pi harness: %v", err)
+	}
+	spec, err := h.Spec(harness.Request{Workdir: "/w"})
+	if err != nil {
+		t.Fatalf("Spec() error = %v", err)
+	}
+	if len(spec.Credentials) != 1 {
+		t.Fatalf("Spec.Credentials = %v, want one credential", spec.Credentials)
+	}
+	if got := spec.Credentials[0]; got.Provider != "openrouter" || got.EnvVar != "OPENROUTER_API_KEY" {
+		t.Fatalf("credential = %+v, want openrouter/OPENROUTER_API_KEY", got)
 	}
 }
 

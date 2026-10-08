@@ -273,7 +273,7 @@ func captureCreateHints(s captureSurface, capture *core.Ticket) []hint {
 func captureListHints(s captureSurface, projectID string, captures []*core.Ticket) []hint {
 	var hints []hint
 	if projectID != "" {
-		hints = append(hints, hint{Command: fmt.Sprintf("ft %s create --project %s --title \"...\"", s.noun, projectID), About: "capture a " + s.noun})
+		hints = append(hints, hint{Command: fmt.Sprintf("ft %s create --project %s --title \"...\"", s.noun, projectID), About: "capture " + s.article + " " + s.noun})
 	}
 	if len(captures) > 0 {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft %s get %s", s.noun, captures[0].ID), About: "inspect the first " + s.noun})

@@ -400,22 +400,23 @@ type linkView struct {
 	Title string
 }
 
-// ideaView is one idea rolled up from the tasks promoted from it. State is one
-// of finished, active, blocked, or captured.
+// ideaView is one capture (an idea or a bug) rolled up from the tasks promoted
+// from it. State is one of finished, active, blocked, or captured.
 type ideaView struct {
-	ID          core.TicketID  `json:"id"`
-	Title       string         `json:"title"`
-	Description string         `json:"description,omitempty"`
-	Repo        string         `json:"repo,omitempty"`
-	State       string         `json:"state"`
-	Chip        string         `json:"chip"`
-	URL         string         `json:"url"`
-	Total       int            `json:"total"`
-	Done        int            `json:"done"`
-	Active      int            `json:"active"`
-	Blocked     int            `json:"blocked"`
-	Tasks       []taskLink     `json:"tasks,omitempty"`
-	Artifacts   []artifactView `json:"artifacts,omitempty"`
+	ID          core.TicketID   `json:"id"`
+	Kind        core.TicketKind `json:"kind"`
+	Title       string          `json:"title"`
+	Description string          `json:"description,omitempty"`
+	Repo        string          `json:"repo,omitempty"`
+	State       string          `json:"state"`
+	Chip        string          `json:"chip"`
+	URL         string          `json:"url"`
+	Total       int             `json:"total"`
+	Done        int             `json:"done"`
+	Active      int             `json:"active"`
+	Blocked     int             `json:"blocked"`
+	Tasks       []taskLink      `json:"tasks,omitempty"`
+	Artifacts   []artifactView  `json:"artifacts,omitempty"`
 }
 
 // taskGroup is a set of tasks sharing an origin idea. Ungrouped marks the bucket
@@ -605,7 +606,7 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		case core.StatusBlocked:
 			page.Stats.Blocked++
 		}
-		if vs.byID[id].IsIdea() {
+		if vs.byID[id].Kind.CapturedByHuman() {
 			page.Stats.Ideas++
 		}
 	}
@@ -630,7 +631,7 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		view := vs.views[id]
 		ready, reason := snapshot.Graph.Readiness(id)
 		switch {
-		case task.IsIdea():
+		case task.Kind.CapturedByHuman():
 		case task.Status == core.StatusInProgress || task.Status == core.StatusReadyForReview:
 			page.InFlight = append(page.InFlight, view)
 		case ready:
@@ -646,7 +647,7 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 
 	for _, id := range vs.ids {
 		task := vs.byID[id]
-		if !task.IsIdea() {
+		if !task.Kind.CapturedByHuman() {
 			continue
 		}
 		idea := s.rollupIdea(task, vs)
@@ -736,7 +737,7 @@ func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) 
 	// The origin edge is each task's first dependency that is an idea; promotion
 	// writes exactly that edge, so it is what groups tasks under ideas.
 	for _, id := range ids {
-		if byID[id].IsIdea() {
+		if byID[id].Kind.CapturedByHuman() {
 			continue
 		}
 		if o, ok := firstIdeaDep(byID[id], byID); ok {
@@ -758,7 +759,7 @@ func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) 
 			Milestone: task.IsMilestone(),
 			URL:       taskOrIdeaURL(task),
 		}
-		if !task.IsIdea() {
+		if !task.Kind.CapturedByHuman() {
 			if _, reason := snapshot.Graph.Readiness(id); reason != nil && reason.Code != graph.ReasonInProgress {
 				view.Reason = string(reason.Code)
 				view.Detail = reason.Detail
@@ -787,6 +788,7 @@ func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) 
 func (s *Server) rollupIdea(idea core.Ticket, vs viewSet) ideaView {
 	out := ideaView{
 		ID:          idea.ID,
+		Kind:        idea.Kind,
 		Title:       idea.Title,
 		Description: idea.Description,
 		Repo:        idea.Repo,
@@ -853,7 +855,7 @@ func ideaRollup(idea ideaView) (state, chip string) {
 // pkg/app's origin rule. It is skipped when the dependency dangles.
 func firstIdeaDep(task core.Ticket, byID map[core.TicketID]core.Ticket) (core.TicketID, bool) {
 	for _, dep := range task.Deps {
-		if depTask, ok := byID[dep]; ok && depTask.IsIdea() {
+		if depTask, ok := byID[dep]; ok && depTask.Kind.CapturedByHuman() {
 			return dep, true
 		}
 	}
@@ -913,7 +915,7 @@ func classify(task core.Ticket, readyAgent, readyHuman, cycle bool) string {
 	switch {
 	case cycle:
 		return "cycle"
-	case task.IsIdea():
+	case task.Kind.CapturedByHuman():
 		return "capture"
 	case task.Status == core.StatusCancelled:
 		return "cancelled"
@@ -978,7 +980,7 @@ func ideaURL(id core.TicketID) string { return "/idea/" + string(id) }
 // taskOrIdeaURL routes an idea to its own detail page and executable work to
 // the task page.
 func taskOrIdeaURL(task core.Ticket) string {
-	if task.IsIdea() {
+	if task.Kind.CapturedByHuman() {
 		return ideaURL(task.ID)
 	}
 	return taskURL(task.ID)

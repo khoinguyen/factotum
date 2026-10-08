@@ -110,6 +110,7 @@ export function createFactotumReceiver({
   let runID = "";
   let stopped = false;
   let heartbeatTimer = null;
+  let registerPromise = null;
 
   async function call(args) {
     // Every verb is machine-read, so always ask ft for JSON.
@@ -180,7 +181,12 @@ export function createFactotumReceiver({
   return {
     runID: () => runID,
     async start() {
-      await register();
+      if (stopped) return;
+      // Retain the registration promise so dispose() can await it and never
+      // deregister a run whose id has not arrived yet (the shutdown-during-
+      // register race that would otherwise orphan the run until its TTL).
+      registerPromise = register();
+      await registerPromise;
       if (stopped) return;
       heartbeatTimer = setIntervalFn(() => { heartbeat().catch(() => {}); }, Math.max(1000, Math.floor(config.ttlMs / 3)));
       void loop();
@@ -189,6 +195,7 @@ export function createFactotumReceiver({
       stopped = true;
       if (heartbeatTimer) clearIntervalFn(heartbeatTimer);
       heartbeatTimer = null;
+      if (registerPromise) await registerPromise.catch(() => {});
       if (runID) await deregister().catch(() => {});
     },
   };
@@ -221,7 +228,9 @@ export default function factotumMsg(pi) {
       run: (argv) => spawnRunner(config.bin, argv),
       inject: makeInjector(pi),
     });
-    receiver.start().catch(() => {});
+    // Await registration so the run id exists before any shutdown; the claim
+    // loop itself stays off the start path.
+    await receiver.start().catch(() => {});
   });
   pi.on("session_shutdown", async () => {
     const current = receiver;

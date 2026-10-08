@@ -220,6 +220,80 @@ func TestWriteProjectConfigFillsEmptyProject(t *testing.T) {
 	}
 }
 
+func TestWriteProjectTechStackCreatesAndPreserves(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".factotum", "config.toml")
+	if _, err := WriteProjectConfig(path, "acme"); err != nil {
+		t.Fatalf("WriteProjectConfig() error = %v", err)
+	}
+
+	wrote, err := WriteProjectTechStack(path, "go")
+	if err != nil {
+		t.Fatalf("WriteProjectTechStack() error = %v", err)
+	}
+	if !wrote {
+		t.Fatal("wrote = false, want true")
+	}
+	got := readFile(t, path)
+	if !strings.Contains(got, `tech_stack = "go"`) {
+		t.Fatalf("project config missing tech stack:\n%s", got)
+	}
+	if !strings.Contains(got, `project = "acme"`) {
+		t.Fatalf("project pin was lost:\n%s", got)
+	}
+}
+
+func TestWriteProjectTechStackIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if _, err := WriteProjectConfig(path, "acme"); err != nil {
+		t.Fatalf("WriteProjectConfig() error = %v", err)
+	}
+	if _, err := WriteProjectTechStack(path, "go"); err != nil {
+		t.Fatalf("WriteProjectTechStack() error = %v", err)
+	}
+	first := readFile(t, path)
+
+	wrote, err := WriteProjectTechStack(path, "go")
+	if err != nil {
+		t.Fatalf("WriteProjectTechStack() error = %v", err)
+	}
+	if wrote {
+		t.Fatal("second write wrote = true, want false")
+	}
+	if got := readFile(t, path); got != first {
+		t.Fatalf("second write changed the file:\n%s", got)
+	}
+}
+
+func TestWriteProjectTechStackReplaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if _, err := WriteProjectConfig(path, "acme"); err != nil {
+		t.Fatalf("WriteProjectConfig() error = %v", err)
+	}
+	if _, err := WriteProjectTechStack(path, "go"); err != nil {
+		t.Fatalf("WriteProjectTechStack() error = %v", err)
+	}
+	if _, err := WriteProjectTechStack(path, "rust"); err != nil {
+		t.Fatalf("WriteProjectTechStack() error = %v", err)
+	}
+	got := readFile(t, path)
+	if strings.Count(got, "tech_stack") != 1 {
+		t.Fatalf("tech_stack should appear once, got:\n%s", got)
+	}
+	if !strings.Contains(got, `tech_stack = "rust"`) {
+		t.Fatalf("tech_stack not replaced:\n%s", got)
+	}
+	cfg, err := Load(Input{ProjectPath: path, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v (duplicate or invalid key?)", err)
+	}
+	if cfg.Project != "acme" {
+		t.Fatalf("Project = %q, want acme", cfg.Project)
+	}
+}
+
 func TestAddProjectEntryQuotesUnsafeID(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

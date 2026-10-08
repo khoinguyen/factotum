@@ -204,12 +204,15 @@ type projectRunFile struct {
 }
 
 type projectFile struct {
-	Project      string         `toml:"project"`
-	DefaultActor string         `toml:"default_actor"`
-	NoHints      *bool          `toml:"no_hints"`
-	Store        fileStore      `toml:"store"`
-	Judge        judgeFile      `toml:"judge"`
-	Run          projectRunFile `toml:"run"`
+	Project      string `toml:"project"`
+	DefaultActor string `toml:"default_actor"`
+	NoHints      *bool  `toml:"no_hints"`
+	// TechStack records the language/framework choice made when initializing a
+	// greenfield project. Empty means no choice was recorded.
+	TechStack string         `toml:"tech_stack"`
+	Store     fileStore      `toml:"store"`
+	Judge     judgeFile      `toml:"judge"`
+	Run       projectRunFile `toml:"run"`
 }
 
 // Default returns the built-in configuration. TypeSafe is the default judge provider.

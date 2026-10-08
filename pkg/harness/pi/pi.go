@@ -3,7 +3,7 @@
 // from a caller-supplied image through an isolating backend.
 //
 // It implements the harness port (pkg/harness) and speaks only the isolation
-// vocabulary: Spec names the base image, entrypoint, and working identity;
+// vocabulary: Spec names the base image and working identity;
 // Command builds the headless invocation (`pi --print` with the model flag and
 // the prompt as the final message) or, for an interactive request, the
 // terminal-attached TUI invocation; Done and Result read the agent's output.
@@ -55,7 +55,7 @@ type Options struct {
 	// run ignores it.
 	Image string
 	// Binary is the argv[0] for the invocation: a host path resolved locally,
-	// or the entrypoint name that exists inside Image. Defaults to
+	// or the binary name that exists inside Image. Defaults to
 	// DefaultBinary.
 	Binary string
 	// User is the non-root identity the backend should run as, for a

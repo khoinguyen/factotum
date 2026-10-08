@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs"
 import path from "node:path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
-import { defineConfig, type Plugin } from "vite"
+import { defineConfig, type Plugin } from "vitest/config"
 
 // keepGitkeep re-adds web/dist/.gitkeep after emptyOutDir wipes the directory,
 // so a fresh clone always has something for `//go:embed all:dist` to match and
@@ -36,5 +36,9 @@ export default defineConfig({
       "/api": "http://127.0.0.1:8484",
       "/events": "http://127.0.0.1:8484",
     },
+  },
+  test: {
+    environment: "jsdom",
+    include: ["src/**/*.test.{ts,tsx}"],
   },
 })

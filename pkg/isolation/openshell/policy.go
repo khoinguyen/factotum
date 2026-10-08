@@ -6,13 +6,15 @@
 // policy can be tested without a live OpenShell runtime.
 //
 // The rendered policy is deny-by-default. Egress is allowed only for hosts the
-// project names explicitly; OpenCode's phone-home to models.opencode.ai and
-// registry.npmjs.org is denied until a project opts in. Each allowed host
-// becomes a rule scoped to the harness binary, not to every process in the
-// sandbox. The workload runs as an explicit non-root identity, and no
-// credential value is ever written: secrets are attached through an OpenShell
-// provider, which injects a placeholder and substitutes the real value only at
-// the provider-authorized endpoint.
+// project names explicitly; the model provider endpoint is the one exception,
+// attached separately by the OpenShell credential provider (from run.provider),
+// not listed here. OpenCode's phone-home to models.opencode.ai and
+// registry.npmjs.org is optional and denied until a project opts in. Each
+// allowed host becomes a rule scoped to the harness binary, not to every
+// process in the sandbox. The workload runs as an explicit non-root identity,
+// and no credential value is ever written: secrets are attached through an
+// OpenShell provider, which injects a placeholder and substitutes the real
+// value only at the provider-authorized endpoint.
 //
 // A project opts in through a committed override file,
 // .factotum/openshell-policy.yaml, whose only permitted key is allow_hosts:

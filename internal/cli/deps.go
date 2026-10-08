@@ -203,7 +203,7 @@ func runBackends(getenv func(string) string) *registry.Registry[IsolationBackend
 		return local.New(local.Options{AllowHost: cfg.AllowHost, Warn: errOut}), nil
 	})
 	registerRunBackend(reg, openshell.Name, func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error) {
-		warnMissingProjectPolicy(errOut, cfg.PolicyPath)
+		warnOpenShellEgress(errOut, cfg)
 		return openshell.New(openshellBackendOptions(cfg, getenv)), nil
 	})
 	registerRunBackend(reg, docker.Name, func(cfg config.Run, errOut io.Writer) (isolation.IsolationBackend, error) {
@@ -212,17 +212,24 @@ func runBackends(getenv func(string) string) *registry.Registry[IsolationBackend
 	return reg
 }
 
-// warnMissingProjectPolicy surfaces a clear message when the OpenShell backend
-// has no project policy override at the resolved path, so a deny-all run is not
-// silent.
-func warnMissingProjectPolicy(errOut io.Writer, policyPath string) {
-	if errOut == nil || policyPath == "" {
+// warnOpenShellEgress surfaces a clear message when the OpenShell backend has
+// no project policy override at the resolved path, so a deny-all run is not
+// silent. The model provider endpoint is the one allowed exception: ft attaches
+// it from run.provider + run.credential_env, so a configured run still reaches
+// the model while every other host is denied. Without that config the message
+// names what makes the model reachable.
+func warnOpenShellEgress(errOut io.Writer, cfg config.Run) {
+	if errOut == nil || cfg.PolicyPath == "" {
 		return
 	}
-	if _, err := os.Stat(policyPath); err == nil || !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(cfg.PolicyPath); err == nil || !errors.Is(err, os.ErrNotExist) {
 		return
 	}
-	_, _ = fmt.Fprintf(errOut, "ft: warning: openshell: no project policy at %s; egress is deny-all\n", policyPath)
+	if cfg.Provider != "" && cfg.CredentialEnvVar != "" {
+		_, _ = fmt.Fprintf(errOut, "ft: warning: openshell: no project policy at %s; egress is deny-all except the %s model provider endpoint\n", cfg.PolicyPath, cfg.Provider)
+		return
+	}
+	_, _ = fmt.Fprintf(errOut, "ft: warning: openshell: no project policy at %s; egress is deny-all; set run.provider and run.credential_env so the model provider endpoint is attached\n", cfg.PolicyPath)
 }
 
 // openshellBackendOptions translates the run config into OpenShell backend

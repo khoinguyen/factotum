@@ -20,13 +20,12 @@ func TestName(t *testing.T) {
 	}
 }
 
-func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
+func TestSpecDeclaresImageAndIdentity(t *testing.T) {
 	tests := []struct {
 		name         string
 		opts         opencode.Options
 		req          harness.Request
 		wantImage    string
-		wantEntry    []string
 		wantUser     string
 		wantCred     bool
 		wantProvider string
@@ -35,7 +34,6 @@ func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
 		{
 			name:      "defaults use the shipped image and binary",
 			wantImage: opencode.DefaultImage,
-			wantEntry: []string{opencode.DefaultBinary},
 			wantUser:  opencode.DefaultUser,
 		},
 		{
@@ -43,14 +41,12 @@ func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
 			opts:      opencode.Options{Image: "ghcr.io/acme/oc:pinned", Binary: "/usr/local/bin/opencode", User: "501:20"},
 			req:       harness.Request{Workdir: "/work", Labels: map[string]string{"task": "t-1"}},
 			wantImage: "ghcr.io/acme/oc:pinned",
-			wantEntry: []string{"/usr/local/bin/opencode"},
 			wantUser:  "501:20",
 		},
 		{
 			name:         "provider credential is declared without a secret",
 			opts:         opencode.Options{Provider: "openrouter", CredentialEnvVar: "OPENROUTER_API_KEY"},
 			wantImage:    opencode.DefaultImage,
-			wantEntry:    []string{opencode.DefaultBinary},
 			wantUser:     opencode.DefaultUser,
 			wantCred:     true,
 			wantProvider: "openrouter",
@@ -60,7 +56,6 @@ func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
 			name:      "partial credential config declares nothing",
 			opts:      opencode.Options{Provider: "openrouter"},
 			wantImage: opencode.DefaultImage,
-			wantEntry: []string{opencode.DefaultBinary},
 			wantUser:  opencode.DefaultUser,
 		},
 	}
@@ -73,8 +68,11 @@ func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
 			if spec.Image.Ref != tc.wantImage {
 				t.Errorf("image = %q, want %q", spec.Image.Ref, tc.wantImage)
 			}
-			if strings.Join(spec.Image.Entrypoint, " ") != strings.Join(tc.wantEntry, " ") {
-				t.Errorf("entrypoint = %v, want %v", spec.Image.Entrypoint, tc.wantEntry)
+			// The harness leaves the container entrypoint to the backend: it
+			// names the workload binary in Command, and a backend that needs its
+			// own init (the docker keep-alive) would otherwise have to refuse it.
+			if len(spec.Image.Entrypoint) != 0 {
+				t.Errorf("entrypoint = %v, want none (the backend owns the container init)", spec.Image.Entrypoint)
 			}
 			if spec.Image.User != tc.wantUser {
 				t.Errorf("user = %q, want %q", spec.Image.User, tc.wantUser)

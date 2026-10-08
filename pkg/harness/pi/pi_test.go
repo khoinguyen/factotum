@@ -20,13 +20,12 @@ func TestName(t *testing.T) {
 	}
 }
 
-func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
+func TestSpecDeclaresImageAndIdentity(t *testing.T) {
 	tests := []struct {
 		name         string
 		opts         pi.Options
 		req          harness.Request
 		wantImage    string
-		wantEntry    []string
 		wantUser     string
 		wantCred     bool
 		wantProvider string
@@ -35,7 +34,6 @@ func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
 		{
 			name:      "defaults target the host pi binary",
 			wantImage: "",
-			wantEntry: []string{pi.DefaultBinary},
 			wantUser:  "",
 		},
 		{
@@ -43,14 +41,12 @@ func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
 			opts:      pi.Options{Image: "ghcr.io/acme/pi:pinned", Binary: "/usr/local/bin/pi", User: "501:20"},
 			req:       harness.Request{Workdir: "/work", Labels: map[string]string{"task": "t-1"}},
 			wantImage: "ghcr.io/acme/pi:pinned",
-			wantEntry: []string{"/usr/local/bin/pi"},
 			wantUser:  "501:20",
 		},
 		{
 			name:         "provider credential is declared without a secret",
 			opts:         pi.Options{Provider: "openrouter", CredentialEnvVar: "OPENROUTER_API_KEY"},
 			wantImage:    "",
-			wantEntry:    []string{pi.DefaultBinary},
 			wantCred:     true,
 			wantProvider: "openrouter",
 			wantEnvVar:   "OPENROUTER_API_KEY",
@@ -59,7 +55,6 @@ func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
 			name:      "partial credential config declares nothing",
 			opts:      pi.Options{Provider: "openrouter"},
 			wantImage: "",
-			wantEntry: []string{pi.DefaultBinary},
 		},
 	}
 	for _, tc := range tests {
@@ -71,8 +66,11 @@ func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
 			if spec.Image.Ref != tc.wantImage {
 				t.Errorf("image = %q, want %q", spec.Image.Ref, tc.wantImage)
 			}
-			if strings.Join(spec.Image.Entrypoint, " ") != strings.Join(tc.wantEntry, " ") {
-				t.Errorf("entrypoint = %v, want %v", spec.Image.Entrypoint, tc.wantEntry)
+			// The harness leaves the container entrypoint to the backend: it
+			// names the workload binary in Command, and a backend that needs its
+			// own init (the docker keep-alive) would otherwise have to refuse it.
+			if len(spec.Image.Entrypoint) != 0 {
+				t.Errorf("entrypoint = %v, want none (the backend owns the container init)", spec.Image.Entrypoint)
 			}
 			if spec.Image.User != tc.wantUser {
 				t.Errorf("user = %q, want %q", spec.Image.User, tc.wantUser)

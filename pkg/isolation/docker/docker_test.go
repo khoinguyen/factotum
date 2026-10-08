@@ -328,6 +328,24 @@ func TestPrepareRejectsNonEmptyPolicy(t *testing.T) {
 	}
 }
 
+// TestPrepareRejectsImageEntrypoint pins the honest boundary: the backend keeps
+// the container alive with its own shell init and runs the workload through
+// `docker exec`, so it cannot honor a custom image entrypoint. It refuses
+// loudly instead of silently dropping it.
+func TestPrepareRejectsImageEntrypoint(t *testing.T) {
+	r := &fakeRunner{}
+	be := newBackend(r)
+	_, err := be.Prepare(context.Background(), isolation.Spec{
+		Image: isolation.Image{Ref: "img", Entrypoint: []string{"opencode"}},
+	})
+	if !errors.Is(err, isolation.ErrUnsupported) {
+		t.Fatalf("Prepare(entrypoint) error = %v, want ErrUnsupported", err)
+	}
+	if r.count("run") != 0 {
+		t.Error("Prepare(entrypoint) started a container before rejecting the entrypoint")
+	}
+}
+
 // TestPrepareHonorsEnvLabelsAndUser pins that the spec's env, labels, and
 // non-root identity reach the container.
 func TestPrepareHonorsEnvLabelsAndUser(t *testing.T) {

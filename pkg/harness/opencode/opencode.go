@@ -109,15 +109,14 @@ func New(opts Options) *Harness {
 
 func (h *Harness) Name() string { return Name }
 
-// Spec returns the environment the run needs: the base image with its
-// entrypoint and non-root identity, the workdir, any extra environment, the
-// run labels, and the credential reference the backend should resolve.
+// Spec returns the environment the run needs: the base image with its non-root
+// identity, the workdir, any extra environment, the run labels, and the
+// credential reference the backend should resolve.
 func (h *Harness) Spec(req harness.Request) (isolation.Spec, error) {
 	spec := isolation.Spec{
 		Image: isolation.Image{
-			Ref:        h.image,
-			Entrypoint: []string{h.binary},
-			User:       h.user,
+			Ref:  h.image,
+			User: h.user,
 		},
 		Workdir: req.Workdir,
 		Env:     clone(req.Env),

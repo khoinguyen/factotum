@@ -98,7 +98,7 @@ var taskKeys = keySet(
 	"not_before", "snooze", "milestone", "created_at", "updated_at",
 )
 
-func encodeTask(task core.Task, extra map[string]*yaml.Node) ([]byte, error) {
+func encodeTask(task core.Ticket, extra map[string]*yaml.Node) ([]byte, error) {
 	fm := taskFrontmatter{
 		ID:                 string(task.ID),
 		Kind:               string(task.Kind),
@@ -133,29 +133,29 @@ func encodeTask(task core.Task, extra map[string]*yaml.Node) ([]byte, error) {
 	return composeDocument(front, task.Description, task.Notes), nil
 }
 
-func decodeTask(data []byte) (core.Task, map[string]*yaml.Node, error) {
+func decodeTask(data []byte) (core.Ticket, map[string]*yaml.Node, error) {
 	front, body, err := splitFrontmatter(data)
 	if err != nil {
-		return core.Task{}, nil, err
+		return core.Ticket{}, nil, err
 	}
 	var fm taskFrontmatter
 	extra, err := decodeFrontmatter(front, &fm, taskKeys)
 	if err != nil {
-		return core.Task{}, nil, err
+		return core.Ticket{}, nil, err
 	}
 	description, notes, err := parseBody(body)
 	if err != nil {
-		return core.Task{}, nil, err
+		return core.Ticket{}, nil, err
 	}
 
-	task := core.Task{
-		ID:                 core.TaskID(fm.ID),
+	task := core.Ticket{
+		ID:                 core.TicketID(fm.ID),
 		ProjectID:          core.ProjectID(fm.Project),
 		Repo:               fm.Repo,
-		Kind:               core.TaskKind(fm.Kind),
+		Kind:               core.TicketKind(fm.Kind),
 		Title:              fm.Title,
 		Description:        description,
-		Status:             core.TaskStatus(fm.Status),
+		Status:             core.TicketStatus(fm.Status),
 		WaitingOn:          actorIDsFromStrings(fm.WaitingOn),
 		Labels:             fm.Labels,
 		Priority:           fm.Priority,
@@ -178,7 +178,7 @@ func decodeTask(data []byte) (core.Task, map[string]*yaml.Node, error) {
 		task.Milestone = milestoneToCore(*fm.Milestone)
 	}
 	if err := task.Validate(); err != nil {
-		return core.Task{}, nil, err
+		return core.Ticket{}, nil, err
 	}
 	return task, extra, nil
 }
@@ -195,7 +195,7 @@ func snoozeFromCore(s core.Snooze) *snoozeDoc {
 func snoozeToCore(doc snoozeDoc) *core.Snooze {
 	s := &core.Snooze{Indefinite: doc.Indefinite, Until: doc.Until}
 	if doc.UntilTask != nil {
-		id := core.TaskID(*doc.UntilTask)
+		id := core.TicketID(*doc.UntilTask)
 		s.UntilTask = &id
 	}
 	return s
@@ -339,7 +339,7 @@ func decodeActor(data []byte) (core.Actor, map[string]*yaml.Node, error) {
 type artifactFrontmatter struct {
 	ID        string    `yaml:"id"`
 	Project   string    `yaml:"project"`
-	Task      *string   `yaml:"task,omitempty"`
+	Ticket    *string   `yaml:"task,omitempty"`
 	Kind      string    `yaml:"kind"`
 	Title     string    `yaml:"title"`
 	Brief     string    `yaml:"brief,omitempty"`
@@ -363,9 +363,9 @@ func encodeArtifact(artifact core.Artifact, extra map[string]*yaml.Node) ([]byte
 		CreatedAt: artifact.CreatedAt,
 		UpdatedAt: artifact.UpdatedAt,
 	}
-	if artifact.TaskID != nil {
-		id := string(*artifact.TaskID)
-		fm.Task = &id
+	if artifact.TicketID != nil {
+		id := string(*artifact.TicketID)
+		fm.Ticket = &id
 	}
 	front, err := marshalFrontmatter(fm, extra)
 	if err != nil {
@@ -400,9 +400,9 @@ func decodeArtifact(data []byte) (core.Artifact, map[string]*yaml.Node, error) {
 		CreatedAt: fm.CreatedAt,
 		UpdatedAt: fm.UpdatedAt,
 	}
-	if fm.Task != nil {
-		id := core.TaskID(*fm.Task)
-		artifact.TaskID = &id
+	if fm.Ticket != nil {
+		id := core.TicketID(*fm.Ticket)
+		artifact.TicketID = &id
 	}
 	if err := artifact.Validate(); err != nil {
 		return core.Artifact{}, nil, err
@@ -665,7 +665,7 @@ func keySet(keys ...string) map[string]bool {
 	return set
 }
 
-func taskIDStrings(ids []core.TaskID) []string {
+func taskIDStrings(ids []core.TicketID) []string {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -676,13 +676,13 @@ func taskIDStrings(ids []core.TaskID) []string {
 	return out
 }
 
-func taskIDsFromStrings(ids []string) []core.TaskID {
+func taskIDsFromStrings(ids []string) []core.TicketID {
 	if len(ids) == 0 {
 		return nil
 	}
-	out := make([]core.TaskID, 0, len(ids))
+	out := make([]core.TicketID, 0, len(ids))
 	for _, id := range ids {
-		out = append(out, core.TaskID(id))
+		out = append(out, core.TicketID(id))
 	}
 	return out
 }
@@ -709,7 +709,7 @@ func actorIDsFromStrings(ids []string) []core.ActorID {
 	return out
 }
 
-func statusStrings(statuses []core.TaskStatus) []string {
+func statusStrings(statuses []core.TicketStatus) []string {
 	if len(statuses) == 0 {
 		return nil
 	}
@@ -720,13 +720,13 @@ func statusStrings(statuses []core.TaskStatus) []string {
 	return out
 }
 
-func statusesFromStrings(statuses []string) []core.TaskStatus {
+func statusesFromStrings(statuses []string) []core.TicketStatus {
 	if len(statuses) == 0 {
 		return nil
 	}
-	out := make([]core.TaskStatus, 0, len(statuses))
+	out := make([]core.TicketStatus, 0, len(statuses))
 	for _, status := range statuses {
-		out = append(out, core.TaskStatus(status))
+		out = append(out, core.TicketStatus(status))
 	}
 	return out
 }

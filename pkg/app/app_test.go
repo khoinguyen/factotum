@@ -34,7 +34,7 @@ func (s *seqIDs) NewID(prefix string) string {
 type harness struct {
 	backend   store.Backend
 	projects  *ProjectService
-	tasks     *TaskService
+	tasks     *TicketService
 	actors    *ActorService
 	artifacts *ArtifactService
 }
@@ -52,13 +52,13 @@ func newHarnessWithClock(t *testing.T, clock Clock) *harness {
 	return &harness{
 		backend:   backend,
 		projects:  NewProjectService(backend, clock, ids),
-		tasks:     NewTaskService(backend, clock, ids),
+		tasks:     NewTicketService(backend, clock, ids),
 		actors:    NewActorService(backend, clock, ids),
 		artifacts: NewArtifactService(backend, clock, ids),
 	}
 }
 
-func equalIDs(got, want []core.TaskID) bool {
+func equalIDs(got, want []core.TicketID) bool {
 	if len(got) != len(want) {
 		return false
 	}
@@ -98,7 +98,7 @@ func TestProjectCreateEmitsEvent(t *testing.T) {
 
 func TestTaskRequiresProject(t *testing.T) {
 	h := newHarness(t)
-	_, err := h.tasks.Add(context.Background(), TaskInput{ProjectID: "missing", Title: "x"})
+	_, err := h.tasks.Add(context.Background(), TicketInput{ProjectID: "missing", Title: "x"})
 	if !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("Add() error = %v, want ErrNotFound", err)
 	}
@@ -109,11 +109,11 @@ func TestTaskDependenciesAndReadiness(t *testing.T) {
 	ctx := context.Background()
 	project := h.newProject(t)
 
-	first, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "first"})
+	first, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "first"})
 	if err != nil {
 		t.Fatalf("Add(first) error = %v", err)
 	}
-	second, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "second"})
+	second, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "second"})
 	if err != nil {
 		t.Fatalf("Add(second) error = %v", err)
 	}
@@ -122,7 +122,7 @@ func TestTaskDependenciesAndReadiness(t *testing.T) {
 	}
 
 	snapshot := mustSnapshot(t, h, project.ID)
-	if !equalIDs(snapshot.Graph.ReadySet(), []core.TaskID{first.ID}) {
+	if !equalIDs(snapshot.Graph.ReadySet(), []core.TicketID{first.ID}) {
 		t.Fatalf("ReadySet() = %v, want [%s]", snapshot.Graph.ReadySet(), first.ID)
 	}
 
@@ -130,7 +130,7 @@ func TestTaskDependenciesAndReadiness(t *testing.T) {
 		t.Fatalf("SetStatus() error = %v", err)
 	}
 	snapshot = mustSnapshot(t, h, project.ID)
-	if !equalIDs(snapshot.Graph.ReadySet(), []core.TaskID{second.ID}) {
+	if !equalIDs(snapshot.Graph.ReadySet(), []core.TicketID{second.ID}) {
 		t.Fatalf("ReadySet() after review = %v, want [%s]", snapshot.Graph.ReadySet(), second.ID)
 	}
 }
@@ -140,8 +140,8 @@ func TestAddDepRejectsCycle(t *testing.T) {
 	ctx := context.Background()
 	project := h.newProject(t)
 
-	first, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "first"})
-	second, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "second"})
+	first, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "first"})
+	second, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "second"})
 	if _, err := h.tasks.AddDep(ctx, second.ID, first.ID); err != nil {
 		t.Fatalf("AddDep() error = %v", err)
 	}
@@ -155,11 +155,11 @@ func TestMilestoneGatesDependents(t *testing.T) {
 	ctx := context.Background()
 	project := h.newProject(t)
 
-	milestone, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Kind: core.KindMilestone, Title: "release"})
+	milestone, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Kind: core.KindMilestone, Title: "release"})
 	if err != nil {
 		t.Fatalf("Add(milestone) error = %v", err)
 	}
-	follow, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "after release"})
+	follow, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "after release"})
 	if err != nil {
 		t.Fatalf("Add(follow) error = %v", err)
 	}
@@ -181,7 +181,7 @@ func TestMilestoneGatesDependents(t *testing.T) {
 		t.Fatalf("SetStatus(done) error = %v", err)
 	}
 	snapshot = mustSnapshot(t, h, project.ID)
-	if !equalIDs(snapshot.Graph.ReadySet(), []core.TaskID{follow.ID}) {
+	if !equalIDs(snapshot.Graph.ReadySet(), []core.TicketID{follow.ID}) {
 		t.Fatalf("ReadySet() after milestone done = %v, want [%s]", snapshot.Graph.ReadySet(), follow.ID)
 	}
 }
@@ -200,7 +200,7 @@ func TestAssignAndReadyByActor(t *testing.T) {
 		t.Fatalf("Add(human) error = %v", err)
 	}
 
-	agentTask, _ := h.tasks.Add(ctx, TaskInput{
+	agentTask, _ := h.tasks.Add(ctx, TicketInput{
 		ProjectID:          project.ID,
 		Title:              "agent work",
 		Groomed:            true,
@@ -209,17 +209,17 @@ func TestAssignAndReadyByActor(t *testing.T) {
 	if _, err := h.tasks.Assign(ctx, agentTask.ID, &agent.ID); err != nil {
 		t.Fatalf("Assign(agent) error = %v", err)
 	}
-	humanTask, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "human work"})
+	humanTask, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "human work"})
 	if _, err := h.tasks.Assign(ctx, humanTask.ID, &human.ID); err != nil {
 		t.Fatalf("Assign(human) error = %v", err)
 	}
-	unownedTask, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "unowned"})
+	unownedTask, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "unowned"})
 
 	snapshot := mustSnapshot(t, h, project.ID)
-	if !equalIDs(snapshot.Ready.Agent, []core.TaskID{agentTask.ID}) {
+	if !equalIDs(snapshot.Ready.Agent, []core.TicketID{agentTask.ID}) {
 		t.Fatalf("Ready.Agent = %v, want [%s]", snapshot.Ready.Agent, agentTask.ID)
 	}
-	if !equalIDs(snapshot.Ready.Human, []core.TaskID{humanTask.ID, unownedTask.ID}) {
+	if !equalIDs(snapshot.Ready.Human, []core.TicketID{humanTask.ID, unownedTask.ID}) {
 		t.Fatalf("Ready.Human = %v, want [%s %s]", snapshot.Ready.Human, humanTask.ID, unownedTask.ID)
 	}
 }
@@ -235,8 +235,8 @@ func TestLoadAllSnapshotMergesProjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create(beta) error = %v", err)
 	}
-	first, _ := h.tasks.Add(ctx, TaskInput{ProjectID: alpha.ID, Title: "first"})
-	second, _ := h.tasks.Add(ctx, TaskInput{ProjectID: beta.ID, Title: "second"})
+	first, _ := h.tasks.Add(ctx, TicketInput{ProjectID: alpha.ID, Title: "first"})
+	second, _ := h.tasks.Add(ctx, TicketInput{ProjectID: beta.ID, Title: "second"})
 
 	snapshot, err := LoadAllSnapshot(ctx, h.backend, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -248,7 +248,7 @@ func TestLoadAllSnapshotMergesProjects(t *testing.T) {
 	if len(snapshot.Tasks) != 2 {
 		t.Fatalf("Tasks = %d, want 2", len(snapshot.Tasks))
 	}
-	ready := map[core.TaskID]bool{}
+	ready := map[core.TicketID]bool{}
 	for _, id := range snapshot.Ready.Human {
 		ready[id] = true
 	}
@@ -447,7 +447,7 @@ func TestArtifactUpdateTaskLink(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "work"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "work"})
 	if err != nil {
 		t.Fatalf("Task Add() error = %v", err)
 	}
@@ -456,20 +456,20 @@ func TestArtifactUpdateTaskLink(t *testing.T) {
 		t.Fatalf("Add() error = %v", err)
 	}
 
-	attached, err := h.artifacts.Update(ctx, artifact.ID, ArtifactPatch{TaskID: &task.ID})
+	attached, err := h.artifacts.Update(ctx, artifact.ID, ArtifactPatch{TicketID: &task.ID})
 	if err != nil {
 		t.Fatalf("Update(attach) error = %v", err)
 	}
-	if attached.TaskID == nil || *attached.TaskID != task.ID {
-		t.Fatalf("Update(attach) TaskID = %v, want %s", attached.TaskID, task.ID)
+	if attached.TicketID == nil || *attached.TicketID != task.ID {
+		t.Fatalf("Update(attach) TicketID = %v, want %s", attached.TicketID, task.ID)
 	}
 
 	detached, err := h.artifacts.Update(ctx, artifact.ID, ArtifactPatch{ClearTask: true})
 	if err != nil {
 		t.Fatalf("Update(detach) error = %v", err)
 	}
-	if detached.TaskID != nil {
-		t.Fatalf("Update(detach) TaskID = %v, want nil", detached.TaskID)
+	if detached.TicketID != nil {
+		t.Fatalf("Update(detach) TicketID = %v, want nil", detached.TicketID)
 	}
 }
 
@@ -487,8 +487,8 @@ func TestArtifactUpdateErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
-	missingTask := core.TaskID("t-missing")
-	if _, err := h.artifacts.Update(ctx, artifact.ID, ArtifactPatch{TaskID: &missingTask}); err == nil {
+	missingTask := core.TicketID("t-missing")
+	if _, err := h.artifacts.Update(ctx, artifact.ID, ArtifactPatch{TicketID: &missingTask}); err == nil {
 		t.Fatal("Update(unknown task) error = nil, want a task lookup error")
 	}
 }
@@ -497,7 +497,7 @@ func TestAddNote(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "decide"})
+	task, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "decide"})
 
 	updated, err := h.tasks.AddNote(ctx, task.ID, NoteInput{
 		Body:  "need Khoi's call",
@@ -585,13 +585,13 @@ func TestTaskKindUpdate(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "feature flag rollout"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "feature flag rollout"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 
 	milestone := core.KindMilestone
-	updated, err := h.tasks.Update(ctx, task.ID, TaskUpdate{Kind: &milestone})
+	updated, err := h.tasks.Update(ctx, task.ID, TicketUpdate{Kind: &milestone})
 	if err != nil {
 		t.Fatalf("Update(kind) error = %v", err)
 	}
@@ -599,8 +599,8 @@ func TestTaskKindUpdate(t *testing.T) {
 		t.Fatalf("Kind = %q, want milestone", updated.Kind)
 	}
 
-	bad := core.TaskKind("epic")
-	if _, err := h.tasks.Update(ctx, task.ID, TaskUpdate{Kind: &bad}); !errors.Is(err, core.ErrInvalid) {
+	bad := core.TicketKind("epic")
+	if _, err := h.tasks.Update(ctx, task.ID, TicketUpdate{Kind: &bad}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Update(bad kind) error = %v, want ErrInvalid", err)
 	}
 }
@@ -610,15 +610,15 @@ func TestTaskExplicitID(t *testing.T) {
 	ctx := context.Background()
 	project := h.newProject(t)
 
-	id := core.TaskID("APS-99999")
-	task, err := h.tasks.Add(ctx, TaskInput{ID: &id, ProjectID: project.ID, Title: "imported"})
+	id := core.TicketID("APS-99999")
+	task, err := h.tasks.Add(ctx, TicketInput{ID: &id, ProjectID: project.ID, Title: "imported"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 	if task.ID != id {
 		t.Fatalf("ID = %q, want %q", task.ID, id)
 	}
-	if _, err := h.tasks.Add(ctx, TaskInput{ID: &id, ProjectID: project.ID, Title: "dup"}); !errors.Is(err, core.ErrAlreadyExists) {
+	if _, err := h.tasks.Add(ctx, TicketInput{ID: &id, ProjectID: project.ID, Title: "dup"}); !errors.Is(err, core.ErrAlreadyExists) {
 		t.Fatalf("Add() duplicate error = %v, want ErrAlreadyExists", err)
 	}
 }
@@ -671,16 +671,16 @@ func TestTaskRepoAssociation(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	dataTask, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Repo: "data", Title: "data task"})
+	dataTask, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Repo: "data", Title: "data task"})
 	if err != nil {
 		t.Fatalf("Add(repo data) error = %v", err)
 	}
-	if _, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Repo: "nope", Title: "bad"}); !errors.Is(err, core.ErrInvalid) {
+	if _, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Repo: "nope", Title: "bad"}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Add(bad repo) error = %v, want ErrInvalid", err)
 	}
 
 	repo := "data"
-	list, err := h.tasks.List(ctx, store.TaskFilter{ProjectID: project.ID, Repo: &repo})
+	list, err := h.tasks.List(ctx, store.TicketFilter{ProjectID: project.ID, Repo: &repo})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -689,7 +689,7 @@ func TestTaskRepoAssociation(t *testing.T) {
 	}
 
 	newRepo := "devops"
-	updated, err := h.tasks.Update(ctx, dataTask.ID, TaskUpdate{Repo: &newRepo})
+	updated, err := h.tasks.Update(ctx, dataTask.ID, TicketUpdate{Repo: &newRepo})
 	if err != nil {
 		t.Fatalf("Update(repo) error = %v", err)
 	}
@@ -702,7 +702,7 @@ func TestTaskSetAppliesTypedFields(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "original"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "original"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -712,7 +712,7 @@ func TestTaskSetAppliesTypedFields(t *testing.T) {
 	title := "renamed"
 	description := "long body"
 	labels := []string{"ui", "api"}
-	updated, err := h.tasks.Set(ctx, task.ID, TaskSet{
+	updated, err := h.tasks.Set(ctx, task.ID, TicketSet{
 		Status:      &status,
 		Priority:    &priority,
 		Title:       &title,
@@ -743,10 +743,10 @@ func TestTaskSetRejectsInvalidStatus(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "x"})
+	task, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "x"})
 
-	bad := core.TaskStatus("bogus")
-	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Status: &bad}); !errors.Is(err, core.ErrInvalid) {
+	bad := core.TicketStatus("bogus")
+	if _, err := h.tasks.Set(ctx, task.ID, TicketSet{Status: &bad}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Set(bad status) error = %v, want ErrInvalid", err)
 	}
 }
@@ -756,7 +756,7 @@ func TestTaskSetAppliesGroomedAndCriteria(t *testing.T) {
 	ctx := context.Background()
 	project := h.newProject(t)
 
-	created, err := h.tasks.Add(ctx, TaskInput{
+	created, err := h.tasks.Add(ctx, TicketInput{
 		ProjectID:          project.ID,
 		Title:              "groomed at birth",
 		Groomed:            true,
@@ -770,7 +770,7 @@ func TestTaskSetAppliesGroomedAndCriteria(t *testing.T) {
 	}
 
 	groomed := true
-	updated, err := h.tasks.Set(ctx, created.ID, TaskSet{
+	updated, err := h.tasks.Set(ctx, created.ID, TicketSet{
 		Groomed:            &groomed,
 		AcceptanceCriteria: []string{"one", "two"},
 	})
@@ -782,7 +782,7 @@ func TestTaskSetAppliesGroomedAndCriteria(t *testing.T) {
 	}
 
 	ungroomed := false
-	cleared, err := h.tasks.Set(ctx, created.ID, TaskSet{Groomed: &ungroomed})
+	cleared, err := h.tasks.Set(ctx, created.ID, TicketSet{Groomed: &ungroomed})
 	if err != nil {
 		t.Fatalf("Set(ungroomed) error = %v", err)
 	}
@@ -790,8 +790,8 @@ func TestTaskSetAppliesGroomedAndCriteria(t *testing.T) {
 		t.Fatalf("Set(ungroomed) Groomed = true, want false")
 	}
 
-	plain, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "ungroomed"})
-	if _, err := h.tasks.Set(ctx, plain.ID, TaskSet{Groomed: &groomed}); !errors.Is(err, core.ErrInvalid) {
+	plain, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "ungroomed"})
+	if _, err := h.tasks.Set(ctx, plain.ID, TicketSet{Groomed: &groomed}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Set(groomed without criteria) error = %v, want ErrInvalid", err)
 	}
 }
@@ -803,10 +803,10 @@ func TestTaskSetValidatesRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "x"})
+	task, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "x"})
 
 	bad := "nope"
-	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Repo: &bad}); !errors.Is(err, core.ErrInvalid) {
+	if _, err := h.tasks.Set(ctx, task.ID, TicketSet{Repo: &bad}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Set(bad repo) error = %v, want ErrInvalid", err)
 	}
 }
@@ -815,12 +815,12 @@ func TestSetStatusEmitsStatusEvent(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "x"})
+	task, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "x"})
 
 	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusDone); err != nil {
 		t.Fatalf("SetStatus() error = %v", err)
 	}
-	events, err := h.backend.Events().List(ctx, store.EventFilter{TaskID: &task.ID})
+	events, err := h.backend.Events().List(ctx, store.EventFilter{TicketID: &task.ID})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -842,10 +842,10 @@ func TestTaskSetClearsLabels(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "x"})
+	task, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "x"})
 
 	empty := []string{}
-	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Labels: empty}); err != nil {
+	if _, err := h.tasks.Set(ctx, task.ID, TicketSet{Labels: empty}); err != nil {
 		t.Fatalf("Set(clear labels) error = %v", err)
 	}
 	reloaded, _ := h.tasks.Get(ctx, task.ID)
@@ -858,7 +858,7 @@ func TestTaskSetRejectsStaleExpectation(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "x"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "x"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -867,17 +867,17 @@ func TestTaskSetRejectsStaleExpectation(t *testing.T) {
 	concurrent := *task
 	concurrent.Title = "other"
 	concurrent.UpdatedAt = stale.Add(time.Minute)
-	if err := h.backend.Tasks().Update(ctx, &concurrent); err != nil {
+	if err := h.backend.Tickets().Update(ctx, &concurrent); err != nil {
 		t.Fatalf("concurrent Update() error = %v", err)
 	}
 
 	title := "mine"
-	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Title: &title, Expect: &stale}); !errors.Is(err, core.ErrConflict) {
+	if _, err := h.tasks.Set(ctx, task.ID, TicketSet{Title: &title, Expect: &stale}); !errors.Is(err, core.ErrConflict) {
 		t.Fatalf("Set(stale expect) error = %v, want ErrConflict", err)
 	}
 
 	fresh := concurrent.UpdatedAt
-	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{Title: &title, Expect: &fresh}); err != nil {
+	if _, err := h.tasks.Set(ctx, task.ID, TicketSet{Title: &title, Expect: &fresh}); err != nil {
 		t.Fatalf("Set(fresh expect) error = %v", err)
 	}
 }
@@ -886,7 +886,7 @@ func TestTaskClaimIsExclusive(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "work"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "work"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -916,7 +916,7 @@ func TestTaskClaimStartBeginsWork(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "work"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "work"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -933,7 +933,7 @@ func TestTaskClaimStartBeginsWork(t *testing.T) {
 		t.Fatalf("Claim(start).Status = %q, want in_progress", claimed.Status)
 	}
 
-	events, err := h.backend.Events().List(ctx, store.EventFilter{TaskID: &task.ID})
+	events, err := h.backend.Events().List(ctx, store.EventFilter{TicketID: &task.ID})
 	if err != nil {
 		t.Fatalf("List(events) error = %v", err)
 	}
@@ -950,7 +950,7 @@ func TestTaskSnoozeExcludesAndWakes(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "park me"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "park me"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -980,8 +980,8 @@ func TestTaskSnoozeUntilTask(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	blocker, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "blocker"})
-	parked, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "parked"})
+	blocker, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "blocker"})
+	parked, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "parked"})
 	if _, err := h.tasks.Snooze(ctx, parked.ID, core.Snooze{UntilTask: &blocker.ID}); err != nil {
 		t.Fatalf("Snooze(until task) error = %v", err)
 	}
@@ -1001,7 +1001,7 @@ func TestTaskUnsnooze(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "park me"})
+	task, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "park me"})
 	if _, err := h.tasks.Snooze(ctx, task.ID, core.Snooze{Indefinite: true}); err != nil {
 		t.Fatalf("Snooze(indefinite) error = %v", err)
 	}
@@ -1020,7 +1020,7 @@ func TestTaskSnoozeRejectsBadCondition(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "park me"})
+	task, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "park me"})
 
 	if _, err := h.tasks.Snooze(ctx, task.ID, core.Snooze{}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Snooze(empty) error = %v, want ErrInvalid", err)
@@ -1028,7 +1028,7 @@ func TestTaskSnoozeRejectsBadCondition(t *testing.T) {
 	if _, err := h.tasks.Snooze(ctx, task.ID, core.Snooze{UntilTask: &task.ID}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Snooze(self) error = %v, want ErrInvalid", err)
 	}
-	missing := core.TaskID("t-missing")
+	missing := core.TicketID("t-missing")
 	if _, err := h.tasks.Snooze(ctx, task.ID, core.Snooze{UntilTask: &missing}); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("Snooze(missing) error = %v, want ErrNotFound", err)
 	}
@@ -1038,9 +1038,9 @@ func TestTaskSnoozeRejectsDependentUntilTask(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	a, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "A"})
-	b, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "B"})
-	c, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "C"})
+	a, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "A"})
+	b, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "B"})
+	c, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "C"})
 	if _, err := h.tasks.AddDep(ctx, b.ID, a.ID); err != nil { // B depends on A
 		t.Fatalf("AddDep(B, A) error = %v", err)
 	}
@@ -1058,7 +1058,7 @@ func TestTaskSnoozeRejectsDependentUntilTask(t *testing.T) {
 	}
 
 	// Independent task: allowed.
-	independent, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "independent"})
+	independent, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "independent"})
 	if _, err := h.tasks.Snooze(ctx, a.ID, core.Snooze{UntilTask: &independent.ID}); err != nil {
 		t.Fatalf("Snooze(until independent) error = %v, want nil", err)
 	}
@@ -1074,8 +1074,8 @@ func TestTaskSnoozeRejectsMutualCycle(t *testing.T) {
 	ctx := context.Background()
 	project := h.newProject(t)
 
-	x, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "X"})
-	y, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "Y"})
+	x, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "X"})
+	y, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "Y"})
 	if _, err := h.tasks.Snooze(ctx, x.ID, core.Snooze{UntilTask: &y.ID}); err != nil {
 		t.Fatalf("Snooze(X until Y) error = %v", err)
 	}
@@ -1085,9 +1085,9 @@ func TestTaskSnoozeRejectsMutualCycle(t *testing.T) {
 	}
 
 	// Transitive waits-for cycle: P -> Q -> R -> P.
-	p, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "P"})
-	q, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "Q"})
-	r, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "R"})
+	p, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "P"})
+	q, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "Q"})
+	r, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "R"})
 	if _, err := h.tasks.Snooze(ctx, p.ID, core.Snooze{UntilTask: &q.ID}); err != nil {
 		t.Fatalf("Snooze(P until Q) error = %v", err)
 	}
@@ -1099,7 +1099,7 @@ func TestTaskSnoozeRejectsMutualCycle(t *testing.T) {
 	}
 
 	// Happy: an until-task outside the chain is fine.
-	d, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "D"})
+	d, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "D"})
 	if _, err := h.tasks.Snooze(ctx, x.ID, core.Snooze{UntilTask: &d.ID}); err != nil {
 		t.Fatalf("Snooze(X until D) error = %v, want nil", err)
 	}
@@ -1110,8 +1110,8 @@ func TestTaskSnoozeAllowsDanglingChain(t *testing.T) {
 	ctx := context.Background()
 	project := h.newProject(t)
 
-	x, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "X"})
-	e, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "E"})
+	x, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "X"})
+	e, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "E"})
 	if _, err := h.tasks.Snooze(ctx, x.ID, core.Snooze{UntilTask: &e.ID}); err != nil {
 		t.Fatalf("Snooze(X until E) error = %v", err)
 	}
@@ -1120,13 +1120,13 @@ func TestTaskSnoozeAllowsDanglingChain(t *testing.T) {
 	}
 
 	// X's UntilTask now dangles; a snooze whose chain hits it must be allowed.
-	f, _ := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "F"})
+	f, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "F"})
 	if _, err := h.tasks.Snooze(ctx, f.ID, core.Snooze{UntilTask: &x.ID}); err != nil {
 		t.Fatalf("Snooze(F until X) with a dangling chain error = %v, want nil", err)
 	}
 }
 
-func readyIDs(t *testing.T, h *harness, projectID core.ProjectID, now time.Time) []core.TaskID {
+func readyIDs(t *testing.T, h *harness, projectID core.ProjectID, now time.Time) []core.TicketID {
 	t.Helper()
 	snapshot, err := LoadSnapshot(context.Background(), h.backend, projectID, now)
 	if err != nil {
@@ -1148,13 +1148,13 @@ func TestTaskSetNotBefore(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "soak"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "soak"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 
 	deadline := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	updated, err := h.tasks.Set(ctx, task.ID, TaskSet{NotBefore: &deadline})
+	updated, err := h.tasks.Set(ctx, task.ID, TicketSet{NotBefore: &deadline})
 	if err != nil {
 		t.Fatalf("Set(not_before) error = %v", err)
 	}
@@ -1162,7 +1162,7 @@ func TestTaskSetNotBefore(t *testing.T) {
 		t.Fatalf("NotBefore = %v, want %v", updated.NotBefore, deadline)
 	}
 
-	cleared, err := h.tasks.Set(ctx, task.ID, TaskSet{ClearNotBefore: true})
+	cleared, err := h.tasks.Set(ctx, task.ID, TicketSet{ClearNotBefore: true})
 	if err != nil {
 		t.Fatalf("Set(clear) error = %v", err)
 	}
@@ -1175,12 +1175,12 @@ func TestSnapshotExcludesNotBeforeUntilDeadline(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "soak"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "soak"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 	deadline := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := h.tasks.Set(ctx, task.ID, TaskSet{NotBefore: &deadline}); err != nil {
+	if _, err := h.tasks.Set(ctx, task.ID, TicketSet{NotBefore: &deadline}); err != nil {
 		t.Fatalf("Set() error = %v", err)
 	}
 
@@ -1196,15 +1196,15 @@ func TestSnapshotExcludesNotBeforeUntilDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSnapshot() error = %v", err)
 	}
-	got := append(append([]core.TaskID{}, after.Ready.Agent...), after.Ready.Human...)
+	got := append(append([]core.TicketID{}, after.Ready.Agent...), after.Ready.Human...)
 	if len(got) != 1 || got[0] != task.ID {
 		t.Fatalf("ready after deadline = %v, want [%s]", got, task.ID)
 	}
 }
 
-func unionIDs(groups ...[]core.TaskID) []core.TaskID {
-	seen := make(map[core.TaskID]struct{})
-	var out []core.TaskID
+func unionIDs(groups ...[]core.TicketID) []core.TicketID {
+	seen := make(map[core.TicketID]struct{})
+	var out []core.TicketID
 	for _, group := range groups {
 		for _, id := range group {
 			if _, ok := seen[id]; ok {

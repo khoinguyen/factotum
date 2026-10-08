@@ -78,7 +78,7 @@ func newFeedbackCreateCommand(deps *Deps) *cobra.Command {
 
 // sendFeedback resolves the sink store, opens it, builds the selected transport,
 // and delivers the report. The caller's own backend is never used as the sink.
-func (d *Deps) sendFeedback(cmd *cobra.Command, sinkProject, transportName string, report feedback.Report) (*core.Task, error) {
+func (d *Deps) sendFeedback(cmd *cobra.Command, sinkProject, transportName string, report feedback.Report) (*core.Ticket, error) {
 	storeCfg, ok, err := config.StoreFor(d.UserConfigPath, sinkProject)
 	if err != nil {
 		return nil, err

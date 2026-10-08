@@ -14,10 +14,10 @@ import (
 
 type Graph struct {
 	policy     core.ResolutionPolicy
-	tasks      map[core.TaskID]core.Task
-	deps       map[core.TaskID][]core.TaskID
-	dependents map[core.TaskID][]core.TaskID
-	ids        []core.TaskID
+	tasks      map[core.TicketID]core.Ticket
+	deps       map[core.TicketID][]core.TicketID
+	dependents map[core.TicketID][]core.TicketID
+	ids        []core.TicketID
 	now        time.Time
 }
 
@@ -27,29 +27,29 @@ type Graph struct {
 // work only when it is groomed: an ungroomed task still needs a human to decide
 // its scope and acceptance criteria, so it falls to the human bucket.
 type ReadyBucket struct {
-	Agent []core.TaskID
-	Human []core.TaskID
+	Agent []core.TicketID
+	Human []core.TicketID
 }
 
 // New builds a graph with no time reference, so not_before constraints are
 // ignored. Use NewAt to evaluate readiness against a clock.
-func New(tasks []core.Task, policy core.ResolutionPolicy) (*Graph, error) {
+func New(tasks []core.Ticket, policy core.ResolutionPolicy) (*Graph, error) {
 	return newGraph(tasks, policy, time.Time{})
 }
 
 // NewAt builds a graph that evaluates not_before constraints at now: a task
 // whose not_before is in the future is excluded from the ready set while still
 // blocking its dependents.
-func NewAt(tasks []core.Task, policy core.ResolutionPolicy, now time.Time) (*Graph, error) {
+func NewAt(tasks []core.Ticket, policy core.ResolutionPolicy, now time.Time) (*Graph, error) {
 	return newGraph(tasks, policy, now)
 }
 
-func newGraph(tasks []core.Task, policy core.ResolutionPolicy, now time.Time) (*Graph, error) {
+func newGraph(tasks []core.Ticket, policy core.ResolutionPolicy, now time.Time) (*Graph, error) {
 	g := &Graph{
 		policy:     policy,
-		tasks:      make(map[core.TaskID]core.Task, len(tasks)),
-		deps:       make(map[core.TaskID][]core.TaskID, len(tasks)),
-		dependents: make(map[core.TaskID][]core.TaskID, len(tasks)),
+		tasks:      make(map[core.TicketID]core.Ticket, len(tasks)),
+		deps:       make(map[core.TicketID][]core.TicketID, len(tasks)),
+		dependents: make(map[core.TicketID][]core.TicketID, len(tasks)),
 		now:        now,
 	}
 	for _, t := range tasks {
@@ -78,28 +78,28 @@ func newGraph(tasks []core.Task, policy core.ResolutionPolicy, now time.Time) (*
 	return g, nil
 }
 
-func (g *Graph) Task(id core.TaskID) (core.Task, bool) {
+func (g *Graph) Ticket(id core.TicketID) (core.Ticket, bool) {
 	t, ok := g.tasks[id]
 	return t, ok
 }
 
-func (g *Graph) IDs() []core.TaskID {
-	return append([]core.TaskID(nil), g.ids...)
+func (g *Graph) IDs() []core.TicketID {
+	return append([]core.TicketID(nil), g.ids...)
 }
 
-func (g *Graph) Deps(id core.TaskID) []core.TaskID {
-	return append([]core.TaskID(nil), g.deps[id]...)
+func (g *Graph) Deps(id core.TicketID) []core.TicketID {
+	return append([]core.TicketID(nil), g.deps[id]...)
 }
 
-func (g *Graph) Dependents(id core.TaskID) []core.TaskID {
-	return append([]core.TaskID(nil), g.dependents[id]...)
+func (g *Graph) Dependents(id core.TicketID) []core.TicketID {
+	return append([]core.TicketID(nil), g.dependents[id]...)
 }
 
 // ExternalDeps returns dependency IDs referenced by tasks in the graph but not
 // present in it (out of scope or missing).
-func (g *Graph) ExternalDeps() []core.TaskID {
-	seen := make(map[core.TaskID]struct{})
-	var out []core.TaskID
+func (g *Graph) ExternalDeps() []core.TicketID {
+	seen := make(map[core.TicketID]struct{})
+	var out []core.TicketID
 	for _, id := range g.ids {
 		for _, d := range g.deps[id] {
 			if _, ok := g.tasks[d]; ok {
@@ -140,7 +140,7 @@ type NotReadyReason struct {
 // resolves is complete, not waiting, so it is not startable and carries no
 // reason. ReadySet is derived from this, so the reason and the ready decision
 // cannot disagree.
-func (g *Graph) Readiness(id core.TaskID) (bool, *NotReadyReason) {
+func (g *Graph) Readiness(id core.TicketID) (bool, *NotReadyReason) {
 	t, ok := g.tasks[id]
 	if !ok {
 		return false, nil
@@ -154,7 +154,7 @@ func (g *Graph) Readiness(id core.TaskID) (bool, *NotReadyReason) {
 	return true, nil
 }
 
-func (g *Graph) notReadyReason(t core.Task) *NotReadyReason {
+func (g *Graph) notReadyReason(t core.Ticket) *NotReadyReason {
 	if unresolved := g.unresolvedDeps(t); len(unresolved) > 0 {
 		return &NotReadyReason{Code: ReasonDepUnresolved, Detail: joinIDs(unresolved)}
 	}
@@ -177,8 +177,8 @@ func (g *Graph) notReadyReason(t core.Task) *NotReadyReason {
 // dependencies all resolve under the policy. Tasks that are blocked or already
 // in progress are not startable, so they are excluded. A dependency that is
 // missing from the graph blocks the task.
-func (g *Graph) ReadySet() []core.TaskID {
-	out := make([]core.TaskID, 0, len(g.ids))
+func (g *Graph) ReadySet() []core.TicketID {
+	out := make([]core.TicketID, 0, len(g.ids))
 	for _, id := range g.ids {
 		if ready, _ := g.Readiness(id); ready {
 			out = append(out, id)
@@ -189,8 +189,8 @@ func (g *Graph) ReadySet() []core.TaskID {
 
 // unresolvedDeps returns the dependency ids that keep a task out of the ready
 // set: unknown to the graph, or not resolved under the policy.
-func (g *Graph) unresolvedDeps(t core.Task) []core.TaskID {
-	var out []core.TaskID
+func (g *Graph) unresolvedDeps(t core.Ticket) []core.TicketID {
+	var out []core.TicketID
 	for _, d := range g.deps[t.ID] {
 		if dep, ok := g.tasks[d]; ok && dep.Resolves(g.policy) {
 			continue
@@ -203,7 +203,7 @@ func (g *Graph) unresolvedDeps(t core.Task) []core.TaskID {
 // snoozeActive reports whether a task is parked by a snooze whose condition has
 // not passed. A date or task condition auto-clears once it is met; an
 // indefinite snooze stays until explicitly removed.
-func (g *Graph) snoozeActive(t core.Task) bool {
+func (g *Graph) snoozeActive(t core.Ticket) bool {
 	snooze := t.Snooze
 	if snooze == nil {
 		return false
@@ -223,7 +223,7 @@ func (g *Graph) snoozeActive(t core.Task) bool {
 	return false
 }
 
-func joinIDs(ids []core.TaskID) string {
+func joinIDs(ids []core.TicketID) string {
 	parts := make([]string, 0, len(ids))
 	for _, id := range ids {
 		parts = append(parts, string(id))
@@ -254,26 +254,26 @@ func (g *Graph) HasCycle() bool {
 	return len(g.Cycles()) > 0
 }
 
-func (g *Graph) Cycles() [][]core.TaskID {
+func (g *Graph) Cycles() [][]core.TicketID {
 	const (
 		white = iota
 		gray
 		black
 	)
 
-	color := make(map[core.TaskID]int, len(g.ids))
-	var stack []core.TaskID
-	var cycles [][]core.TaskID
+	color := make(map[core.TicketID]int, len(g.ids))
+	var stack []core.TicketID
+	var cycles [][]core.TicketID
 	seen := make(map[string]struct{})
 
-	var dfs func(core.TaskID)
-	dfs = func(id core.TaskID) {
+	var dfs func(core.TicketID)
+	dfs = func(id core.TicketID) {
 		color[id] = gray
 		stack = append(stack, id)
 		for _, next := range g.dependents[id] {
 			switch color[next] {
 			case gray:
-				cycle := append([]core.TaskID(nil), stack[indexOf(stack, next):]...)
+				cycle := append([]core.TicketID(nil), stack[indexOf(stack, next):]...)
 				key := cycleKey(cycle)
 				if _, ok := seen[key]; !ok {
 					seen[key] = struct{}{}
@@ -300,8 +300,8 @@ func (g *Graph) Cycles() [][]core.TaskID {
 // TopoSort returns a deterministic topological order of the graph's tasks,
 // or core.ErrCycle when the graph contains a cycle. Among the tasks whose
 // dependencies are all already emitted, it always emits the smallest id next.
-func (g *Graph) TopoSort() ([]core.TaskID, error) {
-	indeg := make(map[core.TaskID]int, len(g.ids))
+func (g *Graph) TopoSort() ([]core.TicketID, error) {
+	indeg := make(map[core.TicketID]int, len(g.ids))
 	for _, id := range g.ids {
 		for _, d := range g.deps[id] {
 			if _, ok := g.tasks[d]; ok {
@@ -318,9 +318,9 @@ func (g *Graph) TopoSort() ([]core.TaskID, error) {
 		}
 	}
 
-	out := make([]core.TaskID, 0, len(g.ids))
+	out := make([]core.TicketID, 0, len(g.ids))
 	for queue.Len() > 0 {
-		id := heap.Pop(queue).(core.TaskID)
+		id := heap.Pop(queue).(core.TicketID)
 		out = append(out, id)
 		for _, dep := range g.dependents[id] {
 			indeg[dep]--
@@ -338,12 +338,12 @@ func (g *Graph) TopoSort() ([]core.TaskID, error) {
 
 // taskHeap is a min-heap of task ids, so TopoSort always emits the smallest
 // ready id next without re-scanning the whole frontier on every step.
-type taskHeap []core.TaskID
+type taskHeap []core.TicketID
 
 func (h taskHeap) Len() int           { return len(h) }
 func (h taskHeap) Less(i, j int) bool { return h[i] < h[j] }
 func (h taskHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *taskHeap) Push(x any)        { *h = append(*h, x.(core.TaskID)) }
+func (h *taskHeap) Push(x any)        { *h = append(*h, x.(core.TicketID)) }
 func (h *taskHeap) Pop() any {
 	old := *h
 	n := len(old)
@@ -357,12 +357,12 @@ func (h *taskHeap) Pop() any {
 // transparent (they add no wave), so a task whose blockers are all resolved is
 // wave 0 and therefore startable. This matches how a release/DAG report reads:
 // "how many rounds of work until this can start".
-func (g *Graph) Waves() (map[core.TaskID]int, error) {
+func (g *Graph) Waves() (map[core.TicketID]int, error) {
 	order, err := g.TopoSort()
 	if err != nil {
 		return nil, err
 	}
-	waves := make(map[core.TaskID]int, len(order))
+	waves := make(map[core.TicketID]int, len(order))
 	for _, id := range order {
 		w := 0
 		for _, d := range g.deps[id] {
@@ -386,12 +386,12 @@ func (g *Graph) Waves() (map[core.TaskID]int, error) {
 // structuralDepth is the longest path over all dependency edges ignoring
 // status. It is used to pick canonical parents so the rendered tree keeps its
 // structural shape even as tasks resolve.
-func (g *Graph) structuralDepth() (map[core.TaskID]int, error) {
+func (g *Graph) structuralDepth() (map[core.TicketID]int, error) {
 	order, err := g.TopoSort()
 	if err != nil {
 		return nil, err
 	}
-	depth := make(map[core.TaskID]int, len(order))
+	depth := make(map[core.TicketID]int, len(order))
 	for _, id := range order {
 		d := 0
 		for _, dep := range g.deps[id] {
@@ -424,7 +424,7 @@ func (g *Graph) WavesDeep() (int, error) {
 
 // UnblockCount counts the direct dependents that would become startable if this
 // task resolved.
-func (g *Graph) UnblockCount(id core.TaskID) int {
+func (g *Graph) UnblockCount(id core.TicketID) int {
 	count := 0
 	for _, dependent := range g.dependents[id] {
 		dt, ok := g.tasks[dependent]
@@ -450,10 +450,10 @@ func (g *Graph) UnblockCount(id core.TaskID) int {
 }
 
 // TransitiveDependents returns every task reachable downstream of id, sorted.
-func (g *Graph) TransitiveDependents(id core.TaskID) []core.TaskID {
-	visited := map[core.TaskID]struct{}{}
-	queue := []core.TaskID{id}
-	var out []core.TaskID
+func (g *Graph) TransitiveDependents(id core.TicketID) []core.TicketID {
+	visited := map[core.TicketID]struct{}{}
+	queue := []core.TicketID{id}
+	var out []core.TicketID
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -472,7 +472,7 @@ func (g *Graph) TransitiveDependents(id core.TaskID) []core.TaskID {
 
 // DistanceToMilestone returns the number of edges from id to the nearest
 // reachable milestone. A milestone has distance 0.
-func (g *Graph) DistanceToMilestone(id core.TaskID) (int, bool) {
+func (g *Graph) DistanceToMilestone(id core.TicketID) (int, bool) {
 	t, ok := g.tasks[id]
 	if !ok {
 		return 0, false
@@ -482,11 +482,11 @@ func (g *Graph) DistanceToMilestone(id core.TaskID) (int, bool) {
 	}
 
 	type node struct {
-		id       core.TaskID
+		id       core.TicketID
 		distance int
 	}
 
-	visited := map[core.TaskID]struct{}{id: {}}
+	visited := map[core.TicketID]struct{}{id: {}}
 	queue := []node{{id: id}}
 	for len(queue) > 0 {
 		cur := queue[0]
@@ -510,7 +510,7 @@ func (g *Graph) DistanceToMilestone(id core.TaskID) (int, bool) {
 }
 
 // ShortestPathTo returns a shortest path of dependent edges from `from` to `to`.
-func (g *Graph) ShortestPathTo(from, to core.TaskID) ([]core.TaskID, bool) {
+func (g *Graph) ShortestPathTo(from, to core.TicketID) ([]core.TicketID, bool) {
 	if _, ok := g.tasks[from]; !ok {
 		return nil, false
 	}
@@ -518,12 +518,12 @@ func (g *Graph) ShortestPathTo(from, to core.TaskID) ([]core.TaskID, bool) {
 		return nil, false
 	}
 	if from == to {
-		return []core.TaskID{from}, true
+		return []core.TicketID{from}, true
 	}
 
-	prev := make(map[core.TaskID]core.TaskID)
-	visited := map[core.TaskID]struct{}{from: {}}
-	queue := []core.TaskID{from}
+	prev := make(map[core.TicketID]core.TicketID)
+	visited := map[core.TicketID]struct{}{from: {}}
+	queue := []core.TicketID{from}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -543,14 +543,14 @@ func (g *Graph) ShortestPathTo(from, to core.TaskID) ([]core.TaskID, bool) {
 }
 
 // CriticalPath returns the longest dependency chain in the graph.
-func (g *Graph) CriticalPath() ([]core.TaskID, error) {
+func (g *Graph) CriticalPath() ([]core.TicketID, error) {
 	order, err := g.TopoSort()
 	if err != nil {
 		return nil, err
 	}
 
-	dist := make(map[core.TaskID]int, len(order))
-	prev := make(map[core.TaskID]core.TaskID)
+	dist := make(map[core.TicketID]int, len(order))
+	prev := make(map[core.TicketID]core.TicketID)
 	for _, id := range order {
 		dist[id] = 1
 		for _, d := range g.deps[id] {
@@ -564,7 +564,7 @@ func (g *Graph) CriticalPath() ([]core.TaskID, error) {
 		}
 	}
 
-	end := core.TaskID("")
+	end := core.TicketID("")
 	best := 0
 	for _, id := range g.ids {
 		if dist[id] > best {
@@ -581,14 +581,14 @@ func (g *Graph) CriticalPath() ([]core.TaskID, error) {
 // Forest returns the canonical parent of every task that has one. The canonical
 // parent is the dependency with the lowest structural depth, breaking ties by
 // ID. Roots (tasks with no known dependency) are absent.
-func (g *Graph) Forest() (map[core.TaskID]core.TaskID, error) {
+func (g *Graph) Forest() (map[core.TicketID]core.TicketID, error) {
 	depth, err := g.structuralDepth()
 	if err != nil {
 		return nil, err
 	}
-	forest := make(map[core.TaskID]core.TaskID, len(g.ids))
+	forest := make(map[core.TicketID]core.TicketID, len(g.ids))
 	for _, id := range g.ids {
-		best := core.TaskID("")
+		best := core.TicketID("")
 		bestDepth := 0
 		for _, d := range g.deps[id] {
 			if _, ok := g.tasks[d]; !ok {
@@ -607,8 +607,8 @@ func (g *Graph) Forest() (map[core.TaskID]core.TaskID, error) {
 	return forest, nil
 }
 
-func reconstruct(prev map[core.TaskID]core.TaskID, from, to core.TaskID) []core.TaskID {
-	var path []core.TaskID
+func reconstruct(prev map[core.TicketID]core.TicketID, from, to core.TicketID) []core.TicketID {
+	var path []core.TicketID
 	for cur := to; ; {
 		path = append(path, cur)
 		if cur == from {
@@ -626,12 +626,12 @@ func reconstruct(prev map[core.TaskID]core.TaskID, from, to core.TaskID) []core.
 	return path
 }
 
-func uniqueSorted(ids []core.TaskID) []core.TaskID {
+func uniqueSorted(ids []core.TicketID) []core.TicketID {
 	if len(ids) == 0 {
 		return nil
 	}
-	seen := make(map[core.TaskID]struct{}, len(ids))
-	out := make([]core.TaskID, 0, len(ids))
+	seen := make(map[core.TicketID]struct{}, len(ids))
+	out := make([]core.TicketID, 0, len(ids))
 	for _, id := range ids {
 		if _, ok := seen[id]; ok {
 			continue
@@ -643,7 +643,7 @@ func uniqueSorted(ids []core.TaskID) []core.TaskID {
 	return out
 }
 
-func indexOf(ids []core.TaskID, target core.TaskID) int {
+func indexOf(ids []core.TicketID, target core.TicketID) int {
 	for i, id := range ids {
 		if id == target {
 			return i
@@ -652,7 +652,7 @@ func indexOf(ids []core.TaskID, target core.TaskID) int {
 	return -1
 }
 
-func cycleKey(cycle []core.TaskID) string {
+func cycleKey(cycle []core.TicketID) string {
 	if len(cycle) == 0 {
 		return ""
 	}
@@ -662,7 +662,7 @@ func cycleKey(cycle []core.TaskID) string {
 			min = i
 		}
 	}
-	rotated := append(append([]core.TaskID(nil), cycle[min:]...), cycle[:min]...)
+	rotated := append(append([]core.TicketID(nil), cycle[min:]...), cycle[:min]...)
 	key := ""
 	for i, id := range rotated {
 		if i > 0 {
@@ -673,7 +673,7 @@ func cycleKey(cycle []core.TaskID) string {
 	return key
 }
 
-func lessIDs(a, b []core.TaskID) bool {
+func lessIDs(a, b []core.TicketID) bool {
 	for i := 0; i < len(a) && i < len(b); i++ {
 		if a[i] != b[i] {
 			return a[i] < b[i]

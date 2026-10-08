@@ -170,7 +170,7 @@ type Options struct {
 // local paths instead of re-cloning. A reused clone whose origin URL no longer
 // matches the repo's configured URL fails with ErrRemoteChanged; with
 // opts.Refresh it is fetched and hard-reset to its upstream first.
-func Resolve(ctx context.Context, project core.Project, task core.Task, opts Options) (*Plan, error) {
+func Resolve(ctx context.Context, project core.Project, task core.Ticket, opts Options) (*Plan, error) {
 	root := opts.Root
 	if root == "" || !filepath.IsAbs(root) {
 		return nil, fmt.Errorf("%w: %q", ErrRoot, root)

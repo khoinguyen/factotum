@@ -31,11 +31,11 @@ type Project struct {
 }
 
 // ReposForTask returns the repositories a task touches. A task names the repo
-// it works in with Task.Repo, resolved against the project's repo definitions;
+// it works in with Ticket.Repo, resolved against the project's repo definitions;
 // naming a repo the project does not define is an error. A task that names no
 // repo spans the project and touches every one of its repos, in definition
 // order.
-func (p Project) ReposForTask(t Task) ([]Repository, error) {
+func (p Project) ReposForTask(t Ticket) ([]Repository, error) {
 	if t.Repo == "" {
 		return append([]Repository(nil), p.Repos...), nil
 	}

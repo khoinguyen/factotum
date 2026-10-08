@@ -77,7 +77,7 @@ func TestProvisionFileBackendsRunTheRealCLI(t *testing.T) {
 			}
 			defer cleanup()
 
-			elapsed, written, err := runner.Run(ctx, perf.Op{Name: "task get", Args: []string{"task", "get", string(perf.TaskID(0))}})
+			elapsed, written, err := runner.Run(ctx, perf.Op{Name: "task get", Args: []string{"task", "get", string(perf.TicketID(0))}})
 			if err != nil {
 				t.Fatalf("Run(task get) error = %v", err)
 			}
@@ -99,7 +99,7 @@ func TestProvisionMemoryRunsInProcess(t *testing.T) {
 	}
 	defer cleanup()
 
-	_, written, err := runner.Run(context.Background(), perf.Op{Name: "task get", Args: []string{"task", "get", string(perf.TaskID(0))}})
+	_, written, err := runner.Run(context.Background(), perf.Op{Name: "task get", Args: []string{"task", "get", string(perf.TicketID(0))}})
 	if err != nil {
 		t.Fatalf("Run(task get) error = %v", err)
 	}
@@ -140,7 +140,7 @@ func TestSeedWritesReadableStoreForSubprocess(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer func() { _ = reopened.Close() }()
-	task, err := reopened.Tasks().Get(ctx, core.TaskID("t-000011"))
+	task, err := reopened.Tickets().Get(ctx, core.TicketID("t-000011"))
 	if err != nil {
 		t.Fatalf("Get(t-000011) error = %v", err)
 	}

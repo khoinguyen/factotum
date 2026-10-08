@@ -93,7 +93,7 @@ func TestMemoryContextListsBriefs(t *testing.T) {
 }
 
 func TestMemoryContextEntryGolden(t *testing.T) {
-	got, err := json.Marshal(memoryContextEntry{ID: "art-1", Title: "Deploy notes", Brief: "load before deploys", Task: "t-1"})
+	got, err := json.Marshal(memoryContextEntry{ID: "art-1", Title: "Deploy notes", Brief: "load before deploys", Ticket: "t-1"})
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
 	}
@@ -121,15 +121,15 @@ func TestMemoryContextJSON(t *testing.T) {
 
 	out := r.run("memory", "context", "-p", projectID, "-o", "json")
 	var entries []struct {
-		ID    string `json:"id"`
-		Title string `json:"title"`
-		Brief string `json:"brief"`
-		Task  string `json:"task_id"`
+		ID     string `json:"id"`
+		Title  string `json:"title"`
+		Brief  string `json:"brief"`
+		Ticket string `json:"task_id"`
 	}
 	if err := json.Unmarshal([]byte(out), &entries); err != nil {
 		t.Fatalf("memory context json: %v\n%s", err, out)
 	}
-	if len(entries) != 1 || entries[0].ID != memoryID || entries[0].Title != "Deploy notes" || entries[0].Brief != "load before deploys" || entries[0].Task != taskID {
+	if len(entries) != 1 || entries[0].ID != memoryID || entries[0].Title != "Deploy notes" || entries[0].Brief != "load before deploys" || entries[0].Ticket != taskID {
 		t.Fatalf("memory context json = %+v", entries)
 	}
 }

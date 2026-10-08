@@ -109,7 +109,7 @@ type taskDoc struct {
 
 // taskDocFrom renders a task as the round-trippable document. Relation fields
 // (assignee, deps, waiting_on) are shown but managed by dedicated commands.
-func taskDocFrom(task *core.Task) taskDoc {
+func taskDocFrom(task *core.Ticket) taskDoc {
 	id := string(task.ID)
 	projectID := string(task.ProjectID)
 	repo := task.Repo
@@ -177,7 +177,7 @@ func noteDocsFrom(notes []core.Note) []noteDoc {
 
 // taskBaseFrom snapshots the fields a document can carry a change to, so a
 // document produced by `task get` remembers the revision it was derived from.
-func taskBaseFrom(task *core.Task) *taskBase {
+func taskBaseFrom(task *core.Ticket) *taskBase {
 	repo := task.Repo
 	kind := string(task.Kind)
 	title := task.Title
@@ -241,7 +241,7 @@ type taskListEntry struct {
 	UpdatedAt time.Time `json:"updated_at" yaml:"updated_at"`
 }
 
-func taskListEntryFrom(task *core.Task) taskListEntry {
+func taskListEntryFrom(task *core.Ticket) taskListEntry {
 	entry := taskListEntry{
 		ID:        string(task.ID),
 		ProjectID: string(task.ProjectID),
@@ -353,7 +353,7 @@ func taskDocValues(doc taskDoc) map[string]any {
 }
 
 // taskSet validates the document against the current task and maps its changed
-// fields into an app.TaskSet.
+// fields into an app.TicketSet.
 //
 // When the document carries the Base revision it was derived from, changes are
 // three-way merged with concurrent writes: a field only the document touched
@@ -362,12 +362,12 @@ func taskDocValues(doc taskDoc) map[string]any {
 // conflict naming it. Without a Base (a hand-written document), the document is
 // compared directly to the current task and updated_at stays a compare-and-swap
 // token.
-func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
+func (doc taskDoc) taskSet(current *core.Ticket) (app.TicketSet, error) {
 	if doc.ID != nil && *doc.ID != string(current.ID) {
-		return app.TaskSet{}, fmt.Errorf("%w: id is immutable", core.ErrInvalid)
+		return app.TicketSet{}, fmt.Errorf("%w: id is immutable", core.ErrInvalid)
 	}
 	if doc.ProjectID != nil && *doc.ProjectID != string(current.ProjectID) {
-		return app.TaskSet{}, fmt.Errorf("%w: project_id is immutable", core.ErrInvalid)
+		return app.TicketSet{}, fmt.Errorf("%w: project_id is immutable", core.ErrInvalid)
 	}
 	// The revision the document was derived from; without a base block this is
 	// the current task, which reduces the merge to a direct comparison.
@@ -377,40 +377,40 @@ func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
 	// must not be modified. Compared against the base so a concurrent change to
 	// a managed field is preserved rather than blamed on the document.
 	if !equalOptionalString(doc.Assignee, base.assignee) {
-		return app.TaskSet{}, fmt.Errorf("%w: assignee is managed by `ft task assign`", core.ErrInvalid)
+		return app.TicketSet{}, fmt.Errorf("%w: assignee is managed by `ft task assign`", core.ErrInvalid)
 	}
 	if !equalStringSet(doc.Deps, base.deps) {
-		return app.TaskSet{}, fmt.Errorf("%w: deps are managed by `ft task dep`", core.ErrInvalid)
+		return app.TicketSet{}, fmt.Errorf("%w: deps are managed by `ft task dep`", core.ErrInvalid)
 	}
 	if !equalStringSet(doc.WaitingOn, base.waitingOn) {
-		return app.TaskSet{}, fmt.Errorf("%w: waiting_on is managed by `ft task wait`", core.ErrInvalid)
+		return app.TicketSet{}, fmt.Errorf("%w: waiting_on is managed by `ft task wait`", core.ErrInvalid)
 	}
 	if doc.Notes != nil && !equalNoteDocs(doc.Notes, base.notes) {
-		return app.TaskSet{}, fmt.Errorf("%w: notes are managed by `ft task note`", core.ErrInvalid)
+		return app.TicketSet{}, fmt.Errorf("%w: notes are managed by `ft task note`", core.ErrInvalid)
 	}
 	if doc.Snooze != nil && !equalSnoozeDocs(doc.Snooze, base.snooze) {
-		return app.TaskSet{}, fmt.Errorf("%w: snooze is managed by `ft task snooze`", core.ErrInvalid)
+		return app.TicketSet{}, fmt.Errorf("%w: snooze is managed by `ft task snooze`", core.ErrInvalid)
 	}
 
-	var set app.TaskSet
+	var set app.TicketSet
 	var conflicts []string
 	record := func(field string) { conflicts = append(conflicts, field) }
 
 	if value, changed, conflict := mergeScalar(doc.Kind, base.kind, string(current.Kind)); conflict {
 		record("kind")
 	} else if changed {
-		kind := core.TaskKind(*value)
+		kind := core.TicketKind(*value)
 		if !kind.Valid() {
-			return app.TaskSet{}, fmt.Errorf("%w: unknown task kind %q", core.ErrInvalid, *doc.Kind)
+			return app.TicketSet{}, fmt.Errorf("%w: unknown task kind %q", core.ErrInvalid, *doc.Kind)
 		}
 		set.Kind = &kind
 	}
 	if value, changed, conflict := mergeScalar(doc.Status, base.status, string(current.Status)); conflict {
 		record("status")
 	} else if changed {
-		status := core.TaskStatus(*value)
+		status := core.TicketStatus(*value)
 		if !status.Valid() {
-			return app.TaskSet{}, fmt.Errorf("%w: unknown task status %q", core.ErrInvalid, *doc.Status)
+			return app.TicketSet{}, fmt.Errorf("%w: unknown task status %q", core.ErrInvalid, *doc.Status)
 		}
 		set.Status = &status
 	}
@@ -456,7 +456,7 @@ func (doc taskDoc) taskSet(current *core.Task) (app.TaskSet, error) {
 	}
 
 	if len(conflicts) > 0 {
-		return app.TaskSet{}, fmt.Errorf("%w: task %s was modified concurrently; conflicting fields: %s",
+		return app.TicketSet{}, fmt.Errorf("%w: task %s was modified concurrently; conflicting fields: %s",
 			core.ErrConflict, current.ID, strings.Join(conflicts, ", "))
 	}
 	if doc.Base != nil {
@@ -636,7 +636,7 @@ func equalOptionalStringPtr(left, right *string) bool {
 	return *left == *right
 }
 
-func currentDeps(current *core.Task) []string {
+func currentDeps(current *core.Ticket) []string {
 	out := make([]string, 0, len(current.Deps))
 	for _, dep := range current.Deps {
 		out = append(out, string(dep))
@@ -644,7 +644,7 @@ func currentDeps(current *core.Task) []string {
 	return out
 }
 
-func currentWaiting(current *core.Task) []string {
+func currentWaiting(current *core.Ticket) []string {
 	out := make([]string, 0, len(current.WaitingOn))
 	for _, actor := range current.WaitingOn {
 		out = append(out, string(actor))
@@ -675,7 +675,7 @@ type taskBaseValues struct {
 
 // baseValues resolves the revision the document was derived from. Without a
 // base block the current task is the base.
-func (doc taskDoc) baseValues(current *core.Task) taskBaseValues {
+func (doc taskDoc) baseValues(current *core.Ticket) taskBaseValues {
 	values := taskBaseValues{
 		repo:               current.Repo,
 		kind:               string(current.Kind),

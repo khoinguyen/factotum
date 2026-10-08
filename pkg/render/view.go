@@ -14,7 +14,7 @@ import (
 // service dependency.
 type View struct {
 	Project *core.Project
-	Tasks   []*core.Task
+	Tasks   []*core.Ticket
 	Graph   *graph.Graph
 	Actors  map[core.ActorID]core.Actor
 	Ready   graph.ReadyBucket
@@ -58,25 +58,25 @@ const (
 
 type info struct {
 	project    *core.Project
-	tasks      map[core.TaskID]core.Task
-	ids        []core.TaskID
-	readyAgent map[core.TaskID]bool
-	readyHuman map[core.TaskID]bool
-	cycles     map[core.TaskID]bool
-	waves      map[core.TaskID]int
+	tasks      map[core.TicketID]core.Ticket
+	ids        []core.TicketID
+	readyAgent map[core.TicketID]bool
+	readyHuman map[core.TicketID]bool
+	cycles     map[core.TicketID]bool
+	waves      map[core.TicketID]int
 	deep       int
-	forest     map[core.TaskID]core.TaskID
+	forest     map[core.TicketID]core.TicketID
 	stats      Stats
 }
 
 func (v View) info() *info {
 	derived := &info{
 		project:    v.Project,
-		tasks:      make(map[core.TaskID]core.Task, len(v.Tasks)),
-		readyAgent: make(map[core.TaskID]bool),
-		readyHuman: make(map[core.TaskID]bool),
-		cycles:     make(map[core.TaskID]bool),
-		forest:     make(map[core.TaskID]core.TaskID),
+		tasks:      make(map[core.TicketID]core.Ticket, len(v.Tasks)),
+		readyAgent: make(map[core.TicketID]bool),
+		readyHuman: make(map[core.TicketID]bool),
+		cycles:     make(map[core.TicketID]bool),
+		forest:     make(map[core.TicketID]core.TicketID),
 	}
 	for _, task := range v.Tasks {
 		derived.tasks[task.ID] = *task
@@ -137,7 +137,7 @@ func (v View) info() *info {
 	return derived
 }
 
-func (v View) Classify(task core.Task) Class {
+func (v View) Classify(task core.Ticket) Class {
 	derived := v.info()
 	switch {
 	case derived.cycles[task.ID]:
@@ -173,7 +173,7 @@ func (v View) title() string {
 	return v.projectName() + " task graph"
 }
 
-func (v View) resolved(task core.Task) bool {
+func (v View) resolved(task core.Ticket) bool {
 	return task.Resolves(v.Project.Policy)
 }
 
@@ -199,7 +199,7 @@ func (v View) ranked() []rank.Scored {
 	}
 	out := make([]rank.Scored, 0, len(scored))
 	for _, s := range scored {
-		if derived.readyAgent[s.TaskID] || derived.readyHuman[s.TaskID] {
+		if derived.readyAgent[s.TicketID] || derived.readyHuman[s.TicketID] {
 			out = append(out, s)
 		}
 	}
@@ -209,12 +209,12 @@ func (v View) ranked() []rank.Scored {
 // ByWave groups task IDs by unlock wave, ordered by wave then ID.
 type WaveGroup struct {
 	Wave int
-	IDs  []core.TaskID
+	IDs  []core.TicketID
 }
 
 func (v View) ByWave() []WaveGroup {
 	derived := v.info()
-	waves := map[int][]core.TaskID{}
+	waves := map[int][]core.TicketID{}
 	for _, id := range derived.ids {
 		wave := derived.waves[id]
 		waves[wave] = append(waves[wave], id)

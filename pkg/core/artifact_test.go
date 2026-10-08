@@ -21,7 +21,7 @@ func TestArtifactKindValid(t *testing.T) {
 }
 
 func TestArtifactValidate(t *testing.T) {
-	taskID := TaskID("t-1")
+	taskID := TicketID("t-1")
 	tests := []struct {
 		name     string
 		artifact Artifact
@@ -30,7 +30,7 @@ func TestArtifactValidate(t *testing.T) {
 		{"valid spec", Artifact{ID: "art-1", ProjectID: "prj-1", Kind: ArtifactSpec, Title: "Product spec"}, false},
 		{
 			"valid memory with task",
-			Artifact{ID: "art-2", ProjectID: "prj-1", TaskID: &taskID, Kind: ArtifactMemory, Title: "recall", Body: "remember this"},
+			Artifact{ID: "art-2", ProjectID: "prj-1", TicketID: &taskID, Kind: ArtifactMemory, Title: "recall", Body: "remember this"},
 			false,
 		},
 		{"missing id", Artifact{ProjectID: "prj-1", Kind: ArtifactSpec, Title: "x"}, true},

@@ -12,9 +12,9 @@ import (
 // a field rename or an accidental Go-name leak fails loudly.
 func TestArtifactDocGolden(t *testing.T) {
 	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	taskID := core.TaskID("t-1")
+	taskID := core.TicketID("t-1")
 	artifact := &core.Artifact{
-		ID: "art-1", ProjectID: "prj-1", TaskID: &taskID, Kind: core.ArtifactSpec,
+		ID: "art-1", ProjectID: "prj-1", TicketID: &taskID, Kind: core.ArtifactSpec,
 		Title: "Spec", Brief: "b", Path: "p.md", Body: "body",
 		Links:     []core.Link{{Kind: core.LinkPR, URL: "https://x/1"}},
 		CreatedAt: at, UpdatedAt: at,

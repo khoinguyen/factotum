@@ -17,8 +17,8 @@ func testProject(repos ...core.Repository) core.Project {
 	return core.Project{ID: "acme", Name: "Acme", Repos: repos, Policy: core.DefaultResolutionPolicy()}
 }
 
-func testTask(repo string) core.Task {
-	return core.Task{
+func testTask(repo string) core.Ticket {
+	return core.Ticket{
 		ID:        "t-1",
 		ProjectID: "acme",
 		Repo:      repo,

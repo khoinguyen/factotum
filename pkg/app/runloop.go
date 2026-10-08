@@ -32,9 +32,9 @@ const (
 // LoopStep is one iteration's compact progress report.
 type LoopStep struct {
 	Iteration int
-	TaskID    core.TaskID
+	TicketID  core.TicketID
 	Title     string
-	Status    core.TaskStatus
+	Status    core.TicketStatus
 	ExitCode  int
 	Complete  bool
 	Failed    bool
@@ -46,26 +46,26 @@ type LoopStep struct {
 
 // LoopOutcome records how the loop ended and what it did.
 type LoopOutcome struct {
-	Goal       core.TaskID
-	GoalKind   core.TaskKind
-	GoalStatus core.TaskStatus
+	Goal       core.TicketID
+	GoalKind   core.TicketKind
+	GoalStatus core.TicketStatus
 	Stop       StopReason
 	Steps      []LoopStep
 	Remaining  int
 	// NotRun names the startable tasks on the path to the goal the loop left
 	// alone because they are not agent-ready (groomed and agent-assigned). They
 	// need a human to groom or run them.
-	NotRun []core.TaskID
+	NotRun []core.TicketID
 }
 
 // LoopRunner runs one task end-to-end and reflects its outcome into the store.
 // It is the single-task RunService in production and a fake in tests, so the
 // loop depends on the behavior, not the adapter.
-type LoopRunner func(ctx context.Context, taskID core.TaskID) (*RunOutcome, error)
+type LoopRunner func(ctx context.Context, taskID core.TicketID) (*RunOutcome, error)
 
 // LoopInput is one DAG-loop run toward a goal.
 type LoopInput struct {
-	GoalID core.TaskID
+	GoalID core.TicketID
 	Runner LoopRunner
 	// MaxTasks bounds how many tasks the loop runs; 0 means no budget.
 	MaxTasks int
@@ -93,7 +93,7 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 	if in.Runner == nil {
 		return nil, fmt.Errorf("%w: no task runner", core.ErrInvalid)
 	}
-	goal, err := s.backend.Tasks().Get(ctx, in.GoalID)
+	goal, err := s.backend.Tickets().Get(ctx, in.GoalID)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 				return outcome, err
 			}
 		}
-		current, ok := snapshot.Graph.Task(goal.ID)
+		current, ok := snapshot.Graph.Ticket(goal.ID)
 		if !ok {
 			return outcome, fmt.Errorf("%w: goal %s is no longer in project %s", core.ErrNotFound, goal.ID, goal.ProjectID)
 		}
@@ -143,8 +143,8 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 		if len(scored) == 0 {
 			return s.stall(outcome, snapshot, goal.ID), nil
 		}
-		next := scored[0].TaskID
-		nextTask, _ := snapshot.Graph.Task(next)
+		next := scored[0].TicketID
+		nextTask, _ := snapshot.Graph.Ticket(next)
 
 		if in.MaxTasks > 0 && len(outcome.Steps) >= in.MaxTasks {
 			outcome.Stop = StopBudgetExhausted
@@ -153,7 +153,7 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 		}
 
 		runOutcome, runErr := in.Runner(ctx, next)
-		step := LoopStep{Iteration: len(outcome.Steps) + 1, TaskID: next, Title: nextTask.Title, Failed: runErr != nil}
+		step := LoopStep{Iteration: len(outcome.Steps) + 1, TicketID: next, Title: nextTask.Title, Failed: runErr != nil}
 		if runOutcome != nil {
 			step.Status = runOutcome.Status
 			step.ExitCode = runOutcome.ExitCode
@@ -172,7 +172,7 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 		if runErr != nil {
 			outcome.Stop = StopFailed
 			outcome.Remaining = step.Remaining
-			if updated, ok := snapshot.Graph.Task(goal.ID); ok {
+			if updated, ok := snapshot.Graph.Ticket(goal.ID); ok {
 				outcome.GoalStatus = updated.Status
 			}
 			return outcome, runErr
@@ -185,20 +185,20 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 func (s *RunLoopService) reachGoal(outcome *LoopOutcome, snapshot *Snapshot, remaining int) *LoopOutcome {
 	outcome.Stop = StopGoalReached
 	outcome.Remaining = remaining
-	if current, ok := snapshot.Graph.Task(outcome.Goal); ok {
+	if current, ok := snapshot.Graph.Ticket(outcome.Goal); ok {
 		outcome.GoalStatus = current.Status
 	}
 	return outcome
 }
 
 // stall finishes when no startable work remains toward the goal.
-func (s *RunLoopService) stall(outcome *LoopOutcome, snapshot *Snapshot, goal core.TaskID) *LoopOutcome {
+func (s *RunLoopService) stall(outcome *LoopOutcome, snapshot *Snapshot, goal core.TicketID) *LoopOutcome {
 	unresolved := unresolvedOnPath(snapshot.Graph, goal, snapshot.Project.Policy)
 	outcome.Remaining = len(unresolved)
 	outcome.NotRun = notRunOnPath(snapshot, goal)
 	outcome.Stop = StopNoReadyWork
 	for _, id := range unresolved {
-		if task, ok := snapshot.Graph.Task(id); ok && task.Status == core.StatusBlocked {
+		if task, ok := snapshot.Graph.Ticket(id); ok && task.Status == core.StatusBlocked {
 			outcome.Stop = StopBlocked
 			break
 		}
@@ -211,14 +211,14 @@ func (s *RunLoopService) stall(outcome *LoopOutcome, snapshot *Snapshot, goal co
 // assigned to a human, or ungroomed - is left for a human; the loop never runs
 // it. Milestones are excluded: a milestone is a human gate, so the loop
 // completes its prerequisites and stops rather than running the gate.
-func agentReadyOnPath(snapshot *Snapshot, goal core.TaskID) []core.TaskID {
+func agentReadyOnPath(snapshot *Snapshot, goal core.TicketID) []core.TicketID {
 	onPath := ancestorsToward(snapshot.Graph, goal)
-	var out []core.TaskID
+	var out []core.TicketID
 	for _, id := range snapshot.Ready.Agent {
 		if !onPath[id] {
 			continue
 		}
-		if task, ok := snapshot.Graph.Task(id); ok && task.IsMilestone() {
+		if task, ok := snapshot.Graph.Ticket(id); ok && task.IsMilestone() {
 			continue
 		}
 		out = append(out, id)
@@ -229,18 +229,18 @@ func agentReadyOnPath(snapshot *Snapshot, goal core.TaskID) []core.TaskID {
 // notRunOnPath returns the startable on-path tasks the loop declines to run
 // because they are not agent-ready. They are the work a human must groom or
 // take on before the loop can make progress.
-func notRunOnPath(snapshot *Snapshot, goal core.TaskID) []core.TaskID {
+func notRunOnPath(snapshot *Snapshot, goal core.TicketID) []core.TicketID {
 	onPath := ancestorsToward(snapshot.Graph, goal)
-	agentReady := make(map[core.TaskID]bool, len(snapshot.Ready.Agent))
+	agentReady := make(map[core.TicketID]bool, len(snapshot.Ready.Agent))
 	for _, id := range snapshot.Ready.Agent {
 		agentReady[id] = true
 	}
-	var out []core.TaskID
+	var out []core.TicketID
 	for _, id := range snapshot.Graph.ReadySet() {
 		if !onPath[id] || agentReady[id] {
 			continue
 		}
-		if task, ok := snapshot.Graph.Task(id); ok && task.IsMilestone() {
+		if task, ok := snapshot.Graph.Ticket(id); ok && task.IsMilestone() {
 			continue
 		}
 		out = append(out, id)
@@ -250,18 +250,18 @@ func notRunOnPath(snapshot *Snapshot, goal core.TaskID) []core.TaskID {
 
 // remainingOnPath counts the unresolved tasks on the path to the goal. A
 // milestone goal is excluded from its own count: reaching it is the goal.
-func remainingOnPath(g *graph.Graph, goal core.TaskID, policy core.ResolutionPolicy) int {
+func remainingOnPath(g *graph.Graph, goal core.TicketID, policy core.ResolutionPolicy) int {
 	return len(unresolvedOnPath(g, goal, policy))
 }
 
-func unresolvedOnPath(g *graph.Graph, goal core.TaskID, policy core.ResolutionPolicy) []core.TaskID {
+func unresolvedOnPath(g *graph.Graph, goal core.TicketID, policy core.ResolutionPolicy) []core.TicketID {
 	onPath := ancestorsToward(g, goal)
-	var out []core.TaskID
+	var out []core.TicketID
 	for _, id := range g.IDs() {
 		if !onPath[id] {
 			continue
 		}
-		task, ok := g.Task(id)
+		task, ok := g.Ticket(id)
 		if !ok || task.Resolves(policy) {
 			continue
 		}
@@ -276,9 +276,9 @@ func unresolvedOnPath(g *graph.Graph, goal core.TaskID, policy core.ResolutionPo
 // ancestorsToward returns the goal and every task that can reach it by
 // following dependency edges (its upstream prerequisites). A task outside this
 // set is not on the path to the goal and the loop leaves it alone.
-func ancestorsToward(g *graph.Graph, goal core.TaskID) map[core.TaskID]bool {
-	onPath := map[core.TaskID]bool{goal: true}
-	queue := []core.TaskID{goal}
+func ancestorsToward(g *graph.Graph, goal core.TicketID) map[core.TicketID]bool {
+	onPath := map[core.TicketID]bool{goal: true}
+	queue := []core.TicketID{goal}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -286,7 +286,7 @@ func ancestorsToward(g *graph.Graph, goal core.TaskID) map[core.TaskID]bool {
 			if onPath[dep] {
 				continue
 			}
-			if _, ok := g.Task(dep); !ok {
+			if _, ok := g.Ticket(dep); !ok {
 				continue
 			}
 			onPath[dep] = true

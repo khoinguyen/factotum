@@ -17,7 +17,7 @@ const intentMinConfidence = 0.5
 
 const intentUnspecified = "unspecified"
 
-// IntentService turns a natural-language sentence into the typed fields of a TaskSet.
+// IntentService turns a natural-language sentence into the typed fields of a TicketSet.
 // Free-text fields (title, description, repo) are out of scope: there is no candidate
 // set to select from, so they stay explicit.
 type IntentService struct {
@@ -31,32 +31,32 @@ func NewIntentService(j judge.Judge) *IntentService {
 
 // ParseTaskIntent reads the closed-set fields the phrase sets. labels are the candidate
 // labels already used in the project. now anchors a not_before phrase.
-func (s *IntentService) ParseTaskIntent(ctx context.Context, phrase string, labels []string, now time.Time) (TaskSet, error) {
+func (s *IntentService) ParseTaskIntent(ctx context.Context, phrase string, labels []string, now time.Time) (TicketSet, error) {
 	response, err := s.judge.Ask(ctx, judge.Request{State: phrase, Questions: intentQuestions(labels)})
 	if err != nil {
-		return TaskSet{}, err
+		return TicketSet{}, err
 	}
 	answers := response.Answers
-	var set TaskSet
+	var set TicketSet
 
 	if stated(answers, "status_stated") && answers["status"].Choice != intentUnspecified {
-		status := core.TaskStatus(answers["status"].Choice)
+		status := core.TicketStatus(answers["status"].Choice)
 		if !status.Valid() {
-			return TaskSet{}, fmt.Errorf("%w: unknown status %q", core.ErrInvalid, answers["status"].Choice)
+			return TicketSet{}, fmt.Errorf("%w: unknown status %q", core.ErrInvalid, answers["status"].Choice)
 		}
 		set.Status = &status
 	}
 	if stated(answers, "kind_stated") && answers["kind"].Choice != intentUnspecified {
-		kind := core.TaskKind(answers["kind"].Choice)
+		kind := core.TicketKind(answers["kind"].Choice)
 		if !kind.Valid() {
-			return TaskSet{}, fmt.Errorf("%w: unknown kind %q", core.ErrInvalid, answers["kind"].Choice)
+			return TicketSet{}, fmt.Errorf("%w: unknown kind %q", core.ErrInvalid, answers["kind"].Choice)
 		}
 		set.Kind = &kind
 	}
 	if stated(answers, "priority_stated") && answers["priority"].Choice != intentUnspecified {
 		priority, err := strconv.Atoi(answers["priority"].Choice)
 		if err != nil {
-			return TaskSet{}, fmt.Errorf("%w: invalid priority %q", core.ErrInvalid, answers["priority"].Choice)
+			return TicketSet{}, fmt.Errorf("%w: invalid priority %q", core.ErrInvalid, answers["priority"].Choice)
 		}
 		set.Priority = &priority
 	}
@@ -72,13 +72,13 @@ func (s *IntentService) ParseTaskIntent(ctx context.Context, phrase string, labe
 	if stated(answers, "not_before_stated") {
 		when, err := s.when.Parse(ctx, phrase, now)
 		if err != nil {
-			return TaskSet{}, err
+			return TicketSet{}, err
 		}
 		set.NotBefore = &when
 	}
 
 	if set.Empty() {
-		return TaskSet{}, fmt.Errorf("%w: nothing to set", core.ErrInvalid)
+		return TicketSet{}, fmt.Errorf("%w: nothing to set", core.ErrInvalid)
 	}
 	return set, nil
 }
@@ -93,7 +93,7 @@ func stated(answers map[string]judge.Answer, id string) bool {
 // labels or dependencies, not priorities or statuses.
 func intentQuestions(labels []string) map[string]judge.Question {
 	statuses := map[string]any{intentUnspecified: "The phrase does not set a status."}
-	for _, status := range []core.TaskStatus{
+	for _, status := range []core.TicketStatus{
 		core.StatusTodo, core.StatusInProgress, core.StatusBlocked,
 		core.StatusReadyForReview, core.StatusDone, core.StatusCancelled,
 	} {

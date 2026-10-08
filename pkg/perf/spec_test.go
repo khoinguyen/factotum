@@ -50,9 +50,9 @@ func TestSeedPopulatesDataset(t *testing.T) {
 		t.Fatalf("project = %q, want %q", projectID, DefaultProjectID)
 	}
 
-	tasks, err := be.Tasks().List(ctx, store.TaskFilter{ProjectID: projectID})
+	tasks, err := be.Tickets().List(ctx, store.TicketFilter{ProjectID: projectID})
 	if err != nil {
-		t.Fatalf("Tasks().List() error = %v", err)
+		t.Fatalf("Tickets().List() error = %v", err)
 	}
 	if len(tasks) != 100 {
 		t.Fatalf("tasks = %d, want 100", len(tasks))
@@ -82,15 +82,15 @@ func TestSeedLinksEveryTenthTaskToItsPredecessor(t *testing.T) {
 		t.Fatalf("Seed() error = %v", err)
 	}
 
-	dep, err := be.Tasks().Get(ctx, core.TaskID("t-000010"))
+	dep, err := be.Tickets().Get(ctx, core.TicketID("t-000010"))
 	if err != nil {
 		t.Fatalf("Get(t-000010) error = %v", err)
 	}
-	if len(dep.Deps) != 1 || dep.Deps[0] != core.TaskID("t-000009") {
+	if len(dep.Deps) != 1 || dep.Deps[0] != core.TicketID("t-000009") {
 		t.Fatalf("t-000010 deps = %v, want [t-000009]", dep.Deps)
 	}
 
-	first, err := be.Tasks().Get(ctx, core.TaskID("t-000000"))
+	first, err := be.Tickets().Get(ctx, core.TicketID("t-000000"))
 	if err != nil {
 		t.Fatalf("Get(t-000000) error = %v", err)
 	}
@@ -110,7 +110,7 @@ func TestSeedSearchFindsSyntheticBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Seed() error = %v", err)
 	}
-	hits, err := be.Tasks().Search(ctx, store.TaskFilter{ProjectID: projectID}, "synthetic")
+	hits, err := be.Tickets().Search(ctx, store.TicketFilter{ProjectID: projectID}, "synthetic")
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}

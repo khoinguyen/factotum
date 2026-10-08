@@ -95,8 +95,8 @@ func TestRunCommandProgressSuppressed(t *testing.T) {
 				if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
 					t.Fatalf("json output is not clean: %v\n%s", err, stdout)
 				}
-				if doc.TaskID != taskID {
-					t.Fatalf("json task_id = %q, want %q", doc.TaskID, taskID)
+				if doc.TicketID != taskID {
+					t.Fatalf("json task_id = %q, want %q", doc.TicketID, taskID)
 				}
 			}
 		})

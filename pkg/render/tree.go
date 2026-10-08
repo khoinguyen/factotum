@@ -11,10 +11,10 @@ import (
 )
 
 type TreeNode struct {
-	Task     core.Task
+	Ticket   core.Ticket
 	Class    Class
 	Children []*TreeNode
-	Refs     []core.TaskID
+	Refs     []core.TicketID
 }
 
 type TreeModel struct {
@@ -24,8 +24,8 @@ type TreeModel struct {
 func (v View) BuildTree() *TreeModel {
 	derived := v.info()
 
-	children := make(map[core.TaskID][]core.TaskID)
-	hasParent := make(map[core.TaskID]bool)
+	children := make(map[core.TicketID][]core.TicketID)
+	hasParent := make(map[core.TicketID]bool)
 	for child, parent := range derived.forest {
 		children[parent] = append(children[parent], child)
 		hasParent[child] = true
@@ -34,18 +34,18 @@ func (v View) BuildTree() *TreeModel {
 		sort.Slice(children[parent], func(i, j int) bool { return children[parent][i] < children[parent][j] })
 	}
 
-	var roots []core.TaskID
+	var roots []core.TicketID
 	for _, id := range derived.ids {
 		if !hasParent[id] {
 			roots = append(roots, id)
 		}
 	}
 
-	seen := make(map[core.TaskID]bool)
-	var build func(core.TaskID) *TreeNode
-	build = func(id core.TaskID) *TreeNode {
+	seen := make(map[core.TicketID]bool)
+	var build func(core.TicketID) *TreeNode
+	build = func(id core.TicketID) *TreeNode {
 		task := derived.tasks[id]
-		node := &TreeNode{Task: task, Class: v.Classify(task)}
+		node := &TreeNode{Ticket: task, Class: v.Classify(task)}
 		for _, child := range children[id] {
 			if seen[child] {
 				continue
@@ -87,7 +87,7 @@ func writeTreeNode(b *strings.Builder, model *TreeModel, depth int) {
 	var walk func(node *TreeNode, level int)
 	walk = func(node *TreeNode, level int) {
 		indent := strings.Repeat("  ", level)
-		fmt.Fprintf(b, "%s- %s [%s] %s\n", indent, node.Task.ID, node.Class, node.Task.Title)
+		fmt.Fprintf(b, "%s- %s [%s] %s\n", indent, node.Ticket.ID, node.Class, node.Ticket.Title)
 		for _, ref := range node.Refs {
 			fmt.Fprintf(b, "%s  ↳ %s\n", indent, ref)
 		}

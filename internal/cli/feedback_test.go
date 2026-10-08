@@ -30,21 +30,21 @@ func writeFeedbackConfig(t *testing.T, r *runner, sinks map[string]string) {
 }
 
 // storedTasks reads every task from a jsonfile store.
-func storedTasks(t *testing.T, path string) []*core.Task {
+func storedTasks(t *testing.T, path string) []*core.Ticket {
 	t.Helper()
 	backend, err := jsonfile.Open(context.Background(), store.Config{Options: map[string]string{"path": path}})
 	if err != nil {
 		t.Fatalf("open store %s: %v", path, err)
 	}
 	defer func() { _ = backend.Close() }()
-	tasks, err := backend.Tasks().List(context.Background(), store.TaskFilter{})
+	tasks, err := backend.Tickets().List(context.Background(), store.TicketFilter{})
 	if err != nil {
 		t.Fatalf("list tasks in %s: %v", path, err)
 	}
 	return tasks
 }
 
-func singleStoredTask(t *testing.T, path string) *core.Task {
+func singleStoredTask(t *testing.T, path string) *core.Ticket {
 	t.Helper()
 	tasks := storedTasks(t, path)
 	if len(tasks) != 1 {
@@ -53,7 +53,7 @@ func singleStoredTask(t *testing.T, path string) *core.Task {
 	return tasks[0]
 }
 
-func containsTaskMessage(tasks []*core.Task, message string) bool {
+func containsTaskMessage(tasks []*core.Ticket, message string) bool {
 	for _, task := range tasks {
 		if strings.Contains(task.Description, message) || strings.Contains(task.Title, message) {
 			return true
@@ -147,9 +147,9 @@ func TestFeedbackCreateUsesAddedTransport(t *testing.T) {
 
 	var got feedback.Report
 	r.feedbackFactory = func(feedback.Env) (feedback.Transport, error) {
-		return feedbackTransportFunc(func(_ context.Context, report feedback.Report) (*core.Task, error) {
+		return feedbackTransportFunc(func(_ context.Context, report feedback.Report) (*core.Ticket, error) {
 			got = report
-			return &core.Task{ID: "t-fake", ProjectID: "factotum", Kind: core.KindTask, Title: report.Title(), Status: core.StatusTodo}, nil
+			return &core.Ticket{ID: "t-fake", ProjectID: "factotum", Kind: core.KindTask, Title: report.Title(), Status: core.StatusTodo}, nil
 		}), nil
 	}
 
@@ -260,7 +260,7 @@ func TestFeedbackCreateSurfacesSendFailure(t *testing.T) {
 	sink := filepath.Join(t.TempDir(), "factotum.json")
 	writeFeedbackConfig(t, r, map[string]string{"factotum": sink})
 	r.feedbackFactory = func(feedback.Env) (feedback.Transport, error) {
-		return feedbackTransportFunc(func(context.Context, feedback.Report) (*core.Task, error) {
+		return feedbackTransportFunc(func(context.Context, feedback.Report) (*core.Ticket, error) {
 			return nil, errors.New("sink exploded")
 		}), nil
 	}
@@ -306,8 +306,8 @@ func TestFeedbackCreateRejectsEmptyBody(t *testing.T) {
 }
 
 // feedbackTransportFunc adapts a function to the feedback.Transport interface.
-type feedbackTransportFunc func(context.Context, feedback.Report) (*core.Task, error)
+type feedbackTransportFunc func(context.Context, feedback.Report) (*core.Ticket, error)
 
-func (f feedbackTransportFunc) Send(ctx context.Context, report feedback.Report) (*core.Task, error) {
+func (f feedbackTransportFunc) Send(ctx context.Context, report feedback.Report) (*core.Ticket, error) {
 	return f(ctx, report)
 }

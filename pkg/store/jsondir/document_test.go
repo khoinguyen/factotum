@@ -16,7 +16,7 @@ func TestTaskDocumentRoundTrip(t *testing.T) {
 	createdAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	updatedAt := createdAt.Add(time.Hour)
 	assignee := core.ActorID("act-1")
-	task := core.Task{
+	task := core.Ticket{
 		ID:          "t-1",
 		ProjectID:   "prj-1",
 		Repo:        "backend",
@@ -28,7 +28,7 @@ func TestTaskDocumentRoundTrip(t *testing.T) {
 		WaitingOn:   []core.ActorID{"act-2"},
 		Labels:      []string{"groomed", "urgent"},
 		Priority:    3,
-		Deps:        []core.TaskID{"t-0"},
+		Deps:        []core.TicketID{"t-0"},
 		Notes: []core.Note{
 			{ID: "note-1", Author: "act-2", Body: "a note\nwith two lines", CreatedAt: notBefore, System: true},
 			{ID: "note-2", Body: "human note", Links: []core.Link{{Kind: core.LinkPR, URL: "https://example.test/pr/1", Title: "PR"}}},
@@ -59,7 +59,7 @@ func TestTaskDocumentRoundTrip(t *testing.T) {
 }
 
 func TestTaskDocumentCanonicalForm(t *testing.T) {
-	task := core.Task{
+	task := core.Ticket{
 		ID:        "t-1",
 		ProjectID: "prj-1",
 		Kind:      core.KindTask,
@@ -155,7 +155,7 @@ func TestTaskDocumentUnknownKeysDoNotDuplicateKnown(t *testing.T) {
 	extra := map[string]*yaml.Node{
 		"title": {Kind: yaml.ScalarNode, Tag: "!!str", Value: "sneaky"},
 	}
-	out, err := encodeTask(core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo}, extra)
+	out, err := encodeTask(core.Ticket{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo}, extra)
 	if err != nil {
 		t.Fatalf("encodeTask() error = %v", err)
 	}
@@ -183,7 +183,7 @@ func TestTaskDocumentSchemaBreak(t *testing.T) {
 }
 
 func TestNoteBodyMayContainHeadings(t *testing.T) {
-	task := core.Task{
+	task := core.Ticket{
 		ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo,
 		Notes: []core.Note{{ID: "note-1", Body: "### not a note heading\nstill body"}},
 	}
@@ -202,7 +202,7 @@ func TestNoteBodyMayContainHeadings(t *testing.T) {
 
 func TestDescriptionMayContainDelimiterLines(t *testing.T) {
 	description := "before\n<!-- ft:notes -->\n<!-- ft:note: {\"id\":\"fake\"} -->\nafter"
-	task := core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, Description: description}
+	task := core.Ticket{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, Description: description}
 	data, err := encodeTask(task, nil)
 	if err != nil {
 		t.Fatalf("encodeTask() error = %v", err)
@@ -221,7 +221,7 @@ func TestDescriptionMayContainDelimiterLines(t *testing.T) {
 
 func TestNoteBodyMayContainDelimiterLines(t *testing.T) {
 	body := "<!-- ft:note: {\"id\":\"fake\"} -->\nand\n<!-- ft:notes -->\ntail"
-	task := core.Task{
+	task := core.Ticket{
 		ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo,
 		Notes: []core.Note{{ID: "note-1", Body: body}},
 	}
@@ -240,7 +240,7 @@ func TestNoteBodyMayContainDelimiterLines(t *testing.T) {
 
 func TestBodyMayContainBackslashLines(t *testing.T) {
 	description := `\a literal backslash line`
-	task := core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, Description: description}
+	task := core.Ticket{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, Description: description}
 	data, err := encodeTask(task, nil)
 	if err != nil {
 		t.Fatalf("encodeTask() error = %v", err)
@@ -302,11 +302,11 @@ func TestActorDocumentRoundTrip(t *testing.T) {
 
 func TestArtifactDocumentRoundTrip(t *testing.T) {
 	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	taskID := core.TaskID("t-1")
+	taskID := core.TicketID("t-1")
 	artifact := core.Artifact{
 		ID:        "art-1",
 		ProjectID: "prj-1",
-		TaskID:    &taskID,
+		TicketID:  &taskID,
 		Kind:      core.ArtifactMemory,
 		Title:     "notes",
 		Brief:     "when to load",

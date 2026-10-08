@@ -14,10 +14,10 @@ type SearchHit struct {
 	Score    float64
 }
 
-// TaskSearchHit is one ranked task search result.
-type TaskSearchHit struct {
-	Task  *core.Task
-	Score float64
+// TicketSearchHit is one ranked task search result.
+type TicketSearchHit struct {
+	Ticket *core.Ticket
+	Score  float64
 }
 
 // LexicalTerms splits a query into lowercase alphanumeric terms. Query terms
@@ -83,7 +83,7 @@ func hasTokenPrefix(tokens []string, prefix string) bool {
 // a title, description, or note token by prefix; a title match weighs more than
 // a description match, which weighs more than a note match. System notes are not
 // scored. It reports whether the task matched all terms.
-func LexicalTaskScore(task *core.Task, terms []string) (float64, bool) {
+func LexicalTaskScore(task *core.Ticket, terms []string) (float64, bool) {
 	if len(terms) == 0 {
 		return 0, true
 	}
@@ -123,11 +123,11 @@ func SortSearchHits(hits []SearchHit) {
 
 // SortTaskSearchHits orders task hits by score (descending), then title and id
 // (ascending), so every backend produces the same deterministic order.
-func SortTaskSearchHits(hits []TaskSearchHit) {
+func SortTaskSearchHits(hits []TicketSearchHit) {
 	sortHits(hits,
-		func(hit TaskSearchHit) float64 { return hit.Score },
-		func(hit TaskSearchHit) string { return hit.Task.Title },
-		func(hit TaskSearchHit) string { return string(hit.Task.ID) })
+		func(hit TicketSearchHit) float64 { return hit.Score },
+		func(hit TicketSearchHit) string { return hit.Ticket.Title },
+		func(hit TicketSearchHit) string { return string(hit.Ticket.ID) })
 }
 
 // sortHits applies the shared search order: score descending, then title and id
@@ -151,7 +151,7 @@ func MatchesArtifactFilter(artifact *core.Artifact, filter ArtifactFilter) bool 
 	if filter.ProjectID != "" && artifact.ProjectID != filter.ProjectID {
 		return false
 	}
-	if filter.TaskID != nil && (artifact.TaskID == nil || *artifact.TaskID != *filter.TaskID) {
+	if filter.TicketID != nil && (artifact.TicketID == nil || *artifact.TicketID != *filter.TicketID) {
 		return false
 	}
 	if filter.Kind != nil && artifact.Kind != *filter.Kind {

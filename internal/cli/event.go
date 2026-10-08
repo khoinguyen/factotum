@@ -21,8 +21,8 @@ func newEventCommand(deps *Deps) *cobra.Command {
 			projectID = string(deps.resolveProject(projectID))
 			filter := store.EventFilter{ProjectID: core.ProjectID(projectID), Limit: limit}
 			if taskID != "" {
-				id := core.TaskID(taskID)
-				filter.TaskID = &id
+				id := core.TicketID(taskID)
+				filter.TicketID = &id
 			}
 			for _, kind := range kinds {
 				filter.Kinds = append(filter.Kinds, core.EventKind(kind))

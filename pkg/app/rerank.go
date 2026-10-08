@@ -68,9 +68,9 @@ func (s *RerankService) Rerank(ctx context.Context, query string, candidates []*
 
 // RerankTasks orders task candidates by how well they answer query, with the same
 // two-stage contract as Rerank: it only reorders the shortlist the store returned.
-func (s *RerankService) RerankTasks(ctx context.Context, query string, candidates []*core.Task) ([]*core.Task, error) {
+func (s *RerankService) RerankTasks(ctx context.Context, query string, candidates []*core.Ticket) ([]*core.Ticket, error) {
 	inputs := make([]rerankCandidate, len(candidates))
-	byID := make(map[string]*core.Task, len(candidates))
+	byID := make(map[string]*core.Ticket, len(candidates))
 	for i, candidate := range candidates {
 		inputs[i] = rerankCandidate{
 			id:    string(candidate.ID),
@@ -83,7 +83,7 @@ func (s *RerankService) RerankTasks(ctx context.Context, query string, candidate
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*core.Task, 0, len(ordered))
+	out := make([]*core.Ticket, 0, len(ordered))
 	for _, candidate := range ordered {
 		out = append(out, byID[candidate.id])
 	}

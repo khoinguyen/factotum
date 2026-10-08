@@ -43,8 +43,8 @@ func (s *CheckService) Names() []string {
 // downgrades a ready verdict for unchanged content, so an agent cannot loop
 // against a target it already met. A human override short-circuits the judge
 // entirely while its content hash matches.
-func (s *CheckService) Run(ctx context.Context, taskID core.TaskID, names []string, force bool) ([]check.Result, error) {
-	task, err := s.backend.Tasks().Get(ctx, taskID)
+func (s *CheckService) Run(ctx context.Context, taskID core.TicketID, names []string, force bool) ([]check.Result, error) {
+	task, err := s.backend.Tickets().Get(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (s *CheckService) Run(ctx context.Context, taskID core.TaskID, names []stri
 	return results, errors.Join(errs...)
 }
 
-func (s *CheckService) runOne(ctx context.Context, task *core.Task, spec check.Spec, c check.Check, force bool) (check.Result, error) {
+func (s *CheckService) runOne(ctx context.Context, task *core.Ticket, spec check.Spec, c check.Check, force bool) (check.Result, error) {
 	cached, err := s.latest(ctx, task, c)
 	if err != nil {
 		return check.Result{}, err
@@ -97,8 +97,8 @@ func (s *CheckService) runOne(ctx context.Context, task *core.Task, spec check.S
 
 // Cached returns the cached results without ever running a check or touching the
 // network. A result whose content hash no longer matches is marked stale.
-func (s *CheckService) Cached(ctx context.Context, taskID core.TaskID, names []string) ([]check.Result, error) {
-	task, err := s.backend.Tasks().Get(ctx, taskID)
+func (s *CheckService) Cached(ctx context.Context, taskID core.TicketID, names []string) ([]check.Result, error) {
+	task, err := s.backend.Tickets().Get(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -130,11 +130,11 @@ func (s *CheckService) Cached(ctx context.Context, taskID core.TaskID, names []s
 // Decide records (or clears) a human decision for a check. It requires a human
 // actor, because the override records a human call. Deciding sets the
 // human-decided label; clearing removes it and restores the judge verdict.
-func (s *CheckService) Decide(ctx context.Context, taskID core.TaskID, checkName string, actor *core.Actor, reason string, clear bool) (check.Result, error) {
+func (s *CheckService) Decide(ctx context.Context, taskID core.TicketID, checkName string, actor *core.Actor, reason string, clear bool) (check.Result, error) {
 	if actor == nil || actor.Kind != core.ActorHuman {
 		return check.Result{}, fmt.Errorf("%w: recording a check decision requires a human actor", core.ErrInvalid)
 	}
-	task, err := s.backend.Tasks().Get(ctx, taskID)
+	task, err := s.backend.Tickets().Get(ctx, taskID)
 	if err != nil {
 		return check.Result{}, err
 	}
@@ -171,7 +171,7 @@ func (s *CheckService) Decide(ctx context.Context, taskID core.TaskID, checkName
 	return decorate(result, task), nil
 }
 
-func (s *CheckService) clearDecision(ctx context.Context, task *core.Task, c check.Check) (check.Result, error) {
+func (s *CheckService) clearDecision(ctx context.Context, task *core.Ticket, c check.Check) (check.Result, error) {
 	// Delete every override, not just the newest: a task may carry several
 	// decisions, and clearing must not resurface an older one.
 	overrides, err := s.overrides(ctx, task, c)
@@ -198,7 +198,7 @@ func (s *CheckService) clearDecision(ctx context.Context, task *core.Task, c che
 
 // setHumanDecided adds or removes the human-decided label without touching the
 // content the check hashes.
-func (s *CheckService) setHumanDecided(ctx context.Context, task *core.Task, decided bool) error {
+func (s *CheckService) setHumanDecided(ctx context.Context, task *core.Ticket, decided bool) error {
 	labels := make([]string, 0, len(task.Labels)+1)
 	for _, label := range task.Labels {
 		if label == humanDecidedLabel {
@@ -212,7 +212,7 @@ func (s *CheckService) setHumanDecided(ctx context.Context, task *core.Task, dec
 	if equalStrings(labels, task.Labels) {
 		return nil
 	}
-	_, err := NewTaskService(s.backend, s.clock, s.ids).Set(ctx, task.ID, TaskSet{Labels: labels})
+	_, err := NewTicketService(s.backend, s.clock, s.ids).Set(ctx, task.ID, TicketSet{Labels: labels})
 	return err
 }
 
@@ -225,7 +225,7 @@ type stored struct {
 // latest returns the newest cached result for a check, or nil when none exists.
 // The newest is ordered by creation time, then id, so it is deterministic under
 // a fixed clock.
-func (s *CheckService) latest(ctx context.Context, task *core.Task, c check.Check) (*stored, error) {
+func (s *CheckService) latest(ctx context.Context, task *core.Ticket, c check.Check) (*stored, error) {
 	all, err := s.artifacts(ctx, task)
 	if err != nil {
 		return nil, err
@@ -244,7 +244,7 @@ func (s *CheckService) latest(ctx context.Context, task *core.Task, c check.Chec
 }
 
 // overrides returns every human-decision artifact for a check, newest first.
-func (s *CheckService) overrides(ctx context.Context, task *core.Task, c check.Check) ([]*stored, error) {
+func (s *CheckService) overrides(ctx context.Context, task *core.Ticket, c check.Check) ([]*stored, error) {
 	all, err := s.artifacts(ctx, task)
 	if err != nil {
 		return nil, err
@@ -261,17 +261,17 @@ func (s *CheckService) overrides(ctx context.Context, task *core.Task, c check.C
 	return found, nil
 }
 
-func (s *CheckService) artifacts(ctx context.Context, task *core.Task) ([]*core.Artifact, error) {
+func (s *CheckService) artifacts(ctx context.Context, task *core.Ticket) ([]*core.Artifact, error) {
 	kind := core.ArtifactTaskCheck
 	taskID := task.ID
 	return s.backend.Artifacts().List(ctx, store.ArtifactFilter{
 		ProjectID: task.ProjectID,
-		TaskID:    &taskID,
+		TicketID:  &taskID,
 		Kind:      &kind,
 	})
 }
 
-func (s *CheckService) store(ctx context.Context, task *core.Task, result check.Result) error {
+func (s *CheckService) store(ctx context.Context, task *core.Ticket, result check.Result) error {
 	body, err := result.Marshal()
 	if err != nil {
 		return err
@@ -281,7 +281,7 @@ func (s *CheckService) store(ctx context.Context, task *core.Task, result check.
 	artifact := &core.Artifact{
 		ID:        core.ArtifactID(s.ids.NewID("art")),
 		ProjectID: task.ProjectID,
-		TaskID:    &taskID,
+		TicketID:  &taskID,
 		Kind:      core.ArtifactTaskCheck,
 		Title:     "check: " + result.Check,
 		Body:      body,
@@ -311,7 +311,7 @@ func (s *CheckService) selected(names []string) ([]check.Check, error) {
 	return selected, nil
 }
 
-func specFrom(task *core.Task) check.Spec {
+func specFrom(task *core.Ticket) check.Spec {
 	return check.Spec{
 		ID:    string(task.ID),
 		Title: task.Title,
@@ -323,7 +323,7 @@ func specFrom(task *core.Task) check.Spec {
 // specFor builds the check spec for a task, resolving its origin when the task
 // was refined from an immutable capture. The origin is the task's first
 // dependency that is an idea: promotion writes exactly that edge.
-func (s *CheckService) specFor(ctx context.Context, task *core.Task) (check.Spec, error) {
+func (s *CheckService) specFor(ctx context.Context, task *core.Ticket) (check.Spec, error) {
 	spec := specFrom(task)
 	origin, err := s.origin(ctx, task)
 	if err != nil {
@@ -337,9 +337,9 @@ func (s *CheckService) specFor(ctx context.Context, task *core.Task) (check.Spec
 // has none. The first idea dependency wins; promotion creates one. A dangling
 // dependency is history, not an origin, so it is skipped rather than failing the
 // read: a read command must not break because a dependency was deleted.
-func (s *CheckService) origin(ctx context.Context, task *core.Task) (*check.Origin, error) {
+func (s *CheckService) origin(ctx context.Context, task *core.Ticket) (*check.Origin, error) {
 	for _, dep := range task.Deps {
-		depTask, err := s.backend.Tasks().Get(ctx, dep)
+		depTask, err := s.backend.Tickets().Get(ctx, dep)
 		if errors.Is(err, core.ErrNotFound) {
 			continue
 		}
@@ -355,7 +355,7 @@ func (s *CheckService) origin(ctx context.Context, task *core.Task) (*check.Orig
 
 // decorate adds the current note count, which is not part of the hash: notes are
 // history and are never read by the judgment.
-func decorate(result check.Result, task *core.Task) check.Result {
+func decorate(result check.Result, task *core.Ticket) check.Result {
 	result.Checked = true
 	result.NotesNotConsidered = len(task.Notes)
 	return result

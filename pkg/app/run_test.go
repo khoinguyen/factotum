@@ -44,14 +44,14 @@ func (h shellHarness) Result(out []byte) (harnesspkg.Result, error) {
 // runFixture wires a RunService over an in-memory store with a project whose one
 // repo is an existing local checkout, so workspace resolution needs no git.
 type runFixture struct {
-	tasks   *TaskService
+	tasks   *TicketService
 	svc     *RunService
 	backend *isofake.Backend
 	harness *harnessfake.Harness
 	root    string
 	repoDir string
 	project *core.Project
-	task    *core.Task
+	task    *core.Ticket
 }
 
 func newRunFixture(t *testing.T) *runFixture {
@@ -62,14 +62,14 @@ func newRunFixture(t *testing.T) *runFixture {
 	clock := fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	ids := &seqIDs{}
 	projects := NewProjectService(storeBackend, clock, ids)
-	tasks := NewTaskService(storeBackend, clock, ids)
+	tasks := NewTicketService(storeBackend, clock, ids)
 
 	repoDir := t.TempDir()
 	project, err := projects.Create(ctx, "Acme", "demo", []core.Repository{{Name: "web", Path: repoDir}})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	task, err := tasks.Add(ctx, TaskInput{
+	task, err := tasks.Add(ctx, TicketInput{
 		ProjectID:   project.ID,
 		Repo:        "web",
 		Title:       "Add a widget",
@@ -95,8 +95,8 @@ func newRunFixture(t *testing.T) *runFixture {
 
 func (f *runFixture) run(t *testing.T, in RunInput) (*RunOutcome, error) {
 	t.Helper()
-	if in.TaskID == "" {
-		in.TaskID = f.task.ID
+	if in.TicketID == "" {
+		in.TicketID = f.task.ID
 	}
 	if in.Backend == nil {
 		in.Backend = f.backend
@@ -213,20 +213,20 @@ func TestRunWorkspaceFailureTouchesNothing(t *testing.T) {
 	clock := fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	ids := &seqIDs{}
 	projects := NewProjectService(storeBackend, clock, ids)
-	tasks := NewTaskService(storeBackend, clock, ids)
+	tasks := NewTicketService(storeBackend, clock, ids)
 	// A repo with neither a URL nor a Path cannot be materialized.
 	project, err := projects.Create(ctx, "Acme", "demo", []core.Repository{{Name: "web"}})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	task, err := tasks.Add(ctx, TaskInput{ProjectID: project.ID, Repo: "web", Title: "x"})
+	task, err := tasks.Add(ctx, TicketInput{ProjectID: project.ID, Repo: "web", Title: "x"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 
 	backend := isofake.New("sandbox")
 	svc := NewRunService(storeBackend, tasks, clock, ids)
-	if _, err := svc.Run(ctx, RunInput{TaskID: task.ID, Backend: backend, Harness: harnessfake.New("h"), WorkspaceRoot: t.TempDir()}); err == nil {
+	if _, err := svc.Run(ctx, RunInput{TicketID: task.ID, Backend: backend, Harness: harnessfake.New("h"), WorkspaceRoot: t.TempDir()}); err == nil {
 		t.Fatal("Run() error = nil, want workspace failure")
 	}
 
@@ -249,7 +249,7 @@ func TestRunRecordsLifecycleEvents(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	events, err := f.svc.backend.Events().List(context.Background(), store.EventFilter{TaskID: &f.task.ID})
+	events, err := f.svc.backend.Events().List(context.Background(), store.EventFilter{TicketID: &f.task.ID})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -267,7 +267,7 @@ func TestRunRecordsLifecycleEvents(t *testing.T) {
 
 func TestRunRequiresBackendAndHarness(t *testing.T) {
 	f := newRunFixture(t)
-	if _, err := f.svc.Run(context.Background(), RunInput{TaskID: f.task.ID, WorkspaceRoot: f.root}); err == nil {
+	if _, err := f.svc.Run(context.Background(), RunInput{TicketID: f.task.ID, WorkspaceRoot: f.root}); err == nil {
 		t.Fatal("Run() with no backend/harness error = nil, want error")
 	}
 }
@@ -308,12 +308,12 @@ func TestRunRefreshesWorkspaceOnRerun(t *testing.T) {
 	clock := fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	ids := &seqIDs{}
 	projects := NewProjectService(storeBackend, clock, ids)
-	tasks := NewTaskService(storeBackend, clock, ids)
+	tasks := NewTicketService(storeBackend, clock, ids)
 	project, err := projects.Create(ctx, "Acme", "demo", []core.Repository{{Name: "backend", URL: "https://example.com/acme/backend.git"}})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	task, err := tasks.Add(ctx, TaskInput{ProjectID: project.ID, Repo: "backend", Title: "x"})
+	task, err := tasks.Add(ctx, TicketInput{ProjectID: project.ID, Repo: "backend", Title: "x"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -326,7 +326,7 @@ func TestRunRefreshesWorkspaceOnRerun(t *testing.T) {
 	run := func(refresh bool) {
 		t.Helper()
 		if _, err := svc.Run(ctx, RunInput{
-			TaskID: task.ID, Backend: backend, Harness: harnessfake.New("h"),
+			TicketID: task.ID, Backend: backend, Harness: harnessfake.New("h"),
 			WorkspaceRoot: root, Git: git, WorkspaceRefresh: refresh,
 		}); err != nil {
 			t.Fatalf("Run(refresh=%v) error = %v", refresh, err)

@@ -24,23 +24,23 @@ type memoryEntry struct {
 	Title   string `json:"title" yaml:"title"`
 	Brief   string `json:"brief,omitempty" yaml:"brief,omitempty"`
 	Project string `json:"project" yaml:"project"`
-	Task    string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+	Ticket  string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
 }
 
 // memoryContextEntry is one line of the project briefing `ft memory context`
 // emits: enough to decide what to load, never the body. id, title, and brief
 // are always present; task_id is set only when the memory is attached to a task.
 type memoryContextEntry struct {
-	ID    string `json:"id" yaml:"id"`
-	Title string `json:"title" yaml:"title"`
-	Brief string `json:"brief" yaml:"brief"`
-	Task  string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+	ID     string `json:"id" yaml:"id"`
+	Title  string `json:"title" yaml:"title"`
+	Brief  string `json:"brief" yaml:"brief"`
+	Ticket string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
 }
 
 func memoryEntryFrom(artifact *core.Artifact) memoryEntry {
 	entry := memoryEntry{ID: string(artifact.ID), Title: artifact.Title, Brief: artifact.Brief, Project: string(artifact.ProjectID)}
-	if artifact.TaskID != nil {
-		entry.Task = string(*artifact.TaskID)
+	if artifact.TicketID != nil {
+		entry.Ticket = string(*artifact.TicketID)
 	}
 	return entry
 }
@@ -252,8 +252,8 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 				Path:      path,
 			}
 			if taskID != "" {
-				id := core.TaskID(taskID)
-				input.TaskID = &id
+				id := core.TicketID(taskID)
+				input.TicketID = &id
 			}
 			artifact, err := deps.Artifacts.Add(cmd.Context(), input)
 			if err != nil {
@@ -353,8 +353,8 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 					deps.printf("brief: %s\n", artifact.Brief)
 				}
 				deps.printf("project: %s\n", artifact.ProjectID)
-				if artifact.TaskID != nil {
-					deps.printf("task: %s\n", *artifact.TaskID)
+				if artifact.TicketID != nil {
+					deps.printf("task: %s\n", *artifact.TicketID)
 				}
 				deps.printf("created_at: %s\n", artifact.CreatedAt.UTC().Format(time.RFC3339))
 				deps.printf("updated_at: %s\n", artifact.UpdatedAt.UTC().Format(time.RFC3339))
@@ -406,11 +406,11 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 				if updTask == "" {
 					patch.ClearTask = true
 				} else {
-					taskID := core.TaskID(updTask)
-					patch.TaskID = &taskID
+					taskID := core.TicketID(updTask)
+					patch.TicketID = &taskID
 				}
 			}
-			if patch.Title == nil && patch.Brief == nil && patch.Body == nil && patch.TaskID == nil && !patch.ClearTask {
+			if patch.Title == nil && patch.Brief == nil && patch.Body == nil && patch.TicketID == nil && !patch.ClearTask {
 				return usageError(cmd, "nothing to update; pass --title, --brief, --body/--file, or --task")
 			}
 			updated, err := deps.Artifacts.Update(cmd.Context(), artifact.ID, patch)
@@ -469,15 +469,15 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 			entries := make([]memoryContextEntry, 0, len(artifacts))
 			for _, artifact := range artifacts {
 				entry := memoryContextEntry{ID: string(artifact.ID), Title: artifact.Title, Brief: artifact.Brief}
-				if artifact.TaskID != nil {
-					entry.Task = string(*artifact.TaskID)
+				if artifact.TicketID != nil {
+					entry.Ticket = string(*artifact.TicketID)
 				}
 				entries = append(entries, entry)
 			}
 			return deps.emit(entries, func() {
 				rows := make([][]string, 0, len(entries))
 				for _, entry := range entries {
-					rows = append(rows, []string{entry.ID, entry.Title, entry.Brief, entry.Task})
+					rows = append(rows, []string{entry.ID, entry.Title, entry.Brief, entry.Ticket})
 				}
 				deps.printTable([]string{"ID", "TITLE", "BRIEF", "TASK"}, rows)
 			}, memoryContextHints(entries)...)

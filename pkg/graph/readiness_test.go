@@ -10,12 +10,12 @@ import (
 func TestReadinessReasons(t *testing.T) {
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	future := now.Add(time.Hour)
-	hold := core.TaskID("hold")
+	hold := core.TicketID("hold")
 
 	tests := []struct {
 		name    string
-		subject core.Task
-		extra   []core.Task
+		subject core.Ticket
+		extra   []core.Ticket
 		ready   bool
 		want    *NotReadyReason
 	}{
@@ -31,7 +31,7 @@ func TestReadinessReasons(t *testing.T) {
 		{
 			name:    "unresolved dependency",
 			subject: task("subject", core.KindTask, core.StatusTodo, "open"),
-			extra:   []core.Task{task("open", core.KindTask, core.StatusTodo)},
+			extra:   []core.Ticket{task("open", core.KindTask, core.StatusTodo)},
 			want:    &NotReadyReason{Code: ReasonDepUnresolved, Detail: "open"},
 		},
 		{
@@ -62,7 +62,7 @@ func TestReadinessReasons(t *testing.T) {
 		{
 			name:    "snoozed until a task",
 			subject: snoozedTask("subject", core.Snooze{UntilTask: &hold}),
-			extra:   []core.Task{task("hold", core.KindTask, core.StatusTodo)},
+			extra:   []core.Ticket{task("hold", core.KindTask, core.StatusTodo)},
 			want:    &NotReadyReason{Code: ReasonSnoozed, Detail: "until hold"},
 		},
 		{
@@ -74,7 +74,7 @@ func TestReadinessReasons(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tasks := append([]core.Task{}, tt.extra...)
+			tasks := append([]core.Ticket{}, tt.extra...)
 			tasks = append(tasks, tt.subject)
 			g, err := NewAt(tasks, core.DefaultResolutionPolicy(), now)
 			if err != nil {
@@ -94,7 +94,7 @@ func TestReadinessReasons(t *testing.T) {
 func TestIdeaIsNotExecutable(t *testing.T) {
 	idea := task("idea", core.KindIdea, core.StatusTodo)
 	dependent := task("dependent", core.KindTask, core.StatusTodo, "idea")
-	g, err := New([]core.Task{idea, dependent}, core.DefaultResolutionPolicy())
+	g, err := New([]core.Ticket{idea, dependent}, core.DefaultResolutionPolicy())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -114,7 +114,7 @@ func TestIdeaIsNotExecutable(t *testing.T) {
 	}
 
 	bucket := g.ReadyByActor(nil)
-	for _, ids := range [][]core.TaskID{bucket.Agent, bucket.Human} {
+	for _, ids := range [][]core.TicketID{bucket.Agent, bucket.Human} {
 		for _, id := range ids {
 			if id == "idea" {
 				t.Fatalf("idea must not appear in a ready bucket: %+v", bucket)
@@ -139,7 +139,7 @@ func TestReadinessPrecedence(t *testing.T) {
 
 	open := task("open", core.KindTask, core.StatusTodo)
 	g, err := NewAt(
-		[]core.Task{open, blockedWithDep, blockedWithSnooze, doingWithSnooze, snoozedBeforeDate},
+		[]core.Ticket{open, blockedWithDep, blockedWithSnooze, doingWithSnooze, snoozedBeforeDate},
 		core.DefaultResolutionPolicy(), now,
 	)
 	if err != nil {
@@ -147,7 +147,7 @@ func TestReadinessPrecedence(t *testing.T) {
 	}
 
 	tests := []struct {
-		id   core.TaskID
+		id   core.TicketID
 		want ReasonCode
 	}{
 		{"blocked-with-dep", ReasonDepUnresolved},
@@ -166,9 +166,9 @@ func TestReadinessPrecedence(t *testing.T) {
 func TestReadinessAgreesWithReadySet(t *testing.T) {
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	future := now.Add(time.Hour)
-	hold := core.TaskID("hold")
+	hold := core.TicketID("hold")
 
-	tasks := []core.Task{
+	tasks := []core.Ticket{
 		task("todo", core.KindTask, core.StatusTodo),
 		task("done", core.KindTask, core.StatusDone),
 		task("blocked", core.KindTask, core.StatusBlocked),
@@ -185,7 +185,7 @@ func TestReadinessAgreesWithReadySet(t *testing.T) {
 		t.Fatalf("NewAt() error = %v", err)
 	}
 
-	ready := map[core.TaskID]bool{}
+	ready := map[core.TicketID]bool{}
 	for _, id := range g.ReadySet() {
 		ready[id] = true
 	}
@@ -204,13 +204,13 @@ func TestReadinessAgreesWithReadySet(t *testing.T) {
 	}
 }
 
-func snoozedTask(id string, snooze core.Snooze) core.Task {
+func snoozedTask(id string, snooze core.Snooze) core.Ticket {
 	t := task(id, core.KindTask, core.StatusTodo)
 	t.Snooze = &snooze
 	return t
 }
 
-func deferredTask(id string, at time.Time) core.Task {
+func deferredTask(id string, at time.Time) core.Ticket {
 	t := task(id, core.KindTask, core.StatusTodo)
 	t.NotBefore = &at
 	return t

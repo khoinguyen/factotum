@@ -218,7 +218,7 @@ func migrateV4(ctx context.Context, tx *sql.Tx) error {
 			_ = rows.Close()
 			return err
 		}
-		var task core.Task
+		var task core.Ticket
 		if err := json.Unmarshal([]byte(data), &task); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("decode task: %w", err)
@@ -264,7 +264,7 @@ func migrateV5(ctx context.Context, tx *sql.Tx) error {
 			_ = rows.Close()
 			return err
 		}
-		var task core.Task
+		var task core.Ticket
 		if err := json.Unmarshal([]byte(data), &task); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("decode task: %w", err)
@@ -434,7 +434,7 @@ func pruneBackups(dir, base string) error {
 func (b *Backend) Close() error { return b.db.Close() }
 
 func (b *Backend) Projects() store.ProjectRepo { return &projectRepo{db: b.db} }
-func (b *Backend) Tasks() store.TaskRepo       { return &taskRepo{db: b.db} }
+func (b *Backend) Tickets() store.TicketRepo   { return &taskRepo{db: b.db} }
 func (b *Backend) Actors() store.ActorRepo     { return &actorRepo{db: b.db} }
 func (b *Backend) Artifacts() store.ArtifactRepo {
 	return &artifactRepo{db: b.db}
@@ -533,7 +533,7 @@ func (r *projectRepo) Delete(ctx context.Context, id core.ProjectID) error {
 
 type taskRepo struct{ db *sql.DB }
 
-func (r *taskRepo) Create(ctx context.Context, task *core.Task) error {
+func (r *taskRepo) Create(ctx context.Context, task *core.Ticket) error {
 	exists, err := rowExists(ctx, r.db, "SELECT 1 FROM tasks WHERE id = ?", string(task.ID))
 	if err != nil {
 		return err
@@ -564,7 +564,7 @@ func (r *taskRepo) Create(ctx context.Context, task *core.Task) error {
 	return tx.Commit()
 }
 
-func (r *taskRepo) Get(ctx context.Context, id core.TaskID) (*core.Task, error) {
+func (r *taskRepo) Get(ctx context.Context, id core.TicketID) (*core.Ticket, error) {
 	var data string
 	err := r.db.QueryRowContext(ctx, "SELECT data FROM tasks WHERE id = ?", string(id)).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -573,7 +573,7 @@ func (r *taskRepo) Get(ctx context.Context, id core.TaskID) (*core.Task, error) 
 	if err != nil {
 		return nil, fmt.Errorf("get task: %w", err)
 	}
-	var task core.Task
+	var task core.Ticket
 	if err := json.Unmarshal([]byte(data), &task); err != nil {
 		return nil, fmt.Errorf("decode task: %w", err)
 	}
@@ -582,7 +582,7 @@ func (r *taskRepo) Get(ctx context.Context, id core.TaskID) (*core.Task, error) 
 
 // taskFilterConditions builds the WHERE conditions for a task filter. Labels
 // are a JSON array column, so they are applied in Go via store.MatchLabels.
-func taskFilterConditions(filter store.TaskFilter) ([]string, []any) {
+func taskFilterConditions(filter store.TicketFilter) ([]string, []any) {
 	var conditions []string
 	var args []any
 	if filter.ProjectID != "" {
@@ -606,7 +606,7 @@ func taskFilterConditions(filter store.TaskFilter) ([]string, []any) {
 	return conditions, args
 }
 
-func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.Task, error) {
+func (r *taskRepo) List(ctx context.Context, filter store.TicketFilter) ([]*core.Ticket, error) {
 	query := "SELECT data FROM tasks"
 	conditions, args := taskFilterConditions(filter)
 	if filter.DependsOn != nil {
@@ -627,13 +627,13 @@ func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.T
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := make([]*core.Task, 0)
+	out := make([]*core.Ticket, 0)
 	for rows.Next() {
 		var data string
 		if err := rows.Scan(&data); err != nil {
 			return nil, err
 		}
-		var task core.Task
+		var task core.Ticket
 		if err := json.Unmarshal([]byte(data), &task); err != nil {
 			return nil, fmt.Errorf("decode task: %w", err)
 		}
@@ -648,7 +648,7 @@ func (r *taskRepo) List(ctx context.Context, filter store.TaskFilter) ([]*core.T
 	return out, rows.Err()
 }
 
-func (r *taskRepo) Search(ctx context.Context, filter store.TaskFilter, query string) ([]store.TaskSearchHit, error) {
+func (r *taskRepo) Search(ctx context.Context, filter store.TicketFilter, query string) ([]store.TicketSearchHit, error) {
 	terms := store.LexicalTerms(query)
 	conditions, args := taskFilterConditions(filter)
 	if filter.DependsOn != nil {
@@ -682,13 +682,13 @@ func (r *taskRepo) Search(ctx context.Context, filter store.TaskFilter, query st
 		return nil, fmt.Errorf("search tasks: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	hits := make([]store.TaskSearchHit, 0)
+	hits := make([]store.TicketSearchHit, 0)
 	for rows.Next() {
 		var data string
 		if err := rows.Scan(&data); err != nil {
 			return nil, err
 		}
-		var task core.Task
+		var task core.Ticket
 		if err := json.Unmarshal([]byte(data), &task); err != nil {
 			return nil, fmt.Errorf("decode task: %w", err)
 		}
@@ -702,7 +702,7 @@ func (r *taskRepo) Search(ctx context.Context, filter store.TaskFilter, query st
 		if !matched {
 			continue
 		}
-		hits = append(hits, store.TaskSearchHit{Task: &task, Score: score})
+		hits = append(hits, store.TicketSearchHit{Ticket: &task, Score: score})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -711,7 +711,7 @@ func (r *taskRepo) Search(ctx context.Context, filter store.TaskFilter, query st
 	return hits, nil
 }
 
-func (r *taskRepo) Update(ctx context.Context, task *core.Task) error {
+func (r *taskRepo) Update(ctx context.Context, task *core.Ticket) error {
 	exists, err := rowExists(ctx, r.db, "SELECT 1 FROM tasks WHERE id = ?", string(task.ID))
 	if err != nil {
 		return err
@@ -742,7 +742,7 @@ func (r *taskRepo) Update(ctx context.Context, task *core.Task) error {
 	return tx.Commit()
 }
 
-func (r *taskRepo) UpdateExpected(ctx context.Context, task *core.Task, expected time.Time) error {
+func (r *taskRepo) UpdateExpected(ctx context.Context, task *core.Ticket, expected time.Time) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin task update: %w", err)
@@ -757,7 +757,7 @@ func (r *taskRepo) UpdateExpected(ctx context.Context, task *core.Task, expected
 	if err != nil {
 		return fmt.Errorf("get task: %w", err)
 	}
-	var stored core.Task
+	var stored core.Ticket
 	if err := json.Unmarshal([]byte(data), &stored); err != nil {
 		return fmt.Errorf("decode task: %w", err)
 	}
@@ -782,7 +782,7 @@ func (r *taskRepo) UpdateExpected(ctx context.Context, task *core.Task, expected
 	return tx.Commit()
 }
 
-func (r *taskRepo) Delete(ctx context.Context, id core.TaskID) error {
+func (r *taskRepo) Delete(ctx context.Context, id core.TicketID) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin task delete: %w", err)
@@ -809,7 +809,7 @@ func (r *taskRepo) Delete(ctx context.Context, id core.TaskID) error {
 }
 
 // indexTask (re)writes the task's row in the FTS index.
-func indexTask(ctx context.Context, tx *sql.Tx, task *core.Task) error {
+func indexTask(ctx context.Context, tx *sql.Tx, task *core.Ticket) error {
 	var rowid int64
 	if err := tx.QueryRowContext(ctx, "SELECT rowid FROM tasks WHERE id = ?", string(task.ID)).Scan(&rowid); err != nil {
 		return fmt.Errorf("task rowid: %w", err)
@@ -825,7 +825,7 @@ func indexTask(ctx context.Context, tx *sql.Tx, task *core.Task) error {
 
 // indexTaskDeps (re)writes the task's outgoing dependency edges in the reverse
 // index, so DependsOn can find dependents without scanning tasks.
-func indexTaskDeps(ctx context.Context, tx *sql.Tx, task *core.Task) error {
+func indexTaskDeps(ctx context.Context, tx *sql.Tx, task *core.Ticket) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM task_deps WHERE task_id = ?", string(task.ID)); err != nil {
 		return fmt.Errorf("clear task deps: %w", err)
 	}
@@ -839,7 +839,7 @@ func indexTaskDeps(ctx context.Context, tx *sql.Tx, task *core.Task) error {
 
 // notesText joins the task's note bodies for the FTS notes column, skipping
 // system-generated notes so they cannot pollute search recall.
-func notesText(task *core.Task) string {
+func notesText(task *core.Ticket) string {
 	parts := make([]string, 0, len(task.Notes))
 	for _, note := range task.Notes {
 		if note.System {
@@ -978,8 +978,8 @@ func (r *artifactRepo) Create(ctx context.Context, artifact *core.Artifact) erro
 		return fmt.Errorf("%w: artifact %s", core.ErrAlreadyExists, artifact.ID)
 	}
 	var taskID any
-	if artifact.TaskID != nil {
-		taskID = string(*artifact.TaskID)
+	if artifact.TicketID != nil {
+		taskID = string(*artifact.TicketID)
 	}
 	if _, err := tx.ExecContext(ctx,
 		"INSERT INTO artifacts (id, project_id, task_id, kind, data) VALUES (?, ?, ?, ?, ?)",
@@ -1027,9 +1027,9 @@ func (r *artifactRepo) List(ctx context.Context, filter store.ArtifactFilter) ([
 		conditions = append(conditions, "project_id = ?")
 		args = append(args, string(filter.ProjectID))
 	}
-	if filter.TaskID != nil {
+	if filter.TicketID != nil {
 		conditions = append(conditions, "task_id = ?")
-		args = append(args, string(*filter.TaskID))
+		args = append(args, string(*filter.TicketID))
 	}
 	if filter.Kind != nil {
 		conditions = append(conditions, "kind = ?")
@@ -1068,9 +1068,9 @@ func (r *artifactRepo) Search(ctx context.Context, filter store.ArtifactFilter, 
 		conditions = append(conditions, "a.project_id = ?")
 		args = append(args, string(filter.ProjectID))
 	}
-	if filter.TaskID != nil {
+	if filter.TicketID != nil {
 		conditions = append(conditions, "a.task_id = ?")
-		args = append(args, string(*filter.TaskID))
+		args = append(args, string(*filter.TicketID))
 	}
 	if filter.Kind != nil {
 		conditions = append(conditions, "a.kind = ?")
@@ -1153,8 +1153,8 @@ func (r *artifactRepo) Update(ctx context.Context, artifact *core.Artifact) erro
 		return fmt.Errorf("%w: artifact %s", core.ErrNotFound, artifact.ID)
 	}
 	var taskID any
-	if artifact.TaskID != nil {
-		taskID = string(*artifact.TaskID)
+	if artifact.TicketID != nil {
+		taskID = string(*artifact.TicketID)
 	}
 	if _, err := tx.ExecContext(ctx,
 		"UPDATE artifacts SET project_id = ?, task_id = ?, kind = ?, data = ? WHERE id = ?",
@@ -1209,8 +1209,8 @@ func (r *eventRepo) Append(ctx context.Context, event *core.Event) error {
 	if event.ProjectID != "" {
 		projectID = string(event.ProjectID)
 	}
-	if event.TaskID != nil {
-		taskID = string(*event.TaskID)
+	if event.TicketID != nil {
+		taskID = string(*event.TicketID)
 	}
 	_, err = r.db.ExecContext(ctx,
 		"INSERT INTO events (project_id, task_id, kind, created_at, data) VALUES (?, ?, ?, ?, ?)",
@@ -1229,9 +1229,9 @@ func (r *eventRepo) List(ctx context.Context, filter store.EventFilter) ([]*core
 		conditions = append(conditions, "project_id = ?")
 		args = append(args, string(filter.ProjectID))
 	}
-	if filter.TaskID != nil {
+	if filter.TicketID != nil {
 		conditions = append(conditions, "task_id = ?")
-		args = append(args, string(*filter.TaskID))
+		args = append(args, string(*filter.TicketID))
 	}
 	if len(filter.Kinds) > 0 {
 		conditions = append(conditions, "kind IN ("+placeholders(len(filter.Kinds))+")")

@@ -82,10 +82,10 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 				}
 				body = string(data)
 			}
-			input := app.TaskInput{
+			input := app.TicketInput{
 				ProjectID:          project,
 				Repo:               repo,
-				Kind:               core.TaskKind(kind),
+				Kind:               core.TicketKind(kind),
 				Title:              title,
 				Description:        body,
 				Priority:           priority,
@@ -94,7 +94,7 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 				AcceptanceCriteria: acceptance,
 			}
 			if id != "" {
-				customID := core.TaskID(id)
+				customID := core.TicketID(id)
 				input.ID = &customID
 			}
 			task, err := deps.Tasks.Add(cmd.Context(), input)
@@ -102,7 +102,7 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			for _, dep := range depIDs {
-				if _, err := deps.Tasks.AddDep(cmd.Context(), task.ID, core.TaskID(dep)); err != nil {
+				if _, err := deps.Tasks.AddDep(cmd.Context(), task.ID, core.TicketID(dep)); err != nil {
 					return err
 				}
 			}
@@ -145,15 +145,15 @@ func newTaskListCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			projectID = string(deps.resolveProject(projectID))
-			filter := store.TaskFilter{ProjectID: core.ProjectID(projectID), Labels: labels, Groomed: groomedWant}
+			filter := store.TicketFilter{ProjectID: core.ProjectID(projectID), Labels: labels, Groomed: groomedWant}
 			if repo != "" {
 				filter.Repo = &repo
 			}
 			for _, status := range statuses {
-				filter.Statuses = append(filter.Statuses, core.TaskStatus(status))
+				filter.Statuses = append(filter.Statuses, core.TicketStatus(status))
 			}
 			if len(kinds) > 0 {
-				kind := core.TaskKind(kinds[0])
+				kind := core.TicketKind(kinds[0])
 				filter.Kind = &kind
 			}
 			tasks, err := deps.Tasks.List(cmd.Context(), filter)
@@ -198,15 +198,15 @@ func newTaskSearchCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			projectID = string(deps.resolveProject(projectID))
-			filter := store.TaskFilter{ProjectID: core.ProjectID(projectID), Labels: labels, Groomed: groomedWant}
+			filter := store.TicketFilter{ProjectID: core.ProjectID(projectID), Labels: labels, Groomed: groomedWant}
 			if repo != "" {
 				filter.Repo = &repo
 			}
 			for _, status := range statuses {
-				filter.Statuses = append(filter.Statuses, core.TaskStatus(status))
+				filter.Statuses = append(filter.Statuses, core.TicketStatus(status))
 			}
 			if len(kinds) > 0 {
-				kind := core.TaskKind(kinds[0])
+				kind := core.TicketKind(kinds[0])
 				filter.Kind = &kind
 			}
 			tasks, err := deps.Tasks.Search(cmd.Context(), filter, args[0])
@@ -246,7 +246,7 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 		Short: "Get a task",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
+			task, err := deps.Tasks.Get(cmd.Context(), core.TicketID(args[0]))
 			if err != nil {
 				return err
 			}
@@ -382,7 +382,7 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 		Short: "Create a dependency (rejects cycles)",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			task, err := deps.Tasks.AddDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1]))
+			task, err := deps.Tasks.AddDep(cmd.Context(), core.TicketID(args[0]), core.TicketID(args[1]))
 			if err != nil {
 				return err
 			}
@@ -396,7 +396,7 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 		Short: "Delete a dependency",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			task, err := deps.Tasks.RemoveDep(cmd.Context(), core.TaskID(args[0]), core.TaskID(args[1]))
+			task, err := deps.Tasks.RemoveDep(cmd.Context(), core.TicketID(args[0]), core.TicketID(args[1]))
 			if err != nil {
 				return err
 			}
@@ -430,7 +430,7 @@ func newTaskAssignCommand(deps *Deps) *cobra.Command {
 			default:
 				return fmt.Errorf("provide --actor <ref> or --unassign")
 			}
-			task, err := deps.Tasks.Assign(cmd.Context(), core.TaskID(args[0]), actorID)
+			task, err := deps.Tasks.Assign(cmd.Context(), core.TicketID(args[0]), actorID)
 			if err != nil {
 				return err
 			}
@@ -475,7 +475,7 @@ func newTaskWaitCommand(deps *Deps) *cobra.Command {
 				}
 				actorIDs = append(actorIDs, actor.ID)
 			}
-			task, err := deps.Tasks.SetWaitingOn(cmd.Context(), core.TaskID(args[0]), actorIDs)
+			task, err := deps.Tasks.SetWaitingOn(cmd.Context(), core.TicketID(args[0]), actorIDs)
 			if err != nil {
 				return err
 			}
@@ -497,13 +497,13 @@ func newTaskWaitCommand(deps *Deps) *cobra.Command {
 	return cmd
 }
 
-func statusCommand(deps *Deps, use string, status core.TaskStatus, short string) *cobra.Command {
+func statusCommand(deps *Deps, use string, status core.TicketStatus, short string) *cobra.Command {
 	return &cobra.Command{
 		Use:   use + " <task>",
 		Short: short,
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			task, err := deps.Tasks.SetStatus(cmd.Context(), core.TaskID(args[0]), status)
+			task, err := deps.Tasks.SetStatus(cmd.Context(), core.TicketID(args[0]), status)
 			if err != nil {
 				return err
 			}
@@ -516,7 +516,7 @@ func statusCommand(deps *Deps, use string, status core.TaskStatus, short string)
 
 // statusShortcut exposes a task status transition as a top-level command, so
 // `ft done <task>` == `ft task done <task>` == `ft task set <task> status=done`.
-func statusShortcut(use string, status core.TaskStatus, short string) CommandFactory {
+func statusShortcut(use string, status core.TicketStatus, short string) CommandFactory {
 	return func(deps *Deps) *cobra.Command {
 		return statusCommand(deps, use, status, short)
 	}
@@ -545,7 +545,7 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 				links = append(links, core.Link{Kind: core.LinkKind(kind), URL: url})
 			}
 			author := deps.currentActorID(cmd.Context())
-			task, err := deps.Tasks.AddNote(cmd.Context(), core.TaskID(args[0]), app.NoteInput{Body: body, Links: links, Author: author, System: system})
+			task, err := deps.Tasks.AddNote(cmd.Context(), core.TicketID(args[0]), app.NoteInput{Body: body, Links: links, Author: author, System: system})
 			if err != nil {
 				return err
 			}
@@ -624,7 +624,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 				Graph:      snapshot.Graph,
 				Tasks:      snapshot.Tasks,
 				Candidates: candidates,
-				Toward:     core.TaskID(toward),
+				Toward:     core.TicketID(toward),
 				Repo:       optionalString(repo),
 			})
 			if err != nil {
@@ -633,9 +633,9 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 			if limit > 0 && len(scored) > limit {
 				scored = scored[:limit]
 			}
-			var top *core.Task
+			var top *core.Ticket
 			if len(scored) > 0 {
-				if task, ok := snapshot.Graph.Task(scored[0].TaskID); ok {
+				if task, ok := snapshot.Graph.Ticket(scored[0].TicketID); ok {
 					top = &task
 				}
 			}
@@ -645,23 +645,23 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 			}
 			entries := make([]nextEntry, 0, len(scored))
 			for _, entry := range scored {
-				task, _ := snapshot.Graph.Task(entry.TaskID)
+				task, _ := snapshot.Graph.Ticket(entry.TicketID)
 				entries = append(entries, nextEntry{
-					TaskID:  string(entry.TaskID),
-					Score:   entry.Score,
-					Title:   task.Title,
-					Kind:    string(task.Kind),
-					Status:  string(task.Status),
-					Project: string(task.ProjectID),
-					Repo:    task.Repo,
-					Labels:  append([]string{}, task.Labels...),
+					TicketID: string(entry.TicketID),
+					Score:    entry.Score,
+					Title:    task.Title,
+					Kind:     string(task.Kind),
+					Status:   string(task.Status),
+					Project:  string(task.ProjectID),
+					Repo:     task.Repo,
+					Labels:   append([]string{}, task.Labels...),
 				})
 			}
 			return deps.emit(entries, func() {
 				rows := make([][]string, 0, len(scored))
 				for _, entry := range scored {
-					task, _ := snapshot.Graph.Task(entry.TaskID)
-					rows = append(rows, []string{fmt.Sprintf("%.2f", entry.Score), string(entry.TaskID), task.Title, string(task.ProjectID), deps.repoValue(task.Repo)})
+					task, _ := snapshot.Graph.Ticket(entry.TicketID)
+					rows = append(rows, []string{fmt.Sprintf("%.2f", entry.Score), string(entry.TicketID), task.Title, string(task.ProjectID), deps.repoValue(task.Repo)})
 				}
 				deps.printTable([]string{"SCORE", "TASK", "TITLE", "PROJECT", "REPO"}, rows)
 			}, taskNextHints(hintProject, top)...)
@@ -713,7 +713,7 @@ func emitNotReady(cmd *cobra.Command, deps *Deps, snapshot *app.Snapshot, filter
 		if reason == nil {
 			continue
 		}
-		task, ok := snapshot.Graph.Task(id)
+		task, ok := snapshot.Graph.Ticket(id)
 		if !ok {
 			continue
 		}
@@ -721,7 +721,7 @@ func emitNotReady(cmd *cobra.Command, deps *Deps, snapshot *app.Snapshot, filter
 			continue
 		}
 		entries = append(entries, notReadyEntry{
-			TaskID:     string(id),
+			TicketID:   string(id),
 			Title:      task.Title,
 			Status:     string(task.Status),
 			ReasonCode: string(reason.Code),
@@ -736,7 +736,7 @@ func emitNotReady(cmd *cobra.Command, deps *Deps, snapshot *app.Snapshot, filter
 	return deps.emit(entries, func() {
 		rows := make([][]string, 0, len(entries))
 		for _, entry := range entries {
-			rows = append(rows, []string{entry.TaskID, entry.ReasonCode, entry.Detail, entry.Title, entry.Project, deps.repoValue(entry.Repo)})
+			rows = append(rows, []string{entry.TicketID, entry.ReasonCode, entry.Detail, entry.Title, entry.Project, deps.repoValue(entry.Repo)})
 		}
 		deps.printTable([]string{"TASK", "REASON", "DETAIL", "TITLE", "PROJECT", "REPO"}, rows)
 	})
@@ -788,7 +788,7 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			for _, entry := range scored {
-				task, err := deps.Tasks.Claim(cmd.Context(), entry.TaskID, actor.ID, start)
+				task, err := deps.Tasks.Claim(cmd.Context(), entry.TicketID, actor.ID, start)
 				if err == nil {
 					next := hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"}
 					if start {
@@ -813,10 +813,10 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 
 // claimable keeps only unassigned candidates, so repeated claims take new work
 // rather than re-claiming what the actor already holds.
-func claimable(snapshot *app.Snapshot, candidates []core.TaskID) []core.TaskID {
-	out := make([]core.TaskID, 0, len(candidates))
+func claimable(snapshot *app.Snapshot, candidates []core.TicketID) []core.TicketID {
+	out := make([]core.TicketID, 0, len(candidates))
 	for _, id := range candidates {
-		task, ok := snapshot.Graph.Task(id)
+		task, ok := snapshot.Graph.Ticket(id)
 		if !ok {
 			continue
 		}
@@ -833,7 +833,7 @@ func newTaskPromoteCommand(deps *Deps) *cobra.Command {
 		Short: "Promote an idea to an executable task, keeping the idea as history",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ideaID := core.TaskID(args[0])
+			ideaID := core.TicketID(args[0])
 			task, err := deps.Tasks.Promote(cmd.Context(), ideaID)
 			if err != nil {
 				return err
@@ -853,7 +853,7 @@ func newTaskDeleteCommand(deps *Deps) *cobra.Command {
 		Short: "Delete a task",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
+			task, err := deps.Tasks.Get(cmd.Context(), core.TicketID(args[0]))
 			if err != nil {
 				return err
 			}
@@ -878,7 +878,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 		Short: "Update a task's fields",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			patch := app.TaskUpdate{}
+			patch := app.TicketUpdate{}
 			groomedWant, err := groomedFilter(cmd, groomed, ungroomed)
 			if err != nil {
 				return err
@@ -888,7 +888,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 				patch.AcceptanceCriteria = acceptance
 			}
 			if cmd.Flags().Changed("kind") {
-				taskKind := core.TaskKind(kind)
+				taskKind := core.TicketKind(kind)
 				patch.Kind = &taskKind
 			}
 			if cmd.Flags().Changed("title") {
@@ -914,7 +914,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 			if cmd.Flags().Changed("label") {
 				patch.Labels = labels
 			}
-			task, err := deps.Tasks.Update(cmd.Context(), core.TaskID(args[0]), patch)
+			task, err := deps.Tasks.Update(cmd.Context(), core.TicketID(args[0]), patch)
 			if err != nil {
 				return err
 			}
@@ -984,8 +984,8 @@ func splitAssignments(args []string) (assignments, phrase []string) {
 }
 
 // applyTaskSet writes a parsed set and reports the updated task.
-func (d *Deps) applyTaskSet(cmd *cobra.Command, taskRef string, set app.TaskSet) error {
-	task, err := d.Tasks.Set(cmd.Context(), core.TaskID(taskRef), set)
+func (d *Deps) applyTaskSet(cmd *cobra.Command, taskRef string, set app.TicketSet) error {
+	task, err := d.Tasks.Set(cmd.Context(), core.TicketID(taskRef), set)
 	if err != nil {
 		return err
 	}
@@ -997,7 +997,7 @@ func (d *Deps) applyTaskSet(cmd *cobra.Command, taskRef string, set app.TaskSet)
 
 // mergeTaskSet applies over on top of base. Explicit field=value assignments win over
 // the phrase for any field they both set.
-func mergeTaskSet(base, over app.TaskSet) app.TaskSet {
+func mergeTaskSet(base, over app.TicketSet) app.TicketSet {
 	if over.Kind != nil {
 		base.Kind = over.Kind
 	}
@@ -1034,7 +1034,7 @@ func mergeTaskSet(base, over app.TaskSet) app.TaskSet {
 	return base
 }
 
-// setFromPhrase turns a natural-language phrase into a TaskSet. Without --yes it
+// setFromPhrase turns a natural-language phrase into a TicketSet. Without --yes it
 // prints what it read and stops, so the caller confirms before the mutation.
 func (d *Deps) setFromPhrase(cmd *cobra.Command, taskRef, phrase string, assignments []string, yes bool) error {
 	if d.Intent == nil {
@@ -1063,7 +1063,7 @@ func (d *Deps) setFromPhrase(cmd *cobra.Command, taskRef, phrase string, assignm
 		set = mergeTaskSet(set, explicit)
 	}
 	if !yes {
-		fields := appendSetFields([]field{f("task_id", core.TaskID(taskRef)), f("parsed", true)}, set)
+		fields := appendSetFields([]field{f("task_id", core.TicketID(taskRef)), f("parsed", true)}, set)
 		d.printFields(fields...)
 		apply := []string{"ft", "task", "set", taskRef, fmt.Sprintf("%q", phrase)}
 		apply = append(append(apply, assignments...), "--yes")
@@ -1074,7 +1074,7 @@ func (d *Deps) setFromPhrase(cmd *cobra.Command, taskRef, phrase string, assignm
 }
 
 // appendSetFields renders the fields a parsed set carries, for confirmation output.
-func appendSetFields(fields []field, set app.TaskSet) []field {
+func appendSetFields(fields []field, set app.TicketSet) []field {
 	if set.Status != nil {
 		fields = append(fields, f("status", *set.Status))
 	}
@@ -1108,7 +1108,7 @@ func appendSetFields(fields []field, set app.TaskSet) []field {
 // knownLabels returns the distinct labels already used in the project, so the intent
 // parser can offer them as candidates.
 func (d *Deps) knownLabels(ctx context.Context) ([]string, error) {
-	tasks, err := d.Tasks.List(ctx, store.TaskFilter{})
+	tasks, err := d.Tasks.List(ctx, store.TicketFilter{})
 	if err != nil {
 		return nil, err
 	}
@@ -1125,33 +1125,33 @@ func (d *Deps) knownLabels(ctx context.Context) ([]string, error) {
 	return labels, nil
 }
 
-// parseTaskSet turns `field=value` assignments into a TaskSet. Long text
+// parseTaskSet turns `field=value` assignments into a TicketSet. Long text
 // fields accept `@path` (read from a file) or `-` (read from stdin). resolveWhen
 // parses a not_before value, trying the deterministic forms then natural language.
-func parseTaskSet(assignments []string, resolveWhen func(string) (time.Time, error)) (app.TaskSet, error) {
-	var set app.TaskSet
+func parseTaskSet(assignments []string, resolveWhen func(string) (time.Time, error)) (app.TicketSet, error) {
+	var set app.TicketSet
 	for _, assignment := range assignments {
 		key, value, ok := strings.Cut(assignment, "=")
 		if !ok {
-			return app.TaskSet{}, fmt.Errorf("invalid assignment %q, want field=value", assignment)
+			return app.TicketSet{}, fmt.Errorf("invalid assignment %q, want field=value", assignment)
 		}
 		switch key {
 		case "status":
-			status := core.TaskStatus(value)
+			status := core.TicketStatus(value)
 			if !status.Valid() {
-				return app.TaskSet{}, fmt.Errorf("invalid status %q", value)
+				return app.TicketSet{}, fmt.Errorf("invalid status %q", value)
 			}
 			set.Status = &status
 		case "priority":
 			priority, err := strconv.Atoi(value)
 			if err != nil {
-				return app.TaskSet{}, fmt.Errorf("invalid priority %q, want an integer", value)
+				return app.TicketSet{}, fmt.Errorf("invalid priority %q, want an integer", value)
 			}
 			set.Priority = &priority
 		case "kind":
-			kind := core.TaskKind(value)
+			kind := core.TicketKind(value)
 			if !kind.Valid() {
-				return app.TaskSet{}, fmt.Errorf("invalid kind %q, want task or milestone", value)
+				return app.TicketSet{}, fmt.Errorf("invalid kind %q, want task or milestone", value)
 			}
 			set.Kind = &kind
 		case "repo":
@@ -1161,7 +1161,7 @@ func parseTaskSet(assignments []string, resolveWhen func(string) (time.Time, err
 		case "body", "description":
 			text, err := readFieldValue(value)
 			if err != nil {
-				return app.TaskSet{}, err
+				return app.TicketSet{}, err
 			}
 			set.Description = &text
 		case "labels":
@@ -1169,7 +1169,7 @@ func parseTaskSet(assignments []string, resolveWhen func(string) (time.Time, err
 		case "groomed":
 			groomed, err := strconv.ParseBool(value)
 			if err != nil {
-				return app.TaskSet{}, fmt.Errorf("invalid groomed %q, want true or false", value)
+				return app.TicketSet{}, fmt.Errorf("invalid groomed %q, want true or false", value)
 			}
 			set.Groomed = &groomed
 		case "not_before":
@@ -1179,11 +1179,11 @@ func parseTaskSet(assignments []string, resolveWhen func(string) (time.Time, err
 			}
 			notBefore, err := resolveWhen(value)
 			if err != nil {
-				return app.TaskSet{}, fmt.Errorf("invalid not_before %q: %w", value, err)
+				return app.TicketSet{}, fmt.Errorf("invalid not_before %q: %w", value, err)
 			}
 			set.NotBefore = &notBefore
 		default:
-			return app.TaskSet{}, fmt.Errorf("unknown field %q, want status, priority, kind, repo, title, body, labels, groomed, or not_before", key)
+			return app.TicketSet{}, fmt.Errorf("unknown field %q, want status, priority, kind, repo, title, body, labels, groomed, or not_before", key)
 		}
 	}
 	return set, nil
@@ -1290,7 +1290,7 @@ func newTaskApplyCommand(deps *Deps) *cobra.Command {
 				if doc.ID == nil || *doc.ID == "" {
 					return fmt.Errorf("%w: document is missing id", core.ErrInvalid)
 				}
-				task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(*doc.ID))
+				task, err := deps.Tasks.Get(cmd.Context(), core.TicketID(*doc.ID))
 				if err != nil {
 					return err
 				}
@@ -1298,7 +1298,7 @@ func newTaskApplyCommand(deps *Deps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				result := applyResult{TaskID: string(task.ID), Project: string(task.ProjectID), Repo: task.Repo}
+				result := applyResult{TicketID: string(task.ID), Project: string(task.ProjectID), Repo: task.Repo}
 				switch {
 				case set.Empty():
 				case dryRun:
@@ -1319,7 +1319,7 @@ func newTaskApplyCommand(deps *Deps) *cobra.Command {
 					if i > 0 {
 						deps.printf("---\n")
 					}
-					fields := []field{f("task_id", result.TaskID), f("updated", result.Updated)}
+					fields := []field{f("task_id", result.TicketID), f("updated", result.Updated)}
 					if result.DryRun {
 						fields = append(fields, f("dry_run", true))
 					}
@@ -1359,7 +1359,7 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 		Short: "Edit a task document in $EDITOR",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
+			task, err := deps.Tasks.Get(cmd.Context(), core.TicketID(args[0]))
 			if err != nil {
 				return err
 			}
@@ -1409,7 +1409,7 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 // excluded from the ready set, from a bounded dependency-neighborhood read.
 // Both are best-effort: a read failure yields none rather than failing the
 // command.
-func taskGraphFacts(ctx context.Context, deps *Deps, task *core.Task) ([]core.TaskID, *graph.NotReadyReason) {
+func taskGraphFacts(ctx context.Context, deps *Deps, task *core.Ticket) ([]core.TicketID, *graph.NotReadyReason) {
 	dependents, reason, err := app.TaskGraphFacts(ctx, deps.Backend, task, deps.Clock.Now())
 	if err != nil {
 		return nil, nil
@@ -1431,8 +1431,8 @@ func reasonLabel(reason graph.NotReadyReason) string {
 // warnDuplicateTitle advises (without blocking) when a new task looks like an
 // existing one. An exact title match always warns; otherwise, when a judge is
 // configured, a shortlist is scored for related or duplicate work.
-func (d *Deps) warnDuplicateTitle(ctx context.Context, task *core.Task) {
-	tasks, err := d.Tasks.List(ctx, store.TaskFilter{ProjectID: task.ProjectID})
+func (d *Deps) warnDuplicateTitle(ctx context.Context, task *core.Ticket) {
+	tasks, err := d.Tasks.List(ctx, store.TicketFilter{ProjectID: task.ProjectID})
 	if err != nil {
 		return
 	}
@@ -1466,21 +1466,21 @@ func (d *Deps) warnDuplicateTitle(ctx context.Context, task *core.Task) {
 
 // similarTasks returns up to limit tasks in the same project whose title shares a
 // token with the new task, ranked by overlap. Retrieval stays in code.
-func similarTasks(task *core.Task, tasks []*core.Task, limit int) []*core.Task {
+func similarTasks(task *core.Ticket, tasks []*core.Ticket, limit int) []*core.Ticket {
 	return rankSimilar(titleTokens(task.Title), tasks, task.ID, limit)
 }
 
 // similarTasksByText ranks tasks by overlap with a piece of prose (a note body).
-func similarTasksByText(text string, tasks []*core.Task, exclude core.TaskID, limit int) []*core.Task {
+func similarTasksByText(text string, tasks []*core.Ticket, exclude core.TicketID, limit int) []*core.Ticket {
 	return rankSimilar(titleTokens(text), tasks, exclude, limit)
 }
 
-func rankSimilar(want map[string]bool, tasks []*core.Task, exclude core.TaskID, limit int) []*core.Task {
+func rankSimilar(want map[string]bool, tasks []*core.Ticket, exclude core.TicketID, limit int) []*core.Ticket {
 	if len(want) == 0 {
 		return nil
 	}
 	type scored struct {
-		task    *core.Task
+		task    *core.Ticket
 		overlap int
 	}
 	var ranked []scored
@@ -1503,7 +1503,7 @@ func rankSimilar(want map[string]bool, tasks []*core.Task, exclude core.TaskID, 
 	if len(ranked) > limit {
 		ranked = ranked[:limit]
 	}
-	out := make([]*core.Task, 0, len(ranked))
+	out := make([]*core.Ticket, 0, len(ranked))
 	for _, item := range ranked {
 		out = append(out, item.task)
 	}
@@ -1528,11 +1528,11 @@ func isTokenRune(r rune) bool {
 
 // referenceHints returns a hint to link the task a note body refers to, if any. It
 // never creates the edge: the caller runs the suggested command.
-func (d *Deps) referenceHints(ctx context.Context, task *core.Task, text string) []hint {
+func (d *Deps) referenceHints(ctx context.Context, task *core.Ticket, text string) []hint {
 	if d.Reference == nil {
 		return nil
 	}
-	tasks, err := d.Tasks.List(ctx, store.TaskFilter{ProjectID: task.ProjectID})
+	tasks, err := d.Tasks.List(ctx, store.TicketFilter{ProjectID: task.ProjectID})
 	if err != nil {
 		return nil
 	}
@@ -1541,16 +1541,16 @@ func (d *Deps) referenceHints(ctx context.Context, task *core.Task, text string)
 		return nil
 	}
 	ref, err := d.Reference.Find(ctx, text, candidates)
-	if err != nil || ref.Task == nil {
+	if err != nil || ref.Ticket == nil {
 		return nil
 	}
 	return []hint{{
-		Command: fmt.Sprintf("ft task dep %s %s", task.ID, ref.Task.ID),
-		About:   fmt.Sprintf("link the referenced task %q", ref.Task.Title),
+		Command: fmt.Sprintf("ft task dep %s %s", task.ID, ref.Ticket.ID),
+		About:   fmt.Sprintf("link the referenced task %q", ref.Ticket.Title),
 	}}
 }
 
-func (d *Deps) taskFields(task *core.Task, action ...field) []field {
+func (d *Deps) taskFields(task *core.Ticket, action ...field) []field {
 	fields := []field{f("task_id", task.ID)}
 	fields = append(fields, action...)
 	return append(fields,
@@ -1603,10 +1603,10 @@ func (d *Deps) currentActorID(ctx context.Context) *core.ActorID {
 	return &actor.ID
 }
 
-func unionIDs(a, b []core.TaskID) []core.TaskID {
-	seen := make(map[core.TaskID]struct{}, len(a)+len(b))
-	out := make([]core.TaskID, 0, len(a)+len(b))
-	for _, list := range [][]core.TaskID{a, b} {
+func unionIDs(a, b []core.TicketID) []core.TicketID {
+	seen := make(map[core.TicketID]struct{}, len(a)+len(b))
+	out := make([]core.TicketID, 0, len(a)+len(b))
+	for _, list := range [][]core.TicketID{a, b} {
 		for _, id := range list {
 			if _, ok := seen[id]; ok {
 				continue
@@ -1618,13 +1618,13 @@ func unionIDs(a, b []core.TaskID) []core.TaskID {
 	return out
 }
 
-func filterByLabels(snapshot *app.Snapshot, candidates []core.TaskID, labels []string) []core.TaskID {
+func filterByLabels(snapshot *app.Snapshot, candidates []core.TicketID, labels []string) []core.TicketID {
 	if len(labels) == 0 {
 		return candidates
 	}
-	out := make([]core.TaskID, 0, len(candidates))
+	out := make([]core.TicketID, 0, len(candidates))
 	for _, id := range candidates {
-		task, ok := snapshot.Graph.Task(id)
+		task, ok := snapshot.Graph.Ticket(id)
 		if !ok {
 			continue
 		}
@@ -1635,13 +1635,13 @@ func filterByLabels(snapshot *app.Snapshot, candidates []core.TaskID, labels []s
 	return out
 }
 
-func filterByGroomed(snapshot *app.Snapshot, candidates []core.TaskID, want *bool) []core.TaskID {
+func filterByGroomed(snapshot *app.Snapshot, candidates []core.TicketID, want *bool) []core.TicketID {
 	if want == nil {
 		return candidates
 	}
-	out := make([]core.TaskID, 0, len(candidates))
+	out := make([]core.TicketID, 0, len(candidates))
 	for _, id := range candidates {
-		task, ok := snapshot.Graph.Task(id)
+		task, ok := snapshot.Graph.Ticket(id)
 		if !ok {
 			continue
 		}
@@ -1652,10 +1652,10 @@ func filterByGroomed(snapshot *app.Snapshot, candidates []core.TaskID, want *boo
 	return out
 }
 
-func filterByActor(snapshot *app.Snapshot, candidates []core.TaskID, actor *core.Actor) []core.TaskID {
-	out := make([]core.TaskID, 0, len(candidates))
+func filterByActor(snapshot *app.Snapshot, candidates []core.TicketID, actor *core.Actor) []core.TicketID {
+	out := make([]core.TicketID, 0, len(candidates))
 	for _, id := range candidates {
-		task, ok := snapshot.Graph.Task(id)
+		task, ok := snapshot.Graph.Ticket(id)
 		if !ok {
 			continue
 		}

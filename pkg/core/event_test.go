@@ -23,7 +23,7 @@ func TestEventKindValid(t *testing.T) {
 }
 
 func TestEventValidate(t *testing.T) {
-	taskID := TaskID("t-1")
+	taskID := TicketID("t-1")
 	actorID := ActorID("act-1")
 	tests := []struct {
 		name    string
@@ -37,7 +37,7 @@ func TestEventValidate(t *testing.T) {
 		},
 		{
 			"valid with task and actor",
-			Event{ID: "ev-2", ProjectID: "prj-1", TaskID: &taskID, Kind: EventTaskAssigned, By: &actorID},
+			Event{ID: "ev-2", ProjectID: "prj-1", TicketID: &taskID, Kind: EventTaskAssigned, By: &actorID},
 			false,
 		},
 		{"missing id", Event{ProjectID: "prj-1", Kind: EventTaskCreated}, true},

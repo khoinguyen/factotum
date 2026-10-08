@@ -107,12 +107,12 @@ func copyState(ctx context.Context, from, to store.Backend) error {
 		}
 	}
 
-	tasks, err := from.Tasks().List(ctx, store.TaskFilter{})
+	tasks, err := from.Tickets().List(ctx, store.TicketFilter{})
 	if err != nil {
 		return fmt.Errorf("list tasks: %w", err)
 	}
 	for _, task := range tasks {
-		if err := to.Tasks().Create(ctx, task); err != nil {
+		if err := to.Tickets().Create(ctx, task); err != nil {
 			return fmt.Errorf("copy task %s: %w", task.ID, err)
 		}
 	}

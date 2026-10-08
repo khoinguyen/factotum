@@ -14,10 +14,10 @@ import (
 	"github.com/khoinguyen/factotum/pkg/rank"
 )
 
-func task(id string, status core.TaskStatus, deps ...string) *core.Task {
-	t := &core.Task{ID: core.TaskID(id), ProjectID: "prj-1", Kind: core.KindTask, Title: id, Status: status}
+func task(id string, status core.TicketStatus, deps ...string) *core.Ticket {
+	t := &core.Ticket{ID: core.TicketID(id), ProjectID: "prj-1", Kind: core.KindTask, Title: id, Status: status}
 	for _, dep := range deps {
-		t.Deps = append(t.Deps, core.TaskID(dep))
+		t.Deps = append(t.Deps, core.TicketID(dep))
 	}
 	return t
 }
@@ -40,8 +40,8 @@ func fixture(t *testing.T, projectName string) View {
 	c := task("c", core.StatusTodo)
 	d := task("d", core.StatusDone)
 
-	tasks := []*core.Task{a, a1, b, c, d}
-	values := make([]core.Task, 0, len(tasks))
+	tasks := []*core.Ticket{a, a1, b, c, d}
+	values := make([]core.Ticket, 0, len(tasks))
 	for _, pointer := range tasks {
 		values = append(values, *pointer)
 	}
@@ -114,16 +114,16 @@ func ideaView(t *testing.T) View {
 	t.Helper()
 	policy := core.DefaultResolutionPolicy()
 	project := &core.Project{ID: "prj-1", Name: "Acme", Policy: policy}
-	idea := &core.Task{ID: "i-1", ProjectID: "prj-1", Kind: core.KindIdea, Title: "a spark", Status: core.StatusTodo}
+	idea := &core.Ticket{ID: "i-1", ProjectID: "prj-1", Kind: core.KindIdea, Title: "a spark", Status: core.StatusTodo}
 	a := task("a", core.StatusTodo)
-	values := []core.Task{*idea, *a}
+	values := []core.Ticket{*idea, *a}
 	built, err := graph.New(values, policy)
 	if err != nil {
 		t.Fatalf("graph.New() error = %v", err)
 	}
 	return View{
 		Project: project,
-		Tasks:   []*core.Task{idea, a},
+		Tasks:   []*core.Ticket{idea, a},
 		Graph:   built,
 		Ready:   built.ReadyByActor(nil),
 	}
@@ -148,7 +148,7 @@ func TestAgentRenderCaptureSection(t *testing.T) {
 
 func TestClassifyIdea(t *testing.T) {
 	view := ideaView(t)
-	idea, _ := view.Graph.Task("i-1")
+	idea, _ := view.Graph.Ticket("i-1")
 	if got := view.Classify(idea); got != ClassCapture {
 		t.Fatalf("Classify(idea) = %q, want %q", got, ClassCapture)
 	}
@@ -267,17 +267,17 @@ func TestSummaryRenderIsCompact(t *testing.T) {
 func scaleView(tb testing.TB, n int) View {
 	tb.Helper()
 	policy := core.DefaultResolutionPolicy()
-	values := make([]core.Task, n)
+	values := make([]core.Ticket, n)
 	for i := range values {
-		values[i] = core.Task{
-			ID: core.TaskID(fmt.Sprintf("t-%06d", i)), ProjectID: "prj-1", Kind: core.KindTask,
+		values[i] = core.Ticket{
+			ID: core.TicketID(fmt.Sprintf("t-%06d", i)), ProjectID: "prj-1", Kind: core.KindTask,
 			Title: fmt.Sprintf("task %d", i), Status: core.StatusTodo, Priority: i % 5,
 		}
 		if i > 0 && i%10 == 0 {
-			values[i].Deps = []core.TaskID{values[i-1].ID}
+			values[i].Deps = []core.TicketID{values[i-1].ID}
 		}
 	}
-	ptrs := make([]*core.Task, len(values))
+	ptrs := make([]*core.Ticket, len(values))
 	for i := range values {
 		ptrs[i] = &values[i]
 	}

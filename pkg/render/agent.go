@@ -63,15 +63,15 @@ func (Agent) Render(_ context.Context, w io.Writer, view View) error {
 	return writeString(w, b.String())
 }
 
-func writeReadyGroup(b *strings.Builder, header string, ranked []rank.Scored, members map[core.TaskID]bool, derived *info, view View) {
+func writeReadyGroup(b *strings.Builder, header string, ranked []rank.Scored, members map[core.TicketID]bool, derived *info, view View) {
 	b.WriteString(header + "\n")
 	for _, scored := range ranked {
-		if !members[scored.TaskID] {
+		if !members[scored.TicketID] {
 			continue
 		}
-		task := derived.tasks[scored.TaskID]
+		task := derived.tasks[scored.TicketID]
 		fmt.Fprintf(b, "  - %s score=%.2f unblocks=%d wave=%d%s%s %s\n",
-			scored.TaskID, scored.Score, view.Graph.UnblockCount(scored.TaskID), derived.waves[scored.TaskID], repoTag(task.Repo), kindTag(task), task.Title)
+			scored.TicketID, scored.Score, view.Graph.UnblockCount(scored.TicketID), derived.waves[scored.TicketID], repoTag(task.Repo), kindTag(task), task.Title)
 	}
 }
 
@@ -92,7 +92,7 @@ func writeCaptureGroup(b *strings.Builder, derived *info) {
 	}
 }
 
-func kindTag(task core.Task) string {
+func kindTag(task core.Ticket) string {
 	if task.IsMilestone() {
 		return " [milestone]"
 	}
@@ -113,10 +113,10 @@ func (v View) snapshotTime() string {
 	return v.Now.UTC().Format(time.RFC3339)
 }
 
-func (v View) blockers(id core.TaskID) []string {
+func (v View) blockers(id core.TicketID) []string {
 	var out []string
 	for _, dep := range v.Graph.Deps(id) {
-		task, ok := v.Graph.Task(dep)
+		task, ok := v.Graph.Ticket(dep)
 		if !ok {
 			out = append(out, string(dep)+"?")
 			continue

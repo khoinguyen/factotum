@@ -28,7 +28,7 @@ func jsonTagNames(t reflect.Type) map[string]bool {
 func TestTaskListEntryGolden(t *testing.T) {
 	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	assignee := core.ActorID("alice")
-	task := &core.Task{
+	task := &core.Ticket{
 		ID: "t-1", ProjectID: "prj-1", Repo: "api", Kind: core.KindTask,
 		Title: "Do it", Status: core.StatusTodo, Priority: 3,
 		Labels: []string{"a", "b"}, AssigneeID: &assignee,

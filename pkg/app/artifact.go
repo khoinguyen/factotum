@@ -20,7 +20,7 @@ func NewArtifactService(backend store.Backend, clock Clock, ids IDGen) *Artifact
 
 type ArtifactInput struct {
 	ProjectID core.ProjectID
-	TaskID    *core.TaskID
+	TicketID  *core.TicketID
 	Kind      core.ArtifactKind
 	Title     string
 	Brief     string
@@ -34,8 +34,8 @@ func (s *ArtifactService) Add(ctx context.Context, in ArtifactInput) (*core.Arti
 	if err != nil {
 		return nil, fmt.Errorf("artifact project: %w", err)
 	}
-	if in.TaskID != nil {
-		if _, err := s.backend.Tasks().Get(ctx, *in.TaskID); err != nil {
+	if in.TicketID != nil {
+		if _, err := s.backend.Tickets().Get(ctx, *in.TicketID); err != nil {
 			return nil, fmt.Errorf("artifact task: %w", err)
 		}
 	}
@@ -43,7 +43,7 @@ func (s *ArtifactService) Add(ctx context.Context, in ArtifactInput) (*core.Arti
 	artifact := &core.Artifact{
 		ID:        core.ArtifactID(s.ids.NewID("art")),
 		ProjectID: in.ProjectID,
-		TaskID:    in.TaskID,
+		TicketID:  in.TicketID,
 		Kind:      in.Kind,
 		Title:     in.Title,
 		Brief:     in.Brief,
@@ -61,7 +61,7 @@ func (s *ArtifactService) Add(ctx context.Context, in ArtifactInput) (*core.Arti
 	}
 	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
 		ProjectID: project.ID,
-		TaskID:    artifact.TaskID,
+		TicketID:  artifact.TicketID,
 		Kind:      core.EventArtifactCreated,
 		Summary:   fmt.Sprintf("added %s artifact %q", artifact.Kind, artifact.Title),
 	}); err != nil {
@@ -84,7 +84,7 @@ type ArtifactPatch struct {
 	Title     *string
 	Brief     *string
 	Body      *string
-	TaskID    *core.TaskID
+	TicketID  *core.TicketID
 	ClearTask bool
 }
 
@@ -103,13 +103,13 @@ func (s *ArtifactService) Update(ctx context.Context, id core.ArtifactID, patch 
 		artifact.Body = *patch.Body
 	}
 	if patch.ClearTask {
-		artifact.TaskID = nil
-	} else if patch.TaskID != nil {
-		if _, err := s.backend.Tasks().Get(ctx, *patch.TaskID); err != nil {
+		artifact.TicketID = nil
+	} else if patch.TicketID != nil {
+		if _, err := s.backend.Tickets().Get(ctx, *patch.TicketID); err != nil {
 			return nil, fmt.Errorf("artifact task: %w", err)
 		}
-		taskID := *patch.TaskID
-		artifact.TaskID = &taskID
+		taskID := *patch.TicketID
+		artifact.TicketID = &taskID
 	}
 	artifact.UpdatedAt = s.clock.Now()
 	if err := artifact.Validate(); err != nil {
@@ -120,7 +120,7 @@ func (s *ArtifactService) Update(ctx context.Context, id core.ArtifactID, patch 
 	}
 	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
 		ProjectID: artifact.ProjectID,
-		TaskID:    artifact.TaskID,
+		TicketID:  artifact.TicketID,
 		Kind:      core.EventArtifactUpdated,
 		Summary:   fmt.Sprintf("updated %s artifact %q", artifact.Kind, artifact.Title),
 	}); err != nil {
@@ -154,7 +154,7 @@ func (s *ArtifactService) Delete(ctx context.Context, id core.ArtifactID) error 
 	}
 	return appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
 		ProjectID: artifact.ProjectID,
-		TaskID:    artifact.TaskID,
+		TicketID:  artifact.TicketID,
 		Kind:      core.EventArtifactDeleted,
 		Summary:   fmt.Sprintf("deleted artifact %q", artifact.Title),
 	})

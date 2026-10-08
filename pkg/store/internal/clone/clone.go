@@ -5,8 +5,8 @@ package clone
 import "github.com/khoinguyen/factotum/pkg/core"
 
 func Policy(policy core.ResolutionPolicy) core.ResolutionPolicy {
-	policy.TaskStatuses = append([]core.TaskStatus(nil), policy.TaskStatuses...)
-	policy.MilestoneStatuses = append([]core.TaskStatus(nil), policy.MilestoneStatuses...)
+	policy.TaskStatuses = append([]core.TicketStatus(nil), policy.TaskStatuses...)
+	policy.MilestoneStatuses = append([]core.TicketStatus(nil), policy.MilestoneStatuses...)
 	return policy
 }
 
@@ -16,7 +16,7 @@ func Project(project core.Project) core.Project {
 	return project
 }
 
-func Task(task core.Task) core.Task {
+func Ticket(task core.Ticket) core.Ticket {
 	if task.AssigneeID != nil {
 		id := *task.AssigneeID
 		task.AssigneeID = &id
@@ -24,7 +24,7 @@ func Task(task core.Task) core.Task {
 	task.WaitingOn = append([]core.ActorID(nil), task.WaitingOn...)
 	task.Labels = append([]string(nil), task.Labels...)
 	task.AcceptanceCriteria = append([]string(nil), task.AcceptanceCriteria...)
-	task.Deps = append([]core.TaskID(nil), task.Deps...)
+	task.Deps = append([]core.TicketID(nil), task.Deps...)
 	task.Notes = notes(task.Notes)
 	if task.NotBefore != nil {
 		notBefore := *task.NotBefore
@@ -58,18 +58,18 @@ func Actor(actor core.Actor) core.Actor {
 }
 
 func Artifact(artifact core.Artifact) core.Artifact {
-	if artifact.TaskID != nil {
-		id := *artifact.TaskID
-		artifact.TaskID = &id
+	if artifact.TicketID != nil {
+		id := *artifact.TicketID
+		artifact.TicketID = &id
 	}
 	artifact.Links = append([]core.Link(nil), artifact.Links...)
 	return artifact
 }
 
 func Event(event core.Event) core.Event {
-	if event.TaskID != nil {
-		id := *event.TaskID
-		event.TaskID = &id
+	if event.TicketID != nil {
+		id := *event.TicketID
+		event.TicketID = &id
 	}
 	if event.By != nil {
 		id := *event.By

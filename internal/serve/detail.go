@@ -19,7 +19,7 @@ type detailData struct {
 	Project    string
 	Title      string
 	Idea       *ideaView
-	Task       *taskDetail
+	Ticket     *taskDetail
 	Origin     *taskLink
 	Artifact   *artifactDetail
 	AttachedTo *taskLink
@@ -68,7 +68,7 @@ func (s *Server) handleIdea(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	task, err := s.options.Backend.Tasks().Get(r.Context(), core.TaskID(id))
+	task, err := s.options.Backend.Tickets().Get(r.Context(), core.TicketID(id))
 	if errors.Is(err, core.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -104,7 +104,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	task, err := s.options.Backend.Tasks().Get(r.Context(), core.TaskID(id))
+	task, err := s.options.Backend.Tickets().Get(r.Context(), core.TicketID(id))
 	if errors.Is(err, core.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -127,7 +127,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 		CSS:     dashboardCSS,
 		Project: string(task.ProjectID),
 		Title:   task.Title,
-		Task:    taskDetailOf(*task, vs),
+		Ticket:  taskDetailOf(*task, vs),
 	}
 	if o, ok := vs.origin[task.ID]; ok {
 		view := vs.views[o]
@@ -181,8 +181,8 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request, prefix s
 		Title:    artifact.Title,
 		Artifact: artifactDetailOf(artifact),
 	}
-	if artifact.TaskID != nil {
-		if task, err := s.options.Backend.Tasks().Get(r.Context(), *artifact.TaskID); err == nil {
+	if artifact.TicketID != nil {
+		if task, err := s.options.Backend.Tickets().Get(r.Context(), *artifact.TicketID); err == nil {
 			link := taskRefLink(task)
 			detail.AttachedTo = &link
 		} else if !errors.Is(err, core.ErrNotFound) {
@@ -209,7 +209,7 @@ func (s *Server) loadViews(r *http.Request, projectID core.ProjectID) (viewSet, 
 
 // taskDetailOf projects one task into its full detail, resolving links through
 // the already-loaded view set.
-func taskDetailOf(task core.Task, vs viewSet) *taskDetail {
+func taskDetailOf(task core.Ticket, vs viewSet) *taskDetail {
 	view := vs.views[task.ID]
 	detail := &taskDetail{
 		taskLink:    taskLinkOf(view),
@@ -235,7 +235,7 @@ func taskDetailOf(task core.Task, vs viewSet) *taskDetail {
 	return detail
 }
 
-func taskRefLink(task *core.Task) taskLink {
+func taskRefLink(task *core.Ticket) taskLink {
 	class := classify(*task, false, false, false)
 	return taskLink{
 		ID:    task.ID,

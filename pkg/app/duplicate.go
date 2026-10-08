@@ -20,7 +20,7 @@ const (
 // Action is "none", "flag" (a human should look), or "link" (probably the same task).
 type DuplicateVerdict struct {
 	Action      string
-	Candidate   *core.Task
+	Candidate   *core.Ticket
 	Rating      float64
 	Confidence  float64
 	SameProblem float64
@@ -35,7 +35,7 @@ type DuplicateService struct {
 func NewDuplicateService(j judge.Judge) *DuplicateService { return &DuplicateService{judge: j} }
 
 // Check compares task against candidates (already retrieved in code) in one request.
-func (s *DuplicateService) Check(ctx context.Context, task *core.Task, candidates []*core.Task) (DuplicateVerdict, error) {
+func (s *DuplicateService) Check(ctx context.Context, task *core.Ticket, candidates []*core.Ticket) (DuplicateVerdict, error) {
 	if len(candidates) == 0 {
 		return DuplicateVerdict{Action: "none"}, nil
 	}
@@ -93,7 +93,7 @@ func (s *DuplicateService) Check(ctx context.Context, task *core.Task, candidate
 
 // duplicateState puts the new task and every candidate into one state. The paths are
 // returned for callers that want to build questions referencing a specific candidate.
-func duplicateState(task *core.Task, candidates []*core.Task) (map[string]any, []string) {
+func duplicateState(task *core.Ticket, candidates []*core.Ticket) (map[string]any, []string) {
 	entries := make([]map[string]string, 0, len(candidates))
 	paths := make([]string, 0, len(candidates))
 	for i, candidate := range candidates {

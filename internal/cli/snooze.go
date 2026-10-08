@@ -40,13 +40,13 @@ func newTaskSnoozeCommand(deps *Deps) *cobra.Command {
 				}
 				snooze.Until = &when
 			case cmd.Flags().Changed("until-task"):
-				id := core.TaskID(untilTask)
+				id := core.TicketID(untilTask)
 				snooze.UntilTask = &id
 			default:
 				snooze.Indefinite = true
 			}
 
-			task, err := deps.Tasks.Snooze(cmd.Context(), core.TaskID(args[0]), snooze)
+			task, err := deps.Tasks.Snooze(cmd.Context(), core.TicketID(args[0]), snooze)
 			if err != nil {
 				return err
 			}
@@ -67,7 +67,7 @@ func newTaskUnsnoozeCommand(deps *Deps) *cobra.Command {
 		Short: "Remove a task's snooze",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			task, err := deps.Tasks.Unsnooze(cmd.Context(), core.TaskID(args[0]))
+			task, err := deps.Tasks.Unsnooze(cmd.Context(), core.TicketID(args[0]))
 			if err != nil {
 				return err
 			}

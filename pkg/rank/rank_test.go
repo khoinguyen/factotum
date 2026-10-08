@@ -8,50 +8,50 @@ import (
 	"github.com/khoinguyen/factotum/pkg/graph"
 )
 
-func task(id string, status core.TaskStatus, deps ...string) core.Task {
-	t := core.Task{ID: core.TaskID(id), ProjectID: "prj", Kind: core.KindTask, Title: id, Status: status}
+func task(id string, status core.TicketStatus, deps ...string) core.Ticket {
+	t := core.Ticket{ID: core.TicketID(id), ProjectID: "prj", Kind: core.KindTask, Title: id, Status: status}
 	for _, dep := range deps {
-		t.Deps = append(t.Deps, core.TaskID(dep))
+		t.Deps = append(t.Deps, core.TicketID(dep))
 	}
 	return t
 }
 
-func milestone(id string, status core.TaskStatus, deps ...string) core.Task {
+func milestone(id string, status core.TicketStatus, deps ...string) core.Ticket {
 	t := task(id, status, deps...)
 	t.Kind = core.KindMilestone
 	return t
 }
 
-func request(t *testing.T, tasks []core.Task, toward core.TaskID) Request {
+func request(t *testing.T, tasks []core.Ticket, toward core.TicketID) Request {
 	t.Helper()
 	g, err := graph.New(tasks, core.DefaultResolutionPolicy())
 	if err != nil {
 		t.Fatalf("graph.New() error = %v", err)
 	}
-	pointers := make([]*core.Task, 0, len(tasks))
+	pointers := make([]*core.Ticket, 0, len(tasks))
 	for i := range tasks {
 		pointers = append(pointers, &tasks[i])
 	}
 	return Request{Graph: g, Tasks: pointers, Toward: toward}
 }
 
-func order(scored []Scored) []core.TaskID {
-	out := make([]core.TaskID, 0, len(scored))
+func order(scored []Scored) []core.TicketID {
+	out := make([]core.TicketID, 0, len(scored))
 	for _, s := range scored {
-		out = append(out, s.TaskID)
+		out = append(out, s.TicketID)
 	}
 	return out
 }
 
-func scoresByID(scored []Scored) map[core.TaskID]float64 {
-	out := make(map[core.TaskID]float64, len(scored))
+func scoresByID(scored []Scored) map[core.TicketID]float64 {
+	out := make(map[core.TicketID]float64, len(scored))
 	for _, s := range scored {
-		out[s.TaskID] = s.Score
+		out[s.TicketID] = s.Score
 	}
 	return out
 }
 
-func equalOrder(got, want []core.TaskID) bool {
+func equalOrder(got, want []core.TicketID) bool {
 	if len(got) != len(want) {
 		return false
 	}
@@ -64,7 +64,7 @@ func equalOrder(got, want []core.TaskID) bool {
 }
 
 func TestUnblockRankerOrdersByImpact(t *testing.T) {
-	tasks := []core.Task{
+	tasks := []core.Ticket{
 		task("a", core.StatusTodo),
 		task("a1", core.StatusTodo, "a"),
 		task("a2", core.StatusTodo, "a"),
@@ -76,13 +76,13 @@ func TestUnblockRankerOrdersByImpact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
 	}
-	if !equalOrder(order(scored), []core.TaskID{"a", "b", "c"}) {
+	if !equalOrder(order(scored), []core.TicketID{"a", "b", "c"}) {
 		t.Fatalf("Rank() = %v, want [a b c]", order(scored))
 	}
 }
 
 func TestMilestoneRankerPrefersCloserTasks(t *testing.T) {
-	tasks := []core.Task{
+	tasks := []core.Ticket{
 		task("near", core.StatusTodo),
 		milestone("m1", core.StatusTodo, "near"),
 		task("far", core.StatusTodo),
@@ -93,13 +93,13 @@ func TestMilestoneRankerPrefersCloserTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
 	}
-	if !equalOrder(order(scored), []core.TaskID{"near", "far"}) {
+	if !equalOrder(order(scored), []core.TicketID{"near", "far"}) {
 		t.Fatalf("Rank() = %v, want [near far]", order(scored))
 	}
 }
 
 func TestTowardRankerPrefersPathToTarget(t *testing.T) {
-	tasks := []core.Task{
+	tasks := []core.Ticket{
 		task("onpath", core.StatusTodo),
 		task("middle", core.StatusTodo, "onpath"),
 		task("target", core.StatusTodo, "middle"),
@@ -109,7 +109,7 @@ func TestTowardRankerPrefersPathToTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
 	}
-	if !equalOrder(order(scored), []core.TaskID{"onpath", "offpath"}) {
+	if !equalOrder(order(scored), []core.TicketID{"onpath", "offpath"}) {
 		t.Fatalf("Rank() = %v, want [onpath offpath]", order(scored))
 	}
 }
@@ -119,7 +119,7 @@ func TestCompositeRanksByPriorityWeight(t *testing.T) {
 	high.Priority = 5
 	low := task("low", core.StatusTodo)
 	low.Priority = 1
-	tasks := []core.Task{low, high}
+	tasks := []core.Ticket{low, high}
 
 	composite, err := NewComposite(DefaultWeights())
 	if err != nil {
@@ -129,7 +129,7 @@ func TestCompositeRanksByPriorityWeight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
 	}
-	if !equalOrder(order(scored), []core.TaskID{"high", "low"}) {
+	if !equalOrder(order(scored), []core.TicketID{"high", "low"}) {
 		t.Fatalf("Rank() = %v, want [high low]", order(scored))
 	}
 	byID := scoresByID(scored)
@@ -139,7 +139,7 @@ func TestCompositeRanksByPriorityWeight(t *testing.T) {
 }
 
 func TestCompositeZeroPriorityIsNeutral(t *testing.T) {
-	tasks := []core.Task{task("a", core.StatusTodo), task("b", core.StatusTodo)}
+	tasks := []core.Ticket{task("a", core.StatusTodo), task("b", core.StatusTodo)}
 	composite, err := NewComposite(DefaultWeights())
 	if err != nil {
 		t.Fatalf("NewComposite() error = %v", err)
@@ -148,7 +148,7 @@ func TestCompositeZeroPriorityIsNeutral(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
 	}
-	if !equalOrder(order(scored), []core.TaskID{"a", "b"}) {
+	if !equalOrder(order(scored), []core.TicketID{"a", "b"}) {
 		t.Fatalf("Rank() = %v, want [a b]", order(scored))
 	}
 	byID := scoresByID(scored)
@@ -163,7 +163,7 @@ func TestCompositePriorityWeightLowersLowPriority(t *testing.T) {
 	chore.Priority = -10
 	blocked1 := task("blocked-1", core.StatusTodo, "chore")
 	blocked2 := task("blocked-2", core.StatusTodo, "chore")
-	tasks := []core.Task{critical, chore, blocked1, blocked2}
+	tasks := []core.Ticket{critical, chore, blocked1, blocked2}
 
 	composite, err := NewComposite(Weights{Unblock: 1, Milestone: 1, Toward: 1, Priority: 2})
 	if err != nil {
@@ -173,7 +173,7 @@ func TestCompositePriorityWeightLowersLowPriority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
 	}
-	if !equalOrder(order(scored), []core.TaskID{"critical", "chore"}) {
+	if !equalOrder(order(scored), []core.TicketID{"critical", "chore"}) {
 		t.Fatalf("Rank() = %v, want [critical chore]", order(scored))
 	}
 	byID := scoresByID(scored)
@@ -187,13 +187,13 @@ func TestUnblockBreaksTiesByPriorityThenID(t *testing.T) {
 	high.Priority = 5
 	low := task("a-low", core.StatusTodo)
 	low.Priority = 1
-	tasks := []core.Task{low, high}
+	tasks := []core.Ticket{low, high}
 
 	scored, err := Unblock{}.Rank(context.Background(), request(t, tasks, ""))
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
 	}
-	if !equalOrder(order(scored), []core.TaskID{"b-high", "a-low"}) {
+	if !equalOrder(order(scored), []core.TicketID{"b-high", "a-low"}) {
 		t.Fatalf("Rank() = %v, want [b-high a-low]", order(scored))
 	}
 }
@@ -205,13 +205,13 @@ func TestNewCompositeRejectsNegativePriorityWeight(t *testing.T) {
 }
 
 func TestEmptyCandidateSetYieldsNoResults(t *testing.T) {
-	tasks := []core.Task{task("a", core.StatusTodo), task("b", core.StatusTodo)}
+	tasks := []core.Ticket{task("a", core.StatusTodo), task("b", core.StatusTodo)}
 	composite, err := NewComposite(DefaultWeights())
 	if err != nil {
 		t.Fatalf("NewComposite() error = %v", err)
 	}
 	req := request(t, tasks, "")
-	req.Candidates = []core.TaskID{}
+	req.Candidates = []core.TicketID{}
 	scored, err := composite.Rank(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
@@ -229,14 +229,14 @@ func TestRepoScopesCandidates(t *testing.T) {
 	misc := task("misc-1", core.StatusTodo)
 
 	repo := "data"
-	req := request(t, []core.Task{data, devops, misc}, "")
+	req := request(t, []core.Ticket{data, devops, misc}, "")
 	req.Repo = &repo
 
 	scored, err := Unblock{}.Rank(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
 	}
-	if !equalOrder(order(scored), []core.TaskID{"data-1"}) {
+	if !equalOrder(order(scored), []core.TicketID{"data-1"}) {
 		t.Fatalf("Rank() = %v, want [data-1]", order(scored))
 	}
 }
@@ -244,17 +244,17 @@ func TestRepoScopesCandidates(t *testing.T) {
 func TestRankersExcludeIdeas(t *testing.T) {
 	idea := task("idea", core.StatusTodo)
 	idea.Kind = core.KindIdea
-	tasks := []core.Task{task("a", core.StatusTodo), idea}
+	tasks := []core.Ticket{task("a", core.StatusTodo), idea}
 
 	// The ready-set default already omits the idea; an explicit candidate set
 	// must omit it too, so no caller can rank a non-executable capture.
 	req := request(t, tasks, "")
-	req.Candidates = []core.TaskID{"a", "idea"}
+	req.Candidates = []core.TicketID{"a", "idea"}
 	scored, err := Unblock{}.Rank(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
 	}
-	if !equalOrder(order(scored), []core.TaskID{"a"}) {
+	if !equalOrder(order(scored), []core.TicketID{"a"}) {
 		t.Fatalf("Rank() = %v, want [a]", order(scored))
 	}
 
@@ -262,7 +262,7 @@ func TestRankersExcludeIdeas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rank() error = %v", err)
 	}
-	if !equalOrder(order(scored), []core.TaskID{"a"}) {
+	if !equalOrder(order(scored), []core.TicketID{"a"}) {
 		t.Fatalf("Rank() = %v, want [a]", order(scored))
 	}
 }

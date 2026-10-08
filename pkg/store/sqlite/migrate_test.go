@@ -77,7 +77,7 @@ CREATE TABLE tasks (
 );`); err != nil {
 		t.Fatalf("create old schema: %v", err)
 	}
-	task := core.Task{ID: "t-old", ProjectID: "prj", Kind: core.KindTask, Title: "old", Status: core.StatusTodo}
+	task := core.Ticket{ID: "t-old", ProjectID: "prj", Kind: core.KindTask, Title: "old", Status: core.StatusTodo}
 	if _, err := raw.Exec(
 		"INSERT INTO tasks (id, project_id, kind, status, data) VALUES (?, ?, ?, ?, ?)",
 		string(task.ID), string(task.ProjectID), string(task.Kind), string(task.Status),
@@ -101,7 +101,7 @@ CREATE TABLE tasks (
 	if got := backups(t, path); len(got) != 1 {
 		t.Fatalf("upgrade should create one backup, got %v", got)
 	}
-	reloaded, err := backend.Tasks().Get(ctx, "t-old")
+	reloaded, err := backend.Tickets().Get(ctx, "t-old")
 	if err != nil {
 		t.Fatalf("Get(old task) error = %v", err)
 	}
@@ -203,8 +203,8 @@ func TestMigrateFailingStepRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	task := core.Task{ID: "t-1", ProjectID: "prj", Kind: core.KindTask, Title: "keep", Status: core.StatusTodo}
-	if err := backend.Tasks().Create(ctx, &task); err != nil {
+	task := core.Ticket{ID: "t-1", ProjectID: "prj", Kind: core.KindTask, Title: "keep", Status: core.StatusTodo}
+	if err := backend.Tickets().Create(ctx, &task); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	_ = backend.Close()
@@ -230,7 +230,7 @@ func TestMigrateFailingStepRollsBack(t *testing.T) {
 		t.Fatalf("reopen error = %v", err)
 	}
 	t.Cleanup(func() { _ = backend.Close() })
-	if _, err := backend.Tasks().Get(ctx, "t-1"); err != nil {
+	if _, err := backend.Tickets().Get(ctx, "t-1"); err != nil {
 		t.Fatalf("data lost after failed migration: %v", err)
 	}
 }
@@ -333,7 +333,7 @@ func TestMigrateV3ToV4BackfillsTaskIndex(t *testing.T) {
 			t.Fatalf("apply v%d: %v", step.version, err)
 		}
 	}
-	data, err := encode(&core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "Terraform notes", Description: "apply in devops", Status: core.StatusTodo})
+	data, err := encode(&core.Ticket{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "Terraform notes", Description: "apply in devops", Status: core.StatusTodo})
 	if err != nil {
 		t.Fatalf("encode task: %v", err)
 	}
@@ -362,11 +362,11 @@ func TestMigrateV3ToV4BackfillsTaskIndex(t *testing.T) {
 	if got := userVersion(t, path); got != currentSchemaVersion {
 		t.Fatalf("user_version = %d, want %d", got, currentSchemaVersion)
 	}
-	hits, err := backend.Tasks().Search(ctx, store.TaskFilter{ProjectID: "prj-1"}, "terraform")
+	hits, err := backend.Tickets().Search(ctx, store.TicketFilter{ProjectID: "prj-1"}, "terraform")
 	if err != nil {
 		t.Fatalf("Search(terraform) error = %v", err)
 	}
-	if len(hits) != 1 || hits[0].Task.ID != "t-1" {
+	if len(hits) != 1 || hits[0].Ticket.ID != "t-1" {
 		t.Fatalf("Search(terraform) after v4 = %v, want [t-1]", taskHitIDs(hits))
 	}
 }
@@ -390,10 +390,10 @@ func TestMigrateV4ToV5BackfillsTaskDeps(t *testing.T) {
 			t.Fatalf("apply v%d: %v", step.version, err)
 		}
 	}
-	tasks := []*core.Task{
+	tasks := []*core.Ticket{
 		{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo},
-		{ID: "t-2", ProjectID: "prj-1", Kind: core.KindTask, Title: "two", Status: core.StatusTodo, Deps: []core.TaskID{"t-1"}},
-		{ID: "t-3", ProjectID: "prj-1", Kind: core.KindTask, Title: "three", Status: core.StatusTodo, Deps: []core.TaskID{"t-1", "t-2"}},
+		{ID: "t-2", ProjectID: "prj-1", Kind: core.KindTask, Title: "two", Status: core.StatusTodo, Deps: []core.TicketID{"t-1"}},
+		{ID: "t-3", ProjectID: "prj-1", Kind: core.KindTask, Title: "three", Status: core.StatusTodo, Deps: []core.TicketID{"t-1", "t-2"}},
 	}
 	for _, task := range tasks {
 		data, err := encode(task)
@@ -426,8 +426,8 @@ func TestMigrateV4ToV5BackfillsTaskDeps(t *testing.T) {
 	if got := userVersion(t, path); got != currentSchemaVersion {
 		t.Fatalf("user_version = %d, want %d", got, currentSchemaVersion)
 	}
-	dep := core.TaskID("t-1")
-	dependents, err := backend.Tasks().List(ctx, store.TaskFilter{ProjectID: "prj-1", DependsOn: &dep})
+	dep := core.TicketID("t-1")
+	dependents, err := backend.Tickets().List(ctx, store.TicketFilter{ProjectID: "prj-1", DependsOn: &dep})
 	if err != nil {
 		t.Fatalf("List(DependsOn t-1) error = %v", err)
 	}
@@ -436,10 +436,10 @@ func TestMigrateV4ToV5BackfillsTaskDeps(t *testing.T) {
 	}
 }
 
-func taskHitIDs(hits []store.TaskSearchHit) []core.TaskID {
-	out := make([]core.TaskID, 0, len(hits))
+func taskHitIDs(hits []store.TicketSearchHit) []core.TicketID {
+	out := make([]core.TicketID, 0, len(hits))
 	for _, hit := range hits {
-		out = append(out, hit.Task.ID)
+		out = append(out, hit.Ticket.ID)
 	}
 	return out
 }

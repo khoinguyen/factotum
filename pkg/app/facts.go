@@ -15,15 +15,15 @@ import (
 // its dependency neighborhood — the task itself, its direct dependencies, and
 // its snooze until-task — plus an indexed lookup of its dependents, so `task
 // get` stays a point read instead of an O(tasks) snapshot load.
-func TaskGraphFacts(ctx context.Context, backend store.Backend, task *core.Task, now time.Time) ([]core.TaskID, *graph.NotReadyReason, error) {
+func TaskGraphFacts(ctx context.Context, backend store.Backend, task *core.Ticket, now time.Time) ([]core.TicketID, *graph.NotReadyReason, error) {
 	project, err := backend.Projects().Get(ctx, task.ProjectID)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	neighborhood := make([]core.Task, 0, len(task.Deps)+2)
-	seen := make(map[core.TaskID]bool, len(task.Deps)+2)
-	add := func(t *core.Task) {
+	neighborhood := make([]core.Ticket, 0, len(task.Deps)+2)
+	seen := make(map[core.TicketID]bool, len(task.Deps)+2)
+	add := func(t *core.Ticket) {
 		if seen[t.ID] {
 			return
 		}
@@ -48,11 +48,11 @@ func TaskGraphFacts(ctx context.Context, backend store.Backend, task *core.Task,
 	}
 	_, reason := built.Readiness(task.ID)
 
-	dependentTasks, err := backend.Tasks().List(ctx, store.TaskFilter{ProjectID: task.ProjectID, DependsOn: &task.ID})
+	dependentTasks, err := backend.Tickets().List(ctx, store.TicketFilter{ProjectID: task.ProjectID, DependsOn: &task.ID})
 	if err != nil {
 		return nil, nil, err
 	}
-	dependents := make([]core.TaskID, 0, len(dependentTasks))
+	dependents := make([]core.TicketID, 0, len(dependentTasks))
 	for _, dependent := range dependentTasks {
 		dependents = append(dependents, dependent.ID)
 	}
@@ -63,8 +63,8 @@ func TaskGraphFacts(ctx context.Context, backend store.Backend, task *core.Task,
 // in another project, is skipped: absent from the neighborhood, graph.Readiness
 // treats it as unresolved, exactly as the full-snapshot graph (scoped to one
 // project) would.
-func addNeighbor(ctx context.Context, backend store.Backend, projectID core.ProjectID, id core.TaskID, add func(*core.Task)) error {
-	task, err := backend.Tasks().Get(ctx, id)
+func addNeighbor(ctx context.Context, backend store.Backend, projectID core.ProjectID, id core.TicketID, add func(*core.Ticket)) error {
+	task, err := backend.Tickets().Get(ctx, id)
 	if errors.Is(err, core.ErrNotFound) {
 		return nil
 	}

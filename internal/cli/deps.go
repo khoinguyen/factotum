@@ -99,7 +99,7 @@ type Deps struct {
 	RunHarnesses *registry.Registry[HarnessFactory]
 
 	Projects  *app.ProjectService
-	Tasks     *app.TaskService
+	Tasks     *app.TicketService
 	Actors    *app.ActorService
 	Artifacts *app.ArtifactService
 	// TaskChecks runs advisory checks and caches their results.
@@ -346,7 +346,7 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	checkbuiltins.RegisterAll(d.Checks, d.Judge)
 	if backend != nil {
 		d.Projects = app.NewProjectService(backend, d.Clock, d.IDs)
-		d.Tasks = app.NewTaskService(backend, d.Clock, d.IDs)
+		d.Tasks = app.NewTicketService(backend, d.Clock, d.IDs)
 		d.Actors = app.NewActorService(backend, d.Clock, d.IDs)
 		d.Artifacts = app.NewArtifactService(backend, d.Clock, d.IDs)
 		d.TaskChecks = app.NewCheckService(backend, d.Clock, d.IDs, d.Checks)
@@ -511,7 +511,7 @@ func (d *Deps) maybeRerank(cmd *cobra.Command, query string, artifacts []*core.A
 // configured and rerank is not disabled. Like maybeRerank, it never fails a
 // search: it falls back to lexical order and warns on a real failure, and it never
 // reranks an empty query (which lists everything in scope).
-func (d *Deps) maybeRerankTasks(cmd *cobra.Command, query string, tasks []*core.Task, disabled bool) []*core.Task {
+func (d *Deps) maybeRerankTasks(cmd *cobra.Command, query string, tasks []*core.Ticket, disabled bool) []*core.Ticket {
 	if disabled || len(tasks) < 2 || d.Rerank == nil || len(store.LexicalTerms(query)) == 0 {
 		return tasks
 	}

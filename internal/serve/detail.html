@@ -97,50 +97,50 @@
 <div class="page">
   {{template "crumbs" .}}
   <header>
-    <p class="eyebrow">{{.Project}} · {{.Task.Kind}}</p>
-    <h1>{{.Task.Title}}</h1>
+    <p class="eyebrow">{{.Project}} · {{.Ticket.Kind}}</p>
+    <h1>{{.Ticket.Title}}</h1>
   </header>
   <div class="detail">
     <dl>
-      <dt>Status</dt><dd><span class="chip {{.Task.Class}}">{{.Task.Chip}}</span></dd>
+      <dt>Status</dt><dd><span class="chip {{.Ticket.Class}}">{{.Ticket.Chip}}</span></dd>
       {{if .Origin}}<dt>Origin idea</dt><dd><a href="{{.Origin.URL}}">{{.Origin.ID}}</a> {{.Origin.Title}}</dd>{{end}}
-      {{if .Task.Repo}}<dt>Repo</dt><dd>{{.Task.Repo}}</dd>{{end}}
-      {{if .Task.Assignee}}<dt>Assignee</dt><dd>{{.Task.Assignee}}</dd>{{end}}
-      <dt>Groomed</dt><dd>{{.Task.Groomed}}</dd>
-      <dt>Created</dt><dd>{{.Task.CreatedAt}}</dd>
-      <dt>Updated</dt><dd>{{.Task.UpdatedAt}}</dd>
+      {{if .Ticket.Repo}}<dt>Repo</dt><dd>{{.Ticket.Repo}}</dd>{{end}}
+      {{if .Ticket.Assignee}}<dt>Assignee</dt><dd>{{.Ticket.Assignee}}</dd>{{end}}
+      <dt>Groomed</dt><dd>{{.Ticket.Groomed}}</dd>
+      <dt>Created</dt><dd>{{.Ticket.CreatedAt}}</dd>
+      <dt>Updated</dt><dd>{{.Ticket.UpdatedAt}}</dd>
     </dl>
-    {{if .Task.Description}}<div class="body">{{.Task.Description}}</div>{{end}}
+    {{if .Ticket.Description}}<div class="body">{{.Ticket.Description}}</div>{{end}}
   </div>
 
-  {{if .Task.Acceptance}}
+  {{if .Ticket.Acceptance}}
   <section>
     <h2>Acceptance criteria</h2>
-    <ul class="list">{{range .Task.Acceptance}}<li>{{.}}</li>{{end}}</ul>
+    <ul class="list">{{range .Ticket.Acceptance}}<li>{{.}}</li>{{end}}</ul>
   </section>
   {{end}}
 
   <section>
-    <h2>Depends on · {{len .Task.Deps}}</h2>
-    {{if .Task.Deps}}<div class="rows">{{range .Task.Deps}}{{template "tasklink-row" .}}{{end}}</div>
+    <h2>Depends on · {{len .Ticket.Deps}}</h2>
+    {{if .Ticket.Deps}}<div class="rows">{{range .Ticket.Deps}}{{template "tasklink-row" .}}{{end}}</div>
     {{else}}<p class="empty">No dependencies.</p>{{end}}
   </section>
 
   <section>
-    <h2>Blocks · {{len .Task.Dependents}}</h2>
-    {{if .Task.Dependents}}<div class="rows">{{range .Task.Dependents}}{{template "tasklink-row" .}}{{end}}</div>
+    <h2>Blocks · {{len .Ticket.Dependents}}</h2>
+    {{if .Ticket.Dependents}}<div class="rows">{{range .Ticket.Dependents}}{{template "tasklink-row" .}}{{end}}</div>
     {{else}}<p class="empty">Nothing depends on this.</p>{{end}}
   </section>
 
   <section>
-    <h2>Notes · {{len .Task.Notes}}</h2>
-    {{if .Task.Notes}}<div class="rows">{{range .Task.Notes}}{{template "note-row" .}}{{end}}</div>
+    <h2>Notes · {{len .Ticket.Notes}}</h2>
+    {{if .Ticket.Notes}}<div class="rows">{{range .Ticket.Notes}}{{template "note-row" .}}{{end}}</div>
     {{else}}<p class="empty">No notes.</p>{{end}}
   </section>
 
   <section>
-    <h2>Artifacts · {{len .Task.Artifacts}}</h2>
-    {{if .Task.Artifacts}}<div class="rows">{{range .Task.Artifacts}}{{template "artifact-row" .}}{{end}}</div>
+    <h2>Artifacts · {{len .Ticket.Artifacts}}</h2>
+    {{if .Ticket.Artifacts}}<div class="rows">{{range .Ticket.Artifacts}}{{template "artifact-row" .}}{{end}}</div>
     {{else}}<p class="empty">No artifacts attached.</p>{{end}}
   </section>
 

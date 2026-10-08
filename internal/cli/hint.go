@@ -40,7 +40,7 @@ func (d *Deps) suggest(hints ...hint) {
 }
 
 // taskGetHints guides the viewer from inspecting a task to acting on it.
-func (d *Deps) taskGetHints(ctx context.Context, task *core.Task) []hint {
+func (d *Deps) taskGetHints(ctx context.Context, task *core.Ticket) []hint {
 	id := string(task.ID)
 	project := string(task.ProjectID)
 
@@ -85,9 +85,9 @@ func (d *Deps) taskGetHints(ctx context.Context, task *core.Task) []hint {
 	}
 }
 
-func (d *Deps) unresolvedDeps(ctx context.Context, task *core.Task) []core.TaskID {
+func (d *Deps) unresolvedDeps(ctx context.Context, task *core.Ticket) []core.TicketID {
 	policy := core.DefaultResolutionPolicy()
-	var waiting []core.TaskID
+	var waiting []core.TicketID
 	for _, depID := range task.Deps {
 		dep, err := d.Tasks.Get(ctx, depID)
 		if err != nil || !dep.Resolves(policy) {
@@ -125,8 +125,8 @@ func docSearchHints(projectID string) []hint {
 
 func docGetHints(artifact *core.Artifact) []hint {
 	var hints []hint
-	if artifact.TaskID != nil {
-		hints = append(hints, hint{Command: fmt.Sprintf("ft task get %s", *artifact.TaskID), About: "the task this artifact belongs to"})
+	if artifact.TicketID != nil {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft task get %s", *artifact.TicketID), About: "the task this artifact belongs to"})
 	}
 	if artifact.ProjectID != "" {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft doc list --project %s", artifact.ProjectID), About: "see all artifacts"})
@@ -159,8 +159,8 @@ func memoryContextHints(entries []memoryContextEntry) []hint {
 
 func memoryGetHints(artifact *core.Artifact) []hint {
 	var hints []hint
-	if artifact.TaskID != nil {
-		hints = append(hints, hint{Command: fmt.Sprintf("ft task get %s", *artifact.TaskID), About: "the task this memory belongs to"})
+	if artifact.TicketID != nil {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft task get %s", *artifact.TicketID), About: "the task this memory belongs to"})
 	}
 	if artifact.ProjectID != "" {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft memory list --project %s", artifact.ProjectID), About: "see all memory"})
@@ -168,7 +168,7 @@ func memoryGetHints(artifact *core.Artifact) []hint {
 	return hints
 }
 
-func milestoneListHints(projectID string, milestones []*core.Task) []hint {
+func milestoneListHints(projectID string, milestones []*core.Ticket) []hint {
 	var hints []hint
 	if projectID != "" {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft milestone create --project %s --title \"...\"", projectID), About: "add a milestone"})
@@ -220,7 +220,7 @@ func projectRepoHints(project *core.Project) []hint {
 	return append(hints, hint{Command: fmt.Sprintf("ft project get %s", project.ID), About: "inspect the project"})
 }
 
-func taskListHints(tasks []*core.Task, projectID string) []hint {
+func taskListHints(tasks []*core.Ticket, projectID string) []hint {
 	project := projectID
 	if project == "" && len(tasks) > 0 {
 		project = string(tasks[0].ProjectID)
@@ -238,7 +238,7 @@ func taskListHints(tasks []*core.Task, projectID string) []hint {
 	return hints
 }
 
-func taskSearchHints(tasks []*core.Task, projectID string) []hint {
+func taskSearchHints(tasks []*core.Ticket, projectID string) []hint {
 	var hints []hint
 	if len(tasks) > 0 {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft task get %s", tasks[0].ID), About: "inspect the top match"})
@@ -251,7 +251,7 @@ func taskSearchHints(tasks []*core.Task, projectID string) []hint {
 
 // ideaGetHints guides the viewer from an idea back to the idea surface: an idea
 // has no lifecycle, so task verbs like start or assign do not apply.
-func ideaGetHints(idea *core.Task) []hint {
+func ideaGetHints(idea *core.Ticket) []hint {
 	switch idea.Status {
 	case core.StatusDone, core.StatusCancelled:
 		return []hint{{Command: fmt.Sprintf("ft idea list --project %s", idea.ProjectID), About: "review the remaining ideas"}}
@@ -263,14 +263,14 @@ func ideaGetHints(idea *core.Task) []hint {
 	}
 }
 
-func ideaCreateHints(idea *core.Task) []hint {
+func ideaCreateHints(idea *core.Ticket) []hint {
 	return []hint{
 		{Command: fmt.Sprintf("ft idea get %s", idea.ID), About: "revisit the idea"},
 		{Command: fmt.Sprintf("ft idea promote %s", idea.ID), About: "turn it into an executable task"},
 	}
 }
 
-func ideaListHints(projectID string, ideas []*core.Task) []hint {
+func ideaListHints(projectID string, ideas []*core.Ticket) []hint {
 	var hints []hint
 	if projectID != "" {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft idea create --project %s --title \"...\"", projectID), About: "capture an idea"})
@@ -281,7 +281,7 @@ func ideaListHints(projectID string, ideas []*core.Task) []hint {
 	return hints
 }
 
-func ideaSearchHints(ideas []*core.Task, projectID string) []hint {
+func ideaSearchHints(ideas []*core.Ticket, projectID string) []hint {
 	var hints []hint
 	if len(ideas) > 0 {
 		hints = append(hints, hint{Command: fmt.Sprintf("ft idea get %s", ideas[0].ID), About: "inspect the top match"})
@@ -292,7 +292,7 @@ func ideaSearchHints(ideas []*core.Task, projectID string) []hint {
 	return hints
 }
 
-func taskNextHints(projectID string, top *core.Task) []hint {
+func taskNextHints(projectID string, top *core.Ticket) []hint {
 	if top == nil {
 		if projectID == "" {
 			return []hint{

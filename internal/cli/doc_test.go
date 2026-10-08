@@ -41,7 +41,7 @@ func TestDocListJSONIsSnakeCase(t *testing.T) {
 			t.Fatalf("doc list json missing %s:\n%s", want, out)
 		}
 	}
-	for _, leak := range []string{`"ID"`, `"ProjectID"`, `"CreatedAt"`, `"UpdatedAt"`, `"TaskID"`} {
+	for _, leak := range []string{`"ID"`, `"ProjectID"`, `"CreatedAt"`, `"UpdatedAt"`, `"TicketID"`} {
 		if strings.Contains(out, leak) {
 			t.Fatalf("doc list json leaked Go field %s:\n%s", leak, out)
 		}
@@ -71,7 +71,7 @@ func TestDocGetJSON(t *testing.T) {
 	var doc struct {
 		ID        string `json:"id"`
 		ProjectID string `json:"project_id"`
-		TaskID    string `json:"task_id"`
+		TicketID  string `json:"task_id"`
 		Kind      string `json:"kind"`
 		Title     string `json:"title"`
 		Body      string `json:"body"`
@@ -80,7 +80,7 @@ func TestDocGetJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("doc get json: %v\n%s", err, out)
 	}
-	if doc.ID != docID || doc.ProjectID != projectID || doc.TaskID != taskID || doc.Kind != "spec" || doc.Title != "Product spec" || doc.Body != "ship it" || doc.CreatedAt == "" {
+	if doc.ID != docID || doc.ProjectID != projectID || doc.TicketID != taskID || doc.Kind != "spec" || doc.Title != "Product spec" || doc.Body != "ship it" || doc.CreatedAt == "" {
 		t.Fatalf("doc get json = %+v", doc)
 	}
 }

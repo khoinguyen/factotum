@@ -16,7 +16,7 @@ import (
 type artifactDoc struct {
 	ID        string    `json:"id" yaml:"id"`
 	ProjectID string    `json:"project_id" yaml:"project_id"`
-	TaskID    string    `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+	TicketID  string    `json:"task_id,omitempty" yaml:"task_id,omitempty"`
 	Kind      string    `json:"kind,omitempty" yaml:"kind,omitempty"`
 	Title     string    `json:"title" yaml:"title"`
 	Brief     string    `json:"brief,omitempty" yaml:"brief,omitempty"`
@@ -39,8 +39,8 @@ func artifactDocFrom(artifact *core.Artifact) artifactDoc {
 		CreatedAt: artifact.CreatedAt,
 		UpdatedAt: artifact.UpdatedAt,
 	}
-	if artifact.TaskID != nil {
-		doc.TaskID = string(*artifact.TaskID)
+	if artifact.TicketID != nil {
+		doc.TicketID = string(*artifact.TicketID)
 	}
 	for _, link := range artifact.Links {
 		doc.Links = append(doc.Links, linkDoc{Kind: string(link.Kind), URL: link.URL, Title: link.Title})

@@ -40,6 +40,14 @@ pair, merging an approved PR, and filing follow-ups. Everything substantive goes
   and no process spawned). Keep every kickoff — builder, reviewer, QA — to a single short line; the
   substance lives in the skill and the task body.
 
+**Any new team-member role works the same way.** When a task needs a specialist the loop doesn't have
+yet, first **create that role's skill** at `.agents/skills/<role>/SKILL.md` — its charter: when it is
+used, its ground rules, what it produces, how it reports and to whom (ship that skill through a PR
+like any other change). Then **dispatch using the skill** with the short kickoff
+`opencode --prompt "load the <role> skill; you are <role>-<task-id>"`. Builder, reviewer, and QA all
+follow this shape; a security reviewer, a docs writer, a perf prober would each get a skill first,
+then a dispatch. Never invent a role by inlining its instructions in the command.
+
 If you catch yourself running a feature, reading a diff, or hand-testing a flow, stop and dispatch it
 instead. Never do the work yourself except a trivial mechanical step.
 

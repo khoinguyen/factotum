@@ -45,6 +45,26 @@ func backups(t *testing.T, path string) []string {
 	return matches
 }
 
+// unstampedDB writes a pre-release database: a tasks table with no version
+// stamp, so Open sees an existing schema older than this binary's.
+func unstampedDB(t *testing.T, path string) {
+	t.Helper()
+	raw := openRaw(t, path)
+	if _, err := raw.Exec("CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL)"); err != nil {
+		t.Fatalf("create old schema: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+}
+
+// consentedConfig returns a config that grants explicit migration consent.
+func consentedConfig(path string) store.Config {
+	cfg := sqliteConfig(path)
+	cfg.Options["migrate"] = "yes"
+	return cfg
+}
+
 func TestMigrateFreshStampsVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "factotum.db")
 	backend, err := Open(context.Background(), sqliteConfig(path))
@@ -89,7 +109,7 @@ CREATE TABLE tasks (
 		t.Fatalf("close raw: %v", err)
 	}
 
-	backend, err := Open(ctx, sqliteConfig(path))
+	backend, err := Open(ctx, consentedConfig(path))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -120,7 +140,7 @@ func TestMigrateNotifiesOnUpgrade(t *testing.T) {
 	_ = raw.Close()
 
 	var notices []string
-	cfg := sqliteConfig(path)
+	cfg := consentedConfig(path)
 	cfg.Noticef = func(format string, args ...any) { notices = append(notices, fmt.Sprintf(format, args...)) }
 	backend, err := Open(ctx, cfg)
 	if err != nil {
@@ -195,6 +215,48 @@ func TestMigrateRejectsNewerVersion(t *testing.T) {
 	}
 }
 
+func TestMigrateOlderRequiresConsent(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.db")
+	unstampedDB(t, path)
+
+	_, err := Open(ctx, sqliteConfig(path))
+	if err == nil {
+		t.Fatal("Open() error = nil, want a migration-consent refusal")
+	}
+	msg := err.Error()
+	for _, want := range []string{"older", fmt.Sprintf("v%d", currentSchemaVersion), "migrate=yes"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("Open() error = %q, want it to contain %q", msg, want)
+		}
+	}
+	if got := userVersion(t, path); got == currentSchemaVersion {
+		t.Fatalf("refused migration still changed user_version to %d", got)
+	}
+	if got := backups(t, path); len(got) != 0 {
+		t.Fatalf("refusing before consent should not back up, got %v", got)
+	}
+}
+
+func TestMigrateOlderWithConsentBacksUpAndMigrates(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.db")
+	unstampedDB(t, path)
+
+	backend, err := Open(ctx, consentedConfig(path))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+
+	if got := userVersion(t, path); got != currentSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", got, currentSchemaVersion)
+	}
+	if got := backups(t, path); len(got) != 1 {
+		t.Fatalf("consented migration should create one backup, got %v", got)
+	}
+}
+
 func TestMigrateFailingStepRollsBack(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "factotum.db")
@@ -217,7 +279,7 @@ func TestMigrateFailingStepRollsBack(t *testing.T) {
 		apply:   func(context.Context, *sql.Tx) error { return errors.New("boom") },
 	})
 
-	if _, err := Open(ctx, sqliteConfig(path)); err == nil {
+	if _, err := Open(ctx, consentedConfig(path)); err == nil {
 		t.Fatal("Open() should fail when a migration step fails")
 	}
 	if got := userVersion(t, path); got != oldVersion {
@@ -283,7 +345,7 @@ func TestMigrateV2ToV3RebuildsArtifactIndex(t *testing.T) {
 	}
 
 	// Reopen: the v3 migration must rebuild the index with the brief column.
-	backend, err := Open(ctx, sqliteConfig(path))
+	backend, err := Open(ctx, consentedConfig(path))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -354,7 +416,7 @@ func TestMigrateV3ToV4BackfillsTaskIndex(t *testing.T) {
 	}
 
 	// Reopen: the v4 migration must build and backfill the task index.
-	backend, err := Open(ctx, sqliteConfig(path))
+	backend, err := Open(ctx, consentedConfig(path))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -418,7 +480,7 @@ func TestMigrateV4ToV5BackfillsTaskDeps(t *testing.T) {
 	}
 
 	// Reopen: the v5 migration must build and backfill the dependency index.
-	backend, err := Open(ctx, sqliteConfig(path))
+	backend, err := Open(ctx, consentedConfig(path))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}

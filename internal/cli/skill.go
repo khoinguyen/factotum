@@ -20,7 +20,9 @@ type skillDoc struct {
 }
 
 func newSkillCommand(deps *Deps) *cobra.Command {
-	cmd := &cobra.Command{Use: "skill", Short: "Print the usage skills embedded in ft"}
+	// Skills are embedded content; reading them never touches the caller's
+	// store, so `ft skill` must not open (and thus migrate) one.
+	cmd := &cobra.Command{Use: "skill", Short: "Print the usage skills embedded in ft", Annotations: map[string]string{annotationNoCallerStore: "true"}}
 
 	list := &cobra.Command{
 		Use:   "list",

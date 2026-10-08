@@ -283,10 +283,10 @@ fails, so a script can gate on it.
   to set a byte budget, or `=unlimited` to disable the bound. `-o json|yaml` becomes
   a truncation envelope.
 - Never edit a database by hand: go through `ft`.
-- A branch build can forward-migrate the shared database. If `ft` reports a schema version newer
-  than it supports, update the installed binary (`mise run install`) or use the newer branch binary;
-  never point a non-installed branch binary at the real project DB — exercise CLI changes against a
-  throwaway store (`--store jsonfile --store-opt path=$(mktemp -d)/db.json`) or a temp config.
+- A branch build can forward-migrate the shared database; SQLite now guards this: a newer-schema
+  database is rejected and an older one migrates only with `--store-opt migrate=yes` (after a backup);
+  `ft version`/`ft skill` never open the store. If `ft` reports a newer schema, `mise run install` or
+  use the newer branch binary; never point an uninstalled branch binary at the real DB.
 - `ft task set <id> field=value ...` updates fields, including
   `not_before=YYYY-MM-DD` (or `+7d`) to defer a task and `not_before=` to clear
   it.

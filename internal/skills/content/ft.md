@@ -82,16 +82,16 @@ condition clears itself; indefinite waits for `unsnooze`).
 
 ```sh
 ft idea create -p <project> -t "A half-formed thought" -b "context"  # capture, not execution
-ft idea promote <idea>                  # groom: create an executable task linked to the idea
+ft idea promote <idea> --acceptance "<observable result>" --actor <agent>  # groom: linked, agent-ready task
 ft bug create -p <project> -t "It crashes on save" -b "steps"  # capture a defect
-ft bug triage <bug>                     # triage: create an executable task linked to the bug
+ft bug triage <bug> --acceptance "<observable result>" --actor <agent>     # triage: linked, agent-ready task
 ```
 
 `ft idea` and `ft bug` are non-executable capture surfaces over the same storage as
 `ft task list -k idea`/`-k bug`: never in `ft task next` or the ready set, not
 assignable or groomable, with only `todo`, `done`, and `cancelled`. Refinement
 creates a linked `task`, keeps the capture as history (`ft task promote` is the peer),
-and each surface also has `list`, `search`, and `get`.
+and each surface also has `list`, `search`, and `get`. Promotion requires grooming.
 
 ## Gauge whether a task is ready
 

@@ -253,7 +253,7 @@ ft task create -p <project> -t "..." --groomed --acceptance "<observable result>
 ft task update <task> --groomed --acceptance "<observable result>"
 ft task assign <task> --actor <agent>               # so it lands in the agent bucket
 ft idea create -p <project> -t "..." -b "..."       # capture a new idea
-ft idea promote <idea>                              # create the linked task
+ft idea promote <idea> --acceptance "<observable result>" --actor <agent>  # promote groomed + assigned
 ft task next --groomed                              # buildable, agent-ready work
 ft graph render --project <project>                 # the whole DAG as text
 ```

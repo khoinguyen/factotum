@@ -102,14 +102,13 @@ Configuration has two scopes, merged `env > project file > user file > defaults`
 - `./.factotum/config.toml` — project-scoped, committed: `project = "<id>"` plus optional overrides.
   Machine-local paths must never appear here.
 
-`ft init` wires both up; `ft project` and `ft project repo` manage them afterward:
+`ft init` wires both up and registers the project. Add the repositories it spans with
+`ft project repo` (a project created outside a git checkout uses `ft project create <name> --repo
+"name=url,brief=..."` instead):
 
 ```sh
-ft init -p acme                       # register the current directory as project "acme"
-ft project create acme \
-  --repo "backend,url=git@github.com:acme/backend.git,brief=Go API service" \
-  --repo "web,brief=Next.js frontend"
-ft project repo create acme web --url git@github.com:acme/web.git --path repos/web
+ft project repo create acme backend --url git@github.com:acme/backend.git --brief "Go API service"
+ft project repo create acme web --path repos/web --brief "Next.js frontend"
 ft project repo list acme
 ft project list
 ```
@@ -217,6 +216,7 @@ it into `web/dist`.
 | Lifecycle | `task start\|review\|done\|reopen\|block\|cancel`, `task claim`, `task assign`, `task snooze\|unsnooze`, `task wait` |
 | Graph | `task dep create\|delete`, `task next`, `graph render --format summary\|agent\|json\|tree\|html\|dot\|mermaid` |
 | Grooming | `task check`, `task decide`, `task promote`, `groom [item...]`, `groom list\|show` |
+| Prompt | `prompt [-y] <words>` (break a free-form prompt into tasks via the configured agent CLI) |
 | Notes | `task note create [--system]` |
 | Capture | `idea create\|list\|get\|search\|promote`, `bug create\|list\|get\|search\|triage` |
 | Artifacts | `doc create --kind spec\|doc\|memory`, `doc list\|get\|search`, `memory create\|list\|get\|update\|delete\|search\|context\|reindex` |
@@ -291,7 +291,7 @@ Developed test-first; see [AGENTS.md](AGENTS.md) for the workflow and definition
 managed by `ft` — start from the graph:
 
 ```sh
-mise run ci                 # fmt-check, lint, test, cover, build, smoke-web, smoke-quickstart
+mise run ci                 # fmt-check, lint, test, cover, web-test, build, smoke-web, smoke-quickstart
 ft task next                # the highest-ranked ready task
 ft graph render --project factotum --format agent
 ```

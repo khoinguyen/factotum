@@ -147,6 +147,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		Prompt:           prompt,
 		Capture:          capture,
 		Interactive:      interactive,
+		OnResolve:        d.warnLocalPlan,
 	})
 	progress.stop()
 	if errors.Is(runErr, local.ErrNotOptedIn) {

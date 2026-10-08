@@ -79,7 +79,7 @@ const migrateConsent = "yes"
 
 // currentSchemaVersion is the schema version this binary writes. It is a var so
 // tests can exercise pending and failing migrations.
-var currentSchemaVersion = 6
+var currentSchemaVersion = 7
 
 // nowFunc is overridable in tests so backup names are deterministic.
 var nowFunc = time.Now
@@ -97,6 +97,7 @@ var migrations = []migration{
 	{version: 4, apply: migrateV4},
 	{version: 5, apply: migrateV5},
 	{version: 6, apply: migrateV6},
+	{version: 7, apply: migrateV7},
 }
 
 // migrateV1 creates the base schema and the pre-release additive columns.
@@ -474,6 +475,9 @@ func (b *Backend) Artifacts() store.ArtifactRepo {
 func (b *Backend) Events() store.EventRepo     { return &eventRepo{db: b.db} }
 func (b *Backend) Messages() store.MessageRepo { return &messageRepo{db: b.db} }
 func (b *Backend) Runs() store.RunRepo         { return &runRepo{db: b.db} }
+func (b *Backend) Pipelines() store.PipelineRepo {
+	return &pipelineRepo{db: b.db}
+}
 
 type projectRepo struct{ db *sql.DB }
 

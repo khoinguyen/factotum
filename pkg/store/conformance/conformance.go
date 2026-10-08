@@ -27,6 +27,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("Event", func(t *testing.T) { testEvent(t, factory(t)) })
 	t.Run("Message", func(t *testing.T) { testMessage(t, factory(t)) })
 	t.Run("Run", func(t *testing.T) { testRun(t, factory(t)) })
+	t.Run("Pipeline", func(t *testing.T) { testPipeline(t, factory(t)) })
 }
 
 func testProject(t *testing.T, be store.Backend) {

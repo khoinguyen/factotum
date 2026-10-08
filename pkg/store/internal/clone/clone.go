@@ -130,6 +130,15 @@ func Run(run core.Run) core.Run {
 	return run
 }
 
+func Pipeline(pipeline core.Pipeline) core.Pipeline {
+	if pipeline.Milestone != nil {
+		id := *pipeline.Milestone
+		pipeline.Milestone = &id
+	}
+	pipeline.Produced = append([]core.TicketID(nil), pipeline.Produced...)
+	return pipeline
+}
+
 func notes(notes []core.Note) []core.Note {
 	if notes == nil {
 		return nil

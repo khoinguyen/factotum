@@ -224,6 +224,38 @@ type RunRepo interface {
 	Delete(ctx context.Context, id core.RunID) error
 }
 
+// PipelineFilter selects pipelines. CaptureID, States, and Gates are optional
+// (empty means "any"); ProjectID scopes the list.
+type PipelineFilter struct {
+	ProjectID core.ProjectID
+	CaptureID *core.TicketID
+	States    []core.PipelineState
+	Gates     []core.GateKind
+	Limit     int
+}
+
+// PipelineRepo is the storage port for factory pipelines. It mirrors
+// MessageRepo: Create/Get/List/Update plus an atomic Claim. See
+// docs/up/design.md §7.
+type PipelineRepo interface {
+	Create(ctx context.Context, pipeline *core.Pipeline) error
+	Get(ctx context.Context, id core.PipelineID) (*core.Pipeline, error)
+	List(ctx context.Context, filter PipelineFilter) ([]*core.Pipeline, error)
+	Update(ctx context.Context, pipeline *core.Pipeline) error
+
+	// Claim atomically selects the oldest queued pipeline for the project and
+	// moves it to grooming, marking it in flight so the single controller
+	// worker owns it. It returns ErrNotFound when nothing is queued. Two
+	// concurrent claims never return the same pipeline.
+	Claim(ctx context.Context, req PipelineClaimRequest) (*core.Pipeline, error)
+}
+
+// PipelineClaimRequest selects the next queued pipeline to claim. ProjectID
+// scopes the claim so a controller never takes another project's work.
+type PipelineClaimRequest struct {
+	ProjectID core.ProjectID
+}
+
 type Backend interface {
 	Projects() ProjectRepo
 	Tickets() TicketRepo
@@ -232,6 +264,7 @@ type Backend interface {
 	Events() EventRepo
 	Messages() MessageRepo
 	Runs() RunRepo
+	Pipelines() PipelineRepo
 	Close() error
 }
 
@@ -295,6 +328,53 @@ func containsMessageState(states []core.MessageState, state core.MessageState) b
 // CompareMessages orders messages oldest first by CreatedAt, then id, so
 // delivery is deterministic.
 func CompareMessages(a, b *core.Message) int {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		if a.CreatedAt.Before(b.CreatedAt) {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(string(a.ID), string(b.ID))
+}
+
+// MatchesPipelineFilter reports whether pipeline satisfies filter.
+func MatchesPipelineFilter(pipeline *core.Pipeline, filter PipelineFilter) bool {
+	if filter.ProjectID != "" && pipeline.ProjectID != filter.ProjectID {
+		return false
+	}
+	if filter.CaptureID != nil && pipeline.CaptureID != *filter.CaptureID {
+		return false
+	}
+	if len(filter.States) > 0 && !containsPipelineState(filter.States, pipeline.State) {
+		return false
+	}
+	if len(filter.Gates) > 0 && !containsGateKind(filter.Gates, pipeline.Gate) {
+		return false
+	}
+	return true
+}
+
+func containsPipelineState(states []core.PipelineState, state core.PipelineState) bool {
+	for _, candidate := range states {
+		if candidate == state {
+			return true
+		}
+	}
+	return false
+}
+
+func containsGateKind(gates []core.GateKind, gate core.GateKind) bool {
+	for _, candidate := range gates {
+		if candidate == gate {
+			return true
+		}
+	}
+	return false
+}
+
+// ComparePipelines orders pipelines oldest first by CreatedAt, then id, so
+// claiming and listing are deterministic.
+func ComparePipelines(a, b *core.Pipeline) int {
 	if !a.CreatedAt.Equal(b.CreatedAt) {
 		if a.CreatedAt.Before(b.CreatedAt) {
 			return -1

@@ -251,6 +251,15 @@ ft task get <task>                                  # its Next: block names the 
 ft graph render --project factotum --format agent   # the whole DAG as text
 ```
 
+**Capture the owner's requests as ideas, then groom them into tasks.** Every request from the
+human owner (Khoi) enters the graph as an `idea` (kind=idea), never directly as an implementation
+task — `ft idea create`. An idea is the capture surface, the place to hold a request before it is
+understood; grooming (idea t-7skm5ucpv2) is what turns it into well-scoped, executable tasks via
+`ft idea promote`. Do not jump straight from a request to implementation tasks. This operating
+rule is recorded in memory art-2wh3x6pijk, alongside the ideas it grew from: the grooming session
+(t-7skm5ucpv2), the product-owner dashboard (t-vdggaty3ba), and the `ft idea` surface
+(t-gg3ky54g7s).
+
 **Move a task through its lifecycle as you work** (each status command prints the next hint):
 
 ```sh

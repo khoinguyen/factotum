@@ -135,14 +135,11 @@ func (d *Deps) createFromPlan(ctx context.Context, project *core.Project, plan a
 	if len(skipped) > 0 {
 		d.warnf("skipped %d task(s) already present in %s", len(skipped), project.ID)
 	}
-	entries := make([]promptEntry, 0, len(created)+len(skipped))
-	for _, doc := range created {
-		entries = append(entries, promptEntry{taskDoc: doc, Created: true})
-	}
+	skippedDocs := make([]taskDoc, 0, len(skipped))
 	for _, task := range skipped {
-		entries = append(entries, promptEntry{taskDoc: taskDocFrom(task), Skipped: true})
+		skippedDocs = append(skippedDocs, taskDocFrom(task))
 	}
-	return d.emit(entries, func() {
+	return d.emit(promptResult{Created: created, Skipped: skippedDocs}, func() {
 		first := true
 		for _, task := range tasks {
 			if !first {
@@ -161,14 +158,13 @@ func (d *Deps) createFromPlan(ctx context.Context, project *core.Project, plan a
 	})
 }
 
-// promptEntry is one outcome of `ft prompt -y`: a task document tagged with
-// whether it was created now or skipped because its normalized title already
-// matched. The embedded taskDoc is inlined so structured output keeps the same
-// document shape as the text output and as `ft task apply`.
-type promptEntry struct {
-	taskDoc `yaml:",inline"`
-	Created bool `json:"created,omitempty" yaml:"created,omitempty"`
-	Skipped bool `json:"skipped,omitempty" yaml:"skipped,omitempty"`
+// promptResult is the structured shape of `ft prompt -y`: the task documents
+// created, and the existing tasks skipped because a proposed title already
+// matched. The two groups stay apart so every document remains a pure taskDoc,
+// the contract `ft task get` and `ft task apply` share.
+type promptResult struct {
+	Created []taskDoc `json:"created" yaml:"created"`
+	Skipped []taskDoc `json:"skipped" yaml:"skipped"`
 }
 
 // normalizeTitle is the idempotency key for plan matching: case-insensitive,

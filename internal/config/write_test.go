@@ -374,6 +374,29 @@ func TestWriteProjectTechStackIgnoresBracketsInStrings(t *testing.T) {
 	}
 }
 
+// TestWriteProjectTechStackHandlesEscapedQuote pins the escape branch of the
+// nesting scan: an escaped quote inside a double-quoted value must not close the
+// string early and let its bracket inflate the depth.
+func TestWriteProjectTechStackHandlesEscapedQuote(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := "project = \"acme\"\nbanner = \"a\\\"[b\"\ntech_stack = \"go\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := WriteProjectTechStack(path, "rust"); err != nil {
+		t.Fatalf("WriteProjectTechStack() error = %v", err)
+	}
+	got := readFile(t, path)
+	if strings.Count(got, "tech_stack") != 1 {
+		t.Fatalf("tech_stack should appear once, got:\n%s", got)
+	}
+	if !strings.Contains(got, `tech_stack = "rust"`) {
+		t.Fatalf("tech_stack not replaced:\n%s", got)
+	}
+}
+
 // TestWriteProjectTechStackStopsAtTableHeader pins that the scan still stops at a
 // real table header: a top-level key is inserted at the top, never inside a table.
 func TestWriteProjectTechStackStopsAtTableHeader(t *testing.T) {

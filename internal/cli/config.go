@@ -31,7 +31,13 @@ func (v configView) fields() []field {
 }
 
 func newConfigCommand(deps *Deps) *cobra.Command {
-	cmd := &cobra.Command{Use: "config", Short: "Inspect the resolved configuration"}
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Inspect the resolved configuration",
+		// config reads only the resolved config, never the caller's store, so it
+		// must run even when that store is misconfigured or absent.
+		Annotations: map[string]string{annotationNoCallerStore: "true"},
+	}
 
 	get := &cobra.Command{
 		Use:   "get [key]",

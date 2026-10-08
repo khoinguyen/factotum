@@ -26,13 +26,14 @@ ft run --prompt-file docs/grooming/prompt.md --sandbox local --harness opencode 
 
 - A **kickoff** appended to this prompt by `ft groom` (or supplied by the human).
   It names the scope (every item id, kind, and title), the workspace-relative
-  paths of the report and deferred-questions files, and the section contract both
-  must follow.
-- Write the report to the kickoff's report path and the deferred questions to its
-  deferred-questions path, relative to your working directory (under
+  paths of the report, deferred-questions, feature spec, feature plan, and
+  feature tech-design files, and the section contract each must follow.
+- Write the report to the kickoff's report path, the deferred questions to its
+  deferred-questions path, and the feature documents to the spec, plan, and
+  tech-design paths, relative to your working directory (under
   `.ft-groom/<session-id>/`). Keeping them inside the workspace is what lets a
-  sandboxed harness write them; when the session ends `ft groom` reads both back
-  and records each as a doc artifact under `grooming-sessions/<session-id>/`.
+  sandboxed harness write them; when the session ends `ft groom` reads all five
+  back and records each as a doc artifact under `grooming-sessions/<session-id>/`.
 - Context: read the repo (code, specs, docs) and `ft memory` / `ft doc`.
 
 ## Method (per idea)
@@ -53,6 +54,10 @@ ft run --prompt-file docs/grooming/prompt.md --sandbox local --harness opencode 
    promote/split the ready items and mark every produced task groomed and assigned to an agent, build
    the DAG, and run hygiene.
 8. Write the deterministic report (template below) to the report path in your kickoff.
+9. Write the feature documents (templates below) to the spec, plan, and tech-design paths in your
+   kickoff: the spec says what and why, the plan says how it lands, and the tech design says how it
+   is built. They cover the feature the session defines and are the input to the independent
+   architecture review.
 
 ## Completion
 
@@ -86,6 +91,7 @@ agent-ready nor deferred is rejected, so the session must resolve every item one
 
 Scope: <items groomed>
 Session: <prompt file or source>
+Feature docs: spec.md, plan.md, tech-design.md
 
 ## Summary
 
@@ -119,6 +125,116 @@ Session: <prompt file or source>
 - added: <edge>
 - linked: <edge>
 - removed: <edge>
+```
+
+## Deterministic feature documents
+
+Besides the report, the session emits three feature documents from fixed templates: a **spec**
+(what and why), a **plan** (how it lands), and a **tech design** (how it is built). Each is
+deterministic data, not prose you invent; its sections and ordering are fixed and asserted by a
+test. They are the input to the independent architecture review.
+
+### Feature spec template
+
+```
+# Feature spec - <feature>
+
+Scope: <items groomed>
+Session: <prompt file or source>
+
+## Summary
+
+<the feature in one paragraph: what it is and why now>
+
+## Problem
+
+<the user or system problem it solves>
+
+## Goals
+
+- <observable outcome the feature delivers>
+
+## Non-goals
+
+- <explicitly out of scope>
+
+## Requirements
+
+- <requirement, with how it is observed>
+
+## Acceptance
+
+- <condition that defines done>
+```
+
+### Feature plan template
+
+```
+# Feature plan - <feature>
+
+Scope: <items groomed>
+Session: <prompt file or source>
+
+## Summary
+
+<the delivery approach in one paragraph>
+
+## Milestones
+
+- <milestone> - <exit condition>
+
+## Tasks
+
+- <task id> - <what it delivers>
+
+## Dependencies
+
+- <task id> blocks <task id> - <why>
+
+## Verification
+
+- <gate> - <how it is checked>
+
+## Rollout
+
+- <step> - <when or behind what flag>
+```
+
+### Feature tech-design template
+
+```
+# Feature tech design - <feature>
+
+Scope: <items groomed>
+Session: <prompt file or source>
+
+## Summary
+
+<the technical approach in one paragraph>
+
+## Context
+
+<the packages, ports, and prior designs it touches>
+
+## Design
+
+<the design: components, data flow, and boundaries>
+
+## Interfaces
+
+- <port, command, or type> - <shape and owner>
+
+## Data
+
+<entities, schema, migration, and storage impact>
+
+## Cross-cutting impact
+
+- <package, command, backend, or doc> - <effect>
+
+## Risks
+
+- <risk> - <mitigation>
 ```
 
 ## Constraints

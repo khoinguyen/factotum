@@ -87,3 +87,36 @@ func TestGroomSkillListsReportSectionsInOrder(t *testing.T) {
 		last = idx
 	}
 }
+
+// TestGroomSkillDocumentsFeatureDocs pins the feature-document contract: the
+// skill names the three templates, their file names, and each section set in
+// order, so a session and its architecture review share one contract.
+func TestGroomSkillDocumentsFeatureDocs(t *testing.T) {
+	skill, err := Get("groom")
+	if err != nil {
+		t.Fatalf("Get(groom) error = %v", err)
+	}
+	body := strings.ToLower(skill.Body)
+	for _, want := range []string{"spec.md", "plan.md", "tech-design.md", "feature documents", "architecture review"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("groom skill body does not mention %q", want)
+		}
+	}
+	for name, sections := range map[string][]string{
+		"spec":        groom.SpecSections(),
+		"plan":        groom.PlanSections(),
+		"tech design": groom.TechDesignSections(),
+	} {
+		last := -1
+		for _, section := range sections {
+			idx := strings.Index(skill.Body, section)
+			if idx < 0 {
+				t.Fatalf("groom skill body does not document %s section %q", name, section)
+			}
+			if idx <= last {
+				t.Fatalf("%s section %q is out of order in the groom skill", name, section)
+			}
+			last = idx
+		}
+	}
+}

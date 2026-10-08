@@ -26,6 +26,13 @@ const (
 	// DeferredQuestionsFileName is the deterministic name of a session's
 	// deferred-questions file.
 	DeferredQuestionsFileName = "deferred-questions.md"
+	// SpecFileName is the deterministic name of a session's feature spec.
+	SpecFileName = "spec.md"
+	// PlanFileName is the deterministic name of a session's feature plan.
+	PlanFileName = "plan.md"
+	// TechDesignFileName is the deterministic name of a session's feature tech
+	// design.
+	TechDesignFileName = "tech-design.md"
 )
 
 // PromptPath is the committed repo path of the grooming-session prompt. It is
@@ -39,6 +46,15 @@ var reportTemplate string
 
 //go:embed templates/deferred-questions.md
 var deferredQuestionsTemplate string
+
+//go:embed templates/spec.md
+var specTemplate string
+
+//go:embed templates/plan.md
+var planTemplate string
+
+//go:embed templates/tech-design.md
+var techDesignTemplate string
 
 // ReportSections is the fixed set of top-level report sections, in the order the
 // session must render them. It is the contract the report template is checked
@@ -59,11 +75,37 @@ func DeferredQuestionsSections() []string {
 	return []string{"Questions", "Resolved"}
 }
 
+// SpecSections is the fixed set of sections of the feature spec, in order.
+func SpecSections() []string {
+	return []string{"Summary", "Problem", "Goals", "Non-goals", "Requirements", "Acceptance"}
+}
+
+// PlanSections is the fixed set of sections of the feature plan, in order.
+func PlanSections() []string {
+	return []string{"Summary", "Milestones", "Tasks", "Dependencies", "Verification", "Rollout"}
+}
+
+// TechDesignSections is the fixed set of sections of the feature tech design, in
+// order.
+func TechDesignSections() []string {
+	return []string{"Summary", "Context", "Design", "Interfaces", "Data", "Cross-cutting impact", "Risks"}
+}
+
 // ReportTemplate returns the deterministic grooming report template (markdown).
 func ReportTemplate() string { return reportTemplate }
 
 // DeferredQuestionsTemplate returns the deferred-questions file format (markdown).
 func DeferredQuestionsTemplate() string { return deferredQuestionsTemplate }
+
+// SpecTemplate returns the deterministic feature spec template (markdown).
+func SpecTemplate() string { return specTemplate }
+
+// PlanTemplate returns the deterministic feature plan template (markdown).
+func PlanTemplate() string { return planTemplate }
+
+// TechDesignTemplate returns the deterministic feature tech-design template
+// (markdown).
+func TechDesignTemplate() string { return techDesignTemplate }
 
 // SessionDir returns the directory a session's outputs live in: a deterministically
 // named subdirectory of the project data dir. The session id keeps concurrent or
@@ -84,6 +126,47 @@ func DeferredQuestionsPath(dataDir, sessionID string) string {
 	return filepath.Join(SessionDir(dataDir, sessionID), DeferredQuestionsFileName)
 }
 
+// SpecPath returns the absolute durable path of a session's captured feature
+// spec.
+func SpecPath(dataDir, sessionID string) string {
+	return filepath.Join(SessionDir(dataDir, sessionID), SpecFileName)
+}
+
+// PlanPath returns the absolute durable path of a session's captured feature
+// plan.
+func PlanPath(dataDir, sessionID string) string {
+	return filepath.Join(SessionDir(dataDir, sessionID), PlanFileName)
+}
+
+// TechDesignPath returns the absolute durable path of a session's captured
+// feature tech design.
+func TechDesignPath(dataDir, sessionID string) string {
+	return filepath.Join(SessionDir(dataDir, sessionID), TechDesignFileName)
+}
+
+// OutputPaths names the workspace-relative path of each deterministic session
+// document. It is the bundle Kickoff names and the CLI captures, so the set of
+// outputs lives in one place.
+type OutputPaths struct {
+	Report     string
+	Deferred   string
+	Spec       string
+	Plan       string
+	TechDesign string
+}
+
+// StagedPaths returns the workspace-relative paths a session writes its five
+// documents to, under the session's staging directory.
+func StagedPaths(sessionID string) OutputPaths {
+	return OutputPaths{
+		Report:     StagedReportPath(sessionID),
+		Deferred:   StagedDeferredQuestionsPath(sessionID),
+		Spec:       StagedSpecPath(sessionID),
+		Plan:       StagedPlanPath(sessionID),
+		TechDesign: StagedTechDesignPath(sessionID),
+	}
+}
+
 // StagedReportPath returns the workspace-relative path a session writes its
 // report to. It is relative so the harness writes inside its own workspace,
 // which a sandboxed backend allows; `ft groom` reads it back and copies it to
@@ -96,6 +179,24 @@ func StagedReportPath(sessionID string) string {
 // writes its deferred-questions file to.
 func StagedDeferredQuestionsPath(sessionID string) string {
 	return path.Join(StagingDirName, sessionID, DeferredQuestionsFileName)
+}
+
+// StagedSpecPath returns the workspace-relative path a session writes its
+// feature spec to.
+func StagedSpecPath(sessionID string) string {
+	return path.Join(StagingDirName, sessionID, SpecFileName)
+}
+
+// StagedPlanPath returns the workspace-relative path a session writes its
+// feature plan to.
+func StagedPlanPath(sessionID string) string {
+	return path.Join(StagingDirName, sessionID, PlanFileName)
+}
+
+// StagedTechDesignPath returns the workspace-relative path a session writes its
+// feature tech design to.
+func StagedTechDesignPath(sessionID string) string {
+	return path.Join(StagingDirName, sessionID, TechDesignFileName)
 }
 
 // ScopeItem is one item a grooming session covers, as named in the kickoff.
@@ -128,7 +229,7 @@ neither agent-ready nor deferred is incomplete.
 // sandboxed harness writes inside its own workspace and `ft groom` captures the
 // files from there. When unattended is set it also carries the no-product-owner
 // override.
-func Kickoff(project string, items []ScopeItem, reportPath, deferredPath string, unattended bool) string {
+func Kickoff(project string, items []ScopeItem, out OutputPaths, unattended bool) string {
 	var b strings.Builder
 	b.WriteString("## Session kickoff\n\n")
 	fmt.Fprintf(&b, "Project: %s\n\n", project)
@@ -141,11 +242,17 @@ func Kickoff(project string, items []ScopeItem, reportPath, deferredPath string,
 		}
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "Write the report to: %s\n", reportPath)
-	fmt.Fprintf(&b, "Write the deferred questions to: %s\n", deferredPath)
-	b.WriteString("Both paths are relative to your working directory; create their parent directory if it is absent.\n\n")
+	fmt.Fprintf(&b, "Write the report to: %s\n", out.Report)
+	fmt.Fprintf(&b, "Write the deferred questions to: %s\n", out.Deferred)
+	fmt.Fprintf(&b, "Write the feature spec to: %s\n", out.Spec)
+	fmt.Fprintf(&b, "Write the feature plan to: %s\n", out.Plan)
+	fmt.Fprintf(&b, "Write the feature tech design to: %s\n", out.TechDesign)
+	b.WriteString("All paths are relative to your working directory; create their parent directory if it is absent.\n\n")
 	fmt.Fprintf(&b, "Report sections, in order: %s\n", strings.Join(ReportSections(), ", "))
 	fmt.Fprintf(&b, "Deferred-questions sections, in order: %s\n", strings.Join(DeferredQuestionsSections(), ", "))
+	fmt.Fprintf(&b, "Feature spec sections, in order: %s\n", strings.Join(SpecSections(), ", "))
+	fmt.Fprintf(&b, "Feature plan sections, in order: %s\n", strings.Join(PlanSections(), ", "))
+	fmt.Fprintf(&b, "Feature tech design sections, in order: %s\n", strings.Join(TechDesignSections(), ", "))
 	if unattended {
 		b.WriteString("\n")
 		b.WriteString(unattendedOverride)

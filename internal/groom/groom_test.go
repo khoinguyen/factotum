@@ -25,10 +25,61 @@ func TestDeferredQuestionsTemplateSectionsInOrder(t *testing.T) {
 	}
 }
 
+// TestFeatureDocTemplatesSectionsInOrder pins the three feature documents to
+// their fixed section contracts: a template is versioned data, so its section
+// set and ordering must not drift from what Kickoff and the skill promise.
+func TestFeatureDocTemplatesSectionsInOrder(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{"spec", SpecTemplate(), SpecSections()},
+		{"plan", PlanTemplate(), PlanSections()},
+		{"tech design", TechDesignTemplate(), TechDesignSections()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sectionTitles(tt.body); !slices.Equal(got, tt.want) {
+				t.Fatalf("%s template sections = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFeatureDocSectionsAreNonEmpty pins that each feature document carries a
+// real contract, so the session is never handed an empty template.
+func TestFeatureDocSectionsAreNonEmpty(t *testing.T) {
+	for name, sections := range map[string][]string{
+		"spec":        SpecSections(),
+		"plan":        PlanSections(),
+		"tech design": TechDesignSections(),
+	} {
+		if len(sections) == 0 {
+			t.Fatalf("%s has no sections", name)
+		}
+	}
+}
+
+// TestReportTemplateReferencesFeatureDocs pins that the report the session
+// writes names the feature documents it sits alongside, so the report, the
+// spec, and the plan travel together as one feature's document set.
+func TestReportTemplateReferencesFeatureDocs(t *testing.T) {
+	body := ReportTemplate()
+	for _, want := range []string{SpecFileName, PlanFileName, TechDesignFileName} {
+		if !strings.Contains(body, want) {
+			t.Errorf("report template does not reference the feature doc %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestTemplatesAreMarkdown(t *testing.T) {
 	for name, body := range map[string]string{
 		"report":             ReportTemplate(),
 		"deferred questions": DeferredQuestionsTemplate(),
+		"spec":               SpecTemplate(),
+		"plan":               PlanTemplate(),
+		"tech design":        TechDesignTemplate(),
 	} {
 		if strings.TrimSpace(body) == "" {
 			t.Fatalf("%s template is empty", name)
@@ -79,6 +130,30 @@ func TestSessionPromptReportTemplateMatchesVersioned(t *testing.T) {
 	}
 }
 
+// TestSessionPromptFeatureDocTemplatesMatchVersioned pins the feature document
+// templates prompt.md embeds to the versioned templates/*.md, so a session
+// launched from the durable prompt cannot drift from the contract a session's
+// docs are checked against.
+func TestSessionPromptFeatureDocTemplatesMatchVersioned(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", PromptPath))
+	if err != nil {
+		t.Fatalf("read durable session prompt %q: %v", PromptPath, err)
+	}
+	for _, doc := range []struct {
+		firstLine string
+		want      string
+	}{
+		{"# Feature spec", SpecTemplate()},
+		{"# Feature plan", PlanTemplate()},
+		{"# Feature tech design", TechDesignTemplate()},
+	} {
+		inline := fencedBlock(t, string(data), doc.firstLine)
+		if got := strings.TrimSpace(inline); got != strings.TrimSpace(doc.want) {
+			t.Fatalf("prompt %s template drifted from the versioned template:\n--- prompt ---\n%s\n--- versioned ---\n%s", doc.firstLine, got, doc.want)
+		}
+	}
+}
+
 // fencedBlock returns the first triple-backtick fenced block in body whose first
 // non-empty line begins with firstLine.
 func fencedBlock(t *testing.T, body, firstLine string) string {
@@ -116,6 +191,20 @@ func TestSessionPathsAreDeterministicUnderDataDir(t *testing.T) {
 	if got, want := DeferredQuestionsPath("/data", "groom-1"), filepath.Join(dir, "deferred-questions.md"); got != want {
 		t.Fatalf("DeferredQuestionsPath = %q, want %q", got, want)
 	}
+	for name, got := range map[string]string{
+		"spec":        SpecPath("/data", "groom-1"),
+		"plan":        PlanPath("/data", "groom-1"),
+		"tech design": TechDesignPath("/data", "groom-1"),
+	} {
+		want := filepath.Join(dir, map[string]string{
+			"spec":        "spec.md",
+			"plan":        "plan.md",
+			"tech design": "tech-design.md",
+		}[name])
+		if got != want {
+			t.Fatalf("%s path = %q, want %q", name, got, want)
+		}
+	}
 }
 
 // TestStagedOutputPathsAreWorkspaceRelative pins the fix for the capture bug:
@@ -135,20 +224,56 @@ func TestStagedOutputPathsAreWorkspaceRelative(t *testing.T) {
 	if want := path.Join(StagingDirName, "groom-1", DeferredQuestionsFileName); deferred != want {
 		t.Fatalf("StagedDeferredQuestionsPath = %q, want %q", deferred, want)
 	}
+	for name, got := range map[string]string{
+		"spec":        StagedSpecPath("groom-1"),
+		"plan":        StagedPlanPath("groom-1"),
+		"tech design": StagedTechDesignPath("groom-1"),
+	} {
+		want := path.Join(StagingDirName, "groom-1", map[string]string{
+			"spec":        SpecFileName,
+			"plan":        PlanFileName,
+			"tech design": TechDesignFileName,
+		}[name])
+		if path.IsAbs(got) {
+			t.Fatalf("staged %s path must be workspace-relative: %q", name, got)
+		}
+		if got != want {
+			t.Fatalf("staged %s path = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestStagedPathsGroupsEveryOutput pins the bundled OutputPaths the CLI uses to
+// capture a session: one struct naming all five workspace-relative documents, so
+// report, deferred questions, and the feature documents cannot drift apart.
+func TestStagedPathsGroupsEveryOutput(t *testing.T) {
+	got := StagedPaths("groom-1")
+	want := OutputPaths{
+		Report:     StagedReportPath("groom-1"),
+		Deferred:   StagedDeferredQuestionsPath("groom-1"),
+		Spec:       StagedSpecPath("groom-1"),
+		Plan:       StagedPlanPath("groom-1"),
+		TechDesign: StagedTechDesignPath("groom-1"),
+	}
+	if got != want {
+		t.Fatalf("StagedPaths = %+v, want %+v", got, want)
+	}
 }
 
 // TestKickoffNamesScopeAndOutputs pins the acceptance contract: the kickoff the
 // session prompt carries names every scoped item and the workspace-relative
 // output paths, so the harness never has to guess where to write.
 func TestKickoffNamesScopeAndOutputs(t *testing.T) {
-	report := StagedReportPath("groom-1")
-	deferred := StagedDeferredQuestionsPath("groom-1")
+	out := StagedPaths("groom-1")
 	kick := Kickoff("factotum", []ScopeItem{
 		{ID: "t-1", Kind: "task", Title: "Add widget"},
 		{ID: "t-2", Kind: "idea", Title: "Maybe cache"},
-	}, report, deferred, false)
+	}, out, false)
 
-	for _, want := range []string{"factotum", "t-1", "Add widget", "t-2", "Maybe cache", report, deferred} {
+	for _, want := range []string{
+		"factotum", "t-1", "Add widget", "t-2", "Maybe cache",
+		out.Report, out.Deferred, out.Spec, out.Plan, out.TechDesign,
+	} {
 		if !strings.Contains(kick, want) {
 			t.Errorf("kickoff does not name %q:\n%s", want, kick)
 		}
@@ -158,23 +283,64 @@ func TestKickoffNamesScopeAndOutputs(t *testing.T) {
 	}
 }
 
-// TestKickoffStatesSectionContract pins the templates' section contract into the
-// kickoff, in order, so the harness writes files whose headings match the
-// versioned templates.
-func TestKickoffStatesSectionContract(t *testing.T) {
-	kick := Kickoff("p", nil, "/r", "/d", false)
-	sections := append(append([]string{}, ReportSections()...), DeferredQuestionsSections()...)
-	last := -1
-	for _, section := range sections {
-		idx := strings.Index(kick, section)
-		if idx < 0 {
-			t.Fatalf("kickoff does not state section %q:\n%s", section, kick)
+// TestKickoffNamesFeatureDocOutputs pins the feature documents the session must
+// emit alongside the task breakdown: the kickoff names each one's output path
+// and its section contract, so a session cannot silently skip a document.
+func TestKickoffNamesFeatureDocOutputs(t *testing.T) {
+	out := StagedPaths("groom-1")
+	kick := Kickoff("factotum", nil, out, false)
+	for _, doc := range []struct {
+		label string
+		path  string
+	}{
+		{"Write the feature spec to: ", out.Spec},
+		{"Write the feature plan to: ", out.Plan},
+		{"Write the feature tech design to: ", out.TechDesign},
+	} {
+		if got := kickoffPath(kick, doc.label); got != doc.path {
+			t.Errorf("kickoff %q = %q, want %q:\n%s", doc.label, got, doc.path, kick)
 		}
-		if idx <= last {
-			t.Fatalf("kickoff section %q is out of order:\n%s", section, kick)
-		}
-		last = idx
 	}
+}
+
+// TestKickoffStatesSectionContract pins the templates' section contract into the
+// kickoff, in order per document, so the harness writes files whose headings
+// match the versioned templates.
+func TestKickoffStatesSectionContract(t *testing.T) {
+	kick := Kickoff("p", nil, StagedPaths("groom-1"), false)
+	for _, doc := range []struct {
+		label    string
+		sections []string
+	}{
+		{"Report sections, in order: ", ReportSections()},
+		{"Deferred-questions sections, in order: ", DeferredQuestionsSections()},
+		{"Feature spec sections, in order: ", SpecSections()},
+		{"Feature plan sections, in order: ", PlanSections()},
+		{"Feature tech design sections, in order: ", TechDesignSections()},
+	} {
+		line := kickoffLine(kick, doc.label)
+		if line == "" {
+			t.Fatalf("kickoff does not state %q:\n%s", doc.label, kick)
+		}
+		if want := strings.Join(doc.sections, ", "); line != want {
+			t.Fatalf("kickoff line for %q = %q, want the ordered sections %q:\n%s", doc.label, line, want, kick)
+		}
+	}
+}
+
+// kickoffLine returns the kickoff line starting with label, trimmed.
+func kickoffLine(body, label string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, label) {
+			return strings.TrimSpace(strings.TrimPrefix(line, label))
+		}
+	}
+	return ""
+}
+
+// kickoffPath returns the path named on the kickoff line starting with label.
+func kickoffPath(body, label string) string {
+	return kickoffLine(body, label)
 }
 
 // TestKickoffUnattendedMode pins the defer-and-complete contract: an unattended
@@ -211,7 +377,7 @@ func TestKickoffUnattendedMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			kick := Kickoff("p", nil, "/r", "/d", tt.unattended)
+			kick := Kickoff("p", nil, StagedPaths("groom-1"), tt.unattended)
 			for _, want := range tt.want {
 				if !strings.Contains(kick, want) {
 					t.Errorf("kickoff missing %q:\n%s", want, kick)

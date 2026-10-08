@@ -29,7 +29,10 @@ func (k ArtifactKind) Valid() bool {
 type Artifact struct {
 	ID        ArtifactID
 	ProjectID ProjectID
-	TicketID  *TicketID
+	// The JSON key stays "TaskID": backends persist Artifact verbatim, so
+	// changing it would silently drop the link in documents written before the
+	// Task->Ticket rename.
+	TicketID  *TicketID `json:"TaskID"`
 	Kind      ArtifactKind
 	Title     string
 	Brief     string

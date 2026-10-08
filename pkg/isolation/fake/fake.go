@@ -98,6 +98,18 @@ func (b *Backend) Upload(_ context.Context, _ isolation.Handle, files []isolatio
 	return nil
 }
 
+// Stage places files directly in the fake environment's filesystem, as a
+// prepared spec or a completed command would, without needing a handle. Tests
+// use it to simulate files a backend produced (for example a session's outputs)
+// that a later Download reads back.
+func (b *Backend) Stage(files ...isolation.File) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, f := range files {
+		b.files[f.Path] = f
+	}
+}
+
 func (b *Backend) Download(_ context.Context, _ isolation.Handle, paths []string) ([]isolation.File, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

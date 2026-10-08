@@ -30,17 +30,19 @@ ephemeral temp file; override it with `--prompt-file`. `ft groom` appends the
 kickoff to the prompt. The kickoff names:
 
 - the scope: every item's id, kind, and title;
-- the absolute **report** path and **deferred-questions** path, both under the
-  project data dir at `grooming-sessions/<session-id>/`, named `report.md` and
-  `deferred-questions.md`;
+- the workspace-relative **report** path and **deferred-questions** path, under
+  `.ft-groom/<session-id>/`, named `report.md` and `deferred-questions.md`;
 - the report and deferred-questions section contracts, in order.
 
 Write the report to the report path and the deferred questions to the
-deferred-questions path. When the session finishes, `ft groom` reads both files
-and records them as `doc` artifacts (`ft doc list`); a session that writes
-neither fails with a clear error. The files are written on the host under the
-project data dir, so the selected backend must give the session write access
-there; the isolating backends mount only the resolved workspace today.
+deferred-questions path, relative to your working directory. When the session
+finishes, `ft groom` reads both files back out of the workspace and copies them
+to the durable session dir under the project data dir
+(`grooming-sessions/<session-id>/`), recording each as a `doc` artifact
+(`ft doc list`); a session that writes neither fails with a clear error. The
+paths are inside the workspace on purpose: a sandboxed backend (openshell,
+docker) allows writes only there, and `ft groom` captures them before the
+environment is torn down.
 
 ## Read a session
 

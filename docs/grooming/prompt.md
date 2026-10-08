@@ -25,12 +25,14 @@ ft run --prompt-file docs/grooming/prompt.md --sandbox local --harness opencode 
 ## Inputs
 
 - A **kickoff** appended to this prompt by `ft groom` (or supplied by the human).
-  It names the scope (every item id, kind, and title), the absolute paths of the
-  report and deferred-questions files, and the section contract both must follow.
-- Write the report to the kickoff's report path and the deferred questions to
-  its deferred-questions path. Both live under the project data dir at
-  `grooming-sessions/<session-id>/`; `ft groom` reads them when the session ends
-  and records each as a doc artifact.
+  It names the scope (every item id, kind, and title), the workspace-relative
+  paths of the report and deferred-questions files, and the section contract both
+  must follow.
+- Write the report to the kickoff's report path and the deferred questions to its
+  deferred-questions path, relative to your working directory (under
+  `.ft-groom/<session-id>/`). Keeping them inside the workspace is what lets a
+  sandboxed harness write them; when the session ends `ft groom` reads both back
+  and records each as a doc artifact under `grooming-sessions/<session-id>/`.
 - Context: read the repo (code, specs, docs) and `ft memory` / `ft doc`.
 
 ## Method (per idea)

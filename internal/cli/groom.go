@@ -102,12 +102,12 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		return err
 	}
 	sessionID := d.IDs.NewID("groom")
-	sessionDir := groom.SessionDir(dataDir, sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
-		return fmt.Errorf("create grooming session dir %s: %w", sessionDir, err)
-	}
 	reportPath := groom.ReportPath(dataDir, sessionID)
 	deferredPath := groom.DeferredQuestionsPath(dataDir, sessionID)
+	// The session writes inside its workspace (a sandboxed backend denies any
+	// other path); ft copies the staged files out to the durable session dir.
+	stagedReport := groom.StagedReportPath(sessionID)
+	stagedDeferred := groom.StagedDeferredQuestionsPath(sessionID)
 
 	// Snapshot the graph and start time before the session runs, so the
 	// manifest can name the tasks the session produced.
@@ -118,14 +118,14 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	started := d.Clock.Now()
 
 	prompt := strings.TrimRight(string(promptBytes), "\n") + "\n\n" +
-		groom.Kickoff(string(projectID), groomScopeItems(items), reportPath, deferredPath, opts.unattended)
+		groom.Kickoff(string(projectID), groomScopeItems(items), stagedReport, stagedDeferred, opts.unattended)
 
 	sel, err := d.prepareRun(cmd, opts.run)
 	if err != nil {
 		return err
 	}
 
-	_, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).RunProject(ctx, app.ProjectRunInput{
+	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).RunProject(ctx, app.ProjectRunInput{
 		ProjectID:        project.ID,
 		Backend:          sel.backend,
 		Harness:          sel.harness,
@@ -135,6 +135,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		Model:            sel.model,
 		Args:             sel.args,
 		Prompt:           prompt,
+		Capture:          []string{stagedReport, stagedDeferred},
 	})
 	if errors.Is(runErr, local.ErrNotOptedIn) {
 		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
@@ -154,12 +155,18 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 
 	// Read both outputs before recording either, so a session that wrote only
 	// one of them fails without leaving a partial artifact behind.
-	reportBody, err := readGroomOutput(sessionID, reportPath)
+	reportBody, err := captureGroomOutput(sessionID, stagedReport, outcome.Captured)
 	if err != nil {
 		return err
 	}
-	deferredBody, err := readGroomOutput(sessionID, deferredPath)
+	deferredBody, err := captureGroomOutput(sessionID, stagedDeferred, outcome.Captured)
 	if err != nil {
+		return err
+	}
+	if err := writeGroomOutput(reportPath, reportBody); err != nil {
+		return err
+	}
+	if err := writeGroomOutput(deferredPath, deferredBody); err != nil {
 		return err
 	}
 	report, err := addGroomArtifact(ctx, post.artifacts, project.ID, items, sessionID, reportPath, reportBody,
@@ -312,18 +319,31 @@ func scopeIDs(tasks []*core.Task) []string {
 	return ids
 }
 
-// readGroomOutput reads one session output. A missing or empty output is an
-// error: a session that produces nothing durable must fail loudly, not look
-// finished.
-func readGroomOutput(sessionID, path string) (string, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("groom session %s produced no output at %s: %w", sessionID, path, err)
+// captureGroomOutput returns one session output read from the run's captured
+// files, keyed by the workspace-relative path the session staged it at. A
+// staged output the session never wrote, or wrote empty, is an error that names
+// that path: capture must fail loudly, not look finished.
+func captureGroomOutput(sessionID, staged string, captured map[string][]byte) (string, error) {
+	body, ok := captured[staged]
+	if !ok {
+		return "", fmt.Errorf("groom session %s produced no output at %s", sessionID, staged)
 	}
 	if strings.TrimSpace(string(body)) == "" {
-		return "", fmt.Errorf("groom session %s wrote an empty output at %s", sessionID, path)
+		return "", fmt.Errorf("groom session %s wrote an empty output at %s", sessionID, staged)
 	}
 	return string(body), nil
+}
+
+// writeGroomOutput writes one captured body to its durable session path,
+// creating the session directory.
+func writeGroomOutput(path, body string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create grooming session dir: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return fmt.Errorf("write grooming session output %s: %w", path, err)
+	}
+	return nil
 }
 
 // addGroomArtifact records one session output as a doc artifact linked to the

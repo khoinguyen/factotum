@@ -2,6 +2,7 @@ package groom
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -117,12 +118,31 @@ func TestSessionPathsAreDeterministicUnderDataDir(t *testing.T) {
 	}
 }
 
+// TestStagedOutputPathsAreWorkspaceRelative pins the fix for the capture bug:
+// the kickoff must name outputs inside the agent's workspace, never an absolute
+// path outside it (which a harness denies in a headless run). The staged paths
+// are relative, deterministic per session, and named from the report and
+// deferred-questions file names.
+func TestStagedOutputPathsAreWorkspaceRelative(t *testing.T) {
+	report := StagedReportPath("groom-1")
+	deferred := StagedDeferredQuestionsPath("groom-1")
+	if path.IsAbs(report) || path.IsAbs(deferred) {
+		t.Fatalf("staged paths must be workspace-relative: report=%q deferred=%q", report, deferred)
+	}
+	if want := path.Join(StagingDirName, "groom-1", ReportFileName); report != want {
+		t.Fatalf("StagedReportPath = %q, want %q", report, want)
+	}
+	if want := path.Join(StagingDirName, "groom-1", DeferredQuestionsFileName); deferred != want {
+		t.Fatalf("StagedDeferredQuestionsPath = %q, want %q", deferred, want)
+	}
+}
+
 // TestKickoffNamesScopeAndOutputs pins the acceptance contract: the kickoff the
-// session prompt carries names every scoped item and the absolute output paths,
-// so the harness never has to guess where to write.
+// session prompt carries names every scoped item and the workspace-relative
+// output paths, so the harness never has to guess where to write.
 func TestKickoffNamesScopeAndOutputs(t *testing.T) {
-	report := filepath.Join("data", "grooming-sessions", "groom-1", "report.md")
-	deferred := filepath.Join("data", "grooming-sessions", "groom-1", "deferred-questions.md")
+	report := StagedReportPath("groom-1")
+	deferred := StagedDeferredQuestionsPath("groom-1")
 	kick := Kickoff("factotum", []ScopeItem{
 		{ID: "t-1", Kind: "task", Title: "Add widget"},
 		{ID: "t-2", Kind: "idea", Title: "Maybe cache"},
@@ -132,6 +152,9 @@ func TestKickoffNamesScopeAndOutputs(t *testing.T) {
 		if !strings.Contains(kick, want) {
 			t.Errorf("kickoff does not name %q:\n%s", want, kick)
 		}
+	}
+	if !strings.Contains(kick, "relative to your working directory") {
+		t.Errorf("kickoff does not state the outputs are relative to the working directory:\n%s", kick)
 	}
 }
 

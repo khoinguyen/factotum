@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react"
 import { afterEach, expect, test, vi } from "vitest"
 
 import App from "@/App"
@@ -201,8 +207,32 @@ function renderAt(path: string) {
   return render(<App />)
 }
 
+// FakeEventSource lets jsdom (which has no EventSource) exercise the live path:
+// the app subscribes, then a server `update` event triggers a refetch.
+class FakeEventSource {
+  static instances: FakeEventSource[] = []
+  url: string
+  private listeners: Record<string, Array<() => void>> = {}
+
+  constructor(url: string) {
+    this.url = url
+    FakeEventSource.instances.push(this)
+  }
+
+  addEventListener(type: string, callback: () => void) {
+    ;(this.listeners[type] ??= []).push(callback)
+  }
+
+  emit(type: string) {
+    for (const callback of this.listeners[type] ?? []) callback()
+  }
+
+  close() {}
+}
+
 afterEach(() => {
   cleanup()
+  FakeEventSource.instances = []
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   window.history.pushState({}, "", "/")
@@ -257,6 +287,25 @@ test("renders tasks and updates from a populated snapshot", async () => {
   renderAt("/")
   expect(await screen.findByText("Ship the app")).toBeTruthy()
   expect(screen.getByText("created task")).toBeTruthy()
+})
+
+test("refetches the snapshot when SSE reports an update", async () => {
+  let calls = 0
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      calls++
+      return { ok: true, status: 200, json: async () => emptySnapshot }
+    }),
+  )
+  vi.stubGlobal("EventSource", FakeEventSource)
+
+  renderAt("/")
+  await screen.findByText("Acme dashboard")
+  expect(calls).toBe(1)
+
+  FakeEventSource.instances[0].emit("update")
+  await waitFor(() => expect(calls).toBe(2))
 })
 
 test("groups in-flight tasks under their origin idea", async () => {

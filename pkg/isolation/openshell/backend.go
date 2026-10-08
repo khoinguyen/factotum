@@ -59,6 +59,10 @@ const (
 	// DefaultReadyTimeout bounds how long Prepare waits for a sandbox to become
 	// ready.
 	DefaultReadyTimeout = 90 * time.Second
+	// DefaultProfileCatalog is the OpenShell provider-profile catalog. A profile
+	// the gateway does not carry is imported from <catalog>/<type>.yaml, the
+	// documented `openshell profile import --url ...` recipe.
+	DefaultProfileCatalog = "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/providers"
 
 	// readyPollInterval is how often Prepare re-checks readiness.
 	readyPollInterval = 500 * time.Millisecond
@@ -626,6 +630,12 @@ func (b *Backend) AttachCredential(ctx context.Context, h isolation.Handle, c is
 // passed in the child environment (never as an argv value) and the gateway
 // injects a placeholder into the sandbox, substituting the real value only at
 // the provider-authorized endpoint.
+//
+// A fresh gateway does not carry every provider profile. When the gateway
+// rejects the create because the profile is missing, the profile is imported
+// from the catalog and the create is retried once, so a fresh gateway can run
+// with a provider without an out-of-band import. If it still cannot be created,
+// the error names the exact import command to run by hand.
 func (b *Backend) createProvider(ctx context.Context, sandbox string, c isolation.Credential) (string, error) {
 	if c.EnvVar == "" {
 		return "", errors.New("isolation/openshell: credential has no EnvVar")
@@ -639,10 +649,92 @@ func (b *Backend) createProvider(ctx context.Context, sandbox string, c isolatio
 	}
 	provider := providerName(sandbox, c.EnvVar)
 	args := []string{"provider", "create", "--name", provider, "--type", c.Provider, "--credential", c.EnvVar}
-	if _, err := b.run.Run(ctx, b.cmd(args...), map[string]string{c.EnvVar: value}); err != nil {
+	env := map[string]string{c.EnvVar: value}
+
+	if _, err := b.run.Run(ctx, b.cmd(args...), env); err == nil {
+		return provider, nil
+	} else if !providerProfileMissing(err) {
 		return "", fmt.Errorf("openshell: create provider %q: %w", provider, err)
 	}
-	return provider, nil
+
+	importErr := b.importProviderProfile(ctx, c.Provider)
+	if _, err := b.run.Run(ctx, b.cmd(args...), env); err == nil {
+		return provider, nil
+	}
+	return "", b.missingProfileError(c.Provider, importErr)
+}
+
+// importProviderProfile imports a provider profile from the catalog so a fresh
+// gateway can create a provider whose profile is not built in. It is
+// best-effort: the caller retries the create and, if that still fails, reports
+// the exact manual import command.
+func (b *Backend) importProviderProfile(ctx context.Context, providerType string) error {
+	url := profileCatalogURL(providerType)
+	if url == "" {
+		return fmt.Errorf("no catalog URL for provider type %q", providerType)
+	}
+	if _, err := b.run.Run(ctx, b.cmd("profile", "import", "--url", url), nil); err != nil {
+		return err
+	}
+	return nil
+}
+
+// missingProfileError is the actionable failure for a provider whose profile is
+// absent from the gateway: it names the exact import command, plus the automatic
+// import failure when there was one.
+func (b *Backend) missingProfileError(providerType string, importErr error) error {
+	cmd := b.profileImportCommand(providerType)
+	if importErr != nil {
+		return fmt.Errorf("openshell: provider profile %q is not imported into the gateway and automatic import failed (%w); import it with:\n  %s", providerType, importErr, cmd)
+	}
+	return fmt.Errorf("openshell: provider profile %q is not imported into the gateway; import it with:\n  %s", providerType, cmd)
+}
+
+// profileImportCommand renders the copy-pasteable import command for a provider
+// type, mirroring the selected gateway.
+func (b *Backend) profileImportCommand(providerType string) string {
+	if url := profileCatalogURL(providerType); url != "" {
+		return b.cliCommand("profile", "import", "--url", url)
+	}
+	return b.cliCommand("profile", "import", "-f", providerType+".yaml")
+}
+
+// cliCommand renders a copy-pasteable openshell invocation.
+func (b *Backend) cliCommand(args ...string) string {
+	return strings.Join(append([]string{b.opts.CLI}, b.cmd(args...)...), " ")
+}
+
+// providerProfileMissing reports whether err is the gateway's rejection of a
+// provider whose profile is not imported, which a profile import can repair.
+// Both the CLI's rendered message and the gateway's own text carry this phrase.
+func providerProfileMissing(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "import a matching profile")
+}
+
+// profileCatalogURL is the OpenShell profile catalog URL for a provider type, or
+// "" when the type is not a safe single path segment.
+func profileCatalogURL(providerType string) string {
+	if !safeProfileID(providerType) {
+		return ""
+	}
+	return DefaultProfileCatalog + "/" + providerType + ".yaml"
+}
+
+// safeProfileID reports whether id is a single safe path segment for a catalog
+// URL: lowercase letters, digits, dot, dash, and underscore, and never "." or
+// "..".
+func safeProfileID(id string) bool {
+	if id == "" || id == "." || id == ".." {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // deleteProvider removes a provider, retrying while the asynchronous sandbox

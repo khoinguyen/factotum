@@ -613,6 +613,98 @@ func TestAttachCredential(t *testing.T) {
 	})
 }
 
+// TestProviderProfileProvisioning pins the fresh-gateway path: when the gateway
+// rejects a provider create because its profile is not imported, the backend
+// imports the profile from the catalog and retries; if the import cannot run,
+// the error names the exact import command.
+func TestProviderProfileProvisioning(t *testing.T) {
+	const (
+		providerType = "openrouter"
+		wantURL      = "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/providers/openrouter.yaml"
+	)
+	missing := errors.New("openshell provider create: exit status 1: provider profile 'openrouter' not found; import a matching profile before using this provider type")
+
+	newBackend := func(r *fakeRunner) *openshell.Backend {
+		return openshell.New(openshell.Options{
+			Runner:      r,
+			NewName:     func() string { return "fttest" },
+			Credentials: resolverFunc(func(context.Context, isolation.Credential) (string, error) { return "sekret", nil }),
+		})
+	}
+	spec := isolation.Spec{
+		Credentials: []isolation.Credential{{Provider: providerType, Ref: "ref", EnvVar: "OPENROUTER_API_KEY"}},
+	}
+
+	t.Run("imports the missing profile then retries", func(t *testing.T) {
+		r := &fakeRunner{}
+		var creates int
+		r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+			if hasPrefix(args, "provider", "create") {
+				creates++
+				if creates == 1 {
+					return nil, missing
+				}
+			}
+			return []byte(`{"phase":"Ready"}`), nil
+		}
+		be := newBackend(r)
+		h := prepared(t, be, spec)
+		t.Cleanup(func() { _ = be.Delete(context.Background(), h) })
+
+		imp, ok := r.first("profile", "import")
+		if !ok {
+			t.Fatalf("missing profile was not imported: %v", r.ran())
+		}
+		if got, _ := flagValue(imp.args, "--url"); got != wantURL {
+			t.Errorf("import url = %q, want %q", got, wantURL)
+		}
+		if creates != 2 {
+			t.Errorf("provider create ran %d times, want 2 (fail, import, retry)", creates)
+		}
+	})
+
+	t.Run("names the exact import command when auto-import fails", func(t *testing.T) {
+		r := &fakeRunner{}
+		r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+			switch {
+			case hasPrefix(args, "provider", "create"):
+				return nil, missing
+			case hasPrefix(args, "profile", "import"):
+				return nil, errors.New("network unreachable")
+			}
+			return []byte(`{"phase":"Ready"}`), nil
+		}
+		_, err := newBackend(r).Prepare(context.Background(), spec)
+		if err == nil {
+			t.Fatal("Prepare() error = nil, want an actionable error")
+		}
+		wantCmd := "openshell profile import --url " + wantURL
+		if !strings.Contains(err.Error(), wantCmd) {
+			t.Errorf("error %q does not name the import command %q", err, wantCmd)
+		}
+		if !strings.Contains(err.Error(), providerType) {
+			t.Errorf("error %q does not name the provider type %q", err, providerType)
+		}
+	})
+
+	t.Run("an unrelated create failure is not retried", func(t *testing.T) {
+		r := &fakeRunner{}
+		r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+			if hasPrefix(args, "provider", "create") {
+				return nil, errors.New("provider already exists")
+			}
+			return []byte(`{"phase":"Ready"}`), nil
+		}
+		_, err := newBackend(r).Prepare(context.Background(), spec)
+		if err == nil {
+			t.Fatal("Prepare() error = nil, want an error")
+		}
+		if r.count("profile", "import") != 0 {
+			t.Errorf("unrelated failure triggered a profile import: %v", r.ran())
+		}
+	})
+}
+
 // TestApplyPolicy pins the policy contract: empty is a no-op, a real policy is
 // installed on the live sandbox.
 func TestApplyPolicy(t *testing.T) {

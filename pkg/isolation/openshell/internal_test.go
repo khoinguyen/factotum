@@ -49,6 +49,24 @@ func TestDisplayPath(t *testing.T) {
 	}
 }
 
+func TestProfileCatalogURL(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"openrouter", "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/providers/openrouter.yaml"},
+		{"openai", "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/providers/openai.yaml"},
+		{"", ""},
+		{".", ""},
+		{"..", ""},
+		{"../evil", ""},
+		{"a/b", ""},
+		{"OpenRouter", ""},
+	}
+	for _, tc := range tests {
+		if got := profileCatalogURL(tc.in); got != tc.want {
+			t.Errorf("profileCatalogURL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestResolvePathRootsAtWorkdir(t *testing.T) {
 	env := &environment{workdir: "/sandbox/work"}
 	if got := env.resolvePath("a.txt"); got != "/sandbox/work/a.txt" {

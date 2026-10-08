@@ -687,6 +687,34 @@ func TestProviderProfileProvisioning(t *testing.T) {
 		}
 	})
 
+	t.Run("surfaces the real retry failure after a successful import", func(t *testing.T) {
+		r := &fakeRunner{}
+		var creates int
+		r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+			if hasPrefix(args, "provider", "create") {
+				creates++
+				if creates == 1 {
+					return nil, missing
+				}
+				return nil, errors.New("provider credentials are not declared by profile 'openrouter': OPENROUTER_API_KEY")
+			}
+			return []byte(`{"phase":"Ready"}`), nil
+		}
+		_, err := newBackend(r).Prepare(context.Background(), spec)
+		if err == nil {
+			t.Fatal("Prepare() error = nil, want an error")
+		}
+		if _, ok := r.first("profile", "import"); !ok {
+			t.Fatalf("profile was not imported: %v", r.ran())
+		}
+		if !strings.Contains(err.Error(), "not declared") {
+			t.Errorf("error %q does not surface the real retry failure", err)
+		}
+		if strings.Contains(err.Error(), "is not imported into the gateway") {
+			t.Errorf("error %q wrongly claims the profile is not imported", err)
+		}
+	})
+
 	t.Run("an unrelated create failure is not retried", func(t *testing.T) {
 		r := &fakeRunner{}
 		r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {

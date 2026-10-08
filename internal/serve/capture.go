@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
@@ -122,9 +123,12 @@ func (s *Server) handleCaptureSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	// The capture is durable now, so hand it to the factory trigger. A nil
 	// controller or a disabled auto-groom opt-out leaves it inert; the capture
-	// is stored either way and the response is not held up by the trigger.
+	// is stored either way. Submit runs synchronously, so a slow controller does
+	// delay the 201 - the interface tells it to start long work asynchronously.
+	// The context is detached from the request: net/http cancels r.Context() the
+	// moment this handler returns, which would kill a controller's async work.
 	if s.options.AutoGroom && s.options.Controller != nil {
-		s.options.Controller.Submit(r.Context(), capture)
+		s.options.Controller.Submit(context.WithoutCancel(r.Context()), capture)
 	}
 	w.Header().Set("Location", taskOrIdeaURL(*capture))
 	writeCaptureJSON(w, http.StatusCreated, captureResult{

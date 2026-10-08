@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -20,18 +21,26 @@ const testToken = "s3cret"
 type recordingController struct {
 	mu       sync.Mutex
 	captures []*core.Ticket
+	ctx      context.Context
 }
 
-func (c *recordingController) Submit(_ context.Context, capture *core.Ticket) {
+func (c *recordingController) Submit(ctx context.Context, capture *core.Ticket) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.captures = append(c.captures, capture)
+	c.ctx = ctx
 }
 
 func (c *recordingController) stored() []*core.Ticket {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]*core.Ticket(nil), c.captures...)
+}
+
+func (c *recordingController) context() context.Context {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ctx
 }
 
 // postCapture sends a JSON capture write with the token in the Authorization
@@ -292,16 +301,57 @@ func TestCaptureTriggerOptOut(t *testing.T) {
 
 // TestCaptureWithoutController proves a plain read+capture server (no
 // controller, the ft serve default) stores a capture without a trigger: the
-// hook is optional and its absence is a valid opt-out.
+// hook is optional and its absence is a valid opt-out. It reads the item back,
+// so a regression that skipped the store when the trigger is absent fails here.
 func TestCaptureWithoutController(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
 	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks, AutoGroom: true})
 
 	resp := postCapture(t, ts.URL+"/api/capture", testToken, `{"text":"Add a dark mode"}`)
-	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
+		_ = resp.Body.Close()
 		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	result := decodeCapture(t, resp)
+	stored, err := f.tasks.Get(context.Background(), result.ID)
+	if err != nil {
+		t.Fatalf("Get(%s) error = %v", result.ID, err)
+	}
+	if stored.Kind != core.KindIdea || stored.Status != core.StatusTodo {
+		t.Fatalf("stored = %+v, want idea in todo", stored)
+	}
+}
+
+// TestCaptureTriggerContextSurvivesRequest proves the context handed to the
+// controller is detached from the request: net/http cancels r.Context() when the
+// handler returns, so a controller that retains the context for async work must
+// still see it live after the request is done.
+func TestCaptureTriggerContextSurvivesRequest(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	controller := &recordingController{}
+	server, err := New(Options{
+		Backend: f.backend, Clock: f.clock, Assets: testAssets(),
+		Project: project.ID, Token: testToken, Tasks: f.tasks,
+		AutoGroom: true, Controller: controller,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/capture", strings.NewReader(`{"text":"Add a dark mode"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
+	server.Handler().ServeHTTP(httptest.NewRecorder(), req)
+
+	cancel()
+	if got := controller.context(); got == nil {
+		t.Fatal("controller did not receive a context")
+	} else if err := got.Err(); err != nil {
+		t.Fatalf("controller context canceled with the request: %v", err)
 	}
 }
 

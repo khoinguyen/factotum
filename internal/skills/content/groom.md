@@ -40,6 +40,10 @@ unset; choosing `local` in that prompt asks to opt in (default no) and records
 `run.allow_host` in the user config. A machine `[run]` table lets a bare
 `ft groom` run with no flags.
 
+Like `ft run`, a repository registered with a local `Path` (not a `URL`) is used
+**in place**, so a backend on the workdir (`local`, `docker`) can modify the
+source checkout; `ft groom` warns on stderr naming the resolved checkout.
+
 The prompt is durable repo data at `docs/grooming/prompt.md` - never an
 ephemeral temp file; override it with `--prompt-file`. `ft groom` appends the
 kickoff to the prompt. The kickoff names:

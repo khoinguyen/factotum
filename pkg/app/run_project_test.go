@@ -13,6 +13,7 @@ import (
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
 	"github.com/khoinguyen/factotum/pkg/store"
 	"github.com/khoinguyen/factotum/pkg/store/memory"
+	"github.com/khoinguyen/factotum/pkg/workspace"
 )
 
 // projectRunFixture wires a RunService over a task-less project: two repos that
@@ -109,6 +110,36 @@ func TestRunProjectMaterializesAllReposAndDeliversPromptVerbatim(t *testing.T) {
 	}
 	if deleted := f.backend.Deleted(); len(deleted) != 1 {
 		t.Fatalf("backend Delete called %d times, want 1 (cleanup)", len(deleted))
+	}
+}
+
+// TestRunProjectCallsOnResolveWithPlanBeforeHarness pins that the resolve hook
+// receives the materialized plan after resolution and before the backend is
+// prepared, so a caller can advise on in-place checkouts before any work starts.
+func TestRunProjectCallsOnResolveWithPlanBeforeHarness(t *testing.T) {
+	f := newProjectRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+
+	var plan *workspace.Plan
+	calls := 0
+	_, err := f.run(t, ProjectRunInput{
+		Prompt: "p",
+		OnResolve: func(p *workspace.Plan) {
+			calls++
+			if prepared := f.backend.Prepared(); len(prepared) != 0 {
+				t.Errorf("OnResolve ran after Prepare; prepared = %+v", prepared)
+			}
+			plan = p
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunProject() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("OnResolve called %d times, want 1", calls)
+	}
+	if plan == nil || len(plan.Checkouts) != 2 {
+		t.Fatalf("OnResolve plan = %+v, want two checkouts", plan)
 	}
 }
 

@@ -75,6 +75,10 @@ type RunInput struct {
 	// provide a terminal. A backend that cannot attach one reports
 	// isolation.ErrNoTerminal.
 	Interactive bool
+	// OnResolve, when non-nil, is called with the resolved workspace plan after
+	// resolution and before the harness runs, so a caller can advise on how the
+	// repos were materialized while there is still time to abort.
+	OnResolve func(*workspace.Plan)
 }
 
 // RunOutcome records what a run did. It is populated even when the harness fails
@@ -123,6 +127,9 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 	})
 	if err != nil {
 		return nil, err
+	}
+	if in.OnResolve != nil {
+		in.OnResolve(plan)
 	}
 
 	res, err := s.runHarness(ctx, harnessRun{
@@ -209,6 +216,10 @@ type ProjectRunInput struct {
 	// provide a terminal. A backend that cannot attach one reports
 	// isolation.ErrNoTerminal.
 	Interactive bool
+	// OnResolve, when non-nil, is called with the resolved workspace plan after
+	// resolution and before the harness runs, so a caller can advise on how the
+	// repos were materialized while there is still time to abort.
+	OnResolve func(*workspace.Plan)
 }
 
 // ProjectRunOutcome records what a task-less run did. There is no task status:
@@ -255,6 +266,9 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 	})
 	if err != nil {
 		return nil, err
+	}
+	if in.OnResolve != nil {
+		in.OnResolve(plan)
 	}
 
 	res, err := s.runHarness(ctx, harnessRun{

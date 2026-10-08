@@ -18,6 +18,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	"github.com/khoinguyen/factotum/pkg/isolation/local"
 	"github.com/khoinguyen/factotum/pkg/isolation/openshell"
+	"github.com/khoinguyen/factotum/pkg/workspace"
 )
 
 // runOptions are the per-invocation overrides of the [run] config.
@@ -419,32 +420,19 @@ func (d *Deps) interactiveUnsupported(cmd *cobra.Command, interactive bool, back
 	return usageError(cmd, "backend %q cannot attach an interactive terminal; rerun with --unattended for a headless run, or use --sandbox local --allow-host", backendName)
 }
 
-// warnLocalCheckout warns when a run will use a local-path repository in place.
-// workspace.Resolve returns a configured Path as-is instead of materializing it
-// under the workspace root, so a backend that operates on the workdir (the local
-// host, a bind-mounted container) runs in — and can modify — the source
-// checkout. A repo with a URL is cloned into the workspace instead.
-func (d *Deps) warnLocalCheckout(ctx context.Context, task *core.Ticket) {
-	project, err := d.Projects.Get(ctx, task.ProjectID)
-	if err != nil {
-		return
-	}
-	repos, err := project.ReposForTask(*task)
-	if err != nil {
-		return
-	}
-	d.warnLocalRepos(repos)
-}
-
-// warnLocalRepos warns once per repository configured with a local Path, naming
-// the checkout used in place. A URL repo is not warned about: it is cloned into
-// the workspace before the run.
-func (d *Deps) warnLocalRepos(repos []core.Repository) {
-	for _, repo := range repos {
-		if repo.Path == "" {
+// warnLocalPlan warns when a resolved workspace uses a repository's local
+// checkout in place. It reads the resolved plan rather than the configured
+// repos, so it fires exactly when workspace.Resolve produced an OriginLocal
+// checkout and names the absolute path the run operates in — a relative
+// configured Path resolves against the project root, so the raw config would
+// print an unresolved path. A repo with a URL is cloned into the workspace
+// (OriginClone) and not warned about.
+func (d *Deps) warnLocalPlan(plan *workspace.Plan) {
+	for _, checkout := range plan.Checkouts {
+		if checkout.Origin != workspace.OriginLocal {
 			continue
 		}
-		d.warnf("repository %q uses the local checkout %s in place; the run may modify the source checkout (register a URL to run in an isolated workspace copy)", repo.Name, repo.Path)
+		d.warnf("repository %q uses the local checkout %s in place; the run may modify the source checkout (register a URL to run in an isolated workspace copy)", checkout.Name, checkout.Path)
 	}
 }
 
@@ -459,7 +447,6 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 	if err != nil {
 		return err
 	}
-	d.warnLocalCheckout(cmd.Context(), task)
 
 	progress := d.startRunProgress(runProgressLabel("run "+taskID, sel.backendName, sel.harness.Name()), interactive)
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).Run(cmd.Context(), app.RunInput{
@@ -476,6 +463,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		MsgURL:           d.Config.Serve.URL,
 		ServeToken:       d.Config.Serve.Token,
 		Interactive:      interactive,
+		OnResolve:        d.warnLocalPlan,
 	})
 	progress.stop()
 	if errors.Is(runErr, local.ErrNotOptedIn) {
@@ -510,7 +498,6 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 	if err != nil {
 		return err
 	}
-	d.warnLocalRepos(project.Repos)
 
 	progress := d.startRunProgress(runProgressLabel("run project "+string(project.ID), sel.backendName, sel.harness.Name()), interactive)
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).RunProject(cmd.Context(), app.ProjectRunInput{
@@ -524,6 +511,7 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 		Args:             sel.args,
 		Prompt:           prompt,
 		Interactive:      interactive,
+		OnResolve:        d.warnLocalPlan,
 	})
 	progress.stop()
 	if errors.Is(runErr, local.ErrNotOptedIn) {
@@ -559,9 +547,6 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 
 	svc := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs)
 	runner := func(ctx context.Context, taskID core.TicketID) (*app.RunOutcome, error) {
-		if task, err := d.Tasks.Get(ctx, taskID); err == nil {
-			d.warnLocalCheckout(ctx, task)
-		}
 		progress := d.startRunProgress(runProgressLabel("run "+string(taskID), sel.backendName, sel.harness.Name()), false)
 		defer progress.stop()
 		return svc.Run(ctx, app.RunInput{
@@ -576,6 +561,7 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 			Actor:            d.currentActorID(ctx),
 			MsgURL:           d.Config.Serve.URL,
 			ServeToken:       d.Config.Serve.Token,
+			OnResolve:        d.warnLocalPlan,
 		})
 	}
 

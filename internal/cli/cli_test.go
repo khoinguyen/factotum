@@ -404,6 +404,27 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+func TestVersionDoesNotOpenCallerStore(t *testing.T) {
+	r := newRunner(t)
+	// An unregistered backend would fail the store lookup if `version` opened
+	// the caller's store; version must print its version regardless, so it can
+	// never trigger a schema migration.
+	out, _ := r.runSplit("--store", "does-not-exist", "version")
+	if strings.TrimSpace(out) == "" {
+		t.Fatal("version output is empty")
+	}
+}
+
+func TestSkillDoesNotOpenCallerStore(t *testing.T) {
+	r := newRunner(t)
+	// Like version, `skill` serves embedded content and must not open the
+	// caller's store.
+	out, _ := r.runSplit("--store", "does-not-exist", "skill", "list")
+	if strings.TrimSpace(out) == "" {
+		t.Fatal("skill list output is empty")
+	}
+}
+
 func TestCLIFlow(t *testing.T) {
 	r := newRunner(t)
 

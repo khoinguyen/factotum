@@ -68,6 +68,15 @@ CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);
 // backupRetention is how many pre-migration backups to keep per database.
 const backupRetention = 5
 
+// optionMigrate is the store option that grants explicit consent to migrate an
+// existing database whose schema an older build wrote. Without it, Open refuses
+// rather than silently forward-migrating a database it may not own (for example
+// the shared real database opened by a stray branch build).
+const optionMigrate = "migrate"
+
+// migrateConsent is the optionMigrate value that grants consent.
+const migrateConsent = "yes"
+
 // currentSchemaVersion is the schema version this binary writes. It is a var so
 // tests can exercise pending and failing migrations.
 var currentSchemaVersion = 6
@@ -288,9 +297,10 @@ func migrateV5(ctx context.Context, tx *sql.Tx) error {
 }
 
 type Backend struct {
-	db      *sql.DB
-	path    string
-	noticef func(format string, args ...any)
+	db           *sql.DB
+	path         string
+	noticef      func(format string, args ...any)
+	allowMigrate bool
 }
 
 // notice emits a human-readable migration notice, if a sink is configured.
@@ -327,7 +337,12 @@ func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
 	if path == ":memory:" {
 		db.SetMaxOpenConns(1)
 	}
-	backend := &Backend{db: db, path: path, noticef: cfg.Noticef}
+	backend := &Backend{
+		db:           db,
+		path:         path,
+		noticef:      cfg.Noticef,
+		allowMigrate: strings.EqualFold(strings.TrimSpace(cfg.Option(optionMigrate)), migrateConsent),
+	}
 	if err := backend.Migrate(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -352,6 +367,9 @@ func (b *Backend) Migrate(ctx context.Context) error {
 	existing, err := b.hasUserTables(ctx)
 	if err != nil {
 		return err
+	}
+	if existing && !b.allowMigrate {
+		return fmt.Errorf("%w: database schema v%d is older than this binary's v%d; refusing to migrate it automatically. A stray or branch build must not forward-migrate a database it does not own. Re-run with `--store-opt migrate=yes` to consent (the file is backed up first)", core.ErrInvalid, version, currentSchemaVersion)
 	}
 	if existing {
 		backupPath, err := b.backup(version)

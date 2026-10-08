@@ -275,8 +275,10 @@ Every backend passes the shared contract suite in `pkg/store/conformance`.
 | JSON dir | `--store jsondir --store-opt path=...` | Directory of markdown + YAML frontmatter. |
 | SQLite | `--store sqlite --store-opt path=...` | Pure-Go driver; the backend `ft init` registers. |
 
-SQLite versions its schema with `PRAGMA user_version` and migrates on open, backing the file up
-first. A database written by a newer binary is rejected rather than modified. A one-time
+SQLite versions its schema with `PRAGMA user_version`. A database written by a newer binary is
+rejected rather than modified, and a database from an older schema is not migrated automatically:
+`ft` refuses and tells you to consent with `--store-opt migrate=yes`, after which it backs the file
+up before migrating. `ft version` and `ft skill` never open the store at all. A one-time
 `migrate_from` option moves a legacy `jsonfile` store into a `jsondir`.
 
 ## Memory and search

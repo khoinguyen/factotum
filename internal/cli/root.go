@@ -177,6 +177,10 @@ func NewRoot(deps *Deps) *cobra.Command {
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
+		// version never reads the caller's store, so it must not open (and thus
+		// migrate) one: a stray branch build reporting its version must leave a
+		// shared database untouched.
+		Annotations: map[string]string{annotationNoCallerStore: "true"},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			deps.printf("%s\n", version.Version)
 			return nil

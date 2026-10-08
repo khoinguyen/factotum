@@ -178,7 +178,7 @@ ft prompt -p <project> -y break this feature into tasks # create the proposed ta
 proposes, in the `ft task apply` document shape. Nothing is created until `-y`;
 applying is idempotent — a proposed task whose **title** already matches one in the
 project or earlier in the plan is skipped, not duplicated (case-insensitive,
-whitespace-trimmed) and reported (`skipped: true` in text and `-o json|yaml`). The agent CLI comes from the machine-scoped `[agent]` table, `FACTOTUM_AGENT_COMMAND`, or the `--agent-command` flag (which wins for one invocation):
+whitespace-trimmed) and reported (text marks them `skipped: true`; `-o json|yaml` returns a `{created, skipped}` object). The agent CLI comes from the machine-scoped `[agent]` table, `FACTOTUM_AGENT_COMMAND`, or the `--agent-command` flag (which wins for one invocation):
 
 ```toml
 [agent]

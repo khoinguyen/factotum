@@ -138,14 +138,13 @@ func TestPromptApplySkipsExistingAndCreatesNew(t *testing.T) {
 }
 
 // TestPromptApplyStructuredOutputCarriesSkipped pins the machine-readable shape
-// of `ft prompt -y`: one array of task documents, each tagged `created` or
-// `skipped`, so a scripted re-run can tell what was written and what was left
-// alone.
+// of `ft prompt -y`: a `created` group and a `skipped` group of task documents,
+// so a scripted re-run can tell what was written and what was left alone.
 func TestPromptApplyStructuredOutputCarriesSkipped(t *testing.T) {
 	cases := []struct {
 		name   string
 		format string
-		parse  func(t *testing.T, out string) []promptOutcome
+		parse  func(t *testing.T, out string) promptGroups
 	}{
 		{"json", "json", parsePromptJSON},
 		{"yaml", "yaml", parsePromptYAML},
@@ -161,50 +160,68 @@ func TestPromptApplyStructuredOutputCarriesSkipped(t *testing.T) {
 			)
 
 			out := r.run("prompt", "--project", projectID, "--yes", "-o", tc.format, "build", "login")
-			outcomes := tc.parse(t, out)
-			if len(outcomes) != 2 {
-				t.Fatalf("structured output has %d entries, want 2:\n%s", len(outcomes), out)
+			groups := tc.parse(t, out)
+			if len(groups.Created) != 1 || groups.Created[0].Title != "Ship login" {
+				t.Fatalf("created group = %+v, want only Ship login:\n%s", groups.Created, out)
 			}
-			byTitle := map[string]promptOutcome{}
-			for _, o := range outcomes {
-				byTitle[o.Title] = o
+			if len(groups.Skipped) != 1 || groups.Skipped[0].Title != "Add auth" {
+				t.Fatalf("skipped group = %+v, want only Add auth:\n%s", groups.Skipped, out)
 			}
-			if created, ok := byTitle["Ship login"]; !ok || !created.Created || created.Skipped {
-				t.Fatalf("new task should be reported created exactly once: %+v\n%s", byTitle, out)
-			}
-			if skipped, ok := byTitle["Add auth"]; !ok || !skipped.Skipped || skipped.Created {
-				t.Fatalf("existing task should be reported skipped exactly once: %+v\n%s", byTitle, out)
-			}
-			if byTitle["Add auth"].ProjectID != projectID {
-				t.Fatalf("skipped entry should carry the project: %+v", byTitle["Add auth"])
+			if groups.Skipped[0].ProjectID != projectID {
+				t.Fatalf("skipped entry should carry the project: %+v", groups.Skipped[0])
 			}
 		})
 	}
 }
 
+// TestPromptApplyStructuredDocumentsStayPureTaskDocs guards the taskDoc
+// contract: each created/skipped document must strict-parse as a task-apply
+// document, with no outcome field leaking into it, so `jq '.created' | ft task
+// apply -f -` works.
+func TestPromptApplyStructuredDocumentsStayPureTaskDocs(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("task", "create", "--project", projectID, "--title", "Add auth")
+	planAgent(t, r, agent.Task{Title: "Add auth"}, agent.Task{Title: "Ship login"})
+
+	out := r.run("prompt", "--project", projectID, "--yes", "-o", "json", "build", "login")
+	var groups map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &groups); err != nil {
+		t.Fatalf("decode json: %v\n%s", err, out)
+	}
+	for _, key := range []string{"created", "skipped"} {
+		if _, err := parseTaskDocs(groups[key], "json"); err != nil {
+			t.Fatalf("prompt %s documents are not strict task docs: %v\n%s", key, err, out)
+		}
+	}
+}
+
+type promptGroups struct {
+	Created []promptOutcome `json:"created" yaml:"created"`
+	Skipped []promptOutcome `json:"skipped" yaml:"skipped"`
+}
+
 type promptOutcome struct {
 	Title     string `json:"title" yaml:"title"`
 	ProjectID string `json:"project_id" yaml:"project_id"`
-	Created   bool   `json:"created" yaml:"created"`
-	Skipped   bool   `json:"skipped" yaml:"skipped"`
 }
 
-func parsePromptJSON(t *testing.T, out string) []promptOutcome {
+func parsePromptJSON(t *testing.T, out string) promptGroups {
 	t.Helper()
-	var entries []promptOutcome
-	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+	var groups promptGroups
+	if err := json.Unmarshal([]byte(out), &groups); err != nil {
 		t.Fatalf("decode json: %v\n%s", err, out)
 	}
-	return entries
+	return groups
 }
 
-func parsePromptYAML(t *testing.T, out string) []promptOutcome {
+func parsePromptYAML(t *testing.T, out string) promptGroups {
 	t.Helper()
-	var entries []promptOutcome
-	if err := yaml.Unmarshal([]byte(out), &entries); err != nil {
+	var groups promptGroups
+	if err := yaml.Unmarshal([]byte(out), &groups); err != nil {
 		t.Fatalf("decode yaml: %v\n%s", err, out)
 	}
-	return entries
+	return groups
 }
 
 func TestPromptApplyWarnsAboutSkipped(t *testing.T) {

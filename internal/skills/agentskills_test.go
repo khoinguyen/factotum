@@ -58,6 +58,48 @@ func TestChiefSkillNamesBuilderAsHandoffSource(t *testing.T) {
 	}
 }
 
+// TestLoopSkillsMessageOverFtMsg guards the channel migration: the builder,
+// reviewer, and chief message each other over ft msg by role, and keep the cmux
+// wrapper only as a documented rollout fallback. A regression to hand-crafted
+// cmux targets is exactly the failure this task exists to fix.
+func TestLoopSkillsMessageOverFtMsg(t *testing.T) {
+	cases := []struct {
+		skill string
+		texts []string
+	}{
+		{".agents/skills/single-task-builder/SKILL.md", []string{
+			"ft msg send reviewer-", "ft msg send chief", "actor:builder-<task-id>", "cmux-msg.sh",
+		}},
+		{".agents/skills/single-task-reviewer/SKILL.md", []string{
+			"ft msg send builder-", "ft msg send chief", "actor:reviewer-<task-id>", "cmux-msg.sh",
+		}},
+		{".agents/skills/chief/SKILL.md", []string{
+			"ft msg send builder-", "ft msg send reviewer-", "loop-agent.sh", "cmux-msg.sh",
+		}},
+	}
+	for _, tc := range cases {
+		body := agentSkill(t, tc.skill)
+		for _, text := range tc.texts {
+			if !strings.Contains(body, text) {
+				t.Errorf("%s must reference %q (loop agents talk over ft msg, cmux only as fallback)", tc.skill, text)
+			}
+		}
+	}
+}
+
+// TestChiefSkillLaunchesAgentsWithReceiver guards the launch contract: loop
+// agents are started through loop-agent.sh, which stages the receiver and
+// exports the role env, so they load the ft msg receiver instead of an
+// unreachable bare OpenCode session.
+func TestChiefSkillLaunchesAgentsWithReceiver(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/chief/SKILL.md")
+	for _, text := range []string{"loop-agent.sh builder-", "loop-agent.sh reviewer-"} {
+		if !strings.Contains(body, text) {
+			t.Errorf("chief skill must launch loop agents via %q", text)
+		}
+	}
+}
+
 // TestArchitectureReviewerSkillReviewsDocsNotCode guards the architecture
 // reviewer's charter: it reviews a feature's documents (spec, plan, tech design)
 // with a project-wide, zoomed-out view and never drops to line-level code. It

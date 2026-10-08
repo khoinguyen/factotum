@@ -29,11 +29,11 @@ pair, merging an approved PR, and filing follow-ups. Everything substantive goes
 
   ```sh
   cmux new-workspace --name qa-<t> --window <active-window> --group <group> --command \
-    'cd /tmp/qa-<t> && opencode --prompt "load the single-task-qa skill; you are qa-<t>" --auto'
+    '.agents/skills/chief/scripts/loop-agent.sh qa-<t> <project> <t> /tmp/qa-<t> "load the single-task-qa skill; you are qa-<t>"'
   ```
 
-  Give it its own worktree (`git worktree add --detach /tmp/qa-<t> origin/main`) and, via
-  `cmux-msg.sh`, the task to exercise, any testing plan to read, and your chief surface. It drives
+  Give it its own worktree (`git worktree add --detach /tmp/qa-<t> origin/main`) and, over
+  `ft msg`, the task to exercise, any testing plan to read, and your chief role. It drives
   cmux itself for attended/TTY paths and reports a one-screen summary.
 
   **Never pass a long charter as an inline `--prompt`.** A multi-hundred-character `--command` gets
@@ -68,17 +68,19 @@ resolve your own refs once and pass them explicitly.
   `cmux workspace-group add --group <group> --workspace <ws>`. Resolve your group once with
   `cmux workspace-group list --json` (the group whose `member_workspace_refs` include your workspace
   ref).
-- Deliver an agent-to-agent message with the shared wrapper
-  `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>`: it resolves a tab or workspace title
-  (or takes a `surface:N`/`workspace:N` ref) and calls `cmux agent message`, which delivers through
-  the recipient's hooks when it has an agent; otherwise the wrapper pastes once into the recipient's
-  surface and submits (so that fallback does type, unlike the hook path). Set `CMUX_MSG_FROM=<name>`
-  to identify the sender. **Do not use `set-buffer`/`paste-buffer`/`send-key` to message an agent**;
-  keep `paste-buffer` only for input that genuinely needs a terminal (a slash command, a raw
-  keystroke).
-- Waking: `cmux agent message` wakes an idle agent (it reads the message at its next step), so a
-  subagent "reporting to the chief" is it messaging your `chief` surface; you wake on your next turn.
-  You wake them the same way.
+- **Messaging agents is over `ft msg`, not cmux targets.** Send with
+  `ft msg send <role> -b "<text>"` (e.g. `ft msg send builder-<t>`, `ft msg send reviewer-<t>`,
+  `ft msg send chief`); the bare role is sugar for `actor:<role>`. The receiver long-polls and wakes
+  an idle agent, so a subagent "reporting to the chief" is it messaging `actor:chief`. **Launch
+  yourself through `loop-agent.sh chief <project> - <dir> "<kickoff>"`** so you load the receiver and
+  are addressable as `actor:chief`; confirm with `ft msg runs`. **Fallback (rollout):** only when a
+  peer is unreachable over ft msg, use the shared wrapper
+  `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (the peer's tab/workspace title or a
+  `surface:N` ref); it calls `cmux agent message`, or pastes once into the surface when the recipient
+  has no agent hook. **Do not use `set-buffer`/`paste-buffer`/`send-key` to message an agent**; keep
+  `paste-buffer` only for input that genuinely needs a terminal.
+- Waking: the ft msg receiver wakes an idle peer at its next poll, exactly as `cmux agent message`
+  did. You wake them the same way; do not poll after sending.
 
 ## Workspace layout
 
@@ -136,30 +138,33 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
 3. **Lay out each pair's workspace.** Your own workspace is chief + dashboard (see **Workspace
    layout**). Name your pane first so subagents can find you: `cmux rename-tab --surface
    <chief-surface> chief`. Then give the pair its own task-named workspace with the script —
-   builder left, reviewer right, both started **in their own directory**:
+   builder left, reviewer right, both started **in their own directory** and both loaded with the
+   ft msg receiver by `loop-agent.sh` (which stages the receiver, exports the role env, and execs
+   OpenCode in the worktree):
    `.agents/skills/chief/scripts/cmux-layout.sh pair <t> <group-ref> <window-ref> '<builder-cmd>' '<reviewer-cmd>'`
-   - builder: `cd /tmp/ft-<t> && opencode --prompt "load the single-task-builder skill; you are builder-<t>; work in /tmp/ft-<t> on branch ft/<t>-<short-brief>" --auto`
-   - reviewer: `cd /tmp/review-<t> && opencode --prompt "load the single-task-reviewer skill; you are reviewer-<t>" --auto`
+   - builder: `.agents/skills/chief/scripts/loop-agent.sh builder-<t> <project> <t> /tmp/ft-<t> "load the single-task-builder skill; you are builder-<t>; work in /tmp/ft-<t> on branch ft/<t>-<short-brief>"`
+   - reviewer: `.agents/skills/chief/scripts/loop-agent.sh reviewer-<t> <project> <t> /tmp/review-<t> "load the single-task-reviewer skill; you are reviewer-<t>"`
      — in **its own** detached worktree; it checks out the branch under review there once it is pushed
      (see the reviewer skill).
    - The script names the tabs `builder-<t>`/`reviewer-<t>` and places the workspace in the group.
-   - Agent: **opencode**. Its positional arg is a project path, not a prompt, so pass the kickoff via
-     `--prompt`; `--auto` runs it unattended. Start it with `cd <worktree> && opencode …` so the agent
-     works in the right directory.
-4. **Wire them** with `cmux-msg.sh` (tab/workspace titles or explicit refs). Tell each the other's
-   name, the task, and how to reach the chief. Your pane is named `chief`; give them that name and
-   your surface ref.
+   - `loop-agent.sh` stages the receiver where OpenCode loads it and registers the session as the
+     role, so each agent is addressable as `actor:<role>` without a cmux target. It runs OpenCode
+     with `--prompt` (its positional arg is a project path) and `--auto`.
+4. **Wire them** over `ft msg`: `ft msg send builder-<t> -b "<kickoff>"` and
+   `ft msg send reviewer-<t> -b "<kickoff>"` (the bare role is sugar for `actor:<role>`). Tell each
+   the other's role, the task, and that the chief is `actor:chief`.
    - to the builder: the task id, the branch `ft/<t>-<short-brief>`, that `reviewer-<t>` will review
-     the PR, and that the chief is `chief` (find it with `cmux find-window --content chief`, or use the
-     ref you give them).
-   - to the reviewer: the task id, that the **handoff comes from `builder-<t>`** (his `cmux-msg.sh`
+     the PR, and that the chief is `actor:chief`.
+   - to the reviewer: the task id, that the **handoff comes from `builder-<t>`** (his `ft msg`
      message once the PR is pushed), that your kickoff only wires him in, not the handoff — so wait
      for the builder, and do not check the branch or ping him before it — and the same chief note.
+   - **Fallback (rollout):** only if `ft msg` is not delivering, wire them with `cmux-msg.sh
+     <tab-or-ref> "<text>"` instead.
 5. **Wait.** They run the build → hand-off → triage → verdict loop between themselves. Do not read
    their diffs. Wait for the builder (or reviewer) to report back to you. They run unattended and must
-   never block on an interactive prompt; if one stalls on a question, nudge it with `cmux-msg.sh
-   <agent> "proceed without asking: decide and document, or report the blocker to the chief and
-   stop"`, and file a skill-bug task if it repeats.
+   never block on an interactive prompt; if one stalls on a question, nudge it with `ft msg send
+   <role> -b "proceed without asking: decide and document, or report the blocker to the chief and
+   stop"` (cmux-msg.sh as the fallback), and file a skill-bug task if it repeats.
 6. **Briefly check.** Confirm: PR approved, `mise run ci` green, task status. That is the whole
    check — the reviewer did the deep verification. Then `gh pr merge <n> --rebase --delete-branch`,
    sync `main`, and `ft task done <t>`.

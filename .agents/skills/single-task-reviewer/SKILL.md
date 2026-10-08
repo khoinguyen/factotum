@@ -16,11 +16,14 @@ the fixes, and report the verdict to the chief. Khoi, the human owner, may also 
 
 ## Wait for the builder's handoff
 
-Your handoff is the builder's own `cmux-msg.sh` message (`From builder-<task-id>: Please review PR
-#<n> ...`). The chief's kickoff only wires you in; it is not the handoff. Until that builder
-message arrives, idle: do not check out the branch, do not open the PR, and do not ping the builder.
-Checking the branch or pinging him before he has pushed produces a premature "handoff is premature"
-report and burns a round. If the chief pings you again, still wait for the builder.
+Your handoff is the builder's own `ft msg` message (`ft msg send reviewer-<task-id> -b "From
+builder-<task-id>: Please review PR #<n> ..."`).
+
+The chief's kickoff only wires you in; it is not the handoff.
+Until that builder message arrives, idle: do not check out the branch, do not open the PR, and
+do not ping the builder. Checking the branch or pinging him before he has pushed produces a premature
+"handoff is premature" report and burns a round. If the chief pings you again, still wait for the
+builder.
 
 ## Unattended: never wait on a prompt
 
@@ -34,27 +37,24 @@ evidence" below, which you file yourself.
 
 ## Identity and channel
 
-- Your shell does **not** inherit `CMUX_*`. Agent-to-agent messaging goes through the shared wrapper
-  `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (run from your worktree root): it
-  resolves a tab or workspace title, or takes a `surface:N`/`workspace:N` ref, and calls
-  `cmux agent message`. That delivers via the recipient's hooks when it has an agent; otherwise the
-  wrapper pastes once into the recipient's surface and submits (so that fallback does type, unlike the
-  hook path). Set `CMUX_MSG_FROM=reviewer-<task-id>` to identify yourself. **Do not use
-  `set-buffer`/`paste-buffer`/`send-key` to message the builder or chief**; keep `paste-buffer` only
-  for input that genuinely needs a terminal.
-- Structural cmux commands (`rename-tab`, `move-surface`, …) likewise need explicit refs: get your own
-  from `cmux identify --id-format both`, pass `--workspace <ws>` / `--surface <ref>`, and enumerate
-  with `cmux tree --all` (there is no `list-surfaces`).
+- Message peers over **`ft msg`**, not cmux targets. The chief launched this session through
+  `.agents/skills/chief/scripts/loop-agent.sh`, which loaded the ft msg receiver and set
+  `FACTOTUM_PROJECT`/`FACTOTUM_ACTOR=reviewer-<task-id>`/`FACTOTUM_TASK_ID`, so you are addressable as
+  `actor:reviewer-<task-id>` and the receiver injects messages into this session.
+- Message the builder: `ft msg send builder-<task-id> -b "<text>"` (the bare role is sugar for
+  `actor:builder-<task-id>`); the chief: `ft msg send chief -b "<text>"`. `--from` defaults to your
+  role.
 - Prefix every message with `From reviewer-<task-id>, regarding PR #N: ...`. The builder writes
   `From builder-<task-id>: ...`.
-- The chief gives you the task id and the builder's name (`builder-<task-id>`); he is a peer agent in
-  another cmux surface. Find him with `cmux tree --all` or `cmux find-window --content
-  builder-<task-id>`; pass either his title or `surface:N` to `cmux-msg.sh`. Do not message him until
-  his handoff arrives (see **Wait for the builder's handoff**).
-- **After sending, confirm delivery, then stop and wait.** `cmux agent message` wakes an idle agent;
-  do not poll.
-- Reporting to the chief wakes it the same way: `CMUX_MSG_FROM=reviewer-<task-id>
-  .agents/skills/chief/scripts/cmux-msg.sh chief "<report>"`.
+- **After sending, stop and wait.** The receiver long-polls and wakes the peer; do not poll for a
+  reply. Confirm the channel with `ft msg runs` (your run shows `reviewer-<task-id>`).
+- **Fallback (rollout).** If `ft msg runs` shows no run for your actor, or the builder/chief is
+  unreachable over ft msg, fall back to the cmux wrapper (from your worktree root):
+  `CMUX_MSG_FROM=reviewer-<task-id> .agents/skills/chief/scripts/cmux-msg.sh <target> "<text>"`
+  where `<target>` is the peer's tab/workspace title or a `surface:N` ref. Structural cmux commands
+  still need explicit refs (`cmux identify --id-format both`, `cmux tree --all`; there is no
+  `list-surfaces`). Report the fallback to the chief. **Never** use
+  `set-buffer`/`paste-buffer`/`send-key` to message an agent.
 
 ## Verify before you judge
 
@@ -110,10 +110,9 @@ exists to prevent.
 ## Report to the chief and stop
 
 Report to the chief: task id, PR number, the commit you reviewed, approved or not, and residual
-watch items (include the PR comment link). The chief gave you its name (`chief`); message it the same
-way you message the builder — `CMUX_MSG_FROM=reviewer-<task-id>
-.agents/skills/chief/scripts/cmux-msg.sh chief "<report>"` — or find it with
-`cmux find-window --content chief`. Then stop and wait.
+watch items (include the PR comment link). Message the chief with
+`ft msg send chief -b "From reviewer-<task-id>: <report>"` (or the cmux-msg.sh fallback). Then stop
+and wait.
 - **Escalation:** if after three rounds you and the builder cannot align, tell the chief, post your
   verdict and the builder's disagreement on the PR, and leave it open for Khoi.
 

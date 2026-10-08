@@ -209,6 +209,19 @@ exists to prevent.
   builds/reviews to a pair, E2E to a QA. Your value is picking well, wiring correctly, and unblocking.
 - One task in flight per pair; you may run several pairs in parallel if they touch different areas.
 
+## Keep yourself current (self-update)
+
+When a just-merged feature would help your own work, don't keep running a stale binary or session:
+
+- **`mise run install`** — put the latest `ft` on PATH (both `mise run build` and `install` stamp the
+  git SHA; build alone never touches `~/.local/bin/ft`). Use the fresh binary for graph ops and loops.
+- **Reincarnate** when the change is a new *skill* or an agent *plugin/extension* your running
+  opencode/pi session cannot load at runtime: open a new cmux surface, spawn a new `chief` there
+  (`opencode --prompt "load the chief skill; you are chief"`) pointed at the resume memory
+  (`ft memory get art-y7p3u3t3mf`), verify it can receive, then have it kill your session.
+  **Quiesce first** — never reincarnate with a builder/reviewer pair mid-flight (they would keep
+  messaging the dead `chief` surface); either wait, or tell both agents the new chief ref.
+
 ## Escalate to Khoi
 
 - A task with an open product decision.

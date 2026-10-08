@@ -202,6 +202,40 @@ func TestSnapshotAPIReportsState(t *testing.T) {
 	}
 }
 
+// TestSnapshotAPICarriesKanbanGroups proves the snapshot carries the kanban
+// grouping the app renders: in-flight tasks grouped under the idea they were
+// promoted from, so an agent claiming a task moves it into that idea's column.
+func TestSnapshotAPICarriesKanbanGroups(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	idea := f.addIdea(t, project.ID, "Grouped idea", "")
+	promoted := f.promote(t, idea.ID)
+	f.setStatus(t, promoted.ID, core.StatusInProgress)
+	ts := newTestServer(t, f, Options{Project: project.ID})
+
+	var doc struct {
+		InFlightGroups []struct {
+			IdeaID    string `json:"idea_id"`
+			IdeaTitle string `json:"idea_title"`
+			Tasks     []struct {
+				ID string `json:"id"`
+			} `json:"tasks"`
+		} `json:"in_flight_groups"`
+	}
+	getDoc(t, ts.URL+"/api/snapshot", &doc)
+
+	if len(doc.InFlightGroups) != 1 {
+		t.Fatalf("in_flight_groups = %+v, want one group", doc.InFlightGroups)
+	}
+	group := doc.InFlightGroups[0]
+	if group.IdeaID != string(idea.ID) || group.IdeaTitle != idea.Title {
+		t.Fatalf("group = %+v, want idea %s %q", group, idea.ID, idea.Title)
+	}
+	if len(group.Tasks) != 1 || group.Tasks[0].ID != string(promoted.ID) {
+		t.Fatalf("group tasks = %+v, want %s", group.Tasks, promoted.ID)
+	}
+}
+
 // TestSnapshotAPIEmitsEmptyArrays guards the SPA crash where Go nil slices
 // marshaled to JSON null and the app called .length/.map on them. Every list the
 // app iterates must be a JSON array even when empty.
@@ -218,7 +252,7 @@ func TestSnapshotAPIEmitsEmptyArrays(t *testing.T) {
 	if err := json.Unmarshal([]byte(readBody(t, resp)), &doc); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	for _, key := range []string{"next_agent", "next_human", "in_flight", "waiting", "flags"} {
+	for _, key := range []string{"next_agent", "next_human", "in_flight", "waiting", "in_flight_groups", "waiting_groups", "flags"} {
 		if got := string(doc[key]); got != "[]" {
 			t.Fatalf("%s = %s, want []", key, got)
 		}

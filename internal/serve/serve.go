@@ -36,13 +36,14 @@ import (
 	"github.com/khoinguyen/factotum/web"
 )
 
-//go:embed dashboard.html detail.html capture.html dashboard.css
+//go:embed capture.html dashboard.css
 var templateFS embed.FS
 
-var templates = template.Must(template.ParseFS(templateFS, "dashboard.html", "detail.html", "capture.html"))
+var templates = template.Must(template.ParseFS(templateFS, "capture.html"))
 
-// dashboardCSS is injected verbatim into each page's <style>. It is served from
-// the same embedded file so the index and detail pages cannot drift.
+// dashboardCSS styles the capture write page. The read side is the shadcn/ui app
+// (web/), so this stylesheet no longer renders a server-side dashboard; the
+// write side keeps it until its own port (t-3g3qpqlhli).
 var dashboardCSS = func() template.CSS {
 	css, err := templateFS.ReadFile("dashboard.css")
 	if err != nil {
@@ -81,9 +82,10 @@ type Options struct {
 	// Tasks is the app service that stores a captured idea. Nil disables
 	// capture. It is required only for writes, so a read-only server may omit it.
 	Tasks *app.TicketService
-	// Assets is the built shadcn/ui app served under /app. Nil falls back to the
-	// bundle embedded in the binary (web.Dist), which is what production uses;
-	// tests inject a small in-memory tree.
+	// Assets is the built shadcn/ui app: it is served under /app and its index
+	// shell answers the read-side client routes (/, /idea, /task, /memory, /doc).
+	// Nil falls back to the bundle embedded in the binary (web.Dist), which is
+	// what production uses; tests inject a small in-memory tree.
 	Assets fs.FS
 	// Poll is how often the event log is checked for a change. It defaults to
 	// 500ms, comfortably under the one-second freshness target.
@@ -144,9 +146,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	switch {
 	case path == "/":
-		s.getOrHead(s.handleIndex)(w, r)
-	case path == "/fragment":
-		s.getOrHead(s.handleFragment)(w, r)
+		s.getOrHead(s.handleAppIndex)(w, r)
 	case path == "/api/snapshot":
 		s.getOrHead(s.handleSnapshot)(w, r)
 	case path == "/events":
@@ -155,17 +155,31 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.handleApp(w, r)
 	case path == "/capture":
 		s.routeCapture(w, r)
-	case strings.HasPrefix(path, "/idea/"):
+	case strings.HasPrefix(path, "/api/idea/"):
 		s.getOrHead(s.handleIdea)(w, r)
-	case strings.HasPrefix(path, "/task/"):
+	case strings.HasPrefix(path, "/api/task/"):
 		s.getOrHead(s.handleTask)(w, r)
-	case strings.HasPrefix(path, "/memory/"):
+	case strings.HasPrefix(path, "/api/memory/"):
 		s.getOrHead(s.handleMemory)(w, r)
-	case strings.HasPrefix(path, "/doc/"):
+	case strings.HasPrefix(path, "/api/doc/"):
 		s.getOrHead(s.handleDoc)(w, r)
+	case isClientRoute(path):
+		s.getOrHead(s.handleAppIndex)(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// isClientRoute reports whether path is a read-side route the shadcn/ui app
+// owns. The server returns the app shell and the client router resolves the id;
+// the data comes from the matching /api/ endpoint.
+func isClientRoute(path string) bool {
+	for _, prefix := range []string{"/idea/", "/task/", "/memory/", "/doc/"} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // getOrHead rejects any method other than GET or HEAD. It is the read-only
@@ -198,22 +212,17 @@ func methodNotAllowed(w http.ResponseWriter) {
 	http.Error(w, "read-only dashboard: method not allowed", http.StatusMethodNotAllowed)
 }
 
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	page, err := s.page(r.Context())
+// handleAppIndex serves the embedded app shell for a read-side route (the
+// dashboard root and the /idea, /task, /memory, /doc client routes). The client
+// router resolves the path and fetches data from the matching /api endpoint.
+func (s *Server) handleAppIndex(w http.ResponseWriter, r *http.Request) {
+	data, err := fs.ReadFile(s.options.Assets, "index.html")
 	if err != nil {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.render(w, "dashboard.html", page)
-}
-
-func (s *Server) handleFragment(w http.ResponseWriter, r *http.Request) {
-	page, err := s.page(r.Context())
-	if err != nil {
-		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.render(w, "dashboard-body", page)
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(data))
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
@@ -224,22 +233,28 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	}
 }
 
+// writeJSON encodes v as the response body. The dashboard projections are the
+// document, so HTML escaping is off and caching is disabled.
+func (s *Server) writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(v); err != nil {
+		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
 // handleSnapshot serves the dashboard state as JSON for the shadcn/ui app. It is
-// the same projection the server-rendered pages use, so the two views cannot
-// drift; the app refetches it whenever /events reports a change.
+// the single projection the app renders; the app refetches it whenever /events
+// reports a change.
 func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	page, err := s.page(r.Context())
 	if err != nil {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	encoder := json.NewEncoder(w)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(page.snapshot()); err != nil {
-		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
-	}
+	s.writeJSON(w, page.snapshot())
 }
 
 // handleApp serves the embedded shadcn/ui single-page app under /app. A request
@@ -385,19 +400,20 @@ type taskLink struct {
 	URL    string        `json:"url"`
 }
 
-// noteView is one note rendered on a task detail page.
+// noteView is one note on a task detail document.
 type noteView struct {
-	Author    string
-	Body      string
-	CreatedAt string
-	System    bool
-	Links     []linkView
+	Author    string     `json:"author"`
+	Body      string     `json:"body"`
+	CreatedAt string     `json:"created_at"`
+	System    bool       `json:"system,omitempty"`
+	Links     []linkView `json:"links"`
 }
 
+// linkView is an external or internal reference attached to a note or artifact.
 type linkView struct {
-	Kind  string
-	URL   string
-	Title string
+	Kind  string `json:"kind"`
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
 }
 
 // ideaView is one capture (an idea or a bug) rolled up from the tasks promoted
@@ -422,10 +438,10 @@ type ideaView struct {
 // taskGroup is a set of tasks sharing an origin idea. Ungrouped marks the bucket
 // for tasks with no origin idea.
 type taskGroup struct {
-	IdeaID    core.TicketID
-	IdeaTitle string
-	Ungrouped bool
-	Tasks     []taskView
+	IdeaID    core.TicketID `json:"idea_id,omitempty"`
+	IdeaTitle string        `json:"idea_title,omitempty"`
+	Ungrouped bool          `json:"ungrouped,omitempty"`
+	Tasks     []taskView    `json:"tasks"`
 }
 
 // laneView is one ideas-board lane (blocked, active, finished, captured).
@@ -465,19 +481,21 @@ type pageData struct {
 }
 
 // snapshotJSON is the /api/snapshot document the shadcn/ui app consumes. It is
-// the same projection the server-rendered pages use, marshaled for the client.
+// the same projection the dashboard renders, marshaled for the client.
 type snapshotJSON struct {
-	Title     string        `json:"title"`
-	Project   string        `json:"project"`
-	Snapshot  string        `json:"snapshot"`
-	Stats     pageStats     `json:"stats"`
-	NextAgent []taskView    `json:"next_agent"`
-	NextHuman []taskView    `json:"next_human"`
-	InFlight  []taskView    `json:"in_flight"`
-	Waiting   []taskView    `json:"waiting"`
-	Ideas     ideaBoardJSON `json:"ideas"`
-	Updates   []updateView  `json:"updates"`
-	Flags     []string      `json:"flags"`
+	Title          string        `json:"title"`
+	Project        string        `json:"project"`
+	Snapshot       string        `json:"snapshot"`
+	Stats          pageStats     `json:"stats"`
+	NextAgent      []taskView    `json:"next_agent"`
+	NextHuman      []taskView    `json:"next_human"`
+	InFlight       []taskView    `json:"in_flight"`
+	Waiting        []taskView    `json:"waiting"`
+	InFlightGroups []taskGroup   `json:"in_flight_groups"`
+	WaitingGroups  []taskGroup   `json:"waiting_groups"`
+	Ideas          ideaBoardJSON `json:"ideas"`
+	Updates        []updateView  `json:"updates"`
+	Flags          []string      `json:"flags"`
 }
 
 // ideaBoardJSON is the four-lane ideas board as the app renders it.
@@ -493,14 +511,16 @@ type ideaBoardJSON struct {
 // iterates every one of them.
 func (p *pageData) snapshot() snapshotJSON {
 	return snapshotJSON{
-		Title:     p.Title,
-		Project:   p.Project,
-		Snapshot:  p.Snapshot,
-		Stats:     p.Stats,
-		NextAgent: nonNil(p.NextAgent),
-		NextHuman: nonNil(p.NextHuman),
-		InFlight:  nonNil(p.InFlight),
-		Waiting:   nonNil(p.Waiting),
+		Title:          p.Title,
+		Project:        p.Project,
+		Snapshot:       p.Snapshot,
+		Stats:          p.Stats,
+		NextAgent:      nonNil(p.NextAgent),
+		NextHuman:      nonNil(p.NextHuman),
+		InFlight:       nonNil(p.InFlight),
+		Waiting:        nonNil(p.Waiting),
+		InFlightGroups: nonNil(p.InFlightGroups),
+		WaitingGroups:  nonNil(p.WaitingGroups),
 		Ideas: ideaBoardJSON{
 			Blocked:  nonNil(p.BlockedIdeas),
 			Active:   nonNil(p.ActiveIdeas),

@@ -76,6 +76,9 @@ func newTestServer(t *testing.T, f *fixture, opts Options) *httptest.Server {
 	t.Helper()
 	opts.Backend = f.backend
 	opts.Clock = f.clock
+	if opts.Assets == nil {
+		opts.Assets = testAssets()
+	}
 	if opts.Ranker == nil {
 		ranker, err := rank.Default()
 		if err != nil {
@@ -111,7 +114,7 @@ func TestHandlerIsReadOnly(t *testing.T) {
 	f.addTask(t, project.ID, "Fix the widget")
 	ts := newTestServer(t, f, Options{Project: project.ID})
 
-	for _, path := range []string{"/", "/fragment", "/events"} {
+	for _, path := range []string{"/", "/api/snapshot", "/events"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 			req, err := http.NewRequest(method, ts.URL+path, strings.NewReader("{}"))
 			if err != nil {
@@ -147,7 +150,10 @@ func TestUnknownPathIsNotFound(t *testing.T) {
 	}
 }
 
-func TestIndexServesLiveDashboard(t *testing.T) {
+// TestIndexServesSPAApp proves the dashboard root is the shadcn/ui app shell,
+// not the retired server-rendered page: the read side is now the SPA, which
+// fetches state from /api/snapshot and refetches on /events.
+func TestIndexServesSPAApp(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
 	f.addTask(t, project.ID, "Fix the widget")
@@ -164,29 +170,29 @@ func TestIndexServesLiveDashboard(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want text/html", ct)
 	}
 	body := readBody(t, resp)
-	for _, want := range []string{"Fix the widget", `id="dash"`, "EventSource"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("index body missing %q", want)
-		}
+	if !strings.Contains(body, `id="root"`) {
+		t.Fatalf("index body is not the SPA shell:\n%s", body)
 	}
 }
 
-func TestFragmentIsBodyOnly(t *testing.T) {
+// TestReadRoutesServeSPA proves every read-side drill-down route returns the app
+// shell so the client router can resolve it; the id data comes from /api.
+func TestReadRoutesServeSPA(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
-	f.addTask(t, project.ID, "Fix the widget")
 	ts := newTestServer(t, f, Options{Project: project.ID})
 
-	resp, err := http.Get(ts.URL + "/fragment")
-	if err != nil {
-		t.Fatalf("Get() error = %v", err)
-	}
-	body := readBody(t, resp)
-	if !strings.Contains(body, "Fix the widget") {
-		t.Fatalf("fragment body missing task title:\n%s", body)
-	}
-	if strings.Contains(body, "<!doctype") || strings.Contains(body, "<html") {
-		t.Fatalf("fragment should not be a full document:\n%s", body)
+	for _, path := range []string{"/idea/t-1", "/task/t-1", "/memory/art-1", "/doc/art-1"} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", path, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Get(%s) status = %d, want 200", path, resp.StatusCode)
+		}
+		if body := readBody(t, resp); !strings.Contains(body, `id="root"`) {
+			t.Fatalf("Get(%s) is not the SPA shell:\n%s", path, body)
+		}
 	}
 }
 
@@ -377,14 +383,14 @@ func TestAllProjectsMode(t *testing.T) {
 	f.addTask(t, two.ID, "Task in two")
 	ts := newTestServer(t, f, Options{All: true})
 
-	resp, err := http.Get(ts.URL + "/fragment")
+	resp, err := http.Get(ts.URL + "/api/snapshot")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
 	body := readBody(t, resp)
 	for _, want := range []string{"Task in one", "Task in two"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("all-projects fragment missing %q", want)
+			t.Fatalf("all-projects snapshot missing %q:\n%s", want, body)
 		}
 	}
 }
@@ -403,45 +409,6 @@ func TestNoProjectFallsBackToAll(t *testing.T) {
 func TestNewRequiresBackend(t *testing.T) {
 	if _, err := New(Options{}); err == nil {
 		t.Fatal("New() without a backend should fail")
-	}
-}
-
-// TestReasonChipWraps guards the mobile regression where a long, nowrap reason
-// chip (a task with several unresolved deps) overflowed a phone-width viewport
-// and was clipped by overflow-x:hidden. The served page must render the reason
-// into a .chip.reason element, and that rule must allow the chip to wrap and
-// break long dependency lists anywhere.
-//
-// The CSS is a static proxy for the visual fix: Go has no layout engine, so the
-// actual wrapping was verified out of band in headless Chrome. README.md in this
-// package records that check. This test fails if the rendered element loses its
-// reason class or the wrapping declarations are dropped.
-func TestReasonChipWraps(t *testing.T) {
-	f := newFixture(t)
-	project := f.addProject(t, "acme", "Acme")
-	blocker := f.addTask(t, project.ID, "blocker task")
-	target := f.addTask(t, project.ID, "Fix the widget")
-	if _, err := f.tasks.AddDep(context.Background(), target.ID, blocker.ID); err != nil {
-		t.Fatalf("AddDep() error = %v", err)
-	}
-	ts := newTestServer(t, f, Options{Project: project.ID})
-
-	body := getBody(t, ts.URL+"/")
-	if !strings.Contains(body, `<span class="chip reason">`) {
-		t.Fatalf("dashboard does not render a reason chip:\n%s", body)
-	}
-	if !strings.Contains(body, string(blocker.ID)) {
-		t.Fatalf("rendered reason chip is missing blocker %s:\n%s", blocker.ID, body)
-	}
-
-	css := cssRule(body, ".chip.reason")
-	if css == "" {
-		t.Fatal("no .chip.reason rule found in the dashboard stylesheet")
-	}
-	for _, decl := range []string{"white-space:normal", "overflow-wrap:anywhere"} {
-		if !strings.Contains(css, decl) {
-			t.Fatalf(".chip.reason does not %q, so a long reason will overflow on phones:\n%s", decl, css)
-		}
 	}
 }
 
@@ -492,20 +459,6 @@ func getBody(t *testing.T, url string) string {
 		t.Fatalf("Get(%s) status = %d, want 200", url, resp.StatusCode)
 	}
 	return readBody(t, resp)
-}
-
-// cssRule returns the declaration block for selector in css, or "".
-func cssRule(css, selector string) string {
-	idx := strings.Index(css, selector)
-	if idx < 0 {
-		return ""
-	}
-	rest := css[idx:]
-	end := strings.IndexByte(rest, '}')
-	if end < 0 {
-		return rest
-	}
-	return rest[:end]
 }
 
 func eventNames(body io.Reader) <-chan string {

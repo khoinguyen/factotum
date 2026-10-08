@@ -2,7 +2,6 @@ package serve
 
 import (
 	"errors"
-	"html/template"
 	"net/http"
 	"strings"
 	"time"
@@ -12,42 +11,44 @@ import (
 	"github.com/khoinguyen/factotum/pkg/store"
 )
 
-// detailData is the state one drill-down page renders. Exactly one of Idea,
-// Task, or Artifact is set.
-type detailData struct {
-	CSS        template.CSS
-	Project    string
-	Title      string
-	Idea       *ideaView
-	Ticket     *taskDetail
-	Origin     *taskLink
-	Artifact   *artifactDetail
-	AttachedTo *taskLink
-}
-
-// taskDetail is a full task projection for /task/<id>.
+// taskDetail is the full task projection for /api/task/<id>.
 type taskDetail struct {
 	taskLink
-	Kind        string
-	Repo        string
-	Assignee    string
-	Groomed     bool
-	Description string
-	Acceptance  []string
-	Deps        []taskLink
-	Dependents  []taskLink
-	Notes       []noteView
-	Artifacts   []artifactView
-	CreatedAt   string
-	UpdatedAt   string
+	Kind        string         `json:"kind"`
+	Repo        string         `json:"repo,omitempty"`
+	Assignee    string         `json:"assignee,omitempty"`
+	Groomed     bool           `json:"groomed"`
+	Description string         `json:"description,omitempty"`
+	Acceptance  []string       `json:"acceptance"`
+	Deps        []taskLink     `json:"deps"`
+	Dependents  []taskLink     `json:"dependents"`
+	Notes       []noteView     `json:"notes"`
+	Artifacts   []artifactView `json:"artifacts"`
+	CreatedAt   string         `json:"created_at"`
+	UpdatedAt   string         `json:"updated_at"`
 }
 
-// artifactDetail is a full artifact projection for /memory/<id> and /doc/<id>.
+// taskPageJSON is the /api/task/<id> document: the task detail plus the idea it
+// was promoted from, when any.
+type taskPageJSON struct {
+	taskDetail
+	Origin *taskLink `json:"origin,omitempty"`
+}
+
+// artifactDetail is the full artifact projection for /api/memory/<id> and
+// /api/doc/<id>.
 type artifactDetail struct {
 	artifactView
-	Links     []linkView
-	CreatedAt string
-	UpdatedAt string
+	Links     []linkView `json:"links"`
+	CreatedAt string     `json:"created_at"`
+	UpdatedAt string     `json:"updated_at"`
+}
+
+// artifactPageJSON is the /api/memory/<id> or /api/doc/<id> document: the
+// artifact plus the task it is attached to, when any.
+type artifactPageJSON struct {
+	artifactDetail
+	AttachedTo *taskLink `json:"attached_to,omitempty"`
 }
 
 // idFromPath returns the single path segment after prefix, or "" when it is
@@ -60,10 +61,10 @@ func idFromPath(path, prefix string) string {
 	return id
 }
 
-// handleIdea renders the drill-down from an idea to its promoted tasks and
-// artifacts. Only an idea id resolves here.
+// handleIdea serves the drill-down from an idea to its promoted tasks and
+// artifacts as JSON. Only an idea id resolves here.
 func (s *Server) handleIdea(w http.ResponseWriter, r *http.Request) {
-	id := idFromPath(r.URL.Path, "/idea/")
+	id := idFromPath(r.URL.Path, "/api/idea/")
 	if id == "" {
 		http.NotFound(w, r)
 		return
@@ -87,19 +88,13 @@ func (s *Server) handleIdea(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	idea := s.rollupIdea(*task, vs)
-	s.render(w, "idea-page", &detailData{
-		CSS:     dashboardCSS,
-		Project: string(task.ProjectID),
-		Title:   task.Title,
-		Idea:    &idea,
-	})
+	s.writeJSON(w, s.rollupIdea(*task, vs))
 }
 
-// handleTask renders the full detail of one executable task. Ideas use
-// /idea/<id>; a task id under /task is rejected so the two stay distinct.
+// handleTask serves the full detail of one executable task as JSON. Ideas use
+// /api/idea/<id>; a task id under /api/task is rejected so the two stay distinct.
 func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
-	id := idFromPath(r.URL.Path, "/task/")
+	id := idFromPath(r.URL.Path, "/api/task/")
 	if id == "" {
 		http.NotFound(w, r)
 		return
@@ -123,28 +118,22 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	detail := &detailData{
-		CSS:     dashboardCSS,
-		Project: string(task.ProjectID),
-		Title:   task.Title,
-		Ticket:  taskDetailOf(*task, vs),
-	}
+	page := taskPageJSON{taskDetail: *taskDetailOf(*task, vs)}
 	if o, ok := vs.origin[task.ID]; ok {
-		view := vs.views[o]
-		link := taskLinkOf(view)
-		detail.Origin = &link
+		link := taskLinkOf(vs.views[o])
+		page.Origin = &link
 	}
-	s.render(w, "task-page", detail)
+	s.writeJSON(w, page)
 }
 
-// handleMemory renders a memory artifact. Only memory kind resolves.
+// handleMemory serves a memory artifact. Only memory kind resolves.
 func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
-	s.handleArtifact(w, r, "/memory/", core.ArtifactMemory)
+	s.handleArtifact(w, r, "/api/memory/", core.ArtifactMemory)
 }
 
-// handleDoc renders a spec or doc artifact. Only those kinds resolve.
+// handleDoc serves a spec or doc artifact. Only those kinds resolve.
 func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
-	s.handleArtifact(w, r, "/doc/", core.ArtifactSpec, core.ArtifactDoc)
+	s.handleArtifact(w, r, "/api/doc/", core.ArtifactSpec, core.ArtifactDoc)
 }
 
 func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request, prefix string, kinds ...core.ArtifactKind) {
@@ -175,26 +164,21 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request, prefix s
 	}
 
 	// Only memory and doc artifacts have a page; a derived check cache does not.
-	detail := &detailData{
-		CSS:      dashboardCSS,
-		Project:  string(artifact.ProjectID),
-		Title:    artifact.Title,
-		Artifact: artifactDetailOf(artifact),
-	}
+	page := artifactPageJSON{artifactDetail: *artifactDetailOf(artifact)}
 	if artifact.TicketID != nil {
 		if task, err := s.options.Backend.Tickets().Get(r.Context(), *artifact.TicketID); err == nil {
 			link := taskRefLink(task)
-			detail.AttachedTo = &link
+			page.AttachedTo = &link
 		} else if !errors.Is(err, core.ErrNotFound) {
 			http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
-	s.render(w, "artifact-page", detail)
+	s.writeJSON(w, page)
 }
 
 // loadViews loads the project's tasks and artifacts and projects them. Both the
-// idea and task drill-downs read through it so they agree with the index.
+// idea and task drill-downs read through it so they agree with the dashboard.
 func (s *Server) loadViews(r *http.Request, projectID core.ProjectID) (viewSet, error) {
 	snapshot, err := app.LoadSnapshot(r.Context(), s.options.Backend, projectID, s.options.Clock.Now())
 	if err != nil {
@@ -218,8 +202,11 @@ func taskDetailOf(task core.Ticket, vs viewSet) *taskDetail {
 		Assignee:    view.Assignee,
 		Groomed:     task.Groomed,
 		Description: task.Description,
-		Acceptance:  task.AcceptanceCriteria,
-		Artifacts:   vs.artifactsByTask[task.ID],
+		Acceptance:  nonNil(task.AcceptanceCriteria),
+		Artifacts:   nonNil(vs.artifactsByTask[task.ID]),
+		Deps:        []taskLink{},
+		Dependents:  []taskLink{},
+		Notes:       []noteView{},
 		CreatedAt:   task.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:   task.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -249,6 +236,7 @@ func taskRefLink(task *core.Ticket) taskLink {
 func artifactDetailOf(artifact *core.Artifact) *artifactDetail {
 	detail := &artifactDetail{
 		artifactView: artifactViewOf(artifact),
+		Links:        []linkView{},
 		CreatedAt:    artifact.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:    artifact.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -264,6 +252,7 @@ func noteViewOf(note core.Note, vs viewSet) noteView {
 		Body:      note.Body,
 		CreatedAt: note.CreatedAt.UTC().Format(time.RFC3339),
 		System:    note.System,
+		Links:     []linkView{},
 	}
 	for _, link := range note.Links {
 		out.Links = append(out.Links, linkView{Kind: string(link.Kind), URL: link.URL, Title: link.Title})

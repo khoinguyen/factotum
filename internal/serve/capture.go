@@ -120,6 +120,12 @@ func (s *Server) handleCaptureSubmit(w http.ResponseWriter, r *http.Request) {
 		writeCaptureJSON(w, http.StatusInternalServerError, captureErrorJSON{Error: "capture: " + err.Error()})
 		return
 	}
+	// The capture is durable now, so hand it to the factory trigger. A nil
+	// controller or a disabled auto-groom opt-out leaves it inert; the capture
+	// is stored either way and the response is not held up by the trigger.
+	if s.options.AutoGroom && s.options.Controller != nil {
+		s.options.Controller.Submit(r.Context(), capture)
+	}
 	w.Header().Set("Location", taskOrIdeaURL(*capture))
 	writeCaptureJSON(w, http.StatusCreated, captureResult{
 		ID:   capture.ID,

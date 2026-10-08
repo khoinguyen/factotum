@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -12,6 +13,26 @@ import (
 )
 
 const testToken = "s3cret"
+
+// recordingController is a CaptureController that remembers what the write side
+// handed it, so a test can assert the trigger fired (or did not) and with which
+// capture.
+type recordingController struct {
+	mu       sync.Mutex
+	captures []*core.Ticket
+}
+
+func (c *recordingController) Submit(_ context.Context, capture *core.Ticket) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.captures = append(c.captures, capture)
+}
+
+func (c *recordingController) stored() []*core.Ticket {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*core.Ticket(nil), c.captures...)
+}
 
 // postCapture sends a JSON capture write with the token in the Authorization
 // header, the only credential the write side accepts.
@@ -199,6 +220,109 @@ func TestCaptureStoresBug(t *testing.T) {
 	}
 	if task.Kind != core.KindBug {
 		t.Fatalf("captured task kind = %q, want bug", task.Kind)
+	}
+}
+
+// TestCaptureTriggersController proves the factory trigger is wired to the write
+// path: a capture that is durably stored is handed to the controller, exactly
+// once, with the stored item, so a daemon can start the capture's pipeline.
+func TestCaptureTriggersController(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+
+	for _, tc := range []struct {
+		name string
+		body string
+		kind core.TicketKind
+	}{
+		{"idea", `{"text":"Add a dark mode"}`, core.KindIdea},
+		{"bug", `{"kind":"bug","text":"It crashes on save"}`, core.KindBug},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			controller := &recordingController{}
+			ts := newTestServer(t, f, Options{
+				Project: project.ID, Token: testToken, Tasks: f.tasks,
+				AutoGroom: true, Controller: controller,
+			})
+			resp := postCapture(t, ts.URL+"/api/capture", testToken, tc.body)
+			if resp.StatusCode != http.StatusCreated {
+				_ = resp.Body.Close()
+				t.Fatalf("status = %d, want 201", resp.StatusCode)
+			}
+			result := decodeCapture(t, resp)
+			stored, err := f.tasks.Get(context.Background(), result.ID)
+			if err != nil {
+				t.Fatalf("Get(%s) error = %v", result.ID, err)
+			}
+			if stored.Kind != tc.kind {
+				t.Fatalf("stored kind = %q, want %q", stored.Kind, tc.kind)
+			}
+			got := controller.stored()
+			if len(got) != 1 {
+				t.Fatalf("controller received %d captures, want 1", len(got))
+			}
+			if got[0].ID != result.ID {
+				t.Fatalf("controller capture id = %q, want %q", got[0].ID, result.ID)
+			}
+		})
+	}
+}
+
+// TestCaptureTriggerOptOut proves the off switch: with auto-groom disabled the
+// capture still stores, but the controller is never invoked.
+func TestCaptureTriggerOptOut(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	controller := &recordingController{}
+	ts := newTestServer(t, f, Options{
+		Project: project.ID, Token: testToken, Tasks: f.tasks,
+		AutoGroom: false, Controller: controller,
+	})
+
+	resp := postCapture(t, ts.URL+"/api/capture", testToken, `{"text":"Add a dark mode"}`)
+	if resp.StatusCode != http.StatusCreated {
+		_ = resp.Body.Close()
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+	if got := controller.stored(); len(got) != 0 {
+		t.Fatalf("opt-out still triggered %d captures, want 0", len(got))
+	}
+}
+
+// TestCaptureWithoutController proves a plain read+capture server (no
+// controller, the ft serve default) stores a capture without a trigger: the
+// hook is optional and its absence is a valid opt-out.
+func TestCaptureWithoutController(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks, AutoGroom: true})
+
+	resp := postCapture(t, ts.URL+"/api/capture", testToken, `{"text":"Add a dark mode"}`)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+}
+
+// TestCaptureTriggerNotCalledOnRejected proves the trigger only fires for a
+// stored capture: a rejected write (bad token) never reaches the controller.
+func TestCaptureTriggerNotCalledOnRejected(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	controller := &recordingController{}
+	ts := newTestServer(t, f, Options{
+		Project: project.ID, Token: testToken, Tasks: f.tasks,
+		AutoGroom: true, Controller: controller,
+	})
+
+	resp := postCapture(t, ts.URL+"/api/capture", "wrong", `{"text":"sneaky"}`)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+	if got := controller.stored(); len(got) != 0 {
+		t.Fatalf("rejected capture triggered %d, want 0", len(got))
 	}
 }
 

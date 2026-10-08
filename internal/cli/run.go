@@ -419,6 +419,35 @@ func (d *Deps) interactiveUnsupported(cmd *cobra.Command, interactive bool, back
 	return usageError(cmd, "backend %q cannot attach an interactive terminal; rerun with --unattended for a headless run, or use --sandbox local --allow-host", backendName)
 }
 
+// warnLocalCheckout warns when a run will use a local-path repository in place.
+// workspace.Resolve returns a configured Path as-is instead of materializing it
+// under the workspace root, so a backend that operates on the workdir (the local
+// host, a bind-mounted container) runs in — and can modify — the source
+// checkout. A repo with a URL is cloned into the workspace instead.
+func (d *Deps) warnLocalCheckout(ctx context.Context, task *core.Ticket) {
+	project, err := d.Projects.Get(ctx, task.ProjectID)
+	if err != nil {
+		return
+	}
+	repos, err := project.ReposForTask(*task)
+	if err != nil {
+		return
+	}
+	d.warnLocalRepos(repos)
+}
+
+// warnLocalRepos warns once per repository configured with a local Path, naming
+// the checkout used in place. A URL repo is not warned about: it is cloned into
+// the workspace before the run.
+func (d *Deps) warnLocalRepos(repos []core.Repository) {
+	for _, repo := range repos {
+		if repo.Path == "" {
+			continue
+		}
+		d.warnf("repository %q uses the local checkout %s in place; the run may modify the source checkout (register a URL to run in an isolated workspace copy)", repo.Name, repo.Path)
+	}
+}
+
 func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
@@ -430,6 +459,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 	if err != nil {
 		return err
 	}
+	d.warnLocalCheckout(cmd.Context(), task)
 
 	progress := d.startRunProgress(runProgressLabel("run "+taskID, sel.backendName, sel.harness.Name()), interactive)
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).Run(cmd.Context(), app.RunInput{
@@ -480,6 +510,7 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 	if err != nil {
 		return err
 	}
+	d.warnLocalRepos(project.Repos)
 
 	progress := d.startRunProgress(runProgressLabel("run project "+string(project.ID), sel.backendName, sel.harness.Name()), interactive)
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).RunProject(cmd.Context(), app.ProjectRunInput{
@@ -528,6 +559,9 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 
 	svc := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs)
 	runner := func(ctx context.Context, taskID core.TicketID) (*app.RunOutcome, error) {
+		if task, err := d.Tasks.Get(ctx, taskID); err == nil {
+			d.warnLocalCheckout(ctx, task)
+		}
 		progress := d.startRunProgress(runProgressLabel("run "+string(taskID), sel.backendName, sel.harness.Name()), false)
 		defer progress.stop()
 		return svc.Run(ctx, app.RunInput{

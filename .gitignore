@@ -4,6 +4,12 @@
 /bin/
 /dist/
 
+# Built frontend bundle. The shadcn/ui app under web/ is embedded into the Go
+# binary at compile time; rebuild it with `mise run build-web`. Only the
+# placeholder that keeps web/dist embeddable on a fresh clone is tracked.
+/web/dist/*
+!/web/dist/.gitkeep
+
 # Test and coverage artifacts
 *.test
 coverage.out

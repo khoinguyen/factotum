@@ -9,9 +9,9 @@
 # than the machine's real ones. The block is the contract: if it stops working,
 # the onboarding path is broken and this fails.
 #
-# It proves the documented install (a built `ft`), init, create, list, and next
-# commands all work end to end. `ft run` and `ft groom` need a real harness and
-# sandbox and are documented but not exercised here (see the PR body).
+# It proves the documented install (a built `ft`), init, create, list, next, and
+# skill commands all work end to end. `ft run` and `ft groom` need a real harness
+# and sandbox and are documented but not exercised here (see the PR body).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -71,4 +71,20 @@ if ! printf '%s' "$next" | grep -Fq "$id"; then
   exit 1
 fi
 
-echo "smoke-quickstart: ok - the README quickstart (init, create, list, next) ran against a throwaway store"
+# The README documents ft's embedded agent skill; exercise the documented commands.
+skills="$(cd "$work" && ft skill list)"
+for name in ft groom; do
+  if ! printf '%s' "$skills" | grep -Fq "$name"; then
+    echo "smoke-quickstart: 'ft skill list' does not list the $name skill:" >&2
+    printf '%s\n' "$skills" >&2
+    exit 1
+  fi
+done
+for name in ft groom; do
+  if ! (cd "$work" && ft skill get "$name") | grep -Fq "# $name"; then
+    echo "smoke-quickstart: 'ft skill get $name' did not print the $name skill" >&2
+    exit 1
+  fi
+done
+
+echo "smoke-quickstart: ok - the README quickstart (init, create, list, next, skill) ran against a throwaway store"

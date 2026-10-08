@@ -53,7 +53,7 @@
 <div class="page">
   {{template "crumbs" .}}
   <header>
-    <p class="eyebrow">{{.Project}} · idea</p>
+    <p class="eyebrow">{{.Project}} · {{.Idea.Kind}}</p>
     <h1>{{.Idea.Title}}</h1>
   </header>
   <div class="detail">
@@ -103,7 +103,7 @@
   <div class="detail">
     <dl>
       <dt>Status</dt><dd><span class="chip {{.Ticket.Class}}">{{.Ticket.Chip}}</span></dd>
-      {{if .Origin}}<dt>Origin idea</dt><dd><a href="{{.Origin.URL}}">{{.Origin.ID}}</a> {{.Origin.Title}}</dd>{{end}}
+      {{if .Origin}}<dt>Origin capture</dt><dd><a href="{{.Origin.URL}}">{{.Origin.ID}}</a> {{.Origin.Title}}</dd>{{end}}
       {{if .Ticket.Repo}}<dt>Repo</dt><dd>{{.Ticket.Repo}}</dd>{{end}}
       {{if .Ticket.Assignee}}<dt>Assignee</dt><dd>{{.Ticket.Assignee}}</dd>{{end}}
       <dt>Groomed</dt><dd>{{.Ticket.Groomed}}</dd>

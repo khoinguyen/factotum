@@ -14,17 +14,35 @@ import (
 // captureSurface parameterizes the human capture command trees (`ft idea`,
 // `ft bug`). Both share one model - a non-executable Ticket recorded for
 // refinement into a linked task - and differ only in their noun, the verb a
-// human uses to refine them, and the past-tense action they print.
+// human uses to refine them, and the copy they print.
 type captureSurface struct {
 	kind    core.TicketKind
 	noun    string
+	article string
 	refine  string
 	refined string
+	// refineShort is the refinement command's one-line summary, written per
+	// surface so each reads naturally ("promote an idea" / "triage a bug").
+	refineShort string
 }
 
 var (
-	ideaCapture = captureSurface{kind: core.KindIdea, noun: "idea", refine: "promote", refined: "promoted"}
-	bugCapture  = captureSurface{kind: core.KindBug, noun: "bug", refine: "triage", refined: "triaged"}
+	ideaCapture = captureSurface{
+		kind:        core.KindIdea,
+		noun:        "idea",
+		article:     "an",
+		refine:      "promote",
+		refined:     "promoted",
+		refineShort: "Promote an idea to an executable task, keeping the idea as history",
+	}
+	bugCapture = captureSurface{
+		kind:        core.KindBug,
+		noun:        "bug",
+		article:     "a",
+		refine:      "triage",
+		refined:     "triaged",
+		refineShort: "Triage a bug into an executable task, keeping the bug as history",
+	}
 )
 
 // captureFor maps a capture kind to its surface, reporting false for a kind that
@@ -62,7 +80,7 @@ func newCaptureCreateCommand(deps *Deps, s captureSurface) *cobra.Command {
 
 	create := &cobra.Command{
 		Use:   "create",
-		Short: "Capture a " + s.noun + " (non-executable)",
+		Short: "Capture " + s.article + " " + s.noun + " (non-executable)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireFlags(cmd, "title"); err != nil {
 				return err
@@ -163,7 +181,7 @@ func newCaptureSearchCommand(deps *Deps, s captureSurface) *cobra.Command {
 func newCaptureGetCommand(deps *Deps, s captureSurface) *cobra.Command {
 	cmd := newTaskGetCommand(deps)
 	cmd.Use = "get <" + s.noun + ">"
-	cmd.Short = "Get a " + s.noun
+	cmd.Short = "Get " + s.article + " " + s.noun
 	return cmd
 }
 
@@ -174,7 +192,7 @@ func newCaptureGetCommand(deps *Deps, s captureSurface) *cobra.Command {
 func newCaptureRefineCommand(deps *Deps, s captureSurface) *cobra.Command {
 	cmd := newPromoteCommand(deps,
 		fmt.Sprintf("%s <%s>", s.refine, s.noun),
-		fmt.Sprintf("Turn a %s into an executable task, keeping it as history", s.noun),
+		s.refineShort,
 		s.refined)
 	return cmd
 }

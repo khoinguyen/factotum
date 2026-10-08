@@ -77,7 +77,7 @@ func (s *Server) handleIdea(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !task.IsIdea() {
+	if !task.Kind.CapturedByHuman() {
 		http.NotFound(w, r)
 		return
 	}
@@ -113,7 +113,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if task.IsIdea() {
+	if task.Kind.CapturedByHuman() {
 		http.NotFound(w, r)
 		return
 	}

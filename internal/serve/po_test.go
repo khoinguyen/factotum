@@ -24,6 +24,20 @@ func (f *fixture) addIdea(t *testing.T, projectID core.ProjectID, title, body st
 	return task
 }
 
+func (f *fixture) addBug(t *testing.T, projectID core.ProjectID, title, body string) *core.Ticket {
+	t.Helper()
+	task, err := f.tasks.Add(context.Background(), app.TicketInput{
+		ProjectID:   projectID,
+		Kind:        core.KindBug,
+		Title:       title,
+		Description: body,
+	})
+	if err != nil {
+		t.Fatalf("Add(bug %q) error = %v", title, err)
+	}
+	return task
+}
+
 func (f *fixture) promote(t *testing.T, ideaID core.TicketID) *core.Ticket {
 	t.Helper()
 	task, err := f.tasks.Promote(context.Background(), ideaID)
@@ -248,6 +262,76 @@ func TestIdeaDetailPage(t *testing.T) {
 	}
 }
 
+// TestBugIsACaptureOnTheBoard proves the dashboard treats a bug like an idea: it
+// rolls up under the captures board, its detail page renders at /idea/<bug>, and
+// /task/<bug> is rejected so a capture never masquerades as executable work.
+func TestBugIsACaptureOnTheBoard(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	bug := f.addBug(t, project.ID, "It crashes on save", "repro: open, edit, save")
+
+	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(context.Background())
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+	if _, ok := findIdea(page.CapturedIdeas, bug.ID); !ok {
+		t.Fatalf("bug %s not in the captures lane: %v", bug.ID, page.CapturedIdeas)
+	}
+	if page.Stats.Ideas != 1 {
+		t.Fatalf("Stats.Ideas = %d, want the bug counted as a capture", page.Stats.Ideas)
+	}
+
+	ts := newTestServer(t, f, Options{Project: project.ID})
+	body := getBody(t, ts.URL+"/idea/"+string(bug.ID))
+	for _, want := range []string{"It crashes on save", "· bug"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("bug detail missing %q:\n%s", want, body)
+		}
+	}
+	resp, err := http.Get(ts.URL + "/task/" + string(bug.ID))
+	if err != nil {
+		t.Fatalf("GET /task/<bug> error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /task/<bug> status = %d, want 404 (a capture is not a task)", resp.StatusCode)
+	}
+}
+
+// TestBugRollsUpWithPromotedTasks proves a bug is the origin a promoted task
+// groups under, exactly like an idea.
+func TestBugRollsUpWithPromotedTasks(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	bug := f.addBug(t, project.ID, "It crashes on save", "")
+	task := f.promote(t, bug.ID)
+	f.setStatus(t, task.ID, core.StatusInProgress)
+
+	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(context.Background())
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+	capture, ok := findIdea(page.ActiveIdeas, bug.ID)
+	if !ok {
+		t.Fatalf("bug %s not in the active captures lane: %v", bug.ID, page.ActiveIdeas)
+	}
+	if capture.Total != 1 {
+		t.Fatalf("bug rollup total = %d, want the promoted task counted", capture.Total)
+	}
+	group, ok := findGroup(page.InFlightGroups, bug.ID)
+	if !ok || group.IdeaTitle != bug.Title {
+		t.Fatalf("InFlightGroups = %v, want the task grouped under the bug", groupIDs(page.InFlightGroups))
+	}
+}
+
 func TestTaskDetailPage(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
@@ -267,7 +351,7 @@ func TestTaskDetailPage(t *testing.T) {
 		task.Title,
 		string(blocker.ID),
 		"/task/" + string(blocker.ID),
-		"Origin idea",
+		"Origin capture",
 		"/idea/" + string(idea.ID),
 		"Task memory",
 	} {

@@ -67,7 +67,10 @@ type Tally struct {
 type Event struct {
 	ID        EventID
 	ProjectID ProjectID
-	TicketID  *TicketID
+	// The JSON key stays "TaskID": backends persist Event verbatim, so changing
+	// it would silently drop the link in documents written before the
+	// Task->Ticket rename.
+	TicketID  *TicketID `json:"TaskID"`
 	Kind      EventKind
 	By        *ActorID
 	Summary   string

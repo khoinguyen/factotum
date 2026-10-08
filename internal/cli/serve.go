@@ -26,14 +26,15 @@ func newServeCommand(deps *Deps) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Serve the live PO dashboard and token-gated capture",
+		Short: "Serve the live PO dashboard, token-gated capture, and the message transport",
 		Long: "Serve a local dashboard of project and task graph state, with a capture write side.\n" +
 			"The read side reloads itself over Server-Sent Events as tasks change; the read pages\n" +
 			"have no mutating endpoints. The app's /capture page turns a natural-language sentence\n" +
 			"into a stored idea or bug, gated by a shared token (machine config serve.token, or\n" +
 			"FACTOTUM_SERVE_TOKEN). With no token configured, capture is disabled and the read side\n" +
-			"stays open. It binds to localhost by default; pass --bind 0.0.0.0:PORT to reach it from\n" +
-			"another device on the network.",
+			"stays open. The message port is exposed at the same token-gated /api/msg/* so a receiver\n" +
+			"on another host can message through the project backend. It binds to localhost by\n" +
+			"default; pass --bind 0.0.0.0:PORT to reach it from another device on the network.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			project := deps.resolveProject(projectID)
 			serveAll := all || project == ""
@@ -47,13 +48,14 @@ func newServeCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			server, err := serve.New(serve.Options{
-				Backend: deps.Backend,
-				Clock:   deps.Clock,
-				Ranker:  ranker,
-				Project: project,
-				All:     serveAll,
-				Token:   deps.Config.Serve.Token,
-				Tasks:   deps.Tasks,
+				Backend:  deps.Backend,
+				Clock:    deps.Clock,
+				Ranker:   ranker,
+				Project:  project,
+				All:      serveAll,
+				Token:    deps.Config.Serve.Token,
+				Tasks:    deps.Tasks,
+				Messages: deps.Messages,
 			})
 			if err != nil {
 				return err

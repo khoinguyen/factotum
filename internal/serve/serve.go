@@ -65,6 +65,9 @@ type Options struct {
 	// Tasks is the app service that stores a captured idea. Nil disables
 	// capture. It is required only for writes, so a read-only server may omit it.
 	Tasks *app.TicketService
+	// Messages is the app service behind the /api/msg/* transport. Nil disables
+	// the transport, so a read-only server or an all-projects one omits it.
+	Messages *app.MessageService
 	// Assets is the built shadcn/ui app: it is served under /app and its index
 	// shell answers the read-side client routes (/, /idea, /task, /memory, /doc).
 	// Nil falls back to the bundle embedded in the binary (web.Dist), which is
@@ -140,6 +143,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.getOrHead(s.handleAppIndex)(w, r)
 	case path == "/api/capture":
 		s.routeCapture(w, r)
+	case path == "/api/msg" || strings.HasPrefix(path, "/api/msg/"):
+		s.routeMessage(w, r)
 	case strings.HasPrefix(path, "/api/idea/"):
 		s.getOrHead(s.handleIdea)(w, r)
 	case strings.HasPrefix(path, "/api/task/"):

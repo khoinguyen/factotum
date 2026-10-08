@@ -82,6 +82,19 @@ func TestAppFallsBackToIndexForClientRoutes(t *testing.T) {
 		t.Fatalf("client route body is not the SPA index:\n%s", body)
 	}
 
+	// A client route whose last segment contains a dot is still a route, not a
+	// missing asset: only paths under assets/ are hard 404s.
+	resp, err = http.Get(ts.URL + "/app/foo.bar")
+	if err != nil {
+		t.Fatalf("Get(dotted route) error = %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Get(dotted route) status = %d, want 200", resp.StatusCode)
+	}
+	if body := readBody(t, resp); !strings.Contains(body, `id="root"`) {
+		t.Fatalf("dotted route body is not the SPA index:\n%s", body)
+	}
+
 	resp, err = http.Get(ts.URL + "/app/assets/missing.js")
 	if err != nil {
 		t.Fatalf("Get(missing asset) error = %v", err)
@@ -186,6 +199,43 @@ func TestSnapshotAPIReportsState(t *testing.T) {
 	}
 	if len(doc.Updates) == 0 {
 		t.Fatal("updates empty after a mutation; the snapshot does not reflect the event log")
+	}
+}
+
+// TestSnapshotAPIEmitsEmptyArrays guards the SPA crash where Go nil slices
+// marshaled to JSON null and the app called .length/.map on them. Every list the
+// app iterates must be a JSON array even when empty.
+func TestSnapshotAPIEmitsEmptyArrays(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ts := newTestServer(t, f, Options{Project: project.ID})
+
+	resp, err := http.Get(ts.URL + "/api/snapshot")
+	if err != nil {
+		t.Fatalf("Get(/api/snapshot) error = %v", err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(readBody(t, resp)), &doc); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	for _, key := range []string{"next_agent", "next_human", "in_flight", "waiting", "flags"} {
+		if got := string(doc[key]); got != "[]" {
+			t.Fatalf("%s = %s, want []", key, got)
+		}
+	}
+	// Creating the project appends an event, so updates is non-empty here; it
+	// only needs to be an array, never null.
+	if got := string(doc["updates"]); got == "null" {
+		t.Fatalf("updates = null, want an array")
+	}
+	var ideas map[string]json.RawMessage
+	if err := json.Unmarshal(doc["ideas"], &ideas); err != nil {
+		t.Fatalf("Unmarshal(ideas) error = %v", err)
+	}
+	for _, key := range []string{"blocked", "active", "finished", "captured"} {
+		if got := string(ideas[key]); got != "[]" {
+			t.Fatalf("ideas.%s = %s, want []", key, got)
+		}
 	}
 }
 

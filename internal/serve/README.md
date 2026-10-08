@@ -21,10 +21,12 @@ under `/app`, served from `web/dist`, which `web/web.go` embeds with `go:embed`.
 `/events` SSE stream, so both views stay live and cannot drift.
 
 Go tests inject a small in-memory asset tree (`Options.Assets`) so they do not
-depend on a frontend build. `mise run smoke-web` is the end-to-end check against
-the real binary: it starts `ft serve` on a throwaway store, fetches the SPA shell
-and its hashed asset from `/app`, mutates the graph through a second `ft`
-process, and asserts a live SSE `update` plus the new task in `/api/snapshot`.
+depend on a frontend build. The app's own render path is covered in `web/` by
+`mise run web-test` (vitest + jsdom mounts `<App>` against an empty project and a
+null-list snapshot). `mise run smoke-web` is the end-to-end check against the
+real binary: it starts `ft serve` on a throwaway store, fetches the SPA shell and
+its hashed asset from `/app`, mutates the graph through a second `ft` process,
+and asserts a live SSE `update` plus the new task in `/api/snapshot`.
 
 ## Capture auth
 

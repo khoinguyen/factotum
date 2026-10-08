@@ -24,7 +24,6 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
-	"path"
 	"sort"
 	"strings"
 	"time"
@@ -246,8 +245,8 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 // handleApp serves the embedded shadcn/ui single-page app under /app. A request
 // for a real file (index.html, a hashed asset) is served from the bundle; any
 // other path is a client-side route, so it falls back to index.html. A missing
-// asset is still a 404 so a broken build fails loudly instead of rendering the
-// app shell over a blank script.
+// path under assets/ is still a 404 so a broken build fails loudly instead of
+// rendering the app shell over a blank script.
 func (s *Server) handleApp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		methodNotAllowed(w)
@@ -262,7 +261,7 @@ func (s *Server) handleApp(w http.ResponseWriter, r *http.Request) {
 		cache = "no-store"
 	}
 	if _, err := fs.Stat(s.options.Assets, rel); err != nil {
-		if path.Ext(rel) != "" {
+		if strings.HasPrefix(rel, "assets/") {
 			http.NotFound(w, r)
 			return
 		}
@@ -488,26 +487,37 @@ type ideaBoardJSON struct {
 	Captured []ideaView `json:"captured"`
 }
 
-// snapshot flattens pageData into the JSON document the SPA fetches.
+// snapshot flattens pageData into the JSON document the SPA fetches. Lists are
+// coerced to empty slices because Go marshals a nil slice as null, and the app
+// iterates every one of them.
 func (p *pageData) snapshot() snapshotJSON {
 	return snapshotJSON{
 		Title:     p.Title,
 		Project:   p.Project,
 		Snapshot:  p.Snapshot,
 		Stats:     p.Stats,
-		NextAgent: p.NextAgent,
-		NextHuman: p.NextHuman,
-		InFlight:  p.InFlight,
-		Waiting:   p.Waiting,
+		NextAgent: nonNil(p.NextAgent),
+		NextHuman: nonNil(p.NextHuman),
+		InFlight:  nonNil(p.InFlight),
+		Waiting:   nonNil(p.Waiting),
 		Ideas: ideaBoardJSON{
-			Blocked:  p.BlockedIdeas,
-			Active:   p.ActiveIdeas,
-			Finished: p.FinishedIdeas,
-			Captured: p.CapturedIdeas,
+			Blocked:  nonNil(p.BlockedIdeas),
+			Active:   nonNil(p.ActiveIdeas),
+			Finished: nonNil(p.FinishedIdeas),
+			Captured: nonNil(p.CapturedIdeas),
 		},
-		Updates: p.Updates,
-		Flags:   p.Flags,
+		Updates: nonNil(p.Updates),
+		Flags:   nonNil(p.Flags),
 	}
+}
+
+// nonNil returns an empty slice for a nil one, so JSON encodes [] rather than
+// null.
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 // Lane returns the ideas-board lane for key. It keeps the template free of

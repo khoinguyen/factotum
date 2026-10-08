@@ -122,6 +122,11 @@ run = "pnpm --dir web build"
 description = "Run the Vite dev server for the frontend (proxies /api and /events to ft serve)"
 run = "pnpm --dir web dev"
 
+[tasks.web-test]
+description = "Run the frontend render tests (vitest + jsdom)"
+depends = ["web-install"]
+run = "pnpm --dir web test"
+
 [tasks.build]
 description = "Build the ft CLI to ./bin/ft (never the installed binary)"
 depends = ["build-web"]
@@ -155,4 +160,4 @@ echo "installed .git/hooks/pre-commit"
 
 [tasks.ci]
 description = "Full check: format, lint, test, coverage, build"
-depends = ["fmt-check", "lint", "test", "cover", "build", "smoke-web"]
+depends = ["fmt-check", "lint", "test", "cover", "web-test", "build", "smoke-web"]

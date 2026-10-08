@@ -60,5 +60,26 @@ export async function fetchSnapshot(): Promise<Snapshot> {
   if (!res.ok) {
     throw new Error(`snapshot request failed: ${res.status}`)
   }
-  return (await res.json()) as Snapshot
+  return normalizeSnapshot((await res.json()) as Snapshot)
+}
+
+// normalizeSnapshot coerces every list to an array. The server now sends [] for
+// empty lanes, but JSON from a network boundary is untrusted and a null here
+// used to blank the whole page via .length/.map.
+export function normalizeSnapshot(s: Snapshot): Snapshot {
+  return {
+    ...s,
+    next_agent: s.next_agent ?? [],
+    next_human: s.next_human ?? [],
+    in_flight: s.in_flight ?? [],
+    waiting: s.waiting ?? [],
+    updates: s.updates ?? [],
+    flags: s.flags ?? [],
+    ideas: {
+      blocked: s.ideas?.blocked ?? [],
+      active: s.ideas?.active ?? [],
+      finished: s.ideas?.finished ?? [],
+      captured: s.ideas?.captured ?? [],
+    },
+  }
 }

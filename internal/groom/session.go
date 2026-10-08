@@ -34,6 +34,14 @@ type SessionRecord struct {
 	Plan       string   `json:"plan" yaml:"plan"`
 	TechDesign string   `json:"tech_design" yaml:"tech_design"`
 	Produced   []string `json:"produced" yaml:"produced"`
+	// Review is the artifact id of the feature's architecture review, and
+	// ReviewVerdict its tech-design verdict. Both are empty until the review is
+	// recorded with `ft groom review`.
+	Review        string `json:"review" yaml:"review"`
+	ReviewVerdict string `json:"review_verdict" yaml:"review_verdict"`
+	// Blocked names the produced tasks a needs-rework verdict blocked from
+	// build, so a later approving review unblocks exactly those.
+	Blocked []string `json:"blocked" yaml:"blocked"`
 }
 
 // SessionManifestPath returns the path of a session's manifest.
@@ -55,6 +63,9 @@ func WriteSession(dataDir string, rec SessionRecord) error {
 	}
 	if rec.Produced == nil {
 		rec.Produced = []string{}
+	}
+	if rec.Blocked == nil {
+		rec.Blocked = []string{}
 	}
 	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {

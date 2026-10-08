@@ -64,7 +64,7 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.run.args, "arg", nil, "extra argument passed to the harness (repeatable)")
 	cmd.Flags().BoolVar(&opts.run.allowHost, "allow-host", false, "opt in to the unsandboxed local backend (dev-only)")
 	cmd.Flags().BoolVar(&opts.run.refresh, "refresh", false, "fetch and reset a reused workspace checkout before running")
-	cmd.AddCommand(newGroomListCommand(deps), newGroomShowCommand(deps))
+	cmd.AddCommand(newGroomListCommand(deps), newGroomShowCommand(deps), newGroomReviewCommand(deps))
 	return cmd
 }
 
@@ -126,7 +126,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	}
 
 	prompt := strings.TrimRight(string(promptBytes), "\n") + "\n\n" +
-		groom.Kickoff(string(projectID), groomScopeItems(items), groom.StagedPaths(sessionID), opts.unattended)
+		groom.Kickoff(string(projectID), groomScopeItems(items), groom.StagedPaths(sessionID), sessionID, opts.unattended)
 
 	sel, err := d.prepareRun(cmd, opts.run)
 	if err != nil {
@@ -610,6 +610,7 @@ func joinTaskIDs(ids []core.TicketID) string {
 func groomHints(projectID core.ProjectID, sessionID string, reportID core.ArtifactID) []hint {
 	return []hint{
 		{Command: fmt.Sprintf("ft groom show %s", sessionID), About: "read the session report, deferred questions, and feature docs"},
+		{Command: fmt.Sprintf("ft groom review %s --verdict <verdict> -f <review>", sessionID), About: "record the architecture reviewer's verdict and gate the build"},
 		{Command: fmt.Sprintf("ft doc get %s", reportID), About: "read the grooming report artifact"},
 		{Command: fmt.Sprintf("ft doc list -p %s", projectID), About: "see the session artifacts"},
 	}

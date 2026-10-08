@@ -102,6 +102,10 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			reviewBody, err := deps.optionalSessionOutputBody(cmd.Context(), session.Review, groom.ReviewPath(dataDir, session.ID))
+			if err != nil {
+				return err
+			}
 			produced, err := deps.producedTaskDocs(cmd.Context(), session.Produced)
 			if err != nil {
 				return err
@@ -117,11 +121,14 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 				Spec:           session.Spec,
 				Plan:           session.Plan,
 				TechDesign:     session.TechDesign,
+				Review:         session.Review,
+				ReviewVerdict:  session.ReviewVerdict,
 				ReportBody:     reportBody,
 				DeferredBody:   deferredBody,
 				SpecBody:       specBody,
 				PlanBody:       planBody,
 				TechDesignBody: techDesignBody,
+				ReviewBody:     reviewBody,
 				Produced:       produced,
 			}
 			return deps.emit(doc, func() {
@@ -136,12 +143,17 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 					f("spec", doc.Spec),
 					f("plan", doc.Plan),
 					f("tech_design", doc.TechDesign),
+					f("review", doc.Review),
+					f("review_verdict", doc.ReviewVerdict),
 				)
 				deps.printf("\n=== Report ===\n%s\n", strings.TrimRight(doc.ReportBody, "\n"))
 				deps.printf("\n=== Deferred questions ===\n%s\n", strings.TrimRight(doc.DeferredBody, "\n"))
 				deps.printf("\n=== Feature spec ===\n%s\n", strings.TrimRight(doc.SpecBody, "\n"))
 				deps.printf("\n=== Feature plan ===\n%s\n", strings.TrimRight(doc.PlanBody, "\n"))
 				deps.printf("\n=== Feature tech design ===\n%s\n", strings.TrimRight(doc.TechDesignBody, "\n"))
+				if strings.TrimSpace(doc.ReviewBody) != "" {
+					deps.printf("\n=== Architecture review ===\n%s\n", strings.TrimRight(doc.ReviewBody, "\n"))
+				}
 				deps.printf("\n=== Produced tasks ===\n")
 				if len(doc.Produced) == 0 {
 					deps.printf("(none)\n")
@@ -208,11 +220,14 @@ type groomSessionDoc struct {
 	Spec           string         `json:"spec" yaml:"spec"`
 	Plan           string         `json:"plan" yaml:"plan"`
 	TechDesign     string         `json:"tech_design" yaml:"tech_design"`
+	Review         string         `json:"review" yaml:"review"`
+	ReviewVerdict  string         `json:"review_verdict" yaml:"review_verdict"`
 	ReportBody     string         `json:"report_body" yaml:"report_body"`
 	DeferredBody   string         `json:"deferred_body" yaml:"deferred_body"`
 	SpecBody       string         `json:"spec_body" yaml:"spec_body"`
 	PlanBody       string         `json:"plan_body" yaml:"plan_body"`
 	TechDesignBody string         `json:"tech_design_body" yaml:"tech_design_body"`
+	ReviewBody     string         `json:"review_body" yaml:"review_body"`
 	Produced       []groomTaskDoc `json:"produced" yaml:"produced"`
 }
 

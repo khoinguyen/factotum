@@ -210,14 +210,18 @@ live CLI, so a skill never names a command or flag that no longer exists (`ft sk
 
 `ft groom` runs a task-less session over the project's open ideas and ungroomed tasks, using the
 durable prompt at `docs/grooming/prompt.md`, and records its report, deferred questions, and feature
-spec, plan, and tech design as doc artifacts. It resolves sandbox and harness exactly like `ft run`.
+spec, plan, and tech design as doc artifacts. The feature docs then get an independent architecture
+review: the reviewer's findings land on the origin idea and its verdict is recorded with
+`ft groom review`, where a `needs-rework` verdict blocks the session's produced tasks from build
+until a later review approves. It resolves sandbox and harness exactly like `ft run`.
 
 ```sh
 ft groom                 # every open idea + ungroomed task
 ft groom <idea|task>...  # a specific scope
 ft groom --unattended    # no product owner: defer product questions, still finish agent-ready
 ft groom list            # past sessions
-ft groom show <session>  # a session's report, deferred questions, feature docs, and produced tasks
+ft groom show <session>  # a session's report, deferred questions, feature docs, review, and produced tasks
+ft groom review <session> --verdict needs-rework -f review.md   # record the architecture verdict
 ```
 
 ## Serve the dashboard
@@ -248,7 +252,7 @@ build-web` rebuilds it into `web/dist`.
 | Task | `task create`, `task list`, `task get`, `task update`, `task set field=value...`, `task search`, `task context`, `task apply`, `task edit`, `task delete` |
 | Lifecycle | `task start\|review\|done\|reopen\|block\|cancel`, `task claim`, `task assign`, `task snooze\|unsnooze`, `task wait` |
 | Graph | `task dep create\|delete`, `task next`, `graph render --format summary\|agent\|json\|tree\|html\|dot\|mermaid` |
-| Grooming | `task check`, `task decide`, `task promote`, `groom [item...]`, `groom list\|show` |
+| Grooming | `task check`, `task decide`, `task promote`, `groom [item...]`, `groom list\|show\|review` |
 | Prompt | `prompt [-y] <words>` (break a free-form prompt into tasks via the configured agent CLI) |
 | Notes | `task note create [--system]` |
 | Capture | `idea create\|list\|get\|search\|promote`, `bug create\|list\|get\|search\|triage` |

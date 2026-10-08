@@ -1,7 +1,8 @@
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, expect, test, vi } from "vitest"
 
 import App from "@/App"
+import { AppLink } from "@/components/app-link"
 import type {
   ArtifactDetail,
   IdeaView,
@@ -202,8 +203,38 @@ function renderAt(path: string) {
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   window.history.pushState({}, "", "/")
+})
+
+// AppLink must only client-route the paths the SPA router owns. Anything else
+// (/capture, /app/*) has to keep the browser's default navigation, or the router
+// renders its not-found page over a server-rendered page.
+test("AppLink leaves a route the client router does not own to the browser", () => {
+  const push = vi.spyOn(window.history, "pushState")
+  render(<AppLink href="/capture">Capture an idea →</AppLink>)
+  fireEvent.click(screen.getByText("Capture an idea →"))
+  expect(push).not.toHaveBeenCalled()
+})
+
+test("AppLink client-routes a route the client router owns", () => {
+  const push = vi.spyOn(window.history, "pushState")
+  render(<AppLink href="/idea/t-1">Idea</AppLink>)
+  fireEvent.click(screen.getByText("Idea"))
+  expect(push).toHaveBeenCalledWith(null, "", "/idea/t-1")
+})
+
+// Regression: the dashboard's only in-UI capture entry is an AppLink to
+// /capture, which the SPA router does not own. Intercepting it landed on the
+// not-found page and made capture unreachable by click.
+test("the dashboard capture link does not trigger the SPA not-found page", async () => {
+  stubFetch({ "/api/snapshot": emptySnapshot })
+  renderAt("/")
+  const link = await screen.findByText("Capture an idea →")
+  fireEvent.click(link)
+  expect(screen.queryByText(/Not found/)).toBeNull()
+  expect(window.location.pathname).toBe("/")
 })
 
 test("renders an empty project without crashing", async () => {

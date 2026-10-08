@@ -15,6 +15,9 @@
 //   - Stop cancels the run's live commands; Delete tears the sandbox and every
 //     provider it created down, retrying the asynchronous provider cleanup so
 //     no credential material leaks into gateway state.
+//   - A custom Spec.Image.Entrypoint is rejected with ErrUnsupported: the
+//     sandbox runs the backend's own keep-alive init and the workload is
+//     started with `sandbox exec`.
 //
 // No OpenShell type escapes this package: the port (pkg/isolation) speaks only
 // generic specs, commands, and policies.
@@ -223,6 +226,9 @@ func (h *handle) ID() string { return h.id }
 // Prepare creates a detached sandbox, applies the hardened policy, and places
 // the spec's workspace and files inside it.
 func (b *Backend) Prepare(ctx context.Context, spec isolation.Spec) (isolation.Handle, error) {
+	if len(spec.Image.Entrypoint) > 0 {
+		return nil, fmt.Errorf("%w: cannot override the image entrypoint with openshell; the sandbox runs its own keep-alive init and the workload is started with sandbox exec", isolation.ErrUnsupported)
+	}
 	policyPath, cleanup, err := b.writePolicy(spec.Policy, spec.Image.User)
 	if err != nil {
 		return nil, err

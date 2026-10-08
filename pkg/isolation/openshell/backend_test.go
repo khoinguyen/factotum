@@ -286,6 +286,24 @@ func TestPrepareUsesDefaultImage(t *testing.T) {
 	}
 }
 
+// TestPrepareRejectsImageEntrypoint pins the honest boundary: the sandbox runs
+// its own keep-alive init and starts the workload with `sandbox exec`, so it
+// cannot honor a custom image entrypoint. It refuses loudly instead of silently
+// dropping it, before creating any sandbox.
+func TestPrepareRejectsImageEntrypoint(t *testing.T) {
+	r := &fakeRunner{}
+	be := openshell.New(openshell.Options{Runner: r, NewName: func() string { return "fttest" }})
+	_, err := be.Prepare(context.Background(), isolation.Spec{
+		Image: isolation.Image{Ref: "img", Entrypoint: []string{"opencode"}},
+	})
+	if !errors.Is(err, isolation.ErrUnsupported) {
+		t.Fatalf("Prepare(entrypoint) error = %v, want ErrUnsupported", err)
+	}
+	if r.count("sandbox", "create") != 0 {
+		t.Error("Prepare(entrypoint) created a sandbox before rejecting the entrypoint")
+	}
+}
+
 // TestPrepareAllowsExplicitHosts pins that per-run allow hosts widen egress in
 // the rendered policy.
 func TestPrepareAllowsExplicitHosts(t *testing.T) {

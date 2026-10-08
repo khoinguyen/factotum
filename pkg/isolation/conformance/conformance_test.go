@@ -40,6 +40,9 @@ func (b *capBackend) Prepare(_ context.Context, spec isolation.Spec) (isolation.
 	if !b.policy && !reflect.DeepEqual(spec.Policy, isolation.Policy{}) {
 		return nil, isolation.ErrUnsupported
 	}
+	if len(spec.Image.Entrypoint) > 0 {
+		return nil, isolation.ErrUnsupported
+	}
 	return capHandle{}, nil
 }
 

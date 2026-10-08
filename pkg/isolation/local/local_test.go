@@ -116,6 +116,20 @@ func TestPrepareRejectsUnsupportedPolicy(t *testing.T) {
 	}
 }
 
+// TestPrepareRejectsImageEntrypoint pins the honest boundary: the host backend
+// executes the harness command directly, so it cannot honor a custom image
+// entrypoint. It refuses loudly instead of silently dropping it.
+func TestPrepareRejectsImageEntrypoint(t *testing.T) {
+	b, _ := newBackend(t, local.Options{})
+	_, err := b.Prepare(context.Background(), isolation.Spec{
+		Workdir: t.TempDir(),
+		Image:   isolation.Image{Ref: "img", Entrypoint: []string{"opencode"}},
+	})
+	if !errors.Is(err, isolation.ErrUnsupported) {
+		t.Fatalf("Prepare(entrypoint) error = %v, want ErrUnsupported", err)
+	}
+}
+
 func TestExecContract(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -50,8 +50,9 @@ type Image struct {
 	// Ref is the image reference, e.g. ghcr.io/anomalyco/opencode:latest.
 	Ref string
 	// Entrypoint overrides the image entrypoint where the backend supports it.
-	// A backend that cannot honor it may reject a non-empty value as
-	// unsupported; backends are not required to.
+	// A backend that cannot honor it must reject a non-empty value with
+	// ErrUnsupported rather than silently dropping it; the shared conformance
+	// suite pins that.
 	Entrypoint []string
 	// User is the non-root identity the workload runs as, where supported. An
 	// empty value leaves the image default, which for many agent images is root.

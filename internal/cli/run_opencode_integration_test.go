@@ -34,7 +34,7 @@ func TestRealRunSmoke(t *testing.T) {
 	}
 
 	r := newRunner(t)
-	r.getenv = os.Getenv
+	r.getenv = hermeticGetenv
 
 	// A local checkout the launcher resolves in place (no clone, no network),
 	// and one task with an unambiguous instruction.

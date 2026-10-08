@@ -67,6 +67,18 @@ func newRunner(t *testing.T) *runner {
 	}
 }
 
+// hermeticGetenv is the getenv the run/groom integration helpers use: it reads
+// the real environment for PATH and provider keys but drops the FACTOTUM_*
+// namespace, so an ambient project, actor, or store exported by the caller's
+// shell (a builder or reviewer session) cannot leak into a test's throwaway
+// project and store.
+func hermeticGetenv(key string) string {
+	if strings.HasPrefix(key, "FACTOTUM_") {
+		return ""
+	}
+	return os.Getenv(key)
+}
+
 // setup injects the runner's fakes and returns the base args every run shares.
 // When embedModel is set it writes an [embed] table to the user config, so the
 // retriever is enabled with that model without a real provider.

@@ -14,6 +14,15 @@
 # and sandbox and are documented but not exercised here (see the PR body).
 set -euo pipefail
 
+# Hermetic against the caller's shell: a builder or reviewer session exports
+# FACTOTUM_* (PROJECT, TASK_ID, ACTOR, STORE, USER_CONFIG, ...), and any of them
+# overrides the throwaway project, store, and HOME this smoke sets up - the
+# quickstart then resolves the real project instead of the temp one. Clear the
+# whole namespace before the built ft runs.
+for name in $(compgen -v FACTOTUM_ || true); do
+  unset "$name"
+done
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 

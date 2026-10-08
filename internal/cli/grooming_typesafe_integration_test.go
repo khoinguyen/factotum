@@ -86,7 +86,7 @@ func realGroomingRunner(t *testing.T) *runner {
 		t.Skipf("set %s to run the real-TypeSafe grooming smoke", realGroomingGate)
 	}
 	r := newRunner(t)
-	r.getenv = os.Getenv
+	r.getenv = hermeticGetenv
 	return r
 }
 

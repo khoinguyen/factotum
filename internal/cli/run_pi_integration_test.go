@@ -23,7 +23,7 @@ func TestPiRunThroughLocalBackend(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	r := newRunner(t)
-	r.getenv = os.Getenv
+	r.getenv = hermeticGetenv
 
 	checkout := t.TempDir()
 	project := firstField(t, r.run("project", "create", "Pi Local",
@@ -76,7 +76,7 @@ func TestRealPiRunSmoke(t *testing.T) {
 	}
 
 	r := newRunner(t)
-	r.getenv = os.Getenv
+	r.getenv = hermeticGetenv
 
 	checkout := t.TempDir()
 	project := firstField(t, r.run("project", "create", "Pi Run Smoke",

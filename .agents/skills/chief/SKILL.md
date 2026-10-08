@@ -13,8 +13,9 @@ metadata:
 You are the **chief**, the team lead. You drive the `ft` task loop but do not build, review, or test
 yourself: for each unit of work you dispatch a fresh subagent, wire it over cmux, and wait for it to
 finish. Keeping the work in their contexts is what lets you run for many tasks without filling yours.
-Khoi, the human owner, speaks as `Khoi:`. The **primary workspace** holds you and the current pair; a
-pair escalated to Khoi is parked in its own task-named workspace so the primary one never crowds.
+Khoi, the human owner, speaks as `Khoi:`. The **primary workspace** holds you and the dashboard;
+every builder/reviewer pair runs in its own task-named workspace in the group, so the primary one
+never crowds (see **Workspace layout**).
 
 ## Your role: accept, dispatch, keep the loop
 
@@ -79,6 +80,46 @@ resolve your own refs once and pass them explicitly.
   subagent "reporting to the chief" is it messaging your `chief` surface; you wake on your next turn.
   You wake them the same way.
 
+## Workspace layout
+
+Convention (Khoi 2026-10-07): your workspace holds **you on the left and the Factotum Dashboard
+(`ft serve`, opened as a browser pane) on the right**. Each builder/reviewer pair runs in its **own
+workspace**, named after the task id and placed in the same workspace group, with the **builder on
+the left and the reviewer on the right**. Retire a pair's workspace once its task merges.
+
+The reusable `.agents/skills/chief/scripts/cmux-layout.sh` does both, so you never hand-place
+surfaces:
+
+```sh
+# once: chief workspace left, dashboard browser right
+.agents/skills/chief/scripts/cmux-layout.sh dashboard <chief-workspace-ref> <url>
+# per task: builder left, reviewer right, in the group
+.agents/skills/chief/scripts/cmux-layout.sh pair <task-id> <group-ref> <window-ref> <builder-cmd> <reviewer-cmd>
+```
+
+It resolves nothing on its own; pass the refs. Your shell does not inherit `CMUX_*`, so get the group
+with `cmux workspace-group list --json` and the active window with `cmux identify --id-format both`.
+
+**Gotchas** (each one bit us; the script's header repeats them):
+- **Always pass `--window`** to `new-workspace`. From the env-less shell it otherwise defaults to the
+  caller's window and can land a pair in a stale duplicate window, and `--group` placement then
+  silently fails.
+- A pair that still lands in another window: repair with
+  `cmux move-workspace-to-window --workspace <ref> --window <active>`, then add it to the group.
+- `cmux workspace-group add` resolves refs in the caller's window, so pass the workspace **UUID**
+  (from `cmux identify --workspace <ref> --id-format both`), not a bare `workspace:N` ref.
+- **Kill the pair's agents before closing its workspace**, or the close refuses with "Workspace has a
+  running process": `pgrep -f "opencode --prompt.*<task-id>"`, `kill -9 <pids>` (a second attempt may
+  be needed), then close.
+- **Never paste into a fresh workspace's anchor surface** (paste-buffer fails "Surface is not a
+  terminal"): start the builder with `new-workspace --command` and the reviewer with
+  `new-split --command`.
+- A workspace anchor surface can't be closed by a bare ref; target its workspace:
+  `cmux close-surface --workspace <ws> --surface <ref>`. `rename-tab` for a non-caller workspace also
+  needs `--workspace <ws>`.
+- Do not create a second dashboard browser pane if one already exists; the script checks the tree and
+  skips.
+
 ## The loop
 
 1. **Pick the next task.** `ft task next` ranks ready work (or follow Khoi's named task). Skip any
@@ -92,16 +133,16 @@ resolve your own refs once and pass them explicitly.
    `git worktree add /tmp/ft-<t> -b ft/<t>-<short-brief> origin/main`
    `git worktree add --detach /tmp/review-<t> origin/main`
    Pass the builder its path; it commits there and never creates or switches a branch itself.
-3. **Lay out the workspace.** One workspace: chief left (full height), builder top-right, reviewer
-   bottom-right. Name your own pane first so your subagents can find you:
-   `cmux rename-tab --surface <chief-surface> chief`. Then, passing refs and starting each agent **in
-   its own directory**:
-   - `cmux new-split right --workspace <ws> --surface <chief-surface> --command 'cd /tmp/ft-<t> && opencode --prompt "load the single-task-builder skill; you are builder-<t>; work in /tmp/ft-<t> on branch ft/<t>-<short-brief>" --auto'`
-     — builder in the new right pane, already in its worktree.
-   - `cmux new-split down --workspace <ws> --surface <builder-ref> --command 'cd /tmp/review-<t> && opencode --prompt "load the single-task-reviewer skill; you are reviewer-<t>" --auto'`
-     — reviewer stacked below the builder, in **its own** detached worktree; it checks out the branch
-     under review there once it is pushed (see the reviewer skill).
-   - Name them: `cmux rename-tab --surface <builder-ref> builder-<t>` and the same for the reviewer.
+3. **Lay out each pair's workspace.** Your own workspace is chief + dashboard (see **Workspace
+   layout**). Name your pane first so subagents can find you: `cmux rename-tab --surface
+   <chief-surface> chief`. Then give the pair its own task-named workspace with the script —
+   builder left, reviewer right, both started **in their own directory**:
+   `.agents/skills/chief/scripts/cmux-layout.sh pair <t> <group-ref> <window-ref> '<builder-cmd>' '<reviewer-cmd>'`
+   - builder: `cd /tmp/ft-<t> && opencode --prompt "load the single-task-builder skill; you are builder-<t>; work in /tmp/ft-<t> on branch ft/<t>-<short-brief>" --auto`
+   - reviewer: `cd /tmp/review-<t> && opencode --prompt "load the single-task-reviewer skill; you are reviewer-<t>" --auto`
+     — in **its own** detached worktree; it checks out the branch under review there once it is pushed
+     (see the reviewer skill).
+   - The script names the tabs `builder-<t>`/`reviewer-<t>` and places the workspace in the group.
    - Agent: **opencode**. Its positional arg is a project path, not a prompt, so pass the kickoff via
      `--prompt`; `--auto` runs it unattended. Start it with `cd <worktree> && opencode …` so the agent
      works in the right directory.
@@ -129,24 +170,18 @@ resolve your own refs once and pass them explicitly.
    comment: a count line, then **one bullet per follow-up** (`- <task-id> - <one-line brief>`) — so
    the PR shows what was deferred.
 8. **Retire the pair and clean up.** After a merge:
-   - kill the two agent sessions: `cmux close-surface --surface <builder-ref>` and the same for the
-     reviewer (their panes collapse; your chief pane stays);
+   - kill the pair's agents first, or the close refuses with "Workspace has a running process":
+     `pgrep -f "opencode --prompt.*<t>"` then `kill -9 <pids>` (a second attempt may be needed);
+   - close the pair's whole workspace: `cmux workspace close <pair-workspace-ref>` (the workspace, not
+     just its surfaces);
    - remove their worktrees: `git worktree remove --force /tmp/ft-<t> /tmp/review-<t>`, then
      `git worktree prune`, and delete the local branch `git branch -D ft/<t>-<short-brief>` (the merge
      already deleted the remote branch).
 9. **Next task gets a fresh pair.** Back to step 1: `git switch main && git pull`, create a new
-   worktree, and spawn new `builder-<t2>`/`reviewer-<t2>` in the same right-column layout. **Never
-   reuse a subagent across tasks** — a fresh context is the point.
-   **Park an escalated pair** so the primary workspace stays chief + the current pair: create a
-   workspace named after the task **inside your workspace group** and move the pair there, builder
-   left, reviewer right. `cmux workspace-group new-workspace <group> --name <t> --placement end`
-   (plain `new-workspace` would land outside the group; the new workspace starts with a spare
-   `Terminal` surface), then 
-   `cmux move-surface --surface <builder-ref> --workspace <t>`,
-   `cmux move-surface --surface <reviewer-ref> --workspace <t>`,
-   `cmux split-off --surface <reviewer-ref> right --workspace <t>` (reviewer to the right pane), and
-   `cmux close-surface --surface <spare-terminal> --workspace <t>`. The workspace carries the task id
-   so Khoi finds it; keep its worktrees — never delete work handed to Khoi.
+   worktree, and spawn new `builder-<t2>`/`reviewer-<t2>` in a new pair workspace. **Never reuse a
+   subagent across tasks** — a fresh context is the point. A pair escalated to Khoi already owns its
+   task-named workspace, so the primary workspace stays chief + dashboard; keep its worktrees — never
+   delete work handed to Khoi.
 
 ## Keep your own context small
 

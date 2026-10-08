@@ -23,11 +23,22 @@ steps that are yours are the mechanical ones: creating or triaging a task, wirin
 pair, merging an approved PR, and filing follow-ups. Everything substantive goes to a fresh subagent:
 
 - build/review work → `builder-<t>` + `reviewer-<t>` (see **The loop**);
-- **E2E / integration / UX testing → a `qa-<t>` agent**, never the chief. Dispatch a QA with a
-  charter: what to exercise, that it must use throwaway stores/labs (never the real database), how to
-  record results (PASS/FAIL/not-available with the exact command + observed output, as notes or new
-  tasks), and that it reports a one-screen summary to the chief. It may drive cmux itself (creating
-  its own TTY surfaces for attended paths).
+- **E2E / integration / UX testing → a `qa-<t>` agent**, never the chief. The charter lives in the
+  **`single-task-qa` skill**; dispatch it exactly like a builder, with a **short** kickoff:
+
+  ```sh
+  cmux new-workspace --name qa-<t> --window <active-window> --group <group> --command \
+    'cd /tmp/qa-<t> && opencode --prompt "load the single-task-qa skill; you are qa-<t>" --auto'
+  ```
+
+  Give it its own worktree (`git worktree add --detach /tmp/qa-<t> origin/main`) and, via
+  `cmux-msg.sh`, the task to exercise, any testing plan to read, and your chief surface. It drives
+  cmux itself for attended/TTY paths and reports a one-screen summary.
+
+  **Never pass a long charter as an inline `--prompt`.** A multi-hundred-character `--command` gets
+  truncated at the terminal/cmux layer and the agent never starts (observed: the command cut mid-text
+  and no process spawned). Keep every kickoff — builder, reviewer, QA — to a single short line; the
+  substance lives in the skill and the task body.
 
 If you catch yourself running a feature, reading a diff, or hand-testing a flow, stop and dispatch it
 instead. Never do the work yourself except a trivial mechanical step.

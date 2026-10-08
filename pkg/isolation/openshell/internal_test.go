@@ -51,8 +51,8 @@ func TestDisplayPath(t *testing.T) {
 
 func TestProfileCatalogURL(t *testing.T) {
 	tests := []struct{ in, want string }{
-		{"openrouter", "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/providers/openrouter.yaml"},
-		{"openai", "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/providers/openai.yaml"},
+		{"openrouter", "https://raw.githubusercontent.com/NVIDIA/OpenShell/6648bd0c290efbc41ba131ee9831ee45cd431f94/providers/openrouter.yaml"},
+		{"openai", "https://raw.githubusercontent.com/NVIDIA/OpenShell/6648bd0c290efbc41ba131ee9831ee45cd431f94/providers/openai.yaml"},
 		{"", ""},
 		{".", ""},
 		{"..", ""},
@@ -63,6 +63,28 @@ func TestProfileCatalogURL(t *testing.T) {
 	for _, tc := range tests {
 		if got := profileCatalogURL(tc.in); got != tc.want {
 			t.Errorf("profileCatalogURL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestProfileCatalogRefIsImmutable pins the watch item from PR #184: the
+// provider-profile catalog must be sourced from an immutable commit, never a
+// mutable branch. A moved ref would let upstream silently change a profile's
+// binaries scope and therefore the sandbox's egress policy.
+func TestProfileCatalogRefIsImmutable(t *testing.T) {
+	if len(DefaultProfileCatalogRef) != 40 {
+		t.Fatalf("DefaultProfileCatalogRef = %q, want a 40-char commit SHA", DefaultProfileCatalogRef)
+	}
+	for _, r := range DefaultProfileCatalogRef {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f':
+		default:
+			t.Fatalf("DefaultProfileCatalogRef = %q, want lowercase hex (a commit SHA)", DefaultProfileCatalogRef)
+		}
+	}
+	for _, mutable := range []string{"/main/", "/master/", "/HEAD/"} {
+		if strings.Contains(DefaultProfileCatalog, mutable) {
+			t.Errorf("DefaultProfileCatalog = %q fetches from the mutable ref %q", DefaultProfileCatalog, mutable)
 		}
 	}
 }

@@ -82,6 +82,71 @@ func TestPromptApplyCreatesTasks(t *testing.T) {
 	}
 }
 
+func TestPromptApplyIsIdempotent(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	planAgent(t, r,
+		agent.Task{Title: "Add auth", Description: "hash passwords"},
+		agent.Task{Kind: "milestone", Title: "Ship login"},
+	)
+
+	first := r.run("prompt", "--project", projectID, "--yes", "build", "login")
+	if !strings.Contains(first, "created: true") {
+		t.Fatalf("first run should create the plan:\n%s", first)
+	}
+
+	second := r.run("prompt", "--project", projectID, "--yes", "build", "login")
+	if strings.Contains(second, "created: true") {
+		t.Fatalf("an identical re-run must not create tasks:\n%s", second)
+	}
+	if !strings.Contains(second, "skipped: true") {
+		t.Fatalf("an identical re-run should report the skipped tasks:\n%s", second)
+	}
+
+	list := r.run("task", "list", "--project", projectID)
+	for _, title := range []string{"Add auth", "Ship login"} {
+		if got := strings.Count(list, title); got != 1 {
+			t.Fatalf("title %q appears %d times, want 1:\n%s", title, got, list)
+		}
+	}
+}
+
+func TestPromptApplySkipsExistingAndCreatesNew(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("task", "create", "--project", projectID, "--title", "Add auth")
+	planAgent(t, r,
+		agent.Task{Title: "Add auth"},
+		agent.Task{Title: "Ship login"},
+	)
+
+	out := r.run("prompt", "--project", projectID, "--yes", "build", "login")
+	if !strings.Contains(out, "created: true") || !strings.Contains(out, "skipped: true") {
+		t.Fatalf("a partially-applied plan should report both outcomes:\n%s", out)
+	}
+
+	list := r.run("task", "list", "--project", projectID)
+	if got := strings.Count(list, "Add auth"); got != 1 {
+		t.Fatalf("existing title appears %d times, want 1:\n%s", got, list)
+	}
+	if !strings.Contains(list, "Ship login") {
+		t.Fatalf("the missing task should still be created:\n%s", list)
+	}
+}
+
+func TestPromptApplyDeduplicatesWithinPlan(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	planAgent(t, r, agent.Task{Title: "Add auth"}, agent.Task{Title: "add auth"})
+
+	r.run("prompt", "--project", projectID, "--yes", "build", "login")
+
+	list := r.run("task", "list", "--project", projectID)
+	if got := strings.Count(strings.ToLower(list), "add auth"); got != 1 {
+		t.Fatalf("a repeated title in one plan appears %d times, want 1:\n%s", got, list)
+	}
+}
+
 func TestPromptProjectFallsBackToDefault(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

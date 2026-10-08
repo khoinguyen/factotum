@@ -969,6 +969,192 @@ func TestDeleteRetriesAfterSandboxDeleteFailure(t *testing.T) {
 	}
 }
 
+// --- robustness watch items -------------------------------------------------
+
+// TestDeleteTransientProviderGetStillRemoves pins the deleteProvider fix: a
+// transient `provider get` failure must not be mistaken for "already removed".
+// The delete is still attempted, so a real provider (and its credential
+// material) is never leaked by a flaky probe.
+func TestDeleteTransientProviderGetStillRemoves(t *testing.T) {
+	r := &fakeRunner{}
+	var providerDeletes int
+	r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+		switch {
+		case hasPrefix(args, "provider", "get"):
+			return nil, errors.New("openshell provider get: exit status 1: connection refused")
+		case hasPrefix(args, "provider", "delete"):
+			providerDeletes++
+			return nil, nil
+		}
+		return []byte(`{"phase":"Ready"}`), nil
+	}
+	be := openshell.New(openshell.Options{
+		Runner:      r,
+		NewName:     func() string { return "fttest" },
+		Credentials: resolverFunc(func(context.Context, isolation.Credential) (string, error) { return "v", nil }),
+	})
+	h := prepared(t, be, isolation.Spec{
+		Credentials: []isolation.Credential{{Provider: "openrouter", Ref: "r", EnvVar: "KEY"}},
+	})
+
+	if err := be.Delete(context.Background(), h); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if providerDeletes != 1 {
+		t.Fatalf("provider deletes = %d, want 1 (a transient get must not skip removal)", providerDeletes)
+	}
+}
+
+// TestDeleteAbsentProviderIsGone pins the other half: a genuine not-found from
+// `provider get` means the provider is already gone, so the delete is skipped
+// and the handle is still recorded deleted.
+func TestDeleteAbsentProviderIsGone(t *testing.T) {
+	notFound := errors.New(`openshell provider get: exit status 1: Error:   × code: 'Some requested entity was not found', message: "provider not found"`)
+	r := &fakeRunner{}
+	var providerDeletes int
+	r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+		switch {
+		case hasPrefix(args, "provider", "get"):
+			return nil, notFound
+		case hasPrefix(args, "provider", "delete"):
+			providerDeletes++
+			return nil, errors.New("delete ran for a provider that was already gone")
+		}
+		return []byte(`{"phase":"Ready"}`), nil
+	}
+	be := openshell.New(openshell.Options{
+		Runner:      r,
+		NewName:     func() string { return "fttest" },
+		Credentials: resolverFunc(func(context.Context, isolation.Credential) (string, error) { return "v", nil }),
+	})
+	h := prepared(t, be, isolation.Spec{
+		Credentials: []isolation.Credential{{Provider: "openrouter", Ref: "r", EnvVar: "KEY"}},
+	})
+
+	if err := be.Delete(context.Background(), h); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if providerDeletes != 0 {
+		t.Fatalf("provider deletes = %d, want 0 for a provider already gone", providerDeletes)
+	}
+}
+
+// TestStopStopsSandbox pins the Stop fix: Stop must handle gateway state, not
+// just cancel the local client. It stops the sandbox so a remote process cannot
+// outlive the client that started it.
+func TestStopStopsSandbox(t *testing.T) {
+	r := &fakeRunner{}
+	be := openshell.New(openshell.Options{Runner: r, NewName: func() string { return "fttest" }})
+	h := prepared(t, be, isolation.Spec{})
+	t.Cleanup(func() { _ = be.Delete(context.Background(), h) })
+
+	if err := be.Stop(context.Background(), h); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if _, ok := r.first("sandbox", "stop", "fttest"); !ok {
+		t.Fatalf("Stop did not stop the sandbox: %v", r.runs)
+	}
+}
+
+// TestExecAfterStopRestartsSandbox pins that the handle stays usable after Stop:
+// the next Exec starts the stopped sandbox, and only once.
+func TestExecAfterStopRestartsSandbox(t *testing.T) {
+	r := &fakeRunner{}
+	be := openshell.New(openshell.Options{Runner: r, NewName: func() string { return "fttest" }})
+	h := prepared(t, be, isolation.Spec{})
+	t.Cleanup(func() { _ = be.Delete(context.Background(), h) })
+
+	if err := be.Stop(context.Background(), h); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	run := func() {
+		t.Helper()
+		ex, err := be.Exec(context.Background(), h, isolation.Command{Argv: []string{"sh", "-c", "true"}})
+		if err != nil {
+			t.Fatalf("Exec() after Stop error = %v", err)
+		}
+		for range ex.Events() {
+		}
+		if _, err := ex.Wait(context.Background()); err != nil {
+			t.Fatalf("Wait() error = %v", err)
+		}
+	}
+	run()
+	run()
+	if got := r.count("sandbox", "start"); got != 1 {
+		t.Fatalf("sandbox starts = %d, want 1 (restart once, then stay running)", got)
+	}
+}
+
+// TestDownloadAfterStopRestartsSandbox pins that Download (which streams over
+// exec) also re-starts a stopped sandbox, so results can be collected after a
+// Stop.
+func TestDownloadAfterStopRestartsSandbox(t *testing.T) {
+	r := &fakeRunner{}
+	r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, "\x00"), "FTFILE") {
+			return []byte("FTFILE\t" + openshell.DefaultWorkdir + "/r.txt\t" + base64.StdEncoding.EncodeToString([]byte("ok")) + "\n"), nil
+		}
+		return []byte(`{"phase":"Ready"}`), nil
+	}
+	be := openshell.New(openshell.Options{Runner: r, NewName: func() string { return "fttest" }})
+	h := prepared(t, be, isolation.Spec{})
+	t.Cleanup(func() { _ = be.Delete(context.Background(), h) })
+
+	if err := be.Stop(context.Background(), h); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	files, err := be.Download(context.Background(), h, []string{"r.txt"})
+	if err != nil {
+		t.Fatalf("Download() after Stop error = %v", err)
+	}
+	if len(files) != 1 || string(files[0].Content) != "ok" {
+		t.Fatalf("Download() after Stop = %v, want r.txt=ok", files)
+	}
+	if _, ok := r.first("sandbox", "start", "fttest"); !ok {
+		t.Fatalf("Download after Stop did not restart the sandbox: %v", r.runs)
+	}
+}
+
+// TestPrepareNonRawPolicyHonorsFilesystemAndDeny pins the writePolicy fix: on
+// the non-Raw path, Policy.ReadOnly/ReadWrite are merged into the rendered
+// template, and egress stays deny-by-default (DefaultDeny is always enforced).
+func TestPrepareNonRawPolicyHonorsFilesystemAndDeny(t *testing.T) {
+	r := &fakeRunner{}
+	var policy []byte
+	r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+		if hasPrefix(args, "sandbox", "create") {
+			if p, ok := flagValue(args, "--policy"); ok {
+				policy, _ = os.ReadFile(p)
+			}
+		}
+		return []byte(`{"phase":"Ready"}`), nil
+	}
+	be := openshell.New(openshell.Options{Runner: r, NewName: func() string { return "fttest" }})
+	prepared(t, be, isolation.Spec{Policy: isolation.Policy{
+		ReadOnly:    []string{"/srv/ro"},
+		ReadWrite:   []string{"/srv/rw"},
+		DefaultDeny: true,
+	}})
+
+	if len(policy) == 0 {
+		t.Fatal("policy file was not written")
+	}
+	if !bytes.Contains(policy, []byte("/srv/ro")) {
+		t.Errorf("rendered policy does not honor ReadOnly:\n%s", policy)
+	}
+	if !bytes.Contains(policy, []byte("/srv/rw")) {
+		t.Errorf("rendered policy does not honor ReadWrite:\n%s", policy)
+	}
+	// The hardened baseline is additive: the template's paths stay.
+	if !bytes.Contains(policy, []byte("/etc")) || !bytes.Contains(policy, []byte("/tmp")) {
+		t.Errorf("rendered policy dropped the hardened filesystem baseline:\n%s", policy)
+	}
+	if bytes.Contains(policy, []byte("network_policies")) {
+		t.Errorf("non-Raw policy opened egress; DefaultDeny is always enforced:\n%s", policy)
+	}
+}
+
 // --- small helpers ----------------------------------------------------------
 
 // foreignHandle is a handle the backend did not create.

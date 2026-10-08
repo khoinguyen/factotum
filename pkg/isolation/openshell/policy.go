@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -89,6 +90,12 @@ type Options struct {
 	// HarnessBinary is the in-image path egress rules are scoped to. Defaults
 	// to DefaultHarnessBinary.
 	HarnessBinary string
+
+	// ReadOnly and ReadWrite are additional filesystem paths merged into the
+	// hardened template's read-only and read-write sets. They are additive only,
+	// so a run can mount extra paths but can never drop the hardened baseline.
+	ReadOnly  []string
+	ReadWrite []string
 
 	// CLI is the openshell executable the backend shells out to. Defaults to
 	// DefaultCLI.
@@ -187,6 +194,8 @@ func Build(opts Options) (Policy, error) {
 		return Policy{}, err
 	}
 	p.Process = ProcessPolicy{RunAsUser: user, RunAsGroup: group}
+	p.FilesystemPolicy.ReadOnly = mergePaths(p.FilesystemPolicy.ReadOnly, opts.ReadOnly)
+	p.FilesystemPolicy.ReadWrite = mergePaths(p.FilesystemPolicy.ReadWrite, opts.ReadWrite)
 
 	hosts := append([]string(nil), opts.AllowHosts...)
 	if opts.OverridePath != "" {
@@ -299,6 +308,29 @@ func validIdentity(value string) bool {
 		return false
 	}
 	return n >= 1 && n <= uint64(^uint32(0))-1
+}
+
+// mergePaths appends extra to base, preserving base order and dropping empty
+// and duplicate paths (cleaned), so the rendered filesystem policy stays
+// deterministic and additive.
+func mergePaths(base, extra []string) []string {
+	seen := make(map[string]bool, len(base)+len(extra))
+	out := make([]string, 0, len(base)+len(extra))
+	for _, group := range [][]string{base, extra} {
+		for _, p := range group {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			p = path.Clean(p)
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func normalizeHosts(hosts []string) ([]string, error) {

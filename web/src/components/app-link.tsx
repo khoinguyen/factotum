@@ -1,10 +1,11 @@
 import type * as React from "react"
 
-import { navigate } from "@/lib/router"
+import { isClientRoute, navigate } from "@/lib/router"
 import { cn } from "@/lib/utils"
 
-// AppLink is an internal link that routes client-side. External links and
-// modified clicks (new tab, download) keep the browser's default behavior.
+// AppLink is a link the client router owns. Anything the router does not own
+// (/capture, /app/*, external URLs) and modified clicks (new tab, download)
+// keep the browser's default behavior.
 export function AppLink({
   href,
   className,
@@ -12,7 +13,7 @@ export function AppLink({
   onClick,
   ...props
 }: React.ComponentProps<"a">) {
-  const internal = href?.startsWith("/") ?? false
+  const internal = href ? isClientRoute(href) : false
   return (
     <a
       {...props}

@@ -8,6 +8,15 @@ export type Route =
   | { kind: "doc"; id: string }
   | { kind: "not-found"; path: string }
 
+const clientPrefixes = ["/idea/", "/task/", "/memory/", "/doc/"]
+
+// isClientRoute reports whether the client router owns path. Links to anything
+// else (/capture, /app/*) must be left to the browser, or the router renders its
+// not-found page over a server-rendered page.
+export function isClientRoute(path: string): boolean {
+  return clientPrefixes.some((prefix) => path.startsWith(prefix))
+}
+
 // resolveRoute maps the current path to a read-side route. The server serves the
 // app shell for every one of them; only the client knows how to render each.
 export function resolveRoute(path: string): Route {
@@ -16,7 +25,7 @@ export function resolveRoute(path: string): Route {
     return { kind: "dashboard" }
   }
   const parts = trimmed.split("/").filter(Boolean)
-  if (parts.length === 2) {
+  if (parts.length === 2 && isClientRoute(trimmed)) {
     const [kind, id] = parts
     if (kind === "idea" || kind === "task" || kind === "memory" || kind === "doc") {
       return { kind, id }

@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -125,13 +126,237 @@ type EventRepo interface {
 	List(ctx context.Context, filter EventFilter) ([]*core.Event, error)
 }
 
+// DefaultMessageLease is how long a claim owns a message before it may be
+// redelivered. MaxMessageAttempts parks a message failed once a claim cycle has
+// failed this many times.
+const (
+	DefaultMessageLease   = 30 * time.Second
+	DefaultMessageWait    = 25 * time.Second
+	MaxMessageAttempts    = 5
+	DefaultMessageBodyMax = 16 * 1024
+)
+
+type MessageFilter struct {
+	ProjectID core.ProjectID
+	To        *core.Address  // exact stored To match
+	Actor     *core.ActorID  // claimable by this actor: To == actor:<id>
+	Run       *core.RunID    // claimable by this run: To == run:<id>
+	Task      *core.TicketID // Message.TaskID == <id> (the originating task)
+	States    []core.MessageState
+	Since     *time.Time
+	Limit     int
+}
+
+// ClaimRecipient is the union of addresses a run can be reached at, resolved
+// from the run by the caller.
+type ClaimRecipient struct {
+	ActorID *core.ActorID
+	TaskID  *core.TicketID
+}
+
+// ClaimRequest selects one message for a run. Recipient is the union of the
+// run's own address, its actor's address, and its task address. ProjectID,
+// when set, scopes the claim so a run never claims another project's mailbox.
+type ClaimRequest struct {
+	ProjectID core.ProjectID
+	RunID     core.RunID
+	Recipient ClaimRecipient
+	Lease     time.Duration // delivered lease; 0 uses DefaultMessageLease
+	Wait      time.Duration // long-poll window; 0 returns immediately
+}
+
+// AckRequest finalizes one delivered message owned by a run.
+type AckRequest struct {
+	ID    core.MessageID
+	RunID core.RunID
+	State core.MessageState // read | failed
+	Error string            // reason when State == failed
+}
+
+type MessageRepo interface {
+	Create(ctx context.Context, message *core.Message) error
+	Get(ctx context.Context, id core.MessageID) (*core.Message, error)
+	List(ctx context.Context, filter MessageFilter) ([]*core.Message, error)
+	Update(ctx context.Context, message *core.Message) error
+
+	// Claim atomically selects the oldest queued message claimable by
+	// (RunID, Recipient) and transitions it to delivered, setting RunID,
+	// LeaseUntil, DeliveredAt, and Attempts. It returns ErrNotFound when
+	// nothing is claimable. Two concurrent claims never return the same message.
+	Claim(ctx context.Context, req ClaimRequest) (*core.Message, error)
+
+	// Ack finalizes a delivered message owned by RunID: read is terminal
+	// success and idempotent; failed records Error and is terminal.
+	Ack(ctx context.Context, req AckRequest) error
+
+	// Nack requeues a delivered message (attempts already counted) or, once
+	// attempts reach MaxMessageAttempts, parks it as failed.
+	Nack(ctx context.Context, id core.MessageID, runID core.RunID, reason string) error
+
+	// RequeueExpired reclaims every delivered message whose lease lapsed: back
+	// to queued, or to failed once attempts >= maxAttempts. It returns how many
+	// moved. It is the crash-recovery sweep.
+	RequeueExpired(ctx context.Context, now time.Time, maxAttempts int) (int, error)
+
+	// Prune removes terminal messages in states older than before and returns
+	// how many were removed.
+	Prune(ctx context.Context, before time.Time, states []core.MessageState) (int, error)
+}
+
+type RunFilter struct {
+	ProjectID core.ProjectID
+	ActorID   *core.ActorID
+	Task      *core.TicketID
+	// Live, when set, keeps only runs whose lease is valid at Now (or the
+	// backend clock when Now is zero).
+	Live  *bool
+	Now   time.Time
+	Limit int
+}
+
+type RunRepo interface {
+	// Register upserts a run idempotently on (ProjectID, ActorID, Host, PID):
+	// re-registering the same session returns the stored run with a stable ID.
+	Register(ctx context.Context, run *core.Run) (*core.Run, error)
+	// Heartbeat renews a run's lease from now.
+	Heartbeat(ctx context.Context, id core.RunID, now time.Time, lease time.Duration) error
+	List(ctx context.Context, filter RunFilter) ([]*core.Run, error)
+	Delete(ctx context.Context, id core.RunID) error
+}
+
 type Backend interface {
 	Projects() ProjectRepo
 	Tickets() TicketRepo
 	Actors() ActorRepo
 	Artifacts() ArtifactRepo
 	Events() EventRepo
+	Messages() MessageRepo
+	Runs() RunRepo
 	Close() error
+}
+
+// Claimable reports whether message can be claimed by req's run: it must be
+// queued and addressed to the run itself, its actor, or its task.
+func Claimable(message *core.Message, req ClaimRequest) bool {
+	if message.State != core.MessageQueued {
+		return false
+	}
+	if req.ProjectID != "" && message.ProjectID != req.ProjectID {
+		return false
+	}
+	if message.To == core.RunAddress(req.RunID) {
+		return true
+	}
+	if req.Recipient.ActorID != nil && message.To == core.ActorAddress(*req.Recipient.ActorID) {
+		return true
+	}
+	if req.Recipient.TaskID != nil && message.To == core.TaskAddress(*req.Recipient.TaskID) {
+		return true
+	}
+	return false
+}
+
+// MatchesMessageFilter reports whether message satisfies filter. Run and Actor
+// match the stored To; Task matches Message.TaskID regardless of To.
+func MatchesMessageFilter(message *core.Message, filter MessageFilter) bool {
+	if filter.ProjectID != "" && message.ProjectID != filter.ProjectID {
+		return false
+	}
+	if filter.To != nil && message.To != *filter.To {
+		return false
+	}
+	if filter.Actor != nil && message.To != core.ActorAddress(*filter.Actor) {
+		return false
+	}
+	if filter.Run != nil && message.To != core.RunAddress(*filter.Run) {
+		return false
+	}
+	if filter.Task != nil && (message.TaskID == nil || *message.TaskID != *filter.Task) {
+		return false
+	}
+	if len(filter.States) > 0 && !containsMessageState(filter.States, message.State) {
+		return false
+	}
+	if filter.Since != nil && message.CreatedAt.Before(*filter.Since) {
+		return false
+	}
+	return true
+}
+
+func containsMessageState(states []core.MessageState, state core.MessageState) bool {
+	for _, candidate := range states {
+		if candidate == state {
+			return true
+		}
+	}
+	return false
+}
+
+// CompareMessages orders messages oldest first by CreatedAt, then id, so
+// delivery is deterministic.
+func CompareMessages(a, b *core.Message) int {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		if a.CreatedAt.Before(b.CreatedAt) {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(string(a.ID), string(b.ID))
+}
+
+// MatchRunFilter reports whether run satisfies filter. now resolves the Live
+// predicate (filter.Now when set, else the caller's clock).
+func MatchRunFilter(run *core.Run, filter RunFilter, now time.Time) bool {
+	if filter.ProjectID != "" && run.ProjectID != filter.ProjectID {
+		return false
+	}
+	if filter.ActorID != nil && run.ActorID != *filter.ActorID {
+		return false
+	}
+	if filter.Task != nil && (run.TaskID == nil || *run.TaskID != *filter.Task) {
+		return false
+	}
+	if filter.Live != nil && run.Live(now) != *filter.Live {
+		return false
+	}
+	return true
+}
+
+// claimPollInterval is how often AwaitClaim retries within a long-poll window.
+const claimPollInterval = 50 * time.Millisecond
+
+// AwaitClaim long-polls claim for up to wait, returning ErrNotFound once the
+// window elapses with nothing claimable. A claim attempt returning (nil, nil)
+// means nothing was available right now.
+func AwaitClaim(ctx context.Context, wait time.Duration, claim func() (*core.Message, error)) (*core.Message, error) {
+	if wait <= 0 {
+		message, err := claim()
+		if err != nil {
+			return nil, err
+		}
+		if message == nil {
+			return nil, core.ErrNotFound
+		}
+		return message, nil
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		message, err := claim()
+		if err != nil {
+			return nil, err
+		}
+		if message != nil {
+			return message, nil
+		}
+		if !time.Now().Before(deadline) {
+			return nil, core.ErrNotFound
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(claimPollInterval):
+		}
+	}
 }
 
 type Factory func(ctx context.Context, cfg Config) (Backend, error)

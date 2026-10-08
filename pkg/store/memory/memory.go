@@ -21,6 +21,8 @@ type Backend struct {
 	actors    map[core.ActorID]core.Actor
 	artifacts map[core.ArtifactID]core.Artifact
 	events    []core.Event
+	messages  map[core.MessageID]core.Message
+	runs      map[core.RunID]core.Run
 }
 
 func New() *Backend {
@@ -29,6 +31,8 @@ func New() *Backend {
 		tasks:     make(map[core.TicketID]core.Ticket),
 		actors:    make(map[core.ActorID]core.Actor),
 		artifacts: make(map[core.ArtifactID]core.Artifact),
+		messages:  make(map[core.MessageID]core.Message),
+		runs:      make(map[core.RunID]core.Run),
 	}
 }
 
@@ -43,7 +47,9 @@ func (b *Backend) Actors() store.ActorRepo     { return &actorRepo{backend: b} }
 func (b *Backend) Artifacts() store.ArtifactRepo {
 	return &artifactRepo{backend: b}
 }
-func (b *Backend) Events() store.EventRepo { return &eventRepo{backend: b} }
+func (b *Backend) Events() store.EventRepo     { return &eventRepo{backend: b} }
+func (b *Backend) Messages() store.MessageRepo { return &messageRepo{backend: b} }
+func (b *Backend) Runs() store.RunRepo         { return &runRepo{backend: b} }
 
 type projectRepo struct{ backend *Backend }
 
@@ -436,4 +442,294 @@ func containsKind(kinds []core.EventKind, kind core.EventKind) bool {
 		}
 	}
 	return false
+}
+
+type messageRepo struct{ backend *Backend }
+
+func (r *messageRepo) Create(_ context.Context, message *core.Message) error {
+	if err := message.Validate(0); err != nil {
+		return err
+	}
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	if _, ok := r.backend.messages[message.ID]; ok {
+		return fmt.Errorf("%w: message %s", core.ErrAlreadyExists, message.ID)
+	}
+	r.backend.messages[message.ID] = clone.Message(*message)
+	return nil
+}
+
+func (r *messageRepo) Get(_ context.Context, id core.MessageID) (*core.Message, error) {
+	r.backend.mu.RLock()
+	defer r.backend.mu.RUnlock()
+	message, ok := r.backend.messages[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: message %s", core.ErrNotFound, id)
+	}
+	cloned := clone.Message(message)
+	return &cloned, nil
+}
+
+func (r *messageRepo) List(_ context.Context, filter store.MessageFilter) ([]*core.Message, error) {
+	r.backend.mu.RLock()
+	defer r.backend.mu.RUnlock()
+	out := make([]*core.Message, 0, len(r.backend.messages))
+	for _, message := range r.backend.messages {
+		if !store.MatchesMessageFilter(&message, filter) {
+			continue
+		}
+		cloned := clone.Message(message)
+		out = append(out, &cloned)
+	}
+	sort.Slice(out, func(i, j int) bool { return store.CompareMessages(out[i], out[j]) < 0 })
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+func (r *messageRepo) Update(_ context.Context, message *core.Message) error {
+	if err := message.Validate(0); err != nil {
+		return err
+	}
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	if _, ok := r.backend.messages[message.ID]; !ok {
+		return fmt.Errorf("%w: message %s", core.ErrNotFound, message.ID)
+	}
+	r.backend.messages[message.ID] = clone.Message(*message)
+	return nil
+}
+
+func (r *messageRepo) Claim(ctx context.Context, req store.ClaimRequest) (*core.Message, error) {
+	return store.AwaitClaim(ctx, req.Wait, func() (*core.Message, error) { return r.claimOnce(req) })
+}
+
+func (r *messageRepo) claimOnce(req store.ClaimRequest) (*core.Message, error) {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	var (
+		best   core.Message
+		bestID core.MessageID
+		found  bool
+	)
+	for id, message := range r.backend.messages {
+		if !store.Claimable(&message, req) {
+			continue
+		}
+		if !found || store.CompareMessages(&message, &best) < 0 {
+			best = message
+			bestID = id
+			found = true
+		}
+	}
+	if !found {
+		return nil, nil
+	}
+	now := time.Now().UTC()
+	lease := req.Lease
+	if lease <= 0 {
+		lease = store.DefaultMessageLease
+	}
+	until := now.Add(lease)
+	runID := req.RunID
+	best.State = core.MessageDelivered
+	best.RunID = &runID
+	best.LeaseUntil = &until
+	best.DeliveredAt = &now
+	best.Attempts++
+	best.UpdatedAt = now
+	r.backend.messages[bestID] = best
+	cloned := clone.Message(best)
+	return &cloned, nil
+}
+
+func (r *messageRepo) Ack(_ context.Context, req store.AckRequest) error {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	message, ok := r.backend.messages[req.ID]
+	if !ok {
+		return fmt.Errorf("%w: message %s", core.ErrNotFound, req.ID)
+	}
+	now := time.Now().UTC()
+	switch req.State {
+	case core.MessageRead:
+		if message.State == core.MessageRead {
+			return nil
+		}
+		if err := checkAckOwner(message, req.RunID); err != nil {
+			return err
+		}
+		message.State = core.MessageRead
+		message.ReadAt = &now
+	case core.MessageFailed:
+		if message.State == core.MessageFailed {
+			return nil
+		}
+		if err := checkAckOwner(message, req.RunID); err != nil {
+			return err
+		}
+		message.State = core.MessageFailed
+		message.Error = req.Error
+	default:
+		return fmt.Errorf("%w: ack state %q must be read or failed", core.ErrInvalid, req.State)
+	}
+	message.UpdatedAt = now
+	r.backend.messages[req.ID] = message
+	return nil
+}
+
+// checkAckOwner requires a delivered message owned by runID.
+func checkAckOwner(message core.Message, runID core.RunID) error {
+	if message.State != core.MessageDelivered {
+		return fmt.Errorf("%w: message %s is %s, not delivered", core.ErrInvalid, message.ID, message.State)
+	}
+	if message.RunID == nil || *message.RunID != runID {
+		return fmt.Errorf("%w: message %s is not owned by run %s", core.ErrInvalid, message.ID, runID)
+	}
+	return nil
+}
+
+func (r *messageRepo) Nack(_ context.Context, id core.MessageID, runID core.RunID, reason string) error {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	message, ok := r.backend.messages[id]
+	if !ok {
+		return fmt.Errorf("%w: message %s", core.ErrNotFound, id)
+	}
+	if err := checkAckOwner(message, runID); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	message.Error = reason
+	message.UpdatedAt = now
+	if message.Attempts >= store.MaxMessageAttempts {
+		message.State = core.MessageFailed
+	} else {
+		message.State = core.MessageQueued
+		message.RunID = nil
+		message.LeaseUntil = nil
+	}
+	r.backend.messages[id] = message
+	return nil
+}
+
+func (r *messageRepo) RequeueExpired(_ context.Context, now time.Time, maxAttempts int) (int, error) {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	moved := 0
+	for id, message := range r.backend.messages {
+		if message.State != core.MessageDelivered || message.LeaseUntil == nil || message.LeaseUntil.After(now) {
+			continue
+		}
+		if message.Attempts >= maxAttempts {
+			message.State = core.MessageFailed
+			message.Error = "lease expired"
+		} else {
+			message.State = core.MessageQueued
+			message.RunID = nil
+			message.LeaseUntil = nil
+		}
+		message.UpdatedAt = now
+		r.backend.messages[id] = message
+		moved++
+	}
+	return moved, nil
+}
+
+func (r *messageRepo) Prune(_ context.Context, before time.Time, states []core.MessageState) (int, error) {
+	if len(states) == 0 {
+		return 0, nil
+	}
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	removed := 0
+	for id, message := range r.backend.messages {
+		if !message.State.Terminal() || !message.UpdatedAt.Before(before) {
+			continue
+		}
+		prunable := false
+		for _, state := range states {
+			if message.State == state {
+				prunable = true
+				break
+			}
+		}
+		if !prunable {
+			continue
+		}
+		delete(r.backend.messages, id)
+		removed++
+	}
+	return removed, nil
+}
+
+type runRepo struct{ backend *Backend }
+
+func (r *runRepo) Register(_ context.Context, run *core.Run) (*core.Run, error) {
+	if err := run.Validate(); err != nil {
+		return nil, err
+	}
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	for id, existing := range r.backend.runs {
+		if existing.ProjectID == run.ProjectID && existing.ActorID == run.ActorID && existing.Host == run.Host && existing.PID == run.PID {
+			existing.TaskID = run.TaskID
+			existing.Harness = run.Harness
+			existing.CanInject = run.CanInject
+			existing.SeenAt = run.SeenAt
+			existing.LeaseUntil = run.LeaseUntil
+			r.backend.runs[id] = existing
+			cloned := clone.Run(existing)
+			return &cloned, nil
+		}
+	}
+	r.backend.runs[run.ID] = clone.Run(*run)
+	cloned := clone.Run(*run)
+	return &cloned, nil
+}
+
+func (r *runRepo) Heartbeat(_ context.Context, id core.RunID, now time.Time, lease time.Duration) error {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	run, ok := r.backend.runs[id]
+	if !ok {
+		return fmt.Errorf("%w: run %s", core.ErrNotFound, id)
+	}
+	run.SeenAt = now
+	run.LeaseUntil = now.Add(lease)
+	r.backend.runs[id] = run
+	return nil
+}
+
+func (r *runRepo) List(_ context.Context, filter store.RunFilter) ([]*core.Run, error) {
+	r.backend.mu.RLock()
+	defer r.backend.mu.RUnlock()
+	now := filter.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	out := make([]*core.Run, 0, len(r.backend.runs))
+	for _, run := range r.backend.runs {
+		if !store.MatchRunFilter(&run, filter, now) {
+			continue
+		}
+		cloned := clone.Run(run)
+		out = append(out, &cloned)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+func (r *runRepo) Delete(_ context.Context, id core.RunID) error {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	if _, ok := r.backend.runs[id]; !ok {
+		return fmt.Errorf("%w: run %s", core.ErrNotFound, id)
+	}
+	delete(r.backend.runs, id)
+	return nil
 }

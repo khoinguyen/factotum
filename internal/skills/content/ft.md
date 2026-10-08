@@ -105,24 +105,15 @@ ft task decide <task> --ready --reason "why"   # record a human decision
 ft task decide <task> --clear                  # restore the judge verdict
 ```
 
-Checks are advisory, never a gate, and `ft task check` is a read verb whose only
-write is its derived cache. The first check, `grooming`, judges the task's
-**body** (title, kind, and description) and reports `ready`, `needs_grooming`
-(only agent-owned findings, each a concrete body edit), or `needs_human` (a
-decision only the author can make - escalate, do not edit the body).
-
-It also scores two task-shaping signals - **decomposable** (one cohesive unit, or
-a bundle that should split) and **right-sized** (small enough to verify as one
-unit) - plus, for a promoted task, **entailment vs its origin**: the origin is
-immutable, so the refinement must contradict nothing and invent nothing it does
-not support. A named gap is a concrete finding (`decomposable`,
-`right_sized`, `entailment_origin`); the result also carries an auditable
-**delta** - the title change and the lines added or dropped - so a reviewer sees
-what changed. The delta never rewrites the task; editing the origin makes it stale.
-
-The body is the spec; notes are history. A note never changes a verdict, so fold
-a decision into the body to make it count. Recording a human override requires a
-human actor; it stops agents re-grooming, and editing the body makes it stale.
+Checks are advisory, never a gate; `ft task check` only writes its derived cache.
+The `grooming` check judges the task's **body** (title, kind, description) and
+reports `ready`, `needs_grooming` (agent-owned body edits), or `needs_human` (a
+decision only the author can make - escalate, do not edit the body). It also
+scores **decomposable** and **right-sized**, plus **entailment vs origin** for a
+promoted task, and carries an auditable **delta** (title change, lines added or
+dropped). The body is the spec; notes are history - a note never changes a
+verdict, so fold a decision into the body. Recording a human override requires a
+human actor; editing the body makes the verdict stale.
 
 ## Definition of ready: groomed work an agent can start
 
@@ -248,6 +239,15 @@ finding paraphrases that share no tokens. Writes stay best-effort; `ft memory
 reindex` backfills skipped vectors and repairs a model change. A detectable embed
 failure - endpoint unreachable, model not served, or empty response - is reported
 by cause and fix, not a generic error, and the failed embed is skipped once known.
+
+## Message peers
+
+```sh
+ft msg send <address|ticket-id> <text> -p <project>   # actor:/run:/task:/bare ticket
+ft msg inbox -p <project> [--state <state>]           # list; ft msg read <id> marks read
+```
+
+A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`); `ft msg read` is idempotent and `--from` defaults to the configured actor.
 
 ## Diagnose the optional subsystems
 

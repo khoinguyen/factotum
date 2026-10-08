@@ -89,6 +89,47 @@ func Event(event core.Event) core.Event {
 	return event
 }
 
+func Message(message core.Message) core.Message {
+	if message.From != nil {
+		id := *message.From
+		message.From = &id
+	}
+	if message.TaskID != nil {
+		id := *message.TaskID
+		message.TaskID = &id
+	}
+	if message.RunID != nil {
+		id := *message.RunID
+		message.RunID = &id
+	}
+	if message.ReplyTo != nil {
+		id := *message.ReplyTo
+		message.ReplyTo = &id
+	}
+	message.Links = append([]core.Link(nil), message.Links...)
+	if message.LeaseUntil != nil {
+		lease := *message.LeaseUntil
+		message.LeaseUntil = &lease
+	}
+	if message.DeliveredAt != nil {
+		at := *message.DeliveredAt
+		message.DeliveredAt = &at
+	}
+	if message.ReadAt != nil {
+		at := *message.ReadAt
+		message.ReadAt = &at
+	}
+	return message
+}
+
+func Run(run core.Run) core.Run {
+	if run.TaskID != nil {
+		id := *run.TaskID
+		run.TaskID = &id
+	}
+	return run
+}
+
 func notes(notes []core.Note) []core.Note {
 	if notes == nil {
 		return nil

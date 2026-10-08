@@ -102,6 +102,7 @@ type Deps struct {
 	Tasks     *app.TicketService
 	Actors    *app.ActorService
 	Artifacts *app.ArtifactService
+	Messages  *app.MessageService
 	// TaskChecks runs advisory checks and caches their results.
 	TaskChecks *app.CheckService
 
@@ -349,6 +350,7 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 		d.Tasks = app.NewTicketService(backend, d.Clock, d.IDs)
 		d.Actors = app.NewActorService(backend, d.Clock, d.IDs)
 		d.Artifacts = app.NewArtifactService(backend, d.Clock, d.IDs)
+		d.Messages = app.NewMessageService(backend, d.Clock, d.IDs)
 		d.TaskChecks = app.NewCheckService(backend, d.Clock, d.IDs, d.Checks)
 	}
 	if d.EmbedderOverride != nil {

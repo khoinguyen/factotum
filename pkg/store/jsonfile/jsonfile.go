@@ -883,6 +883,11 @@ func (r *pipelineRepo) Create(_ context.Context, pipeline *core.Pipeline) error 
 	if _, ok := r.backend.pipelineIndex(pipeline.ID); ok {
 		return fmt.Errorf("%w: pipeline %s", core.ErrAlreadyExists, pipeline.ID)
 	}
+	for _, existing := range r.backend.state.Pipelines {
+		if existing.ProjectID == pipeline.ProjectID && existing.CaptureID == pipeline.CaptureID {
+			return fmt.Errorf("%w: pipeline for capture %s in project %s", core.ErrAlreadyExists, pipeline.CaptureID, pipeline.ProjectID)
+		}
+	}
 	r.backend.state.Pipelines = append(r.backend.state.Pipelines, clone.Pipeline(*pipeline))
 	return r.backend.persist()
 }

@@ -1340,6 +1340,11 @@ func (r *pipelineRepo) Create(_ context.Context, pipeline *core.Pipeline) error 
 	if _, ok := b.pipelines[pipeline.ID]; ok {
 		return fmt.Errorf("%w: pipeline %s", core.ErrAlreadyExists, pipeline.ID)
 	}
+	for _, record := range b.pipelines {
+		if record.pipeline.ProjectID == pipeline.ProjectID && record.pipeline.CaptureID == pipeline.CaptureID {
+			return fmt.Errorf("%w: pipeline for capture %s in project %s", core.ErrAlreadyExists, pipeline.CaptureID, pipeline.ProjectID)
+		}
+	}
 	if err := checkID("pipeline", string(pipeline.ID)); err != nil {
 		return err
 	}

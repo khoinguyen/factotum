@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
@@ -549,6 +550,92 @@ func TestMigrateV4ToV5BackfillsTaskDeps(t *testing.T) {
 	}
 	if len(dependents) != 2 || dependents[0].ID != "t-2" || dependents[1].ID != "t-3" {
 		t.Fatalf("List(DependsOn t-1) = %v, want [t-2 t-3]", dependents)
+	}
+}
+
+func TestMigrateV7ToV8AddsPipelineCaptureIndex(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.db")
+
+	// Build a v7 database: the schema through the pipelines table, with one
+	// pipeline already stored.
+	raw := openRaw(t, path)
+	tx, err := raw.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	for _, step := range migrations {
+		if step.version > 7 {
+			break
+		}
+		if err := step.apply(ctx, tx); err != nil {
+			t.Fatalf("apply v%d: %v", step.version, err)
+		}
+	}
+	existing := &core.Pipeline{
+		ID:        "pl-old",
+		ProjectID: "prj-1",
+		CaptureID: "i-old",
+		State:     core.PipelineQueued,
+		Gate:      core.GateNone,
+		CreatedAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC),
+	}
+	data, err := encode(existing)
+	if err != nil {
+		t.Fatalf("encode pipeline: %v", err)
+	}
+	if _, err := tx.Exec(
+		"INSERT INTO pipelines (id, project_id, capture_id, state, gate, created_at, updated_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		string(existing.ID), string(existing.ProjectID), string(existing.CaptureID), string(existing.State), string(existing.Gate), formatTimeKey(existing.CreatedAt), formatTimeKey(existing.UpdatedAt), data,
+	); err != nil {
+		t.Fatalf("insert pipeline: %v", err)
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 7"); err != nil {
+		t.Fatalf("stamp v7: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	// Reopen: the v8 migration adds the unique capture index without touching
+	// the stored pipeline.
+	backend, err := Open(ctx, consentedConfig(path))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	if got := userVersion(t, path); got != currentSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", got, currentSchemaVersion)
+	}
+	if _, err := backend.Pipelines().Get(ctx, "pl-old"); err != nil {
+		t.Fatalf("Get(pl-old) after v8 error = %v", err)
+	}
+
+	var count int
+	if err := openRaw(t, path).QueryRow("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_pipelines_capture_unique'").Scan(&count); err != nil {
+		t.Fatalf("inspect index: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("unique capture index count = %d, want 1", count)
+	}
+
+	// The index is the backstop: a raw duplicate insert is rejected even
+	// bypassing the repo's explicit check.
+	duplicate := *existing
+	duplicate.ID = "pl-dupe"
+	dupData, err := encode(&duplicate)
+	if err != nil {
+		t.Fatalf("encode duplicate: %v", err)
+	}
+	if _, err := openRaw(t, path).Exec(
+		"INSERT INTO pipelines (id, project_id, capture_id, state, gate, created_at, updated_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		string(duplicate.ID), string(duplicate.ProjectID), string(duplicate.CaptureID), string(duplicate.State), string(duplicate.Gate), formatTimeKey(duplicate.CreatedAt), formatTimeKey(duplicate.UpdatedAt), dupData,
+	); err == nil {
+		t.Fatal("raw duplicate pipeline insert succeeded, want unique constraint error")
 	}
 }
 

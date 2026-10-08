@@ -22,6 +22,7 @@ func testPipeline(t *testing.T, be store.Backend) {
 
 	t.Run("roundtrip", func(t *testing.T) { testPipelineRoundtrip(t, repo, ctx) })
 	t.Run("validate", func(t *testing.T) { testPipelineValidate(t, repo, ctx) })
+	t.Run("capture-unique", func(t *testing.T) { testPipelineCaptureUnique(t, repo, ctx) })
 	t.Run("list", func(t *testing.T) { testPipelineList(t, repo, ctx) })
 	t.Run("claim", func(t *testing.T) { testPipelineClaim(t, repo, ctx) })
 	t.Run("claim-concurrency", func(t *testing.T) { testPipelineClaimConcurrency(t, repo, ctx) })
@@ -115,6 +116,34 @@ func testPipelineValidate(t *testing.T, repo store.PipelineRepo, ctx context.Con
 				t.Fatalf("Create() error = %v, want ErrInvalid", err)
 			}
 		})
+	}
+}
+
+func testPipelineCaptureUnique(t *testing.T, repo store.PipelineRepo, ctx context.Context) {
+	t.Helper()
+	const project = core.ProjectID("prj-cap")
+	const other = core.ProjectID("prj-cap-other")
+	capture := core.TicketID("i-cap")
+
+	if err := repo.Create(ctx, pipelineRecord("cap-1", project, capture, core.PipelineQueued, core.GateNone)); err != nil {
+		t.Fatalf("Create(cap-1) error = %v", err)
+	}
+
+	// A second pipeline with a different id but the same (project, capture) is
+	// rejected: one pipeline drives a capture.
+	duplicate := pipelineRecord("cap-2", project, capture, core.PipelineQueued, core.GateNone)
+	if err := repo.Create(ctx, duplicate); !errors.Is(err, core.ErrAlreadyExists) {
+		t.Fatalf("Create(duplicate capture) error = %v, want ErrAlreadyExists", err)
+	}
+
+	// The same capture id in another project is a distinct pipeline.
+	if err := repo.Create(ctx, pipelineRecord("cap-3", other, capture, core.PipelineQueued, core.GateNone)); err != nil {
+		t.Fatalf("Create(same capture, other project) error = %v", err)
+	}
+
+	// A different capture in the same project is a distinct pipeline.
+	if err := repo.Create(ctx, pipelineRecord("cap-4", project, "i-cap-2", core.PipelineQueued, core.GateNone)); err != nil {
+		t.Fatalf("Create(other capture) error = %v", err)
 	}
 }
 

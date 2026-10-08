@@ -11,9 +11,21 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/internal/config"
+	"github.com/khoinguyen/factotum/pkg/doctor"
 	"github.com/khoinguyen/factotum/pkg/embed"
 	"github.com/khoinguyen/factotum/pkg/vector"
 )
+
+// stubProber models the doctor probes the embed guard runs after a failed embed,
+// so a test can drive the endpoint-unreachable and model-not-served causes.
+type stubProber struct {
+	reachableErr error
+	modelErr     error
+}
+
+func (s *stubProber) Reachable(context.Context, doctor.Endpoint) error { return s.reachableErr }
+func (s *stubProber) HasModel(context.Context, doctor.Endpoint) error  { return s.modelErr }
+func (s *stubProber) Resolvable(context.Context, string) error         { return nil }
 
 // keywordEmbedder maps a text to a vector by the topic it mentions, so tests can
 // model paraphrase recall ("provisioning" finds "terraform") without a model. It
@@ -79,6 +91,61 @@ func TestMemorySearchFallsBackToLexicalWhenEmbedderDown(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "warning") || !strings.Contains(stderr, "lexical") {
 		t.Fatalf("a vector failure should warn once and fall back to lexical:\n%s", stderr)
+	}
+}
+
+func TestMemorySearchNamesModelNotServed(t *testing.T) {
+	r := vectorRunner(t)
+	r.embedProvider = "openai"
+	r.embedEndpoint = "http://127.0.0.1:8080"
+	r.embedder = &keywordEmbedder{err: embed.ErrEmptyResponse}
+	r.doctorProbe = &stubProber{modelErr: errors.New("model not served")}
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("memory", "create", "-p", projectID, "-t", "Terraform notes", "--brief", "infra versioning")
+
+	_, stderr := r.runSplit("memory", "search", "provisioning", "-p", projectID)
+	if !strings.Contains(stderr, "not served") {
+		t.Fatalf("search must name the model-not-served cause:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "ft doctor") {
+		t.Fatalf("search must point at the fix:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "empty vector in response") {
+		t.Fatalf("search must not surface the generic embed error:\n%s", stderr)
+	}
+}
+
+func TestMemorySearchNamesEndpointUnreachable(t *testing.T) {
+	r := vectorRunner(t)
+	r.embedProvider = "openai"
+	r.embedEndpoint = "http://127.0.0.1:8080"
+	r.embedder = &keywordEmbedder{err: errors.New("request failed")}
+	r.doctorProbe = &stubProber{reachableErr: errors.New("connection refused")}
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("memory", "create", "-p", projectID, "-t", "Terraform notes", "--brief", "infra versioning")
+
+	_, stderr := r.runSplit("memory", "search", "provisioning", "-p", projectID)
+	if !strings.Contains(stderr, "unreachable") {
+		t.Fatalf("search must name the unreachable-endpoint cause:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "ft doctor") {
+		t.Fatalf("search must point at the fix:\n%s", stderr)
+	}
+}
+
+// With a command fallback the endpoint probe would preempt the working fallback,
+// so the guard must leave the embedder unwrapped.
+func TestGuardEmbedderSkipsCommandFallback(t *testing.T) {
+	d := &Deps{
+		Err: io.Discard,
+		Config: config.Config{Embed: config.Embed{
+			Provider: "ollama",
+			Options:  map[string]string{"endpoint": "http://x", "model": "m", "command": "embed"},
+		}},
+	}
+	e := &keywordEmbedder{}
+	if got := d.guardEmbedder(e); got != embed.Embedder(e) {
+		t.Fatalf("guardEmbedder wrapped an embedder that has a command fallback")
 	}
 }
 

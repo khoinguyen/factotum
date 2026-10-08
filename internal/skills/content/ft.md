@@ -242,12 +242,12 @@ strongly related to existing memory - reconcile it in the same session.
 task and `--task ""` detaches it. Only memory artifacts are accepted: the verbs
 reject specs and docs.
 
-Memory search is lexical by default. Configuring an embedding provider (the
-machine-scoped `[embed]` table, or `FACTOTUM_EMBED_PROVIDER`) adds vector recall:
-`ft memory search` then also finds paraphrases that share no tokens. Writes stay
-best-effort - a memory is created even when the embedder is down, and the skipped
-vector is backfilled by the next edit or `ft memory reindex`. A change of embedding
-model is detected and reported; run `ft memory reindex` after changing it.
+Memory search is lexical by default; configuring an embedding provider (the
+machine-scoped `[embed]` table, or `FACTOTUM_EMBED_PROVIDER`) adds vector recall,
+finding paraphrases that share no tokens. Writes stay best-effort; `ft memory
+reindex` backfills skipped vectors and repairs a model change. A detectable embed
+failure - endpoint unreachable, model not served, or empty response - is reported
+by cause and fix, not a generic error, and the failed embed is skipped once known.
 
 ## Diagnose the optional subsystems
 

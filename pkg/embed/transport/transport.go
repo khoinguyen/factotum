@@ -171,7 +171,7 @@ func (h *HTTP) post(ctx context.Context, url string, body []byte, apiKey string)
 	}
 	response, err := h.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("embed: request failed: %w", err)
+		return nil, fmt.Errorf("%w: %s: %w", embed.ErrEndpointUnreachable, url, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	data, _ := io.ReadAll(response.Body)
@@ -233,11 +233,11 @@ func execRunner(ctx context.Context, command string, stdin []byte) ([]byte, erro
 
 func checkVectors(vectors [][]float32, want int) ([][]float32, error) {
 	if len(vectors) != want {
-		return nil, fmt.Errorf("embed: got %d vectors for %d texts", len(vectors), want)
+		return nil, fmt.Errorf("%w: got %d vectors for %d texts", embed.ErrEmptyResponse, len(vectors), want)
 	}
 	for _, vector := range vectors {
 		if len(vector) == 0 {
-			return nil, fmt.Errorf("embed: empty vector in response")
+			return nil, fmt.Errorf("%w: endpoint returned an empty vector", embed.ErrEmptyResponse)
 		}
 	}
 	return vectors, nil

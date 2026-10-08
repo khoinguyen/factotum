@@ -19,7 +19,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/doctor"
 	"github.com/khoinguyen/factotum/pkg/embed"
-	_ "github.com/khoinguyen/factotum/pkg/embed/transport" // register the embedding providers
+	"github.com/khoinguyen/factotum/pkg/embed/transport" // registers embedding providers and the failure guard
 	"github.com/khoinguyen/factotum/pkg/feedback"
 	"github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/harness/opencode"
@@ -361,7 +361,31 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 	} else {
 		d.Vectors = d.openVectors(cfg)
 	}
+	d.Embedder = d.guardEmbedder(d.Embedder)
 	d.Retriever = app.NewVectorRetriever(d.Embedder, d.Vectors, cfg.Embed.Options["model"])
+}
+
+// guardEmbedder wraps the embedder so a detectable endpoint/model failure is named
+// once and cached, instead of every search paying a failing embed. It applies only
+// to an endpoint provider with a model and no command fallback: with a command
+// configured the chain may still succeed after the endpoint fails, so pre-probing
+// would wrongly skip it. A command or disabled embedder passes through untouched.
+func (d *Deps) guardEmbedder(e embed.Embedder) embed.Embedder {
+	if !embedderUsable(e) {
+		return e
+	}
+	cfg := d.Config.Embed
+	endpoint := cfg.Options["endpoint"]
+	model := cfg.Options["model"]
+	if cfg.Provider == "command" || endpoint == "" || model == "" || cfg.Options["command"] != "" {
+		return e
+	}
+	return transport.NewGuard(e, d.doctorProbe(), doctor.Endpoint{
+		Protocol: cfg.Provider,
+		URL:      endpoint,
+		APIKey:   cfg.Options["api_key"],
+		Model:    model,
+	})
 }
 
 // Close releases the vector side index and the storage backend.

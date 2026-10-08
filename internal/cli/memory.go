@@ -101,17 +101,25 @@ func (d *Deps) vectorCandidates(ctx context.Context, project core.ProjectID, que
 }
 
 // warnVector reports the first vector fallback in a command, so a broken embedder
-// is visible without flooding the output.
+// is visible without flooding the output. A detectable cause names both why vector
+// retrieval is off and the fix, instead of the generic transport error.
 func (d *Deps) warnVector(err error) {
 	if d.vectorWarned {
 		return
 	}
 	d.vectorWarned = true
-	if errors.Is(err, app.ErrModelMismatch) {
+	switch {
+	case errors.Is(err, app.ErrModelMismatch):
 		d.warnf("%v; using lexical order. Run `ft memory reindex`", err)
-		return
+	case errors.Is(err, embed.ErrEndpointUnreachable):
+		d.warnf("vector retrieval unavailable: %v; using lexical order. Start the embedding server, then run `ft doctor`", err)
+	case errors.Is(err, embed.ErrModelNotServed):
+		d.warnf("vector retrieval unavailable: %v; using lexical order. Pull or load the model on the endpoint, then run `ft doctor`", err)
+	case errors.Is(err, embed.ErrEmptyResponse):
+		d.warnf("vector retrieval unavailable: %v; using lexical order. Run `ft doctor`", err)
+	default:
+		d.warnf("vector retrieval unavailable (%v); using lexical order", err)
 	}
-	d.warnf("vector retrieval unavailable (%v); using lexical order", err)
 }
 
 // forgetMemoryVector removes a deleted memory's vector best-effort, so the side

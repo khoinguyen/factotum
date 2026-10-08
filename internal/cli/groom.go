@@ -100,7 +100,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		return fmt.Errorf("session prompt %s is empty", promptPath)
 	}
 
-	dataDir, err := projectDataDir(d.Config)
+	dataDir, err := projectDataDir(d.Config.Store)
 	if err != nil {
 		return err
 	}
@@ -481,16 +481,16 @@ func (d *Deps) reopenStore(ctx context.Context) (groomStore, error) {
 }
 
 // projectDataDir resolves where a project's session outputs live: the directory
-// of the configured store, else the per-user default beside the config. The path
-// is made absolute because the session runs with a different working directory
-// than ft, so a relative path would name different places.
-func projectDataDir(cfg config.Config) (string, error) {
-	path := cfg.Store.Options["path"]
+// of the store, else the per-user default beside the config. The path is made
+// absolute because the session runs with a different working directory than ft,
+// so a relative path would name different places.
+func projectDataDir(st config.Store) (string, error) {
+	path := st.Options["path"]
 	if path != "" && path != ":memory:" {
 		// jsondir roots a document tree at its path; every other file-backed
 		// backend stores one file whose parent is the data dir.
 		dir := filepath.Dir(path)
-		if cfg.Store.Backend == "jsondir" {
+		if st.Backend == "jsondir" {
 			dir = path
 		}
 		abs, err := filepath.Abs(dir)

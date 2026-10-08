@@ -329,3 +329,79 @@ func TestGroomShowUnknownSessionErrors(t *testing.T) {
 		t.Fatal("groom show of an unknown session error = nil, want an error")
 	}
 }
+
+// seedOtherProjectSession registers a second project in the machine config with
+// its own store, and records a session under that store's data dir. It returns
+// the project id and the session id. The session lives in a different data dir
+// than the configured project's, so reading it proves -p selects the project's
+// store rather than filtering the configured one.
+func seedOtherProjectSession(t *testing.T, r *runner, name string) (projectID, sessionID string) {
+	t.Helper()
+	projectID = firstField(t, r.run("project", "create", name))
+	dbPath := filepath.Join(t.TempDir(), projectID+".json")
+	mustWrite(t, r.userPath, "[projects."+projectID+"]\ndb_path = \""+dbPath+"\"\n")
+
+	dataDir := filepath.Dir(dbPath)
+	sessionID = "groom-" + projectID
+	if err := groom.WriteSession(dataDir, groom.SessionRecord{
+		ID:        sessionID,
+		Project:   projectID,
+		Mode:      "headless",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("WriteSession error = %v", err)
+	}
+	mustWrite(t, groom.ReportPath(dataDir, sessionID), "# Grooming report - "+projectID+"\n\n## Summary\n")
+	mustWrite(t, groom.DeferredQuestionsPath(dataDir, sessionID), "# Deferred questions - "+projectID+"\n\n## Questions\n")
+	return projectID, sessionID
+}
+
+// TestGroomShowProjectFlagReadsAnotherProjectsStore pins -p/--project on
+// `ft groom show`: a project's sessions live beside its own store, so showing a
+// non-default project's session must read that project's data dir (resolved
+// from the machine registry), not the configured project's.
+func TestGroomShowProjectFlagReadsAnotherProjectsStore(t *testing.T) {
+	r := newRunner(t)
+	_, cfgPath := tasklessContext(t, r)
+	other, sessionID := seedOtherProjectSession(t, r, "Beta")
+
+	out := r.run("--config", cfgPath, "groom", "show", sessionID, "-p", other)
+	for _, want := range []string{"session: " + sessionID, "project: " + other, "Grooming report - " + other} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("groom show -p output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestGroomListProjectFlagReadsAnotherProjectsStore pins that -p on list reads
+// the same project store show does, so list and show agree on which sessions a
+// project has.
+func TestGroomListProjectFlagReadsAnotherProjectsStore(t *testing.T) {
+	r := newRunner(t)
+	_, cfgPath := tasklessContext(t, r)
+	other, sessionID := seedOtherProjectSession(t, r, "Beta")
+
+	out := r.run("--config", cfgPath, "groom", "list", "-p", other)
+	if !strings.Contains(out, sessionID) {
+		t.Fatalf("groom list -p %s did not list %s:\n%s", other, sessionID, out)
+	}
+}
+
+// TestGroomShowProjectFlagRejectsAnotherProjectsSession pins that -p is
+// authoritative: asking for project B must not surface project A's session,
+// which is the filter list already applies.
+func TestGroomShowProjectFlagRejectsAnotherProjectsSession(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("idea", "create", "-p", projectID, "-t", "Maybe cache")
+	sessionID, _ := seedGroomSession(t, r, projectID, cfgPath, "Extract cache module")
+	other := firstField(t, r.run("project", "create", "Beta"))
+
+	err := r.runErr("--config", cfgPath, "groom", "show", sessionID, "-p", other)
+	if err == nil {
+		t.Fatalf("groom show -p %s of a %s session error = nil, want a mismatch error", other, projectID)
+	}
+	if !strings.Contains(err.Error(), projectID) {
+		t.Fatalf("mismatch error %q does not name the session's project %s", err, projectID)
+	}
+}

@@ -70,7 +70,7 @@ the agent-ready queue:
 
 ```sh
 ft groom list -p <project>
-ft groom show <session>
+ft groom show <session> -p <project>
 ft task next -p <project> --groomed
 ```
 
@@ -180,7 +180,7 @@ The whole recipe in one block:
 ft idea create -p <project> -t "..." -b "..."                     # capture an idea
 ft bug create -p <project> -t "..." -b "..."                      # capture a defect
 ft groom -p <project> --unattended --sandbox local --harness opencode --allow-host
-ft groom show <session>                                           # report, docs, produced tasks
+ft groom show <session> -p <project>                              # report, docs, produced tasks
 ft groom review <session> --verdict approve -f review.md          # needs-rework blocks the build
 ft graph render -p <project> -f agent                             # the DAG as text
 ft task next -p <project> --groomed --for <agent>                 # the buildable queue

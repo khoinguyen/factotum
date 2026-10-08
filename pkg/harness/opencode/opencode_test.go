@@ -101,6 +101,63 @@ func TestSpecDeclaresImageEntrypointAndIdentity(t *testing.T) {
 	}
 }
 
+// TestSpecStagesReceiverPlugin proves a run configured with a project and actor
+// stages the ft msg plugin into the workspace, and an unconfigured run does not.
+func TestSpecStagesReceiverPlugin(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       map[string]string
+		wantStage bool
+	}{
+		{
+			name:      "project and actor stage the plugin",
+			env:       map[string]string{harness.EnvProject: "prj", harness.EnvActor: "act"},
+			wantStage: true,
+		},
+		{
+			name:      "actor alone is not enough",
+			env:       map[string]string{harness.EnvActor: "act"},
+			wantStage: false,
+		},
+		{
+			name:      "no receiver config stages nothing",
+			env:       nil,
+			wantStage: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, err := opencode.New(opencode.Options{Binary: "/opt/opencode"}).Spec(harness.Request{Workdir: "/work", Env: tc.env})
+			if err != nil {
+				t.Fatalf("Spec() error = %v", err)
+			}
+			found := ""
+			for _, file := range spec.Files {
+				if file.Path == ".opencode/plugin/factotum-msg.js" {
+					found = string(file.Content)
+				}
+			}
+			if tc.wantStage && found == "" {
+				t.Fatalf("plugin not staged; files = %v", spec.Files)
+			}
+			if !tc.wantStage && found != "" {
+				t.Fatalf("plugin staged without receiver config; files = %v", spec.Files)
+			}
+			if tc.wantStage && !strings.Contains(found, "server(") {
+				t.Errorf("staged plugin does not export server(): %s", found)
+			}
+		})
+	}
+}
+
+// TestStagedPluginMatchesEmbeddedSource pins that the staged file is the
+// embedded plugin, so the run and the shipped source cannot drift.
+func TestStagedPluginMatchesEmbeddedSource(t *testing.T) {
+	if string(opencode.MsgPluginFile().Content) != string(opencode.MsgPluginBytes()) {
+		t.Fatal("MsgPluginFile content differs from MsgPluginBytes")
+	}
+}
+
 func TestCommandBuildsHeadlessInvocation(t *testing.T) {
 	tests := []struct {
 		name string

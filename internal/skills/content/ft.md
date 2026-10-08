@@ -243,11 +243,11 @@ by cause and fix, not a generic error, and the failed embed is skipped once know
 ## Message peers
 
 ```sh
-ft msg send <address|ticket-id> <text> -p <project>   # actor:/run:/task:/bare ticket
-ft msg inbox -p <project> [--state <state>]           # list; ft msg read <id> marks read
+ft msg send <address|ticket-id> <text> -p <project>; ft msg inbox -p <project> [--state <state>]   # ft msg read <id> marks read
+ft msg agent register|claim|ack|nack|heartbeat|deregister ...   # receiver protocol, JSON in/out
 ```
 
-A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`); `ft msg read` is idempotent and `--from` defaults to the configured actor.
+A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`); `ft msg read` is idempotent and `--from` defaults to the configured actor. A receiver registers with `ft msg agent register`, long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode harness stages that plugin (per the `FACTOTUM_*` env it sets) when the run has an actor.
 
 ## Diagnose the optional subsystems
 

@@ -123,6 +123,12 @@ func (h *Harness) Spec(req harness.Request) (isolation.Spec, error) {
 		Env:     clone(req.Env),
 		Labels:  req.Labels,
 	}
+	// When the run carries receiver configuration, stage the ft msg plugin so
+	// the launched session registers and claims messages. Without a configured
+	// project/actor the plugin is not installed and the session is unmanaged.
+	if MessagingEnabled(req.Env) {
+		spec.Files = append(spec.Files, MsgPluginFile())
+	}
 	if h.provider != "" && h.credEnv != "" {
 		spec.Credentials = []isolation.Credential{{
 			Provider: h.provider,

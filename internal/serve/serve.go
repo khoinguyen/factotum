@@ -45,6 +45,19 @@ const (
 // the graph package to name the waiting state.
 const ReasonDepUnresolved = string(graph.ReasonDepUnresolved)
 
+// CaptureController is the factory's hook on the capture write path. When set,
+// the server hands it each capture the moment the capture is durably stored, so
+// a controller can start the capture's factory pipeline (docs/up/design.md §4).
+// Nil disables the trigger: capture stays a pure store write, which is what
+// plain `ft serve` does. The daemon (`ft up`) supplies the controller and gates
+// it with its auto_groom opt-out.
+type CaptureController interface {
+	// Submit is called after a capture is stored. It runs on the request
+	// goroutine, so an implementation that starts long work must do so
+	// asynchronously and must not block the response.
+	Submit(ctx context.Context, capture *core.Ticket)
+}
+
 // Options configures the dashboard server.
 type Options struct {
 	// Backend is the store to read. It is required and never written.
@@ -65,6 +78,15 @@ type Options struct {
 	// Tasks is the app service that stores a captured idea. Nil disables
 	// capture. It is required only for writes, so a read-only server may omit it.
 	Tasks *app.TicketService
+	// AutoGroom enables the capture trigger: with it set and a Controller
+	// installed, every stored capture is handed to the controller. The daemon
+	// sets it from its auto_groom config (default on); `ft serve` leaves it off,
+	// so capture stays inert.
+	AutoGroom bool
+	// Controller receives stored captures when AutoGroom is set. Nil disables
+	// the trigger regardless of AutoGroom, so a read-only or plain serve server
+	// has no factory hook.
+	Controller CaptureController
 	// Messages is the app service behind the /api/msg/* transport. Nil disables
 	// the transport, so a read-only server or an all-projects one omits it.
 	Messages *app.MessageService

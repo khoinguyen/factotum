@@ -71,7 +71,7 @@ func TestPluginLoadsOnInstalledOpenCode(t *testing.T) {
 
 		// The regression this test exists for: an invalid plugin shape is
 		// reported as a load error naming the plugin.
-		if strings.Contains(string(lastOut), "factotum-msg.js\" error") {
+		if pluginLoadFailed(lastOut) {
 			t.Fatalf("receiver plugin failed to load on opencode:\n%s", lastOut)
 		}
 		if calls, _ := os.ReadFile(callsPath); strings.Contains(string(calls), "msg agent register") {
@@ -79,6 +79,35 @@ func TestPluginLoadsOnInstalledOpenCode(t *testing.T) {
 		}
 	}
 	t.Skipf("opencode did not reach plugin loading in the attempts (no load error seen); skipped rather than flaked\nopencode output:\n%s", lastOut)
+}
+
+// pluginLoadFailed reports whether OpenCode logged a load failure for the
+// receiver plugin. OpenCode 1.18.35 writes the path unquoted followed by the
+// error, e.g.
+//
+//	level=ERROR message="failed to load plugin" path=file:///.../factotum-msg.js error="Plugin ... must default export an object with server()"
+//
+// The pattern is scoped to the plugin's own path so the (unrelated) global cmux
+// plugins that also fail to load on this OpenCode version do not trip it.
+func pluginLoadFailed(out []byte) bool {
+	text := string(out)
+	return strings.Contains(text, "factotum-msg.js error=") ||
+		(strings.Contains(text, "failed to load plugin") && strings.Contains(text, "factotum-msg.js"))
+}
+
+// TestPluginLoadFailedDetector pins the detector against the exact OpenCode
+// 1.18.35 line shape (path unquoted, then error=) so the load guard cannot
+// silently become toothless, and against a run that only carries an unrelated
+// global plugin failure.
+func TestPluginLoadFailedDetector(t *testing.T) {
+	broken := []byte(`timestamp=... level=ERROR message="failed to load plugin" path=file:///tmp/x/.opencode/plugin/factotum-msg.js error="Plugin file:///tmp/x/.opencode/plugin/factotum-msg.js must default export an object with server()"`)
+	if !pluginLoadFailed(broken) {
+		t.Fatal("pluginLoadFailed() = false for a genuine receiver load error")
+	}
+	other := []byte(`timestamp=... level=ERROR message="failed to load plugin" path=file:///home/u/.config/opencode/plugins/cmux-feed.js error="Plugin ... must default export an object with server()"`)
+	if pluginLoadFailed(other) {
+		t.Fatal("pluginLoadFailed() = true for an unrelated global plugin failure")
+	}
 }
 
 // TestPluginUnitTests runs the plugin's Node unit tests, so `mise run test`

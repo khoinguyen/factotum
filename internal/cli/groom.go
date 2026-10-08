@@ -128,6 +128,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	}
 	interactive := d.runInteractive(cmd, opts.unattended)
 
+	progress := d.startRunProgress(runProgressLabel("groom session "+sessionID, sel.backendName, sel.harness.Name()), interactive)
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).RunProject(ctx, app.ProjectRunInput{
 		ProjectID:        project.ID,
 		Backend:          sel.backend,
@@ -141,6 +142,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		Capture:          []string{stagedReport, stagedDeferred},
 		Interactive:      interactive,
 	})
+	progress.stop()
 	if errors.Is(runErr, local.ErrNotOptedIn) {
 		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
 	}

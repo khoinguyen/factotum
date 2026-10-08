@@ -70,9 +70,11 @@ A session is complete only when every task it produces is **agent-ready**: `groo
 least one acceptance criterion) AND assigned to an agent, so `ft task next --for <agent>` offers it.
 This is the end state *after* the grill answers: the timing guard in step 6 forbids promoting,
 splitting, or marking groomed before then, and this rule requires it by the time the session is done.
-Promoting an idea creates a linked task that is groomed and assigned in the same step. Do not leave
-produced work ungroomed or unassigned for a human - that is what put session 1's work in the human
-bucket. Genuinely human items (product decisions, human testing and review) stay human on purpose and
+Promoting an idea creates a linked task that is groomed and assigned in the same step: `ft idea
+promote <idea> --acceptance "<observable result>" --actor <agent>` (triage a bug the same way). Both
+the acceptance criterion and the agent assignee are required - promotion errors and asks for what is
+missing rather than creating an ungroomed, unassigned todo. Do not leave produced work ungroomed or
+unassigned for a human - that is what put session 1's work in the human bucket. Genuinely human items (product decisions, human testing and review) stay human on purpose and
 are named in the report.
 
 ## Unattended mode

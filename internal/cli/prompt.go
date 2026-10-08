@@ -11,6 +11,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/agent"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/store"
 )
 
 func newPromptCommand(deps *Deps) *cobra.Command {
@@ -87,14 +88,30 @@ func (d *Deps) promptAgent(command string) (agent.Agent, error) {
 
 // createFromPlan validates the whole plan before writing anything, so a single
 // bad task from the agent cannot leave a half-applied graph, then creates every
-// task and reports the created documents.
+// proposed task that is not already present and reports the created and skipped
+// documents. Matching is by normalized title within the project, so re-running
+// the same prompt is idempotent: a task whose title already exists (or repeats
+// earlier in the same plan) is skipped rather than duplicated.
 func (d *Deps) createFromPlan(ctx context.Context, project *core.Project, plan agent.Plan) error {
 	if err := validatePlan(project, plan); err != nil {
 		return err
 	}
+	existing, err := d.Tasks.List(ctx, store.TicketFilter{ProjectID: project.ID})
+	if err != nil {
+		return err
+	}
+	byTitle := make(map[string]*core.Ticket, len(existing))
+	for _, task := range existing {
+		byTitle[normalizeTitle(task.Title)] = task
+	}
 	created := make([]taskDoc, 0, len(plan.Tasks))
 	tasks := make([]*core.Ticket, 0, len(plan.Tasks))
+	skipped := make([]*core.Ticket, 0, len(plan.Tasks))
 	for _, proposed := range plan.Tasks {
+		if match, ok := byTitle[normalizeTitle(proposed.Title)]; ok {
+			skipped = append(skipped, match)
+			continue
+		}
 		kind := core.TicketKind(proposed.Kind)
 		if kind == "" {
 			kind = core.KindTask
@@ -111,17 +128,37 @@ func (d *Deps) createFromPlan(ctx context.Context, project *core.Project, plan a
 		if err != nil {
 			return err
 		}
+		byTitle[normalizeTitle(task.Title)] = task
 		tasks = append(tasks, task)
 		created = append(created, taskDocFrom(task))
 	}
+	if len(skipped) > 0 {
+		d.warnf("skipped %d task(s) already present in %s", len(skipped), project.ID)
+	}
 	return d.emit(created, func() {
-		for i, task := range tasks {
-			if i > 0 {
+		first := true
+		for _, task := range tasks {
+			if !first {
 				d.printf("---\n")
 			}
+			first = false
 			d.printFields(d.taskFields(task, f("created", true))...)
 		}
+		for _, task := range skipped {
+			if !first {
+				d.printf("---\n")
+			}
+			first = false
+			d.printFields(d.taskFields(task, f("skipped", true))...)
+		}
 	})
+}
+
+// normalizeTitle is the idempotency key for plan matching: case-insensitive,
+// with surrounding whitespace ignored, consistent with the duplicate-title
+// warning on `task create`.
+func normalizeTitle(title string) string {
+	return strings.ToLower(strings.TrimSpace(title))
 }
 
 // validatePlan rejects a plan whose tasks could not be created, before any are.

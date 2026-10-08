@@ -175,10 +175,10 @@ ft prompt -p <project> -y break this feature into tasks # create the proposed ta
 ```
 
 `ft prompt` hands the words to the configured agent CLI and prints the tasks it
-proposes, in the `ft task apply` document shape. Nothing is created until `-y`.
-The agent CLI comes from the machine-scoped `[agent]` table,
-`FACTOTUM_AGENT_COMMAND`, or the `--agent-command` flag (which wins for one
-invocation):
+proposes, in the `ft task apply` document shape. Nothing is created until `-y`;
+applying is idempotent (an existing title is skipped, not duplicated). The agent
+CLI comes from the machine-scoped `[agent]` table, `FACTOTUM_AGENT_COMMAND`, or
+the `--agent-command` flag (which wins for one invocation):
 
 ```toml
 [agent]

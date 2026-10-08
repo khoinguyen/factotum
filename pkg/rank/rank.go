@@ -15,16 +15,16 @@ import (
 
 type Request struct {
 	Graph      *graph.Graph
-	Tasks      []*core.Task
-	Candidates []core.TaskID
-	Toward     core.TaskID
+	Tasks      []*core.Ticket
+	Candidates []core.TicketID
+	Toward     core.TicketID
 	Actor      *core.ActorID
 	Repo       *string
 }
 
 type Scored struct {
-	TaskID core.TaskID
-	Score  float64
+	TicketID core.TicketID
+	Score    float64
 }
 
 type Ranker interface {
@@ -40,7 +40,7 @@ func (Unblock) Rank(_ context.Context, req Request) ([]Scored, error) {
 	ids := candidates(req)
 	out := make([]Scored, 0, len(ids))
 	for _, id := range ids {
-		out = append(out, Scored{TaskID: id, Score: float64(req.Graph.UnblockCount(id))})
+		out = append(out, Scored{TicketID: id, Score: float64(req.Graph.UnblockCount(id))})
 	}
 	return sortScored(out, req), nil
 }
@@ -57,7 +57,7 @@ func (Milestone) Rank(_ context.Context, req Request) ([]Scored, error) {
 		if distance, ok := req.Graph.DistanceToMilestone(id); ok {
 			score = 1 / float64(distance+1)
 		}
-		out = append(out, Scored{TaskID: id, Score: score})
+		out = append(out, Scored{TicketID: id, Score: score})
 	}
 	return sortScored(out, req), nil
 }
@@ -76,7 +76,7 @@ func (Toward) Rank(_ context.Context, req Request) ([]Scored, error) {
 				score = 1 / float64(len(path))
 			}
 		}
-		out = append(out, Scored{TaskID: id, Score: score})
+		out = append(out, Scored{TicketID: id, Score: score})
 	}
 	return sortScored(out, req), nil
 }
@@ -109,9 +109,9 @@ func (c *Composite) Rank(_ context.Context, req Request) ([]Scored, error) {
 	ids := candidates(req)
 
 	priority := priorityByID(req.Tasks)
-	rawUnblock := make(map[core.TaskID]float64, len(ids))
-	rawMilestone := make(map[core.TaskID]float64, len(ids))
-	rawToward := make(map[core.TaskID]float64, len(ids))
+	rawUnblock := make(map[core.TicketID]float64, len(ids))
+	rawMilestone := make(map[core.TicketID]float64, len(ids))
+	rawToward := make(map[core.TicketID]float64, len(ids))
 	maxUnblock := 0.0
 	maxPriority := 0.0
 
@@ -144,12 +144,12 @@ func (c *Composite) Rank(_ context.Context, req Request) ([]Scored, error) {
 			priorityTerm = float64(priority[id]) / maxPriority
 		}
 		score := c.weights.Unblock*unblock + c.weights.Milestone*rawMilestone[id] + c.weights.Toward*rawToward[id] + c.weights.Priority*priorityTerm
-		out = append(out, Scored{TaskID: id, Score: score})
+		out = append(out, Scored{TicketID: id, Score: score})
 	}
 	return sortScored(out, req), nil
 }
 
-func candidates(req Request) []core.TaskID {
+func candidates(req Request) []core.TicketID {
 	// A nil candidate set means "unspecified" and falls back to the ready set;
 	// a non-nil empty set means the caller filtered everything out.
 	ids := req.Candidates
@@ -161,11 +161,11 @@ func candidates(req Request) []core.TaskID {
 			return ids
 		}
 	}
-	byID := make(map[core.TaskID]core.Task, len(req.Tasks))
+	byID := make(map[core.TicketID]core.Ticket, len(req.Tasks))
 	for _, task := range req.Tasks {
 		byID[task.ID] = *task
 	}
-	out := make([]core.TaskID, 0, len(ids))
+	out := make([]core.TicketID, 0, len(ids))
 	for _, id := range ids {
 		task, ok := byID[id]
 		if ok && !task.Kind.Executable() {
@@ -189,8 +189,8 @@ func candidates(req Request) []core.TaskID {
 	return out
 }
 
-func priorityByID(tasks []*core.Task) map[core.TaskID]int {
-	priority := make(map[core.TaskID]int, len(tasks))
+func priorityByID(tasks []*core.Ticket) map[core.TicketID]int {
+	priority := make(map[core.TicketID]int, len(tasks))
 	for _, task := range tasks {
 		priority[task.ID] = task.Priority
 	}
@@ -203,11 +203,11 @@ func sortScored(out []Scored, req Request) []Scored {
 		if out[i].Score != out[j].Score {
 			return out[i].Score > out[j].Score
 		}
-		pi, pj := priority[out[i].TaskID], priority[out[j].TaskID]
+		pi, pj := priority[out[i].TicketID], priority[out[j].TicketID]
 		if pi != pj {
 			return pi > pj
 		}
-		return out[i].TaskID < out[j].TaskID
+		return out[i].TicketID < out[j].TicketID
 	})
 	return out
 }

@@ -50,7 +50,7 @@ func (Mermaid) Render(_ context.Context, w io.Writer, view View) error {
 	return writeString(w, b.String())
 }
 
-func mermaidID(id core.TaskID) string {
+func mermaidID(id core.TicketID) string {
 	var b strings.Builder
 	for _, r := range string(id) {
 		switch {

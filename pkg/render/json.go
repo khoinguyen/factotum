@@ -90,22 +90,22 @@ func (JSON) Render(_ context.Context, w io.Writer, view View) error {
 	}
 
 	for _, scored := range view.ranked() {
-		task := derived.tasks[scored.TaskID]
+		task := derived.tasks[scored.TicketID]
 		entry := jsonReadyTask{
-			ID:       string(scored.TaskID),
+			ID:       string(scored.TicketID),
 			Repo:     task.Repo,
 			Title:    task.Title,
 			Kind:     string(task.Kind),
 			Status:   string(task.Status),
 			Score:    scored.Score,
-			Unblocks: view.Graph.UnblockCount(scored.TaskID),
-			Wave:     derived.waves[scored.TaskID],
+			Unblocks: view.Graph.UnblockCount(scored.TicketID),
+			Wave:     derived.waves[scored.TicketID],
 			Assignee: view.actorName(task.AssigneeID),
 		}
-		if derived.readyAgent[scored.TaskID] {
+		if derived.readyAgent[scored.TicketID] {
 			doc.Next.Agent = append(doc.Next.Agent, entry)
 		}
-		if derived.readyHuman[scored.TaskID] {
+		if derived.readyHuman[scored.TicketID] {
 			doc.Next.Human = append(doc.Next.Human, entry)
 		}
 	}
@@ -161,7 +161,7 @@ func (v View) actorName(id *core.ActorID) string {
 	return string(*id)
 }
 
-func (v View) stringDeps(id core.TaskID) []string {
+func (v View) stringDeps(id core.TicketID) []string {
 	deps := v.Graph.Deps(id)
 	out := make([]string, 0, len(deps))
 	for _, dep := range deps {

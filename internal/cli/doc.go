@@ -61,8 +61,8 @@ func newDocCommand(deps *Deps) *cobra.Command {
 				Path:      path,
 			}
 			if taskID != "" {
-				id := core.TaskID(taskID)
-				input.TaskID = &id
+				id := core.TicketID(taskID)
+				input.TicketID = &id
 			}
 			artifact, err := deps.Artifacts.Add(cmd.Context(), input)
 			if err != nil {
@@ -164,8 +164,8 @@ func newDocCommand(deps *Deps) *cobra.Command {
 					deps.printf("brief: %s\n", artifact.Brief)
 				}
 				deps.printf("project: %s\n", artifact.ProjectID)
-				if artifact.TaskID != nil {
-					deps.printf("task: %s\n", *artifact.TaskID)
+				if artifact.TicketID != nil {
+					deps.printf("task: %s\n", *artifact.TicketID)
 				}
 				deps.printf("created_at: %s\n", artifact.CreatedAt.UTC().Format(time.RFC3339))
 				deps.printf("updated_at: %s\n", artifact.UpdatedAt.UTC().Format(time.RFC3339))

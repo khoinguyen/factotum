@@ -23,9 +23,9 @@ func factsBackend(t *testing.T) (store.Backend, core.ProjectID) {
 	return backend, project.ID
 }
 
-func createTask(t *testing.T, backend store.Backend, task *core.Task) {
+func createTask(t *testing.T, backend store.Backend, task *core.Ticket) {
 	t.Helper()
-	if err := backend.Tasks().Create(context.Background(), task); err != nil {
+	if err := backend.Tickets().Create(context.Background(), task); err != nil {
 		t.Fatalf("Create(%s) error = %v", task.ID, err)
 	}
 }
@@ -35,11 +35,11 @@ func TestTaskGraphFactsReportsDependentsAndReason(t *testing.T) {
 	backend, projectID := factsBackend(t)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	createTask(t, backend, &core.Task{ID: "first", ProjectID: projectID, Kind: core.KindTask, Title: "first", Status: core.StatusTodo})
-	createTask(t, backend, &core.Task{ID: "second", ProjectID: projectID, Kind: core.KindTask, Title: "second", Status: core.StatusTodo, Deps: []core.TaskID{"first"}})
-	createTask(t, backend, &core.Task{ID: "third", ProjectID: projectID, Kind: core.KindTask, Title: "third", Status: core.StatusTodo, Deps: []core.TaskID{"second"}})
+	createTask(t, backend, &core.Ticket{ID: "first", ProjectID: projectID, Kind: core.KindTask, Title: "first", Status: core.StatusTodo})
+	createTask(t, backend, &core.Ticket{ID: "second", ProjectID: projectID, Kind: core.KindTask, Title: "second", Status: core.StatusTodo, Deps: []core.TicketID{"first"}})
+	createTask(t, backend, &core.Ticket{ID: "third", ProjectID: projectID, Kind: core.KindTask, Title: "third", Status: core.StatusTodo, Deps: []core.TicketID{"second"}})
 
-	first, err := backend.Tasks().Get(ctx, "first")
+	first, err := backend.Tickets().Get(ctx, "first")
 	if err != nil {
 		t.Fatalf("Get(first) error = %v", err)
 	}
@@ -47,14 +47,14 @@ func TestTaskGraphFactsReportsDependentsAndReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TaskGraphFacts(first) error = %v", err)
 	}
-	if !equalIDs(dependents, []core.TaskID{"second"}) {
+	if !equalIDs(dependents, []core.TicketID{"second"}) {
 		t.Fatalf("first dependents = %v, want [second]", dependents)
 	}
 	if reason != nil {
 		t.Fatalf("first should be ready, reason = %+v", reason)
 	}
 
-	second, err := backend.Tasks().Get(ctx, "second")
+	second, err := backend.Tickets().Get(ctx, "second")
 	if err != nil {
 		t.Fatalf("Get(second) error = %v", err)
 	}
@@ -62,14 +62,14 @@ func TestTaskGraphFactsReportsDependentsAndReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TaskGraphFacts(second) error = %v", err)
 	}
-	if !equalIDs(dependents, []core.TaskID{"third"}) {
+	if !equalIDs(dependents, []core.TicketID{"third"}) {
 		t.Fatalf("second dependents = %v, want [third]", dependents)
 	}
 	if reason == nil || reason.Code != graph.ReasonDepUnresolved || reason.Detail != "first" {
 		t.Fatalf("second reason = %+v, want dep_unresolved/first", reason)
 	}
 
-	third, err := backend.Tasks().Get(ctx, "third")
+	third, err := backend.Tickets().Get(ctx, "third")
 	if err != nil {
 		t.Fatalf("Get(third) error = %v", err)
 	}
@@ -92,12 +92,12 @@ func TestTaskGraphFactsSnoozeUntilTask(t *testing.T) {
 	ctx := context.Background()
 	backend, projectID := factsBackend(t)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	gate := core.TaskID("gate")
+	gate := core.TicketID("gate")
 
-	createTask(t, backend, &core.Task{ID: "gate", ProjectID: projectID, Kind: core.KindTask, Title: "gate", Status: core.StatusTodo})
-	createTask(t, backend, &core.Task{ID: "parked", ProjectID: projectID, Kind: core.KindTask, Title: "parked", Status: core.StatusTodo, Snooze: &core.Snooze{UntilTask: &gate}})
+	createTask(t, backend, &core.Ticket{ID: "gate", ProjectID: projectID, Kind: core.KindTask, Title: "gate", Status: core.StatusTodo})
+	createTask(t, backend, &core.Ticket{ID: "parked", ProjectID: projectID, Kind: core.KindTask, Title: "parked", Status: core.StatusTodo, Snooze: &core.Snooze{UntilTask: &gate}})
 
-	parked, err := backend.Tasks().Get(ctx, "parked")
+	parked, err := backend.Tickets().Get(ctx, "parked")
 	if err != nil {
 		t.Fatalf("Get(parked) error = %v", err)
 	}
@@ -109,7 +109,7 @@ func TestTaskGraphFactsSnoozeUntilTask(t *testing.T) {
 		t.Fatalf("parked reason = %+v, want snoozed", reason)
 	}
 
-	if err := backend.Tasks().Update(ctx, &core.Task{ID: "gate", ProjectID: projectID, Kind: core.KindTask, Title: "gate", Status: core.StatusDone}); err != nil {
+	if err := backend.Tickets().Update(ctx, &core.Ticket{ID: "gate", ProjectID: projectID, Kind: core.KindTask, Title: "gate", Status: core.StatusDone}); err != nil {
 		t.Fatalf("Update(gate) error = %v", err)
 	}
 	_, reason, err = TaskGraphFacts(ctx, backend, parked, now)
@@ -127,8 +127,8 @@ func TestTaskGraphFactsNotBefore(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	notBefore := now.Add(24 * time.Hour)
 
-	createTask(t, backend, &core.Task{ID: "later", ProjectID: projectID, Kind: core.KindTask, Title: "later", Status: core.StatusTodo, NotBefore: &notBefore})
-	later, err := backend.Tasks().Get(ctx, "later")
+	createTask(t, backend, &core.Ticket{ID: "later", ProjectID: projectID, Kind: core.KindTask, Title: "later", Status: core.StatusTodo, NotBefore: &notBefore})
+	later, err := backend.Tickets().Get(ctx, "later")
 	if err != nil {
 		t.Fatalf("Get(later) error = %v", err)
 	}
@@ -152,10 +152,10 @@ func TestTaskGraphFactsIgnoresCrossProjectDeps(t *testing.T) {
 	if err := backend.Projects().Create(ctx, &core.Project{ID: "other", Name: "Other", Policy: core.DefaultResolutionPolicy()}); err != nil {
 		t.Fatalf("Create(other project) error = %v", err)
 	}
-	createTask(t, backend, &core.Task{ID: "foreign", ProjectID: "other", Kind: core.KindTask, Title: "foreign", Status: core.StatusDone})
-	createTask(t, backend, &core.Task{ID: "local", ProjectID: projectID, Kind: core.KindTask, Title: "local", Status: core.StatusTodo, Deps: []core.TaskID{"foreign"}})
+	createTask(t, backend, &core.Ticket{ID: "foreign", ProjectID: "other", Kind: core.KindTask, Title: "foreign", Status: core.StatusDone})
+	createTask(t, backend, &core.Ticket{ID: "local", ProjectID: projectID, Kind: core.KindTask, Title: "local", Status: core.StatusTodo, Deps: []core.TicketID{"foreign"}})
 
-	local, err := backend.Tasks().Get(ctx, "local")
+	local, err := backend.Tickets().Get(ctx, "local")
 	if err != nil {
 		t.Fatalf("Get(local) error = %v", err)
 	}
@@ -175,11 +175,11 @@ func TestTaskGraphFactsDependentsAreProjectScoped(t *testing.T) {
 	backend, projectID := factsBackend(t)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	createTask(t, backend, &core.Task{ID: "mine", ProjectID: projectID, Kind: core.KindTask, Title: "mine", Status: core.StatusTodo})
-	createTask(t, backend, &core.Task{ID: "local", ProjectID: projectID, Kind: core.KindTask, Title: "local", Status: core.StatusTodo, Deps: []core.TaskID{"mine"}})
-	createTask(t, backend, &core.Task{ID: "remote", ProjectID: "other", Kind: core.KindTask, Title: "remote", Status: core.StatusTodo, Deps: []core.TaskID{"mine"}})
+	createTask(t, backend, &core.Ticket{ID: "mine", ProjectID: projectID, Kind: core.KindTask, Title: "mine", Status: core.StatusTodo})
+	createTask(t, backend, &core.Ticket{ID: "local", ProjectID: projectID, Kind: core.KindTask, Title: "local", Status: core.StatusTodo, Deps: []core.TicketID{"mine"}})
+	createTask(t, backend, &core.Ticket{ID: "remote", ProjectID: "other", Kind: core.KindTask, Title: "remote", Status: core.StatusTodo, Deps: []core.TicketID{"mine"}})
 
-	mine, err := backend.Tasks().Get(ctx, "mine")
+	mine, err := backend.Tickets().Get(ctx, "mine")
 	if err != nil {
 		t.Fatalf("Get(mine) error = %v", err)
 	}
@@ -187,7 +187,7 @@ func TestTaskGraphFactsDependentsAreProjectScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TaskGraphFacts(mine) error = %v", err)
 	}
-	if !equalIDs(dependents, []core.TaskID{"local"}) {
+	if !equalIDs(dependents, []core.TicketID{"local"}) {
 		t.Fatalf("mine dependents = %v, want [local]", dependents)
 	}
 }

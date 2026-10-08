@@ -32,11 +32,11 @@ type ProjectRepo interface {
 	Delete(ctx context.Context, id core.ProjectID) error
 }
 
-type TaskFilter struct {
+type TicketFilter struct {
 	ProjectID core.ProjectID
 	Repo      *string
-	Statuses  []core.TaskStatus
-	Kind      *core.TaskKind
+	Statuses  []core.TicketStatus
+	Kind      *core.TicketKind
 	Labels    []string
 	// Groomed, when set, keeps only tasks whose Groomed flag matches. It is a
 	// pointer so an explicit false (ungroomed) is distinct from "unset".
@@ -44,17 +44,17 @@ type TaskFilter struct {
 	// DependsOn, when set, keeps only tasks that declare the given task id in
 	// their Deps, i.e. the direct dependents of that id. It is a reverse-edge
 	// lookup, so a backend should serve it without scanning every task.
-	DependsOn *core.TaskID
+	DependsOn *core.TicketID
 }
 
 // MatchGroomed reports whether task's groomed flag satisfies the filter. A nil
 // filter matches every task.
-func MatchGroomed(task core.Task, want *bool) bool {
+func MatchGroomed(task core.Ticket, want *bool) bool {
 	return want == nil || task.Groomed == *want
 }
 
 // MatchLabels reports whether task carries every label in labels (AND).
-func MatchLabels(task core.Task, labels []string) bool {
+func MatchLabels(task core.Ticket, labels []string) bool {
 	for _, want := range labels {
 		found := false
 		for _, have := range task.Labels {
@@ -70,20 +70,20 @@ func MatchLabels(task core.Task, labels []string) bool {
 	return true
 }
 
-type TaskRepo interface {
-	Create(ctx context.Context, task *core.Task) error
-	Get(ctx context.Context, id core.TaskID) (*core.Task, error)
-	List(ctx context.Context, filter TaskFilter) ([]*core.Task, error)
-	Update(ctx context.Context, task *core.Task) error
+type TicketRepo interface {
+	Create(ctx context.Context, task *core.Ticket) error
+	Get(ctx context.Context, id core.TicketID) (*core.Ticket, error)
+	List(ctx context.Context, filter TicketFilter) ([]*core.Ticket, error)
+	Update(ctx context.Context, task *core.Ticket) error
 	// UpdateExpected writes the task only if its stored UpdatedAt still equals
 	// expected, returning ErrConflict otherwise (compare-and-swap). It lets a
 	// caller that read a document reject a stale write atomically.
-	UpdateExpected(ctx context.Context, task *core.Task, expected time.Time) error
-	Delete(ctx context.Context, id core.TaskID) error
+	UpdateExpected(ctx context.Context, task *core.Ticket, expected time.Time) error
+	Delete(ctx context.Context, id core.TicketID) error
 	// Search returns tasks in filter scope whose title, description, or notes
 	// match the query, ranked by relevance. An empty query matches everything in
 	// scope.
-	Search(ctx context.Context, filter TaskFilter, query string) ([]TaskSearchHit, error)
+	Search(ctx context.Context, filter TicketFilter, query string) ([]TicketSearchHit, error)
 }
 
 type ActorRepo interface {
@@ -97,7 +97,7 @@ type ActorRepo interface {
 
 type ArtifactFilter struct {
 	ProjectID core.ProjectID
-	TaskID    *core.TaskID
+	TicketID  *core.TicketID
 	Kind      *core.ArtifactKind
 }
 
@@ -114,7 +114,7 @@ type ArtifactRepo interface {
 
 type EventFilter struct {
 	ProjectID core.ProjectID
-	TaskID    *core.TaskID
+	TicketID  *core.TicketID
 	Kinds     []core.EventKind
 	Since     *time.Time
 	Limit     int
@@ -127,7 +127,7 @@ type EventRepo interface {
 
 type Backend interface {
 	Projects() ProjectRepo
-	Tasks() TaskRepo
+	Tickets() TicketRepo
 	Actors() ActorRepo
 	Artifacts() ArtifactRepo
 	Events() EventRepo

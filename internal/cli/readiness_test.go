@@ -116,7 +116,7 @@ func TestTaskNextExplainJSONReasons(t *testing.T) {
 
 	out := r.run("task", "next", "-p", projectID, "--explain", "-o", "json")
 	var entries []struct {
-		TaskID     string `json:"task_id"`
+		TicketID   string `json:"task_id"`
 		Status     string `json:"status"`
 		ReasonCode string `json:"reason_code"`
 		Detail     string `json:"detail"`
@@ -128,7 +128,7 @@ func TestTaskNextExplainJSONReasons(t *testing.T) {
 		t.Fatalf("entries = %+v, want the single excluded task", entries)
 	}
 	got := entries[0]
-	if got.TaskID != dependent || got.ReasonCode != "dep_unresolved" || got.Detail != blocker {
+	if got.TicketID != dependent || got.ReasonCode != "dep_unresolved" || got.Detail != blocker {
 		t.Fatalf("entry = %+v, want %s dep_unresolved/%s", got, dependent, blocker)
 	}
 }
@@ -207,7 +207,7 @@ func TestTaskNextExplainHonorsLimitInJSON(t *testing.T) {
 
 	out := r.run("task", "next", "-p", projectID, "--explain", "-n", "1", "-o", "json")
 	var entries []struct {
-		TaskID string `json:"task_id"`
+		TicketID string `json:"task_id"`
 	}
 	if err := json.Unmarshal([]byte(out), &entries); err != nil {
 		t.Fatalf("task next --explain json: %v\n%s", err, out)

@@ -74,7 +74,7 @@ func Seed(ctx context.Context, be store.Backend, spec Spec) (core.ProjectID, err
 	}
 	for i := 0; i < spec.Tasks; i++ {
 		task := syntheticTask(i, spec.Tasks, now)
-		if err := be.Tasks().Create(ctx, task); err != nil {
+		if err := be.Tickets().Create(ctx, task); err != nil {
 			return "", fmt.Errorf("create task %d: %w", i, err)
 		}
 	}
@@ -91,12 +91,12 @@ func Seed(ctx context.Context, be store.Backend, spec Spec) (core.ProjectID, err
 	return DefaultProjectID, nil
 }
 
-// TaskID returns the synthetic id for the i-th task.
-func TaskID(i int) core.TaskID { return core.TaskID(fmt.Sprintf("t-%06d", i)) }
+// TicketID returns the synthetic id for the i-th task.
+func TicketID(i int) core.TicketID { return core.TicketID(fmt.Sprintf("t-%06d", i)) }
 
-func syntheticTask(i, total int, now time.Time) *core.Task {
-	task := &core.Task{
-		ID:          TaskID(i),
+func syntheticTask(i, total int, now time.Time) *core.Ticket {
+	task := &core.Ticket{
+		ID:          TicketID(i),
 		ProjectID:   DefaultProjectID,
 		Kind:        core.KindTask,
 		Title:       fmt.Sprintf("task %d", i),
@@ -107,7 +107,7 @@ func syntheticTask(i, total int, now time.Time) *core.Task {
 		UpdatedAt:   now,
 	}
 	if i > 0 && i%10 == 0 {
-		task.Deps = []core.TaskID{TaskID(i - 1)}
+		task.Deps = []core.TicketID{TicketID(i - 1)}
 	}
 	return task
 }
@@ -124,9 +124,9 @@ func syntheticArtifact(i, total int, now time.Time) *core.Artifact {
 		UpdatedAt: now,
 	}
 	if total > 0 && i%10 == 0 {
-		taskID := TaskID(i / 10 % total)
+		taskID := TicketID(i / 10 % total)
 		artifact.Kind = core.ArtifactMemory
-		artifact.TaskID = &taskID
+		artifact.TicketID = &taskID
 	}
 	return artifact
 }
@@ -140,8 +140,8 @@ func syntheticEvent(i, total int, now time.Time) *core.Event {
 		CreatedAt: now.Add(time.Duration(i) * time.Millisecond),
 	}
 	if total > 0 {
-		taskID := TaskID(i % total)
-		event.TaskID = &taskID
+		taskID := TicketID(i % total)
+		event.TicketID = &taskID
 	}
 	return event
 }

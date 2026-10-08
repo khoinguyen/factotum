@@ -25,7 +25,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 			if err := requireProject(cmd, project); err != nil {
 				return err
 			}
-			task, err := deps.Tasks.Add(cmd.Context(), app.TaskInput{
+			task, err := deps.Tasks.Add(cmd.Context(), app.TicketInput{
 				ProjectID:   project,
 				Kind:        core.KindMilestone,
 				Title:       title,
@@ -52,7 +52,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			listProject = string(deps.resolveProject(listProject))
 			kind := core.KindMilestone
-			tasks, err := deps.Tasks.List(cmd.Context(), store.TaskFilter{ProjectID: core.ProjectID(listProject), Kind: &kind})
+			tasks, err := deps.Tasks.List(cmd.Context(), store.TicketFilter{ProjectID: core.ProjectID(listProject), Kind: &kind})
 			if err != nil {
 				return err
 			}
@@ -72,7 +72,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 		Short: "Mark a milestone done (unblocks dependents)",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			task, err := deps.Tasks.SetStatus(cmd.Context(), core.TaskID(args[0]), core.StatusDone)
+			task, err := deps.Tasks.SetStatus(cmd.Context(), core.TicketID(args[0]), core.StatusDone)
 			if err != nil {
 				return err
 			}

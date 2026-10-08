@@ -67,10 +67,10 @@ func BenchmarkTaskList(b *testing.B) {
 		for _, n := range benchmarkScales(backend) {
 			b.Run(backend+"/"+itoa(n), func(b *testing.B) {
 				be := seedBenchBackend(b, backend, Spec{Tasks: n})
-				filter := store.TaskFilter{ProjectID: DefaultProjectID}
+				filter := store.TicketFilter{ProjectID: DefaultProjectID}
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					if _, err := be.Tasks().List(ctx, filter); err != nil {
+					if _, err := be.Tickets().List(ctx, filter); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -87,10 +87,10 @@ func BenchmarkTaskSearch(b *testing.B) {
 		for _, n := range benchmarkScales(backend) {
 			b.Run(backend+"/"+itoa(n), func(b *testing.B) {
 				be := seedBenchBackend(b, backend, Spec{Tasks: n})
-				filter := store.TaskFilter{ProjectID: DefaultProjectID}
+				filter := store.TicketFilter{ProjectID: DefaultProjectID}
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					if _, err := be.Tasks().Search(ctx, filter, "synthetic"); err != nil {
+					if _, err := be.Tickets().Search(ctx, filter, "synthetic"); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -129,14 +129,14 @@ func BenchmarkJSONFileWriteAmplification(b *testing.B) {
 	for _, n := range []int{100, 1000, 2000} {
 		b.Run(itoa(n), func(b *testing.B) {
 			be := seedBenchBackend(b, "jsonfile", Spec{Tasks: n})
-			task, err := be.Tasks().Get(ctx, core.TaskID("t-000000"))
+			task, err := be.Tickets().Get(ctx, core.TicketID("t-000000"))
 			if err != nil {
 				b.Fatal(err)
 			}
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				task.UpdatedAt = task.UpdatedAt.Add(time.Millisecond)
-				if err := be.Tasks().Update(ctx, task); err != nil {
+				if err := be.Tickets().Update(ctx, task); err != nil {
 					b.Fatal(err)
 				}
 			}

@@ -37,12 +37,12 @@ func DefaultOps() []Op {
 	return []Op{
 		{Name: "version", Args: []string{"version"}, Class: ClassNone},
 		{Name: "task next -n 5", Args: []string{"task", "next", "-n", "5"}, Class: ClassHot},
-		{Name: "task get", Args: []string{"task", "get", string(TaskID(0))}, Class: ClassPoint},
+		{Name: "task get", Args: []string{"task", "get", string(TicketID(0))}, Class: ClassPoint},
 		{Name: "task list", Args: []string{"task", "list"}, Class: ClassHeavy},
 		{Name: "task list -o json", Args: []string{"task", "list", "-o", "json"}, Class: ClassHeavy},
 		{Name: "task search", Args: []string{"task", "search", "synthetic"}, Class: ClassHeavy},
 		{Name: "graph render agent", Args: []string{"graph", "render", "--format", "agent"}, Class: ClassHeavy},
-		{Name: "task context", Args: []string{"task", "context", string(TaskID(0))}, Class: ClassHeavy},
+		{Name: "task context", Args: []string{"task", "context", string(TicketID(0))}, Class: ClassHeavy},
 		{Name: "event list -n 20", Args: []string{"event", "list", "-n", "20"}, Class: ClassHeavy},
 	}
 }

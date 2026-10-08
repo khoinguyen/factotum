@@ -67,7 +67,7 @@ type Tally struct {
 type Event struct {
 	ID        EventID
 	ProjectID ProjectID
-	TaskID    *TaskID
+	TicketID  *TicketID
 	Kind      EventKind
 	By        *ActorID
 	Summary   string

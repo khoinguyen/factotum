@@ -33,7 +33,7 @@ const DefaultPath = ".factotum/jsondir"
 const eventShardSize = 1000
 
 type taskRecord struct {
-	task  core.Task
+	task  core.Ticket
 	extra map[string]*yaml.Node
 }
 
@@ -55,7 +55,7 @@ type artifactRecord struct {
 type Backend struct {
 	mu        sync.Mutex
 	root      string
-	tasks     map[core.TaskID]*taskRecord
+	tasks     map[core.TicketID]*taskRecord
 	projects  map[core.ProjectID]*projectRecord
 	actors    map[core.ActorID]*actorRecord
 	artifacts map[core.ArtifactID]*artifactRecord
@@ -79,7 +79,7 @@ func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
 func open(_ context.Context, root string) (store.Backend, error) {
 	b := &Backend{
 		root:      root,
-		tasks:     make(map[core.TaskID]*taskRecord),
+		tasks:     make(map[core.TicketID]*taskRecord),
 		projects:  make(map[core.ProjectID]*projectRecord),
 		actors:    make(map[core.ActorID]*actorRecord),
 		artifacts: make(map[core.ArtifactID]*artifactRecord),
@@ -111,7 +111,7 @@ func migrateFromOption(ctx context.Context, cfg store.Config, root string) error
 func (b *Backend) Close() error { return nil }
 
 func (b *Backend) Projects() store.ProjectRepo   { return &projectRepo{backend: b} }
-func (b *Backend) Tasks() store.TaskRepo         { return &taskRepo{backend: b} }
+func (b *Backend) Tickets() store.TicketRepo     { return &taskRepo{backend: b} }
 func (b *Backend) Actors() store.ActorRepo       { return &actorRepo{backend: b} }
 func (b *Backend) Artifacts() store.ArtifactRepo { return &artifactRepo{backend: b} }
 func (b *Backend) Events() store.EventRepo       { return &eventRepo{backend: b} }
@@ -400,7 +400,7 @@ func (r *projectRepo) Delete(_ context.Context, id core.ProjectID) error {
 
 type taskRepo struct{ backend *Backend }
 
-func (r *taskRepo) Create(_ context.Context, task *core.Task) error {
+func (r *taskRepo) Create(_ context.Context, task *core.Ticket) error {
 	b := r.backend
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -417,11 +417,11 @@ func (r *taskRepo) Create(_ context.Context, task *core.Task) error {
 	if err := writeFileAtomic(b.docPath("tasks", string(task.ID)), data); err != nil {
 		return err
 	}
-	b.tasks[task.ID] = &taskRecord{task: clone.Task(*task)}
+	b.tasks[task.ID] = &taskRecord{task: clone.Ticket(*task)}
 	return nil
 }
 
-func (r *taskRepo) Get(_ context.Context, id core.TaskID) (*core.Task, error) {
+func (r *taskRepo) Get(_ context.Context, id core.TicketID) (*core.Ticket, error) {
 	b := r.backend
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -429,32 +429,32 @@ func (r *taskRepo) Get(_ context.Context, id core.TaskID) (*core.Task, error) {
 	if !ok {
 		return nil, fmt.Errorf("%w: task %s", core.ErrNotFound, id)
 	}
-	task := clone.Task(record.task)
+	task := clone.Ticket(record.task)
 	return &task, nil
 }
 
-func (r *taskRepo) List(_ context.Context, filter store.TaskFilter) ([]*core.Task, error) {
+func (r *taskRepo) List(_ context.Context, filter store.TicketFilter) ([]*core.Ticket, error) {
 	b := r.backend
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	out := make([]*core.Task, 0, len(b.tasks))
+	out := make([]*core.Ticket, 0, len(b.tasks))
 	for _, record := range b.tasks {
 		if !matchesTask(record.task, filter) {
 			continue
 		}
-		task := clone.Task(record.task)
+		task := clone.Ticket(record.task)
 		out = append(out, &task)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
-func (r *taskRepo) Search(_ context.Context, filter store.TaskFilter, query string) ([]store.TaskSearchHit, error) {
+func (r *taskRepo) Search(_ context.Context, filter store.TicketFilter, query string) ([]store.TicketSearchHit, error) {
 	b := r.backend
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	terms := store.LexicalTerms(query)
-	hits := make([]store.TaskSearchHit, 0)
+	hits := make([]store.TicketSearchHit, 0)
 	for _, record := range b.tasks {
 		if !matchesTask(record.task, filter) {
 			continue
@@ -463,14 +463,14 @@ func (r *taskRepo) Search(_ context.Context, filter store.TaskFilter, query stri
 		if !matched {
 			continue
 		}
-		task := clone.Task(record.task)
-		hits = append(hits, store.TaskSearchHit{Task: &task, Score: score})
+		task := clone.Ticket(record.task)
+		hits = append(hits, store.TicketSearchHit{Ticket: &task, Score: score})
 	}
 	store.SortTaskSearchHits(hits)
 	return hits, nil
 }
 
-func (r *taskRepo) Update(_ context.Context, task *core.Task) error {
+func (r *taskRepo) Update(_ context.Context, task *core.Ticket) error {
 	b := r.backend
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -485,11 +485,11 @@ func (r *taskRepo) Update(_ context.Context, task *core.Task) error {
 	if err := writeFileAtomic(b.docPath("tasks", string(task.ID)), data); err != nil {
 		return err
 	}
-	b.tasks[task.ID] = &taskRecord{task: clone.Task(*task), extra: record.extra}
+	b.tasks[task.ID] = &taskRecord{task: clone.Ticket(*task), extra: record.extra}
 	return nil
 }
 
-func (r *taskRepo) UpdateExpected(_ context.Context, task *core.Task, expected time.Time) error {
+func (r *taskRepo) UpdateExpected(_ context.Context, task *core.Ticket, expected time.Time) error {
 	b := r.backend
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -507,11 +507,11 @@ func (r *taskRepo) UpdateExpected(_ context.Context, task *core.Task, expected t
 	if err := writeFileAtomic(b.docPath("tasks", string(task.ID)), data); err != nil {
 		return err
 	}
-	b.tasks[task.ID] = &taskRecord{task: clone.Task(*task), extra: record.extra}
+	b.tasks[task.ID] = &taskRecord{task: clone.Ticket(*task), extra: record.extra}
 	return nil
 }
 
-func (r *taskRepo) Delete(_ context.Context, id core.TaskID) error {
+func (r *taskRepo) Delete(_ context.Context, id core.TicketID) error {
 	b := r.backend
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -525,7 +525,7 @@ func (r *taskRepo) Delete(_ context.Context, id core.TaskID) error {
 	return nil
 }
 
-func matchesTask(task core.Task, filter store.TaskFilter) bool {
+func matchesTask(task core.Ticket, filter store.TicketFilter) bool {
 	if filter.ProjectID != "" && task.ProjectID != filter.ProjectID {
 		return false
 	}
@@ -556,7 +556,7 @@ func matchesTask(task core.Task, filter store.TaskFilter) bool {
 	return store.MatchLabels(task, filter.Labels)
 }
 
-func taskDependsOn(task core.Task, id core.TaskID) bool {
+func taskDependsOn(task core.Ticket, id core.TicketID) bool {
 	for _, dep := range task.Deps {
 		if dep == id {
 			return true
@@ -819,7 +819,7 @@ func (r *eventRepo) List(_ context.Context, filter store.EventFilter) ([]*core.E
 		if filter.ProjectID != "" && event.ProjectID != filter.ProjectID {
 			continue
 		}
-		if filter.TaskID != nil && (event.TaskID == nil || *event.TaskID != *filter.TaskID) {
+		if filter.TicketID != nil && (event.TicketID == nil || *event.TicketID != *filter.TicketID) {
 			continue
 		}
 		if len(filter.Kinds) > 0 && !containsKind(filter.Kinds, event.Kind) {

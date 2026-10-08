@@ -5,7 +5,7 @@ import "testing"
 func TestDefaultResolutionPolicyTask(t *testing.T) {
 	p := DefaultResolutionPolicy()
 	tests := []struct {
-		status TaskStatus
+		status TicketStatus
 		want   bool
 	}{
 		{StatusTodo, false},
@@ -25,7 +25,7 @@ func TestDefaultResolutionPolicyTask(t *testing.T) {
 func TestDefaultResolutionPolicyMilestone(t *testing.T) {
 	p := DefaultResolutionPolicy()
 	tests := []struct {
-		status TaskStatus
+		status TicketStatus
 		want   bool
 	}{
 		{StatusTodo, false},
@@ -44,7 +44,7 @@ func TestDefaultResolutionPolicyMilestone(t *testing.T) {
 
 func TestDefaultResolutionPolicyIdea(t *testing.T) {
 	p := DefaultResolutionPolicy()
-	for _, status := range []TaskStatus{StatusTodo, StatusDone, StatusCancelled} {
+	for _, status := range []TicketStatus{StatusTodo, StatusDone, StatusCancelled} {
 		if !p.Resolves(KindIdea, status) {
 			t.Errorf("Resolves(idea, %q) = false, want true: ideas are not executable and never block", status)
 		}
@@ -59,16 +59,16 @@ func TestResolutionPolicyValidate(t *testing.T) {
 	}{
 		{"default", DefaultResolutionPolicy(), false},
 		{"empty", ResolutionPolicy{}, true},
-		{"task statuses only", ResolutionPolicy{TaskStatuses: []TaskStatus{StatusDone}}, true},
-		{"milestone statuses only", ResolutionPolicy{MilestoneStatuses: []TaskStatus{StatusDone}}, true},
+		{"task statuses only", ResolutionPolicy{TaskStatuses: []TicketStatus{StatusDone}}, true},
+		{"milestone statuses only", ResolutionPolicy{MilestoneStatuses: []TicketStatus{StatusDone}}, true},
 		{
 			"unknown task status",
-			ResolutionPolicy{TaskStatuses: []TaskStatus{"nope"}, MilestoneStatuses: []TaskStatus{StatusDone}},
+			ResolutionPolicy{TaskStatuses: []TicketStatus{"nope"}, MilestoneStatuses: []TicketStatus{StatusDone}},
 			true,
 		},
 		{
 			"unknown milestone status",
-			ResolutionPolicy{TaskStatuses: []TaskStatus{StatusDone}, MilestoneStatuses: []TaskStatus{"nope"}},
+			ResolutionPolicy{TaskStatuses: []TicketStatus{StatusDone}, MilestoneStatuses: []TicketStatus{"nope"}},
 			true,
 		},
 	}

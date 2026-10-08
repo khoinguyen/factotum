@@ -9,8 +9,8 @@ import (
 	"github.com/khoinguyen/factotum/pkg/judge/fake"
 )
 
-func dupTask(id, title string) *core.Task {
-	return &core.Task{ID: core.TaskID(id), Title: title, Description: "body of " + title}
+func dupTask(id, title string) *core.Ticket {
+	return &core.Ticket{ID: core.TicketID(id), Title: title, Description: "body of " + title}
 }
 
 func TestDuplicateCheckFlagsRelatedTask(t *testing.T) {
@@ -20,7 +20,7 @@ func TestDuplicateCheckFlagsRelatedTask(t *testing.T) {
 		"link::t-old": {Rating: 0.9, Confidence: 0.7},
 		"same::t-old": {Probability: 0.6},
 	})
-	verdict, err := NewDuplicateService(f).Check(context.Background(), task, []*core.Task{candidate})
+	verdict, err := NewDuplicateService(f).Check(context.Background(), task, []*core.Ticket{candidate})
 	if err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
@@ -36,7 +36,7 @@ func TestDuplicateCheckLinksSameTask(t *testing.T) {
 		"link::t-old": {Rating: 1.9, Confidence: 0.8},
 		"same::t-old": {Probability: 0.9},
 	})
-	verdict, err := NewDuplicateService(f).Check(context.Background(), task, []*core.Task{candidate})
+	verdict, err := NewDuplicateService(f).Check(context.Background(), task, []*core.Ticket{candidate})
 	if err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
@@ -52,7 +52,7 @@ func TestDuplicateCheckIgnoresDistinctTask(t *testing.T) {
 		"link::t-old": {Rating: 0.1, Confidence: 0.9},
 		"same::t-old": {Probability: 0.1},
 	})
-	verdict, err := NewDuplicateService(f).Check(context.Background(), task, []*core.Task{candidate})
+	verdict, err := NewDuplicateService(f).Check(context.Background(), task, []*core.Ticket{candidate})
 	if err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
@@ -68,7 +68,7 @@ func TestDuplicateCheckStaysSilentWhenUnsure(t *testing.T) {
 		"link::t-old": {Rating: 1.0, Confidence: 0.2},
 		"same::t-old": {Probability: 0.5},
 	})
-	verdict, err := NewDuplicateService(f).Check(context.Background(), task, []*core.Task{candidate})
+	verdict, err := NewDuplicateService(f).Check(context.Background(), task, []*core.Ticket{candidate})
 	if err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}

@@ -29,7 +29,7 @@ func (k ArtifactKind) Valid() bool {
 type Artifact struct {
 	ID        ArtifactID
 	ProjectID ProjectID
-	TaskID    *TaskID
+	TicketID  *TicketID
 	Kind      ArtifactKind
 	Title     string
 	Brief     string

@@ -9,9 +9,9 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 )
 
-func newIdea(t *testing.T, h *harness, project *core.Project, title string) *core.Task {
+func newIdea(t *testing.T, h *harness, project *core.Project, title string) *core.Ticket {
 	t.Helper()
-	idea, err := h.tasks.Add(context.Background(), TaskInput{ProjectID: project.ID, Kind: core.KindIdea, Title: title})
+	idea, err := h.tasks.Add(context.Background(), TicketInput{ProjectID: project.ID, Kind: core.KindIdea, Title: title})
 	if err != nil {
 		t.Fatalf("Add(idea) error = %v", err)
 	}
@@ -35,7 +35,7 @@ func TestAddIdeaRejectsAssignee(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add(actor) error = %v", err)
 	}
-	_, err = h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Kind: core.KindIdea, Title: "x", AssigneeID: &actor.ID})
+	_, err = h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Kind: core.KindIdea, Title: "x", AssigneeID: &actor.ID})
 	if !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Add(assigned idea) error = %v, want ErrInvalid", err)
 	}
@@ -79,7 +79,7 @@ func TestPromoteCreatesLinkedTaskAndKeepsIdea(t *testing.T) {
 	project := h.newProject(t)
 	idea := newIdea(t, h, project, "a spark")
 	idea.Description = "context"
-	if _, err := h.tasks.Set(ctx, idea.ID, TaskSet{Description: &idea.Description, Labels: []string{"groomed"}}); err != nil {
+	if _, err := h.tasks.Set(ctx, idea.ID, TicketSet{Description: &idea.Description, Labels: []string{"groomed"}}); err != nil {
 		t.Fatalf("Set(idea) error = %v", err)
 	}
 
@@ -93,7 +93,7 @@ func TestPromoteCreatesLinkedTaskAndKeepsIdea(t *testing.T) {
 	if task.Title != "a spark" || task.Description != "context" {
 		t.Fatalf("Promote() = %+v, want title/body copied from idea", task)
 	}
-	if !equalIDs(task.Deps, []core.TaskID{idea.ID}) {
+	if !equalIDs(task.Deps, []core.TicketID{idea.ID}) {
 		t.Fatalf("Promote().Deps = %v, want origin edge to %s", task.Deps, idea.ID)
 	}
 
@@ -122,7 +122,7 @@ func TestKindMutationInvolvingIdeaIsRejected(t *testing.T) {
 	ctx := context.Background()
 	project := h.newProject(t)
 	idea := newIdea(t, h, project, "a spark")
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "work"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "work"})
 	if err != nil {
 		t.Fatalf("Add(task) error = %v", err)
 	}
@@ -130,14 +130,14 @@ func TestKindMutationInvolvingIdeaIsRejected(t *testing.T) {
 	// Demoting executable work into a capture loses its graph position; only an
 	// explicit create makes an idea.
 	ideaKind := core.KindIdea
-	if _, err := h.tasks.Update(ctx, task.ID, TaskUpdate{Kind: &ideaKind}); !errors.Is(err, core.ErrInvalid) {
+	if _, err := h.tasks.Update(ctx, task.ID, TicketUpdate{Kind: &ideaKind}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Update(task -> idea) error = %v, want ErrInvalid", err)
 	}
 
 	// Promoting must go through `task promote` so the origin edge and history
 	// note are written, not a bare kind mutation.
 	taskKind := core.KindTask
-	if _, err := h.tasks.Update(ctx, idea.ID, TaskUpdate{Kind: &taskKind}); !errors.Is(err, core.ErrInvalid) {
+	if _, err := h.tasks.Update(ctx, idea.ID, TicketUpdate{Kind: &taskKind}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("Update(idea -> task) error = %v, want ErrInvalid", err)
 	}
 
@@ -154,7 +154,7 @@ func TestPromoteRejectsNonIdea(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	task, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "already a task"})
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "already a task"})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}

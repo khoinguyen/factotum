@@ -37,7 +37,7 @@ type contextEvent struct {
 
 // taskContext bundles everything an agent needs to start a task in one call.
 type taskContext struct {
-	Task   taskDoc           `json:"task" yaml:"task"`
+	Ticket taskDoc           `json:"task" yaml:"task"`
 	Deps   []contextDep      `json:"deps,omitempty" yaml:"deps,omitempty"`
 	Notes  []contextNote     `json:"notes,omitempty" yaml:"notes,omitempty"`
 	Memory []contextArtifact `json:"memory,omitempty" yaml:"memory,omitempty"`
@@ -61,11 +61,11 @@ func newTaskContextCommand(deps *Deps) *cobra.Command {
 			for _, name := range requested {
 				selected[name] = true
 			}
-			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
+			task, err := deps.Tasks.Get(cmd.Context(), core.TicketID(args[0]))
 			if err != nil {
 				return err
 			}
-			ctx := taskContext{Task: taskDocFrom(task)}
+			ctx := taskContext{Ticket: taskDocFrom(task)}
 			if selected["deps"] {
 				ctx.Deps = contextDeps(cmd.Context(), deps, task)
 			}
@@ -76,7 +76,7 @@ func newTaskContextCommand(deps *Deps) *cobra.Command {
 			}
 			if selected["memory"] {
 				kind := core.ArtifactMemory
-				artifacts, err := deps.Artifacts.List(cmd.Context(), store.ArtifactFilter{TaskID: &task.ID, Kind: &kind})
+				artifacts, err := deps.Artifacts.List(cmd.Context(), store.ArtifactFilter{TicketID: &task.ID, Kind: &kind})
 				if err != nil {
 					return err
 				}
@@ -85,7 +85,7 @@ func newTaskContextCommand(deps *Deps) *cobra.Command {
 				}
 			}
 			if selected["events"] {
-				recent, err := deps.Backend.Events().List(cmd.Context(), store.EventFilter{TaskID: &task.ID, Limit: events})
+				recent, err := deps.Backend.Events().List(cmd.Context(), store.EventFilter{TicketID: &task.ID, Limit: events})
 				if err != nil {
 					return err
 				}
@@ -108,14 +108,14 @@ func newTaskContextCommand(deps *Deps) *cobra.Command {
 // contextSectionNames are the selectable sections of a task context bundle.
 var contextSectionNames = []string{"task", "deps", "notes", "memory", "events"}
 
-func contextDeps(ctx context.Context, deps *Deps, task *core.Task) []contextDep {
+func contextDeps(ctx context.Context, deps *Deps, task *core.Ticket) []contextDep {
 	snapshot, err := app.LoadSnapshot(ctx, deps.Backend, task.ProjectID, deps.Clock.Now())
 	if err != nil {
 		return nil
 	}
 	var out []contextDep
 	for _, depID := range task.Deps {
-		if dep, ok := snapshot.Graph.Task(depID); ok {
+		if dep, ok := snapshot.Graph.Ticket(depID); ok {
 			out = append(out, contextDep{ID: string(dep.ID), Title: dep.Title, Status: string(dep.Status)})
 		}
 	}
@@ -123,7 +123,7 @@ func contextDeps(ctx context.Context, deps *Deps, task *core.Task) []contextDep 
 }
 
 func printContext(deps *Deps, ctx taskContext) {
-	task := ctx.Task
+	task := ctx.Ticket
 	deps.printFields(
 		f("task_id", derefString(task.ID)),
 		f("status", derefString(task.Status)),

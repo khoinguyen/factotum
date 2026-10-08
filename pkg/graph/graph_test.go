@@ -9,21 +9,21 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 )
 
-func task(id string, kind core.TaskKind, status core.TaskStatus, deps ...string) core.Task {
-	t := core.Task{
-		ID:        core.TaskID(id),
+func task(id string, kind core.TicketKind, status core.TicketStatus, deps ...string) core.Ticket {
+	t := core.Ticket{
+		ID:        core.TicketID(id),
 		ProjectID: "prj",
 		Kind:      kind,
 		Title:     id,
 		Status:    status,
 	}
 	for _, d := range deps {
-		t.Deps = append(t.Deps, core.TaskID(d))
+		t.Deps = append(t.Deps, core.TicketID(d))
 	}
 	return t
 }
 
-func mustGraph(t *testing.T, tasks ...core.Task) *Graph {
+func mustGraph(t *testing.T, tasks ...core.Ticket) *Graph {
 	t.Helper()
 	g, err := New(tasks, core.DefaultResolutionPolicy())
 	if err != nil {
@@ -32,7 +32,7 @@ func mustGraph(t *testing.T, tasks ...core.Task) *Graph {
 	return g
 }
 
-func equalIDs(got, want []core.TaskID) bool {
+func equalIDs(got, want []core.TicketID) bool {
 	if len(got) != len(want) {
 		return false
 	}
@@ -56,19 +56,19 @@ func TestReadySetExcludesNotBefore(t *testing.T) {
 	deferred.NotBefore = &future
 	dependent := task("dependent", core.KindTask, core.StatusTodo, "deferred")
 
-	g, err := NewAt([]core.Task{ready, pastTask, deferred, dependent}, core.DefaultResolutionPolicy(), now)
+	g, err := NewAt([]core.Ticket{ready, pastTask, deferred, dependent}, core.DefaultResolutionPolicy(), now)
 	if err != nil {
 		t.Fatalf("NewAt() error = %v", err)
 	}
-	if got := g.ReadySet(); !equalIDs(got, []core.TaskID{"past", "ready"}) {
+	if got := g.ReadySet(); !equalIDs(got, []core.TicketID{"past", "ready"}) {
 		t.Fatalf("ReadySet() = %v, want [past ready]", got)
 	}
 
-	later, err := NewAt([]core.Task{ready, pastTask, deferred, dependent}, core.DefaultResolutionPolicy(), future.Add(time.Hour))
+	later, err := NewAt([]core.Ticket{ready, pastTask, deferred, dependent}, core.DefaultResolutionPolicy(), future.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("NewAt() error = %v", err)
 	}
-	if got := later.ReadySet(); !equalIDs(got, []core.TaskID{"deferred", "past", "ready"}) {
+	if got := later.ReadySet(); !equalIDs(got, []core.TicketID{"deferred", "past", "ready"}) {
 		t.Fatalf("ReadySet() after deadline = %v, want [deferred past ready]", got)
 	}
 }
@@ -86,26 +86,26 @@ func TestReadySetExcludesSnoozed(t *testing.T) {
 	parked := task("parked", core.KindTask, core.StatusTodo)
 	parked.Snooze = &core.Snooze{Indefinite: true}
 	blocker := task("blocker", core.KindTask, core.StatusTodo)
-	untilTask := core.TaskID("blocker")
+	untilTask := core.TicketID("blocker")
 	waiting := task("waiting", core.KindTask, core.StatusTodo)
 	waiting.Snooze = &core.Snooze{UntilTask: &untilTask}
 
-	tasks := []core.Task{open, snoozedUntil, woken, parked, blocker, waiting}
+	tasks := []core.Ticket{open, snoozedUntil, woken, parked, blocker, waiting}
 	g, err := NewAt(tasks, core.DefaultResolutionPolicy(), now)
 	if err != nil {
 		t.Fatalf("NewAt() error = %v", err)
 	}
-	if got := g.ReadySet(); !equalIDs(got, []core.TaskID{"blocker", "open", "woken"}) {
+	if got := g.ReadySet(); !equalIDs(got, []core.TicketID{"blocker", "open", "woken"}) {
 		t.Fatalf("ReadySet() = %v, want [blocker open woken]", got)
 	}
 
 	// Once the blocker resolves, the until-task snooze wakes automatically.
 	blocker.Status = core.StatusDone
-	later, err := NewAt([]core.Task{open, snoozedUntil, woken, parked, blocker, waiting}, core.DefaultResolutionPolicy(), now)
+	later, err := NewAt([]core.Ticket{open, snoozedUntil, woken, parked, blocker, waiting}, core.DefaultResolutionPolicy(), now)
 	if err != nil {
 		t.Fatalf("NewAt() error = %v", err)
 	}
-	if got := later.ReadySet(); !equalIDs(got, []core.TaskID{"open", "waiting", "woken"}) {
+	if got := later.ReadySet(); !equalIDs(got, []core.TicketID{"open", "waiting", "woken"}) {
 		t.Fatalf("ReadySet() after blocker = %v, want [open waiting woken]", got)
 	}
 }
@@ -116,13 +116,13 @@ func TestReadySetIgnoresNotBeforeWithoutClock(t *testing.T) {
 	deferred.NotBefore = &future
 
 	g := mustGraph(t, deferred)
-	if got := g.ReadySet(); !equalIDs(got, []core.TaskID{"deferred"}) {
+	if got := g.ReadySet(); !equalIDs(got, []core.TicketID{"deferred"}) {
 		t.Fatalf("ReadySet() = %v, want [deferred]", got)
 	}
 }
 
 func TestNewRejectsDuplicateIDs(t *testing.T) {
-	_, err := New([]core.Task{task("t1", core.KindTask, core.StatusTodo), task("t1", core.KindTask, core.StatusTodo)}, core.DefaultResolutionPolicy())
+	_, err := New([]core.Ticket{task("t1", core.KindTask, core.StatusTodo), task("t1", core.KindTask, core.StatusTodo)}, core.DefaultResolutionPolicy())
 	if !errors.Is(err, core.ErrConflict) {
 		t.Fatalf("New() error = %v, want ErrConflict", err)
 	}
@@ -145,7 +145,7 @@ func TestReadySet(t *testing.T) {
 
 	// m1 is a milestone in ready_for_review: still open work (needs its explicit
 	// Done gate), so it is startable, but it does not unblock t7.
-	want := []core.TaskID{"m1", "t1", "t6", "t8"}
+	want := []core.TicketID{"m1", "t1", "t6", "t8"}
 	if got := g.ReadySet(); !equalIDs(got, want) {
 		t.Fatalf("ReadySet() = %v, want %v", got, want)
 	}
@@ -159,7 +159,7 @@ func TestReadySetExcludesBlockedAndInProgress(t *testing.T) {
 		task("after-blocked", core.KindTask, core.StatusTodo, "blocked"),
 		task("after-doing", core.KindTask, core.StatusTodo, "doing"),
 	)
-	want := []core.TaskID{"todo"}
+	want := []core.TicketID{"todo"}
 	if got := g.ReadySet(); !equalIDs(got, want) {
 		t.Fatalf("ReadySet() = %v, want %v", got, want)
 	}
@@ -170,7 +170,7 @@ func TestExternalDeps(t *testing.T) {
 		task("t1", core.KindTask, core.StatusTodo, "ghost", "phantom"),
 		task("t2", core.KindTask, core.StatusTodo, "t1"),
 	)
-	want := []core.TaskID{"ghost", "phantom"}
+	want := []core.TicketID{"ghost", "phantom"}
 	if got := g.ExternalDeps(); !equalIDs(got, want) {
 		t.Fatalf("ExternalDeps() = %v, want %v", got, want)
 	}
@@ -199,10 +199,10 @@ func TestReadyByActor(t *testing.T) {
 	g := mustGraph(t, t1, t2, t3, t4)
 	got := g.ReadyByActor(actors)
 
-	if !equalIDs(got.Agent, []core.TaskID{"t1"}) {
+	if !equalIDs(got.Agent, []core.TicketID{"t1"}) {
 		t.Fatalf("Agent = %v, want [t1]", got.Agent)
 	}
-	if !equalIDs(got.Human, []core.TaskID{"t2", "t3", "t4"}) {
+	if !equalIDs(got.Human, []core.TicketID{"t2", "t3", "t4"}) {
 		t.Fatalf("Human = %v, want [t2 t3 t4]", got.Human)
 	}
 }
@@ -210,27 +210,27 @@ func TestReadyByActor(t *testing.T) {
 func TestCycles(t *testing.T) {
 	tests := []struct {
 		name  string
-		tasks []core.Task
-		want  [][]core.TaskID
+		tasks []core.Ticket
+		want  [][]core.TicketID
 	}{
 		{
 			"none",
-			[]core.Task{task("t1", core.KindTask, core.StatusTodo), task("t2", core.KindTask, core.StatusTodo, "t1")},
+			[]core.Ticket{task("t1", core.KindTask, core.StatusTodo), task("t2", core.KindTask, core.StatusTodo, "t1")},
 			nil,
 		},
 		{
 			"two cycle",
-			[]core.Task{task("t1", core.KindTask, core.StatusTodo, "t2"), task("t2", core.KindTask, core.StatusTodo, "t1")},
-			[][]core.TaskID{{"t1", "t2"}},
+			[]core.Ticket{task("t1", core.KindTask, core.StatusTodo, "t2"), task("t2", core.KindTask, core.StatusTodo, "t1")},
+			[][]core.TicketID{{"t1", "t2"}},
 		},
 		{
 			"three cycle",
-			[]core.Task{
+			[]core.Ticket{
 				task("t1", core.KindTask, core.StatusTodo, "t3"),
 				task("t2", core.KindTask, core.StatusTodo, "t1"),
 				task("t3", core.KindTask, core.StatusTodo, "t2"),
 			},
-			[][]core.TaskID{{"t1", "t2", "t3"}},
+			[][]core.TicketID{{"t1", "t2", "t3"}},
 		},
 	}
 	for _, tt := range tests {
@@ -263,7 +263,7 @@ func TestWaves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Waves() error = %v", err)
 	}
-	want := map[core.TaskID]int{"a": 0, "b": 1, "c": 2, "d": 1}
+	want := map[core.TicketID]int{"a": 0, "b": 1, "c": 2, "d": 1}
 	for id, w := range want {
 		if waves[id] != w {
 			t.Errorf("wave(%s) = %d, want %d", id, waves[id], w)
@@ -349,7 +349,7 @@ func TestTopoSort(t *testing.T) {
 	if len(order) != 3 {
 		t.Fatalf("TopoSort() = %v, want 3 nodes", order)
 	}
-	pos := map[core.TaskID]int{}
+	pos := map[core.TicketID]int{}
 	for i, id := range order {
 		pos[id] = i
 	}
@@ -373,7 +373,7 @@ func TestTopoSortIsLexicographicallyMinimal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TopoSort() error = %v", err)
 	}
-	want := []core.TaskID{"w", "x", "a", "z"}
+	want := []core.TicketID{"w", "x", "a", "z"}
 	if !equalIDs(order, want) {
 		t.Fatalf("TopoSort() = %v, want %v", order, want)
 	}
@@ -390,7 +390,7 @@ func TestTopoSortWideGraphBudget(t *testing.T) {
 		n       = 20000
 		ceiling = 250 * time.Millisecond
 	)
-	tasks := make([]core.Task, n)
+	tasks := make([]core.Ticket, n)
 	for i := range tasks {
 		tasks[i] = task(fmt.Sprintf("t-%06d", i), core.KindTask, core.StatusTodo)
 	}
@@ -412,7 +412,7 @@ func TestTopoSortWideGraphBudget(t *testing.T) {
 func BenchmarkTopoSort(b *testing.B) {
 	for _, n := range []int{1000, 10000, 50000} {
 		b.Run(fmt.Sprintf("%d", n), func(b *testing.B) {
-			tasks := make([]core.Task, n)
+			tasks := make([]core.Ticket, n)
 			for i := range tasks {
 				tasks[i] = task(fmt.Sprintf("t-%06d", i), core.KindTask, core.StatusTodo)
 			}
@@ -452,7 +452,7 @@ func TestTransitiveDependents(t *testing.T) {
 		task("c", core.KindTask, core.StatusTodo, "b"),
 		task("d", core.KindTask, core.StatusTodo, "c"),
 	)
-	want := []core.TaskID{"b", "c", "d"}
+	want := []core.TicketID{"b", "c", "d"}
 	if got := g.TransitiveDependents("a"); !equalIDs(got, want) {
 		t.Fatalf("TransitiveDependents(a) = %v, want %v", got, want)
 	}
@@ -486,7 +486,7 @@ func TestShortestPathTo(t *testing.T) {
 	if !ok {
 		t.Fatalf("ShortestPathTo(a,c) ok = false")
 	}
-	if !equalIDs(path, []core.TaskID{"a", "b", "c"}) && !equalIDs(path, []core.TaskID{"a", "b2", "c"}) {
+	if !equalIDs(path, []core.TicketID{"a", "b", "c"}) && !equalIDs(path, []core.TicketID{"a", "b2", "c"}) {
 		t.Fatalf("ShortestPathTo(a,c) = %v, want a shortest path", path)
 	}
 	if _, ok := g.ShortestPathTo("c", "a"); ok {
@@ -505,7 +505,7 @@ func TestCriticalPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CriticalPath() error = %v", err)
 	}
-	if !equalIDs(path, []core.TaskID{"a", "b", "c"}) {
+	if !equalIDs(path, []core.TicketID{"a", "b", "c"}) {
 		t.Fatalf("CriticalPath() = %v, want [a b c]", path)
 	}
 }

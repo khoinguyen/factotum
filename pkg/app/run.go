@@ -26,19 +26,19 @@ const defaultRunOutputLimit = 8192
 // captures the output, and reflects progress into the store.
 type RunService struct {
 	backend store.Backend
-	tasks   *TaskService
+	tasks   *TicketService
 	clock   Clock
 	ids     IDGen
 }
 
-func NewRunService(backend store.Backend, tasks *TaskService, clock Clock, ids IDGen) *RunService {
+func NewRunService(backend store.Backend, tasks *TicketService, clock Clock, ids IDGen) *RunService {
 	return &RunService{backend: backend, tasks: tasks, clock: clock, ids: ids}
 }
 
 // RunInput is one single-task run. Backend and Harness are selected by the
 // caller (config/flags); this service never picks a default.
 type RunInput struct {
-	TaskID        core.TaskID
+	TicketID      core.TicketID
 	Backend       isolation.IsolationBackend
 	Harness       harnesspkg.Harness
 	WorkspaceRoot string
@@ -73,8 +73,8 @@ type RunInput struct {
 // RunOutcome records what a run did. It is populated even when the harness fails
 // so the caller can report the captured output alongside the error.
 type RunOutcome struct {
-	TaskID    core.TaskID
-	Status    core.TaskStatus
+	TicketID  core.TicketID
+	Status    core.TicketStatus
 	Output    string
 	ExitCode  int
 	Complete  bool
@@ -92,7 +92,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		return nil, errors.New("run: no harness selected")
 	}
 
-	task, err := s.backend.Tasks().Get(ctx, in.TaskID)
+	task, err := s.backend.Tickets().Get(ctx, in.TicketID)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 	}
 
 	outcome := &RunOutcome{
-		TaskID:    task.ID,
+		TicketID:  task.ID,
 		Status:    task.Status,
 		Output:    res.output,
 		ExitCode:  res.exitCode,
@@ -233,7 +233,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 	}
 
 	// An empty task names no repo, so resolution spans every project repo.
-	plan, err := workspace.Resolve(ctx, *project, core.Task{}, workspace.Options{
+	plan, err := workspace.Resolve(ctx, *project, core.Ticket{}, workspace.Options{
 		Root:    in.WorkspaceRoot,
 		Base:    in.RepoBase,
 		Git:     in.Git,
@@ -381,7 +381,7 @@ func captureFiles(ctx context.Context, backend isolation.IsolationBackend, h iso
 // runPrompt returns the prompt a harness receives: the caller-supplied override
 // when set, else the task-derived prompt. An override is data (a stored prompt),
 // so it is used verbatim.
-func runPrompt(project *core.Project, task *core.Task, override string) string {
+func runPrompt(project *core.Project, task *core.Ticket, override string) string {
 	if override != "" {
 		return override
 	}
@@ -390,7 +390,7 @@ func runPrompt(project *core.Project, task *core.Task, override string) string {
 
 // TaskPrompt builds the instruction a harness receives for a task: its title,
 // identity, and description, so a run is reproducible from the task alone.
-func TaskPrompt(project *core.Project, task *core.Task) string {
+func TaskPrompt(project *core.Project, task *core.Ticket) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", task.Title)
 	fmt.Fprintf(&b, "Task %s in project %s", task.ID, project.ID)
@@ -413,7 +413,7 @@ func runWorkdir(plan *workspace.Plan) string {
 	return plan.Root
 }
 
-func (s *RunService) recordRunNote(ctx context.Context, task *core.Task, in RunInput, body string) error {
+func (s *RunService) recordRunNote(ctx context.Context, task *core.Ticket, in RunInput, body string) error {
 	_, err := s.tasks.AddNote(ctx, task.ID, NoteInput{
 		Body:   body,
 		Author: in.Actor,
@@ -422,10 +422,10 @@ func (s *RunService) recordRunNote(ctx context.Context, task *core.Task, in RunI
 	return err
 }
 
-func (s *RunService) appendRunEvent(ctx context.Context, task *core.Task, kind core.EventKind, summary string, data map[string]any) error {
+func (s *RunService) appendRunEvent(ctx context.Context, task *core.Ticket, kind core.EventKind, summary string, data map[string]any) error {
 	return appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
 		ProjectID: task.ProjectID,
-		TaskID:    &task.ID,
+		TicketID:  &task.ID,
 		Kind:      kind,
 		Summary:   summary,
 		Data:      data,
@@ -433,7 +433,7 @@ func (s *RunService) appendRunEvent(ctx context.Context, task *core.Task, kind c
 }
 
 // finishRunEvent records a completed run (success or failure).
-func (s *RunService) finishRunEvent(ctx context.Context, task *core.Task, exitCode int, completed bool) error {
+func (s *RunService) finishRunEvent(ctx context.Context, task *core.Ticket, exitCode int, completed bool) error {
 	state := "finished"
 	if !completed {
 		state = "failed"

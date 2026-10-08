@@ -43,10 +43,10 @@ func postBearer(t *testing.T, target, token, text string) *http.Response {
 	return resp
 }
 
-func ideas(t *testing.T, f *fixture, project core.ProjectID) []*core.Task {
+func ideas(t *testing.T, f *fixture, project core.ProjectID) []*core.Ticket {
 	t.Helper()
 	kind := core.KindIdea
-	list, err := f.tasks.List(context.Background(), store.TaskFilter{ProjectID: project, Kind: &kind})
+	list, err := f.tasks.List(context.Background(), store.TicketFilter{ProjectID: project, Kind: &kind})
 	if err != nil {
 		t.Fatalf("List(ideas) error = %v", err)
 	}
@@ -115,7 +115,7 @@ func TestCaptureWithFormToken(t *testing.T) {
 		t.Fatalf("Location = %q, want /idea/<id>", loc)
 	}
 
-	task, err := f.tasks.Get(context.Background(), core.TaskID(strings.TrimPrefix(loc, "/idea/")))
+	task, err := f.tasks.Get(context.Background(), core.TicketID(strings.TrimPrefix(loc, "/idea/")))
 	if err != nil {
 		t.Fatalf("Get(captured) error = %v", err)
 	}
@@ -295,7 +295,7 @@ func TestCaptureTruncatesLongTitle(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", resp.StatusCode)
 	}
-	task, err := f.tasks.Get(context.Background(), core.TaskID(strings.TrimPrefix(resp.Header.Get("Location"), "/idea/")))
+	task, err := f.tasks.Get(context.Background(), core.TicketID(strings.TrimPrefix(resp.Header.Get("Location"), "/idea/")))
 	if err != nil {
 		t.Fatalf("Get(captured) error = %v", err)
 	}

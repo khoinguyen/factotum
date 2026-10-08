@@ -15,7 +15,7 @@ import (
 // CLI work from a snapshot.
 type Snapshot struct {
 	Project *core.Project
-	Tasks   []*core.Task
+	Tasks   []*core.Ticket
 	Actors  map[core.ActorID]core.Actor
 	Graph   *graph.Graph
 	Ready   graph.ReadyBucket
@@ -28,7 +28,7 @@ func LoadSnapshot(ctx context.Context, backend store.Backend, projectID core.Pro
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := backend.Tasks().List(ctx, store.TaskFilter{ProjectID: projectID})
+	tasks, err := backend.Tickets().List(ctx, store.TicketFilter{ProjectID: projectID})
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func LoadSnapshot(ctx context.Context, backend store.Backend, projectID core.Pro
 		actorMap[actor.ID] = *actor
 	}
 
-	copied := make([]core.Task, 0, len(tasks))
+	copied := make([]core.Ticket, 0, len(tasks))
 	for _, task := range tasks {
 		copied = append(copied, *task)
 	}
@@ -63,7 +63,7 @@ func LoadSnapshot(ctx context.Context, backend store.Backend, projectID core.Pro
 // cross-project queries such as ranking. Snapshot.Project is nil; the default
 // resolution policy is used.
 func LoadAllSnapshot(ctx context.Context, backend store.Backend, now time.Time) (*Snapshot, error) {
-	tasks, err := backend.Tasks().List(ctx, store.TaskFilter{})
+	tasks, err := backend.Tickets().List(ctx, store.TicketFilter{})
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func LoadAllSnapshot(ctx context.Context, backend store.Backend, now time.Time) 
 		actorMap[actor.ID] = *actor
 	}
 
-	copied := make([]core.Task, 0, len(tasks))
+	copied := make([]core.Ticket, 0, len(tasks))
 	for _, task := range tasks {
 		copied = append(copied, *task)
 	}

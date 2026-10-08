@@ -17,7 +17,7 @@ import (
 type Backend struct {
 	mu        sync.RWMutex
 	projects  map[core.ProjectID]core.Project
-	tasks     map[core.TaskID]core.Task
+	tasks     map[core.TicketID]core.Ticket
 	actors    map[core.ActorID]core.Actor
 	artifacts map[core.ArtifactID]core.Artifact
 	events    []core.Event
@@ -26,7 +26,7 @@ type Backend struct {
 func New() *Backend {
 	return &Backend{
 		projects:  make(map[core.ProjectID]core.Project),
-		tasks:     make(map[core.TaskID]core.Task),
+		tasks:     make(map[core.TicketID]core.Ticket),
 		actors:    make(map[core.ActorID]core.Actor),
 		artifacts: make(map[core.ArtifactID]core.Artifact),
 	}
@@ -38,7 +38,7 @@ func Open(_ context.Context, _ store.Config) (store.Backend, error) {
 
 func (b *Backend) Close() error                { return nil }
 func (b *Backend) Projects() store.ProjectRepo { return &projectRepo{backend: b} }
-func (b *Backend) Tasks() store.TaskRepo       { return &taskRepo{backend: b} }
+func (b *Backend) Tickets() store.TicketRepo   { return &taskRepo{backend: b} }
 func (b *Backend) Actors() store.ActorRepo     { return &actorRepo{backend: b} }
 func (b *Backend) Artifacts() store.ArtifactRepo {
 	return &artifactRepo{backend: b}
@@ -106,31 +106,31 @@ func (r *projectRepo) Delete(_ context.Context, id core.ProjectID) error {
 
 type taskRepo struct{ backend *Backend }
 
-func (r *taskRepo) Create(_ context.Context, task *core.Task) error {
+func (r *taskRepo) Create(_ context.Context, task *core.Ticket) error {
 	r.backend.mu.Lock()
 	defer r.backend.mu.Unlock()
 	if _, ok := r.backend.tasks[task.ID]; ok {
 		return fmt.Errorf("%w: task %s", core.ErrAlreadyExists, task.ID)
 	}
-	r.backend.tasks[task.ID] = clone.Task(*task)
+	r.backend.tasks[task.ID] = clone.Ticket(*task)
 	return nil
 }
 
-func (r *taskRepo) Get(_ context.Context, id core.TaskID) (*core.Task, error) {
+func (r *taskRepo) Get(_ context.Context, id core.TicketID) (*core.Ticket, error) {
 	r.backend.mu.RLock()
 	defer r.backend.mu.RUnlock()
 	task, ok := r.backend.tasks[id]
 	if !ok {
 		return nil, fmt.Errorf("%w: task %s", core.ErrNotFound, id)
 	}
-	cloned := clone.Task(task)
+	cloned := clone.Ticket(task)
 	return &cloned, nil
 }
 
-func (r *taskRepo) List(_ context.Context, filter store.TaskFilter) ([]*core.Task, error) {
+func (r *taskRepo) List(_ context.Context, filter store.TicketFilter) ([]*core.Ticket, error) {
 	r.backend.mu.RLock()
 	defer r.backend.mu.RUnlock()
-	ids := make([]core.TaskID, 0, len(r.backend.tasks))
+	ids := make([]core.TicketID, 0, len(r.backend.tasks))
 	for id, task := range r.backend.tasks {
 		if !matchesTask(task, filter) {
 			continue
@@ -138,15 +138,15 @@ func (r *taskRepo) List(_ context.Context, filter store.TaskFilter) ([]*core.Tas
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	out := make([]*core.Task, 0, len(ids))
+	out := make([]*core.Ticket, 0, len(ids))
 	for _, id := range ids {
-		cloned := clone.Task(r.backend.tasks[id])
+		cloned := clone.Ticket(r.backend.tasks[id])
 		out = append(out, &cloned)
 	}
 	return out, nil
 }
 
-func matchesTask(task core.Task, filter store.TaskFilter) bool {
+func matchesTask(task core.Ticket, filter store.TicketFilter) bool {
 	if filter.ProjectID != "" && task.ProjectID != filter.ProjectID {
 		return false
 	}
@@ -178,7 +178,7 @@ func matchesTask(task core.Task, filter store.TaskFilter) bool {
 }
 
 // taskDependsOn reports whether task lists id among its direct dependencies.
-func taskDependsOn(task core.Task, id core.TaskID) bool {
+func taskDependsOn(task core.Ticket, id core.TicketID) bool {
 	for _, dep := range task.Deps {
 		if dep == id {
 			return true
@@ -187,11 +187,11 @@ func taskDependsOn(task core.Task, id core.TaskID) bool {
 	return false
 }
 
-func (r *taskRepo) Search(_ context.Context, filter store.TaskFilter, query string) ([]store.TaskSearchHit, error) {
+func (r *taskRepo) Search(_ context.Context, filter store.TicketFilter, query string) ([]store.TicketSearchHit, error) {
 	r.backend.mu.RLock()
 	defer r.backend.mu.RUnlock()
 	terms := store.LexicalTerms(query)
-	hits := make([]store.TaskSearchHit, 0)
+	hits := make([]store.TicketSearchHit, 0)
 	for _, task := range r.backend.tasks {
 		if !matchesTask(task, filter) {
 			continue
@@ -200,24 +200,24 @@ func (r *taskRepo) Search(_ context.Context, filter store.TaskFilter, query stri
 		if !matched {
 			continue
 		}
-		cloned := clone.Task(task)
-		hits = append(hits, store.TaskSearchHit{Task: &cloned, Score: score})
+		cloned := clone.Ticket(task)
+		hits = append(hits, store.TicketSearchHit{Ticket: &cloned, Score: score})
 	}
 	store.SortTaskSearchHits(hits)
 	return hits, nil
 }
 
-func (r *taskRepo) Update(_ context.Context, task *core.Task) error {
+func (r *taskRepo) Update(_ context.Context, task *core.Ticket) error {
 	r.backend.mu.Lock()
 	defer r.backend.mu.Unlock()
 	if _, ok := r.backend.tasks[task.ID]; !ok {
 		return fmt.Errorf("%w: task %s", core.ErrNotFound, task.ID)
 	}
-	r.backend.tasks[task.ID] = clone.Task(*task)
+	r.backend.tasks[task.ID] = clone.Ticket(*task)
 	return nil
 }
 
-func (r *taskRepo) UpdateExpected(_ context.Context, task *core.Task, expected time.Time) error {
+func (r *taskRepo) UpdateExpected(_ context.Context, task *core.Ticket, expected time.Time) error {
 	r.backend.mu.Lock()
 	defer r.backend.mu.Unlock()
 	current, ok := r.backend.tasks[task.ID]
@@ -227,11 +227,11 @@ func (r *taskRepo) UpdateExpected(_ context.Context, task *core.Task, expected t
 	if !current.UpdatedAt.Equal(expected) {
 		return fmt.Errorf("%w: task %s was modified", core.ErrConflict, task.ID)
 	}
-	r.backend.tasks[task.ID] = clone.Task(*task)
+	r.backend.tasks[task.ID] = clone.Ticket(*task)
 	return nil
 }
 
-func (r *taskRepo) Delete(_ context.Context, id core.TaskID) error {
+func (r *taskRepo) Delete(_ context.Context, id core.TicketID) error {
 	r.backend.mu.Lock()
 	defer r.backend.mu.Unlock()
 	if _, ok := r.backend.tasks[id]; !ok {
@@ -411,7 +411,7 @@ func (r *eventRepo) List(_ context.Context, filter store.EventFilter) ([]*core.E
 		if filter.ProjectID != "" && event.ProjectID != filter.ProjectID {
 			continue
 		}
-		if filter.TaskID != nil && (event.TaskID == nil || *event.TaskID != *filter.TaskID) {
+		if filter.TicketID != nil && (event.TicketID == nil || *event.TicketID != *filter.TicketID) {
 			continue
 		}
 		if len(filter.Kinds) > 0 && !containsKind(filter.Kinds, event.Kind) {

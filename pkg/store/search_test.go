@@ -32,7 +32,7 @@ func TestLexicalTerms(t *testing.T) {
 }
 
 func TestLexicalTaskScore(t *testing.T) {
-	task := &core.Task{
+	task := &core.Ticket{
 		Title:       "Terraform notes",
 		Description: "apply in the devops repo",
 		Notes:       []core.Note{{Body: "remember the kubectl flag"}},
@@ -63,7 +63,7 @@ func TestLexicalTaskScore(t *testing.T) {
 }
 
 func TestLexicalTaskScoreSkipsSystemNotes(t *testing.T) {
-	task := &core.Task{
+	task := &core.Ticket{
 		Title:       "quiet",
 		Description: "nothing here",
 		Notes: []core.Note{
@@ -80,28 +80,28 @@ func TestLexicalTaskScoreSkipsSystemNotes(t *testing.T) {
 }
 
 func TestSortTaskSearchHits(t *testing.T) {
-	task := func(id, title string) *core.Task {
-		return &core.Task{ID: core.TaskID(id), Title: title}
+	task := func(id, title string) *core.Ticket {
+		return &core.Ticket{ID: core.TicketID(id), Title: title}
 	}
-	hits := []TaskSearchHit{
-		{Task: task("t-3", "beta"), Score: 1},
-		{Task: task("t-1", "Alpha"), Score: 3},
-		{Task: task("t-2", "alpha"), Score: 3},
-		{Task: task("t-4", "gamma"), Score: 1},
+	hits := []TicketSearchHit{
+		{Ticket: task("t-3", "beta"), Score: 1},
+		{Ticket: task("t-1", "Alpha"), Score: 3},
+		{Ticket: task("t-2", "alpha"), Score: 3},
+		{Ticket: task("t-4", "gamma"), Score: 1},
 	}
 	SortTaskSearchHits(hits)
-	want := []core.TaskID{"t-1", "t-2", "t-3", "t-4"}
+	want := []core.TicketID{"t-1", "t-2", "t-3", "t-4"}
 	for i, id := range want {
-		if hits[i].Task.ID != id {
+		if hits[i].Ticket.ID != id {
 			t.Fatalf("SortTaskSearchHits() = %v, want %v", taskIDs(hits), want)
 		}
 	}
 }
 
-func taskIDs(hits []TaskSearchHit) []core.TaskID {
-	out := make([]core.TaskID, 0, len(hits))
+func taskIDs(hits []TicketSearchHit) []core.TicketID {
+	out := make([]core.TicketID, 0, len(hits))
 	for _, hit := range hits {
-		out = append(out, hit.Task.ID)
+		out = append(out, hit.Ticket.ID)
 	}
 	return out
 }

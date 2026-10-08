@@ -3,18 +3,18 @@ package core
 import "fmt"
 
 type ResolutionPolicy struct {
-	TaskStatuses      []TaskStatus
-	MilestoneStatuses []TaskStatus
+	TaskStatuses      []TicketStatus
+	MilestoneStatuses []TicketStatus
 }
 
 func DefaultResolutionPolicy() ResolutionPolicy {
 	return ResolutionPolicy{
-		TaskStatuses:      []TaskStatus{StatusReadyForReview, StatusDone, StatusCancelled},
-		MilestoneStatuses: []TaskStatus{StatusDone},
+		TaskStatuses:      []TicketStatus{StatusReadyForReview, StatusDone, StatusCancelled},
+		MilestoneStatuses: []TicketStatus{StatusDone},
 	}
 }
 
-func (p ResolutionPolicy) Resolves(kind TaskKind, status TaskStatus) bool {
+func (p ResolutionPolicy) Resolves(kind TicketKind, status TicketStatus) bool {
 	// Non-executable kinds (ideas) are outside the execution graph: they never
 	// become ready, never block a dependent, and carry no resolution statuses.
 	if !kind.Executable() {

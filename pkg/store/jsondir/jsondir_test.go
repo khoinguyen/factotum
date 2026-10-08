@@ -46,8 +46,8 @@ func TestPersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	task := &core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, Description: "body text"}
-	if err := first.Tasks().Create(ctx, task); err != nil {
+	task := &core.Ticket{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, Description: "body text"}
+	if err := first.Tickets().Create(ctx, task); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	if err := first.Close(); err != nil {
@@ -59,7 +59,7 @@ func TestPersistsAcrossReopen(t *testing.T) {
 		t.Fatalf("reopen error = %v", err)
 	}
 	t.Cleanup(func() { _ = second.Close() })
-	got, err := second.Tasks().Get(ctx, "t-1")
+	got, err := second.Tickets().Get(ctx, "t-1")
 	if err != nil {
 		t.Fatalf("Get() after reopen error = %v", err)
 	}
@@ -74,7 +74,7 @@ func TestLayoutIsDirectoryOfMarkdownFiles(t *testing.T) {
 	if err := backend.Projects().Create(ctx, &core.Project{ID: "prj-1", Name: "Acme", Policy: core.DefaultResolutionPolicy()}); err != nil {
 		t.Fatalf("Create(project) error = %v", err)
 	}
-	if err := backend.Tasks().Create(ctx, &core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo}); err != nil {
+	if err := backend.Tickets().Create(ctx, &core.Ticket{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo}); err != nil {
 		t.Fatalf("Create(task) error = %v", err)
 	}
 	if err := backend.Actors().Create(ctx, &core.Actor{ID: "act-1", Kind: core.ActorHuman, Name: "Khoi", Active: true}); err != nil {
@@ -101,8 +101,8 @@ func TestLayoutIsDirectoryOfMarkdownFiles(t *testing.T) {
 func TestWriteTouchesOnlyAffectedFile(t *testing.T) {
 	backend := newBackend(t)
 	ctx := context.Background()
-	for _, id := range []core.TaskID{"t-1", "t-2"} {
-		if err := backend.Tasks().Create(ctx, &core.Task{ID: id, ProjectID: "prj-1", Kind: core.KindTask, Title: string(id), Status: core.StatusTodo}); err != nil {
+	for _, id := range []core.TicketID{"t-1", "t-2"} {
+		if err := backend.Tickets().Create(ctx, &core.Ticket{ID: id, ProjectID: "prj-1", Kind: core.KindTask, Title: string(id), Status: core.StatusTodo}); err != nil {
 			t.Fatalf("Create(%s) error = %v", id, err)
 		}
 	}
@@ -112,12 +112,12 @@ func TestWriteTouchesOnlyAffectedFile(t *testing.T) {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 
-	taskB, err := backend.Tasks().Get(ctx, "t-2")
+	taskB, err := backend.Tickets().Get(ctx, "t-2")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
 	taskB.Title = "two renamed"
-	if err := backend.Tasks().Update(ctx, taskB); err != nil {
+	if err := backend.Tickets().Update(ctx, taskB); err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestUnknownFrontmatterSurvivesUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	if err := backend.Tasks().Create(ctx, &core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo}); err != nil {
+	if err := backend.Tickets().Create(ctx, &core.Ticket{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	if err := backend.Close(); err != nil {
@@ -161,12 +161,12 @@ func TestUnknownFrontmatterSurvivesUpdate(t *testing.T) {
 		t.Fatalf("reopen error = %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	task, err := reopened.Tasks().Get(ctx, "t-1")
+	task, err := reopened.Tickets().Get(ctx, "t-1")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
 	task.Title = "renamed"
-	if err := reopened.Tasks().Update(ctx, task); err != nil {
+	if err := reopened.Tickets().Update(ctx, task); err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
 
@@ -222,18 +222,18 @@ func TestDuplicateIDsFailClearly(t *testing.T) {
 func TestUpdateExpectedConflict(t *testing.T) {
 	backend := newBackend(t)
 	ctx := context.Background()
-	task := &core.Task{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, UpdatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	if err := backend.Tasks().Create(ctx, task); err != nil {
+	task := &core.Ticket{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, UpdatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	if err := backend.Tickets().Create(ctx, task); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	stale := task.UpdatedAt
 	task.Title = "two"
 	task.UpdatedAt = stale.Add(time.Minute)
-	if err := backend.Tasks().UpdateExpected(ctx, task, stale); err != nil {
+	if err := backend.Tickets().UpdateExpected(ctx, task, stale); err != nil {
 		t.Fatalf("UpdateExpected(current) error = %v", err)
 	}
 	task.Title = "three"
-	if err := backend.Tasks().UpdateExpected(ctx, task, stale); !errors.Is(err, core.ErrConflict) {
+	if err := backend.Tickets().UpdateExpected(ctx, task, stale); !errors.Is(err, core.ErrConflict) {
 		t.Fatalf("UpdateExpected(stale) error = %v, want ErrConflict", err)
 	}
 }

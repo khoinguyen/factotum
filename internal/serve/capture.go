@@ -81,7 +81,7 @@ func (s *Server) handleCaptureSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "capture: idea text is required", http.StatusBadRequest)
 		return
 	}
-	idea, err := s.options.Tasks.Add(r.Context(), app.TaskInput{
+	idea, err := s.options.Tasks.Add(r.Context(), app.TicketInput{
 		ProjectID:   s.options.Project,
 		Kind:        core.KindIdea,
 		Title:       title,

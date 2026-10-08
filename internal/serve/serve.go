@@ -4,7 +4,7 @@
 // to push live updates over SSE. Reads are open.
 //
 // It is one app with a write side too: /capture stores a natural-language idea
-// through the same pkg/app TaskService, gated by a shared token. The token is
+// through the same pkg/app TicketService, gated by a shared token. The token is
 // the only authentication; the read side stays open and live. Enrichment of a
 // captured idea is deferred to the grooming step, so a capture stores the raw
 // sentence immediately.
@@ -76,7 +76,7 @@ type Options struct {
 	Token string
 	// Tasks is the app service that stores a captured idea. Nil disables
 	// capture. It is required only for writes, so a read-only server may omit it.
-	Tasks *app.TaskService
+	Tasks *app.TicketService
 	// Poll is how often the event log is checked for a change. It defaults to
 	// 500ms, comfortably under the one-second freshness target.
 	Poll time.Duration
@@ -273,7 +273,7 @@ type pageStats struct {
 
 // taskView is one executable task projected for the work board and next-up lists.
 type taskView struct {
-	ID          core.TaskID
+	ID          core.TicketID
 	Title       string
 	Repo        string
 	Class       string
@@ -286,7 +286,7 @@ type taskView struct {
 	Milestone   bool
 	Score       float64
 	URL         string
-	Origin      core.TaskID
+	Origin      core.TicketID
 	OriginTitle string
 }
 
@@ -308,7 +308,7 @@ type artifactView struct {
 // taskLink is a compact reference to a task, used inside idea and task detail
 // pages where the full work-board projection is unnecessary.
 type taskLink struct {
-	ID     core.TaskID
+	ID     core.TicketID
 	Title  string
 	Class  string
 	Chip   string
@@ -335,7 +335,7 @@ type linkView struct {
 // ideaView is one idea rolled up from the tasks promoted from it. State is one
 // of finished, active, blocked, or captured.
 type ideaView struct {
-	ID          core.TaskID
+	ID          core.TicketID
 	Title       string
 	Description string
 	Repo        string
@@ -353,7 +353,7 @@ type ideaView struct {
 // taskGroup is a set of tasks sharing an origin idea. Ungrouped marks the bucket
 // for tasks with no origin idea.
 type taskGroup struct {
-	IdeaID    core.TaskID
+	IdeaID    core.TicketID
 	IdeaTitle string
 	Ungrouped bool
 	Tasks     []taskView
@@ -486,12 +486,12 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 	}
 
 	for _, score := range scored {
-		view := vs.views[score.TaskID]
+		view := vs.views[score.TicketID]
 		view.Score = score.Score
 		switch {
-		case vs.agentSet[score.TaskID]:
+		case vs.agentSet[score.TicketID]:
 			page.NextAgent = append(page.NextAgent, view)
-		case vs.humanSet[score.TaskID]:
+		case vs.humanSet[score.TicketID]:
 			page.NextHuman = append(page.NextHuman, view)
 		}
 	}
@@ -565,29 +565,29 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 // index and the drill-down pages, so grouping and rollups cannot drift.
 type viewSet struct {
 	snapshot        *app.Snapshot
-	ids             []core.TaskID
-	byID            map[core.TaskID]core.Task
-	views           map[core.TaskID]taskView
-	origin          map[core.TaskID]core.TaskID
-	artifactsByTask map[core.TaskID][]artifactView
-	waves           map[core.TaskID]int
+	ids             []core.TicketID
+	byID            map[core.TicketID]core.Ticket
+	views           map[core.TicketID]taskView
+	origin          map[core.TicketID]core.TicketID
+	artifactsByTask map[core.TicketID][]artifactView
+	waves           map[core.TicketID]int
 	actors          map[core.ActorID]string
-	agentSet        map[core.TaskID]bool
-	humanSet        map[core.TaskID]bool
-	cycles          [][]core.TaskID
+	agentSet        map[core.TicketID]bool
+	humanSet        map[core.TicketID]bool
+	cycles          [][]core.TicketID
 }
 
 // buildViews projects a snapshot into the ids, readiness-annotated task views,
 // origin edges, and task-attached artifacts the pages render.
 func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) viewSet {
 	ids := snapshot.Graph.IDs()
-	byID := make(map[core.TaskID]core.Task, len(snapshot.Tasks))
+	byID := make(map[core.TicketID]core.Ticket, len(snapshot.Tasks))
 	for _, task := range snapshot.Tasks {
 		byID[task.ID] = *task
 	}
 	waves, _ := snapshot.Graph.Waves()
 	cycles := snapshot.Graph.Cycles()
-	cycleIDs := make(map[core.TaskID]bool)
+	cycleIDs := make(map[core.TicketID]bool)
 	for _, cycle := range cycles {
 		for _, id := range cycle {
 			cycleIDs[id] = true
@@ -597,8 +597,8 @@ func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) 
 		snapshot: snapshot,
 		ids:      ids,
 		byID:     byID,
-		views:    make(map[core.TaskID]taskView, len(ids)),
-		origin:   make(map[core.TaskID]core.TaskID, len(ids)),
+		views:    make(map[core.TicketID]taskView, len(ids)),
+		origin:   make(map[core.TicketID]core.TicketID, len(ids)),
 		waves:    waves,
 		actors:   make(map[core.ActorID]string, len(snapshot.Actors)),
 		agentSet: idSet(snapshot.Ready.Agent),
@@ -647,19 +647,19 @@ func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) 
 		}
 		vs.views[id] = view
 	}
-	vs.artifactsByTask = make(map[core.TaskID][]artifactView)
+	vs.artifactsByTask = make(map[core.TicketID][]artifactView)
 	for _, artifact := range artifacts {
-		if artifact.TaskID == nil {
+		if artifact.TicketID == nil {
 			continue
 		}
-		vs.artifactsByTask[*artifact.TaskID] = append(vs.artifactsByTask[*artifact.TaskID], artifactViewOf(artifact))
+		vs.artifactsByTask[*artifact.TicketID] = append(vs.artifactsByTask[*artifact.TicketID], artifactViewOf(artifact))
 	}
 	return vs
 }
 
 // rollupIdea builds the idea card from the tasks promoted from it and the
 // artifacts attached to the idea or any of those tasks.
-func (s *Server) rollupIdea(idea core.Task, vs viewSet) ideaView {
+func (s *Server) rollupIdea(idea core.Ticket, vs viewSet) ideaView {
 	out := ideaView{
 		ID:          idea.ID,
 		Title:       idea.Title,
@@ -667,7 +667,7 @@ func (s *Server) rollupIdea(idea core.Task, vs viewSet) ideaView {
 		Repo:        idea.Repo,
 		URL:         ideaURL(idea.ID),
 	}
-	var promoted []core.TaskID
+	var promoted []core.TicketID
 	for _, id := range vs.ids {
 		if vs.origin[id] == idea.ID {
 			promoted = append(promoted, id)
@@ -694,7 +694,7 @@ func (s *Server) rollupIdea(idea core.Task, vs viewSet) ideaView {
 // taskState reduces one promoted task to its rollup contribution. A task is
 // finished once it resolves, blocked when it is explicitly blocked or waiting on
 // an unresolved condition, and active otherwise.
-func taskState(task core.Task, view taskView) string {
+func taskState(task core.Ticket, view taskView) string {
 	switch {
 	case task.Status == core.StatusDone || task.Status == core.StatusCancelled:
 		return "finished"
@@ -726,7 +726,7 @@ func ideaRollup(idea ideaView) (state, chip string) {
 
 // firstIdeaDep returns the first dependency of task that is an idea, matching
 // pkg/app's origin rule. It is skipped when the dependency dangles.
-func firstIdeaDep(task core.Task, byID map[core.TaskID]core.Task) (core.TaskID, bool) {
+func firstIdeaDep(task core.Ticket, byID map[core.TicketID]core.Ticket) (core.TicketID, bool) {
 	for _, dep := range task.Deps {
 		if depTask, ok := byID[dep]; ok && depTask.IsIdea() {
 			return dep, true
@@ -738,8 +738,8 @@ func firstIdeaDep(task core.Task, byID map[core.TaskID]core.Task) (core.TaskID, 
 // groupByOrigin groups tasks under the idea they were promoted from, with the
 // ungrouped bucket last. Groups are ordered deterministically by idea id.
 func groupByOrigin(tasks []taskView) []taskGroup {
-	order := make([]core.TaskID, 0)
-	byIdea := make(map[core.TaskID]*taskGroup)
+	order := make([]core.TicketID, 0)
+	byIdea := make(map[core.TicketID]*taskGroup)
 	for _, task := range tasks {
 		group, ok := byIdea[task.Origin]
 		if !ok {
@@ -784,7 +784,7 @@ func (s *Server) projectLabel(snapshot *app.Snapshot) string {
 // mirrors pkg/render's presentation classes instead of calling render.Classify,
 // which would re-derive the whole view on every task; the class strings are CSS
 // keys local to this template, so there is no behavior to keep in sync.
-func classify(task core.Task, readyAgent, readyHuman, cycle bool) string {
+func classify(task core.Ticket, readyAgent, readyHuman, cycle bool) string {
 	switch {
 	case cycle:
 		return "cycle"
@@ -840,19 +840,19 @@ func actorName(actors map[core.ActorID]core.Actor, id *core.ActorID) string {
 	return string(*id)
 }
 
-func idSet(ids []core.TaskID) map[core.TaskID]bool {
-	set := make(map[core.TaskID]bool, len(ids))
+func idSet(ids []core.TicketID) map[core.TicketID]bool {
+	set := make(map[core.TicketID]bool, len(ids))
 	for _, id := range ids {
 		set[id] = true
 	}
 	return set
 }
-func taskURL(id core.TaskID) string { return "/task/" + string(id) }
-func ideaURL(id core.TaskID) string { return "/idea/" + string(id) }
+func taskURL(id core.TicketID) string { return "/task/" + string(id) }
+func ideaURL(id core.TicketID) string { return "/idea/" + string(id) }
 
 // taskOrIdeaURL routes an idea to its own detail page and executable work to
 // the task page.
-func taskOrIdeaURL(task core.Task) string {
+func taskOrIdeaURL(task core.Ticket) string {
 	if task.IsIdea() {
 		return ideaURL(task.ID)
 	}

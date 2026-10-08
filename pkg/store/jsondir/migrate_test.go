@@ -43,7 +43,7 @@ func seedLegacy(t *testing.T) func(be store.Backend) {
 		}
 		must(be.Projects().Create(ctx, &core.Project{ID: "legacy-prj", Name: "Legacy", Policy: core.DefaultResolutionPolicy()}))
 		must(be.Actors().Create(ctx, &core.Actor{ID: "legacy-act", Kind: core.ActorHuman, Name: "Khoi", Active: true}))
-		must(be.Tasks().Create(ctx, &core.Task{
+		must(be.Tickets().Create(ctx, &core.Ticket{
 			ID: "legacy-t", ProjectID: "legacy-prj", Kind: core.KindTask, Title: "Old task",
 			Status: core.StatusTodo, Description: "old body", Labels: []string{"legacy"},
 		}))
@@ -86,7 +86,7 @@ func TestMigrateFromJSONFileRoundTrips(t *testing.T) {
 	if err != nil || project.Name != "Legacy" {
 		t.Fatalf("project = %#v, err = %v, want Legacy", project, err)
 	}
-	task, err := backend.Tasks().Get(ctx, "legacy-t")
+	task, err := backend.Tickets().Get(ctx, "legacy-t")
 	if err != nil {
 		t.Fatalf("task Get() error = %v", err)
 	}
@@ -185,7 +185,7 @@ func TestMigrateFromJSONFileIdempotent(t *testing.T) {
 		t.Fatalf("second migrate backup = %q, want empty", backup)
 	}
 	backend := openJSONDir(t, root)
-	if _, err := backend.Tasks().Get(ctx, "legacy-t"); err != nil {
+	if _, err := backend.Tickets().Get(ctx, "legacy-t"); err != nil {
 		t.Fatalf("data lost after second migrate: %v", err)
 	}
 }
@@ -306,7 +306,7 @@ func TestOpenAutoMigratesFromOption(t *testing.T) {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = backend.Close() })
-	if _, err := backend.Tasks().Get(ctx, "legacy-t"); err != nil {
+	if _, err := backend.Tickets().Get(ctx, "legacy-t"); err != nil {
 		t.Fatalf("migrated task not loaded: %v", err)
 	}
 	if _, err := os.Stat(source); !errors.Is(err, os.ErrNotExist) {

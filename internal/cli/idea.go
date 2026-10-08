@@ -12,7 +12,7 @@ import (
 )
 
 // newIdeaCommand is the user-facing idea surface: a PO captures and manages
-// ideas here, over the same TaskService storage the task tree uses. Ideas are
+// ideas here, over the same TicketService storage the task tree uses. Ideas are
 // non-executable captures, so this tree offers no lifecycle or assignment verbs.
 func newIdeaCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "idea", Short: "Capture and manage ideas (non-executable)"}
@@ -48,7 +48,7 @@ func newIdeaCreateCommand(deps *Deps) *cobra.Command {
 				}
 				body = string(data)
 			}
-			idea, err := deps.Tasks.Add(cmd.Context(), app.TaskInput{
+			idea, err := deps.Tasks.Add(cmd.Context(), app.TicketInput{
 				ProjectID:   project,
 				Repo:        repo,
 				Kind:        core.KindIdea,
@@ -149,19 +149,19 @@ func newIdeaPromoteCommand(deps *Deps) *cobra.Command {
 
 // ideaFilter scopes a read to the project's kind=idea captures, mirroring the
 // task-list filters so `ft idea list` matches `ft task list -k idea`.
-func ideaFilter(projectID, repo string, statuses, labels []string) store.TaskFilter {
+func ideaFilter(projectID, repo string, statuses, labels []string) store.TicketFilter {
 	kind := core.KindIdea
-	filter := store.TaskFilter{ProjectID: core.ProjectID(projectID), Kind: &kind, Labels: labels}
+	filter := store.TicketFilter{ProjectID: core.ProjectID(projectID), Kind: &kind, Labels: labels}
 	if repo != "" {
 		filter.Repo = &repo
 	}
 	for _, status := range statuses {
-		filter.Statuses = append(filter.Statuses, core.TaskStatus(status))
+		filter.Statuses = append(filter.Statuses, core.TicketStatus(status))
 	}
 	return filter
 }
 
-func ideaListEntries(ideas []*core.Task) []taskListEntry {
+func ideaListEntries(ideas []*core.Ticket) []taskListEntry {
 	entries := make([]taskListEntry, 0, len(ideas))
 	for _, idea := range ideas {
 		entries = append(entries, taskListEntryFrom(idea))
@@ -173,7 +173,7 @@ func ideaTableHeader() []string {
 	return []string{"ID", "KIND", "TITLE", "STATUS", "PROJECT", "REPO"}
 }
 
-func ideaTableRows(deps *Deps, ideas []*core.Task) [][]string {
+func ideaTableRows(deps *Deps, ideas []*core.Ticket) [][]string {
 	rows := make([][]string, 0, len(ideas))
 	for _, idea := range ideas {
 		rows = append(rows, []string{

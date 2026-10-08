@@ -123,7 +123,7 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 				} else {
 					rows := make([][]string, 0, len(doc.Produced))
 					for _, task := range doc.Produced {
-						rows = append(rows, []string{task.TaskID, task.Kind, task.Status, task.Title})
+						rows = append(rows, []string{task.TicketID, task.Kind, task.Status, task.Title})
 					}
 					deps.printTable([]string{"TASK", "KIND", "STATUS", "TITLE"}, rows)
 				}
@@ -165,10 +165,10 @@ func nonNilStrings(values []string) []string {
 
 // groomTaskDoc is one produced task as `ft groom show` reports it.
 type groomTaskDoc struct {
-	TaskID string `json:"task_id" yaml:"task_id"`
-	Kind   string `json:"kind" yaml:"kind"`
-	Title  string `json:"title" yaml:"title"`
-	Status string `json:"status" yaml:"status"`
+	TicketID string `json:"task_id" yaml:"task_id"`
+	Kind     string `json:"kind" yaml:"kind"`
+	Title    string `json:"title" yaml:"title"`
+	Status   string `json:"status" yaml:"status"`
 }
 
 // groomSessionDoc is the lossless structured shape of `ft groom show`.
@@ -221,19 +221,19 @@ func (d *Deps) sessionOutputBody(ctx context.Context, artifactID, path string) (
 func (d *Deps) producedTaskDocs(ctx context.Context, ids []string) ([]groomTaskDoc, error) {
 	docs := make([]groomTaskDoc, 0, len(ids))
 	for _, id := range ids {
-		task, err := d.Tasks.Get(ctx, core.TaskID(id))
+		task, err := d.Tasks.Get(ctx, core.TicketID(id))
 		if errors.Is(err, core.ErrNotFound) {
-			docs = append(docs, groomTaskDoc{TaskID: id})
+			docs = append(docs, groomTaskDoc{TicketID: id})
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
 		docs = append(docs, groomTaskDoc{
-			TaskID: string(task.ID),
-			Kind:   string(task.Kind),
-			Title:  task.Title,
-			Status: string(task.Status),
+			TicketID: string(task.ID),
+			Kind:     string(task.Kind),
+			Title:    task.Title,
+			Status:   string(task.Status),
 		})
 	}
 	return docs, nil
@@ -241,12 +241,12 @@ func (d *Deps) producedTaskDocs(ctx context.Context, ids []string) ([]groomTaskD
 
 // projectTaskIDs snapshots the ids in a project before a session runs, so the
 // capture can tell which tasks the session produced.
-func (d *Deps) projectTaskIDs(ctx context.Context, projectID core.ProjectID) (map[core.TaskID]bool, error) {
-	tasks, err := d.Tasks.List(ctx, store.TaskFilter{ProjectID: projectID})
+func (d *Deps) projectTaskIDs(ctx context.Context, projectID core.ProjectID) (map[core.TicketID]bool, error) {
+	tasks, err := d.Tasks.List(ctx, store.TicketFilter{ProjectID: projectID})
 	if err != nil {
 		return nil, err
 	}
-	ids := make(map[core.TaskID]bool, len(tasks))
+	ids := make(map[core.TicketID]bool, len(tasks))
 	for _, task := range tasks {
 		ids[task.ID] = true
 	}
@@ -259,8 +259,8 @@ func (d *Deps) projectTaskIDs(ctx context.Context, projectID core.ProjectID) (ma
 // runs is indistinguishable from one the session made and is also included.
 // This is deliberate for a single-operator tool; if exact attribution is ever
 // needed the session must record its own produced ids.
-func producedTaskIDs(ctx context.Context, tasks *app.TaskService, projectID core.ProjectID, before map[core.TaskID]bool) ([]string, error) {
-	after, err := tasks.List(ctx, store.TaskFilter{ProjectID: projectID})
+func producedTaskIDs(ctx context.Context, tasks *app.TicketService, projectID core.ProjectID, before map[core.TicketID]bool) ([]string, error) {
+	after, err := tasks.List(ctx, store.TicketFilter{ProjectID: projectID})
 	if err != nil {
 		return nil, err
 	}

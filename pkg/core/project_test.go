@@ -46,32 +46,32 @@ func TestProjectReposForTask(t *testing.T) {
 	tests := []struct {
 		name    string
 		project Project
-		task    Task
+		task    Ticket
 		want    []string
 		wantErr bool
 	}{
 		{
 			name:    "named repo resolves to exactly that repo",
 			project: project,
-			task:    Task{ID: "t-1", ProjectID: "acme", Repo: "web", Kind: KindTask, Status: StatusTodo, Title: "x"},
+			task:    Ticket{ID: "t-1", ProjectID: "acme", Repo: "web", Kind: KindTask, Status: StatusTodo, Title: "x"},
 			want:    []string{"web"},
 		},
 		{
 			name:    "no repo resolves to every project repo in order",
 			project: project,
-			task:    Task{ID: "t-1", ProjectID: "acme", Kind: KindTask, Status: StatusTodo, Title: "x"},
+			task:    Ticket{ID: "t-1", ProjectID: "acme", Kind: KindTask, Status: StatusTodo, Title: "x"},
 			want:    []string{"backend", "web"},
 		},
 		{
 			name:    "unknown repo is an error",
 			project: project,
-			task:    Task{ID: "t-1", ProjectID: "acme", Repo: "data", Kind: KindTask, Status: StatusTodo, Title: "x"},
+			task:    Ticket{ID: "t-1", ProjectID: "acme", Repo: "data", Kind: KindTask, Status: StatusTodo, Title: "x"},
 			wantErr: true,
 		},
 		{
 			name:    "no repos and no named repo is empty",
 			project: Project{ID: "acme", Name: "Acme", Policy: DefaultResolutionPolicy()},
-			task:    Task{ID: "t-1", ProjectID: "acme", Kind: KindTask, Status: StatusTodo, Title: "x"},
+			task:    Ticket{ID: "t-1", ProjectID: "acme", Kind: KindTask, Status: StatusTodo, Title: "x"},
 			want:    nil,
 		},
 	}

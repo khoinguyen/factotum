@@ -263,7 +263,7 @@ func newTaskCheckCommand(deps *Deps) *cobra.Command {
 		Short: "Run advisory checks on a task and cache the results",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			results, runErr := deps.TaskChecks.Run(cmd.Context(), core.TaskID(args[0]), checkNames, force)
+			results, runErr := deps.TaskChecks.Run(cmd.Context(), core.TicketID(args[0]), checkNames, force)
 			docs := make([]checkResultDoc, 0, len(results))
 			for _, result := range results {
 				docs = append(docs, checkResultDocFrom(result))
@@ -324,7 +324,7 @@ func newTaskDecideCommand(deps *Deps) *cobra.Command {
 			if checkName == "" {
 				checkName = "grooming"
 			}
-			task, err := deps.Tasks.Get(cmd.Context(), core.TaskID(args[0]))
+			task, err := deps.Tasks.Get(cmd.Context(), core.TicketID(args[0]))
 			if err != nil {
 				return err
 			}

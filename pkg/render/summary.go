@@ -18,7 +18,7 @@ func (Summary) Format() string { return "summary" }
 func (Summary) Render(_ context.Context, w io.Writer, view View) error {
 	derived := view.info()
 
-	counts := map[core.TaskStatus]int{}
+	counts := map[core.TicketStatus]int{}
 	depBlocked := 0
 	for _, id := range derived.ids {
 		task := derived.tasks[id]
@@ -48,7 +48,7 @@ func (Summary) Render(_ context.Context, w io.Writer, view View) error {
 			if i == 3 {
 				break
 			}
-			parts = append(parts, fmt.Sprintf("%s %s", scored.TaskID, derived.tasks[scored.TaskID].Title))
+			parts = append(parts, fmt.Sprintf("%s %s", scored.TicketID, derived.tasks[scored.TicketID].Title))
 		}
 		fmt.Fprintf(&b, "next: %s\n", strings.Join(parts, " | "))
 	}

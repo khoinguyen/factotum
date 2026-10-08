@@ -34,7 +34,7 @@ func newProjectRunFixture(t *testing.T) *projectRunFixture {
 	clock := fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	ids := &seqIDs{}
 	projects := NewProjectService(storeBackend, clock, ids)
-	tasks := NewTaskService(storeBackend, clock, ids)
+	tasks := NewTicketService(storeBackend, clock, ids)
 
 	project, err := projects.Create(ctx, "Acme", "demo", []core.Repository{
 		{Name: "backend", Path: t.TempDir()},

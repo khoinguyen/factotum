@@ -67,18 +67,18 @@ func seedTasks(tb testing.TB, be store.Backend, n int) core.ProjectID {
 	if err := be.Projects().Create(ctx, project); err != nil {
 		tb.Fatalf("create project: %v", err)
 	}
-	prev := core.TaskID("")
+	prev := core.TicketID("")
 	for i := 0; i < n; i++ {
-		id := core.TaskID(fmt.Sprintf("t-%06d", i))
-		task := &core.Task{
+		id := core.TicketID(fmt.Sprintf("t-%06d", i))
+		task := &core.Ticket{
 			ID: id, ProjectID: project.ID, Kind: core.KindTask,
 			Title: fmt.Sprintf("task %d", i), Status: core.StatusTodo, Priority: i % 5,
 			CreatedAt: time.Unix(0, 0).UTC(),
 		}
 		if i > 0 && i%10 == 0 {
-			task.Deps = []core.TaskID{prev}
+			task.Deps = []core.TicketID{prev}
 		}
-		if err := be.Tasks().Create(ctx, task); err != nil {
+		if err := be.Tickets().Create(ctx, task); err != nil {
 			tb.Fatalf("create task %d: %v", i, err)
 		}
 		prev = id
@@ -88,16 +88,16 @@ func seedTasks(tb testing.TB, be store.Backend, n int) core.ProjectID {
 
 // syntheticTasks is the in-memory twin of seedTasks, for benchmarks that time
 // the graph and ranker directly.
-func syntheticTasks(n int) []core.Task {
-	tasks := make([]core.Task, n)
+func syntheticTasks(n int) []core.Ticket {
+	tasks := make([]core.Ticket, n)
 	for i := range tasks {
-		tasks[i] = core.Task{
-			ID: core.TaskID(fmt.Sprintf("t-%06d", i)), ProjectID: "prj", Kind: core.KindTask,
+		tasks[i] = core.Ticket{
+			ID: core.TicketID(fmt.Sprintf("t-%06d", i)), ProjectID: "prj", Kind: core.KindTask,
 			Title: fmt.Sprintf("task %d", i), Status: core.StatusTodo, Priority: i % 5,
 			CreatedAt: time.Unix(0, 0).UTC(),
 		}
 		if i > 0 && i%10 == 0 {
-			tasks[i].Deps = []core.TaskID{tasks[i-1].ID}
+			tasks[i].Deps = []core.TicketID{tasks[i-1].ID}
 		}
 	}
 	return tasks
@@ -141,7 +141,7 @@ func BenchmarkTaskGraphFacts(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/%d", name, n), func(b *testing.B) {
 				be := openBenchBackend(b, name)
 				seedTasks(b, be, n)
-				target, err := be.Tasks().Get(ctx, core.TaskID(fmt.Sprintf("t-%06d", n/2)))
+				target, err := be.Tickets().Get(ctx, core.TicketID(fmt.Sprintf("t-%06d", n/2)))
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -176,7 +176,7 @@ func BenchmarkCompositeRank(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	ptrs := make([]*core.Task, len(tasks))
+	ptrs := make([]*core.Ticket, len(tasks))
 	for i := range tasks {
 		ptrs[i] = &tasks[i]
 	}

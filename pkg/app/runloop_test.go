@@ -14,21 +14,21 @@ import (
 // tasks were run and, unless programmed to fail a task, resolves it the way a
 // real run does (moves it to ready_for_review).
 type fakeLoopRunner struct {
-	tasks *TaskService
-	order []core.TaskID
-	fail  map[core.TaskID]error
+	tasks *TicketService
+	order []core.TicketID
+	fail  map[core.TicketID]error
 }
 
-func (f *fakeLoopRunner) run(ctx context.Context, id core.TaskID) (*RunOutcome, error) {
+func (f *fakeLoopRunner) run(ctx context.Context, id core.TicketID) (*RunOutcome, error) {
 	f.order = append(f.order, id)
 	if err := f.fail[id]; err != nil {
-		return &RunOutcome{TaskID: id, ExitCode: 1}, err
+		return &RunOutcome{TicketID: id, ExitCode: 1}, err
 	}
 	updated, err := f.tasks.SetStatus(ctx, id, core.StatusReadyForReview)
 	if err != nil {
 		return nil, err
 	}
-	return &RunOutcome{TaskID: id, Status: updated.Status, Output: "ok", Complete: true}, nil
+	return &RunOutcome{TicketID: id, Status: updated.Status, Output: "ok", Complete: true}, nil
 }
 
 func newLoopService(t *testing.T, h *harness) *RunLoopService {
@@ -58,10 +58,10 @@ func loopAgent(t *testing.T, h *harness) *core.Actor {
 	return agent
 }
 
-func addLoopTask(t *testing.T, h *harness, project *core.Project, title string, priority int) *core.Task {
+func addLoopTask(t *testing.T, h *harness, project *core.Project, title string, priority int) *core.Ticket {
 	t.Helper()
 	agent := loopAgent(t, h)
-	task, err := h.tasks.Add(context.Background(), TaskInput{
+	task, err := h.tasks.Add(context.Background(), TicketInput{
 		ProjectID:          project.ID,
 		Title:              title,
 		Priority:           priority,
@@ -75,7 +75,7 @@ func addLoopTask(t *testing.T, h *harness, project *core.Project, title string, 
 	return task
 }
 
-func mustDep(t *testing.T, h *harness, task, dep *core.Task) {
+func mustDep(t *testing.T, h *harness, task, dep *core.Ticket) {
 	t.Helper()
 	if _, err := h.tasks.AddDep(context.Background(), task.ID, dep.ID); err != nil {
 		t.Fatalf("AddDep(%s, %s) error = %v", task.ID, dep.ID, err)
@@ -104,7 +104,7 @@ func TestRunLoopDrivesChainToTaskGoal(t *testing.T) {
 	if outcome.GoalStatus != core.StatusReadyForReview {
 		t.Fatalf("GoalStatus = %q, want ready_for_review", outcome.GoalStatus)
 	}
-	if !equalIDs(runner.order, []core.TaskID{first.ID, goal.ID}) {
+	if !equalIDs(runner.order, []core.TicketID{first.ID, goal.ID}) {
 		t.Fatalf("run order = %v, want [%s %s]", runner.order, first.ID, goal.ID)
 	}
 	if len(outcome.Steps) != 2 {
@@ -139,7 +139,7 @@ func TestRunLoopStopsOnBudget(t *testing.T) {
 	if outcome.Stop != StopBudgetExhausted {
 		t.Fatalf("Stop = %q, want budget_exhausted", outcome.Stop)
 	}
-	if !equalIDs(runner.order, []core.TaskID{first.ID}) {
+	if !equalIDs(runner.order, []core.TicketID{first.ID}) {
 		t.Fatalf("run order = %v, want [%s]", runner.order, first.ID)
 	}
 	if outcome.Remaining != 2 {
@@ -165,7 +165,7 @@ func TestRunLoopGoalReachedExactlyAtBudget(t *testing.T) {
 	if outcome.Stop != StopGoalReached {
 		t.Fatalf("Stop = %q, want goal_reached", outcome.Stop)
 	}
-	if !equalIDs(runner.order, []core.TaskID{first.ID, goal.ID}) {
+	if !equalIDs(runner.order, []core.TicketID{first.ID, goal.ID}) {
 		t.Fatalf("run order = %v, want [%s %s]", runner.order, first.ID, goal.ID)
 	}
 }
@@ -253,7 +253,7 @@ func TestRunLoopMilestoneGoalStopsWhenGateOpens(t *testing.T) {
 	ctx := context.Background()
 	project := h.newProject(t)
 	first := addLoopTask(t, h, project, "first", 0)
-	gate, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Kind: core.KindMilestone, Title: "release"})
+	gate, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Kind: core.KindMilestone, Title: "release"})
 	if err != nil {
 		t.Fatalf("Add(milestone) error = %v", err)
 	}
@@ -270,7 +270,7 @@ func TestRunLoopMilestoneGoalStopsWhenGateOpens(t *testing.T) {
 	if outcome.GoalKind != core.KindMilestone {
 		t.Fatalf("GoalKind = %q, want milestone", outcome.GoalKind)
 	}
-	if !equalIDs(runner.order, []core.TaskID{first.ID}) {
+	if !equalIDs(runner.order, []core.TicketID{first.ID}) {
 		t.Fatalf("run order = %v, want only the prerequisite", runner.order)
 	}
 	if outcome.Remaining != 0 {
@@ -296,7 +296,7 @@ func TestRunLoopRespectsPriority(t *testing.T) {
 	if outcome.Stop != StopGoalReached {
 		t.Fatalf("Stop = %q, want goal_reached", outcome.Stop)
 	}
-	if !equalIDs(runner.order, []core.TaskID{high.ID, low.ID, goal.ID}) {
+	if !equalIDs(runner.order, []core.TicketID{high.ID, low.ID, goal.ID}) {
 		t.Fatalf("run order = %v, want high, low, goal", runner.order)
 	}
 }
@@ -309,7 +309,7 @@ func TestRunLoopStopsOnFailure(t *testing.T) {
 	goal := addLoopTask(t, h, project, "goal", 0)
 	mustDep(t, h, goal, first)
 
-	runner := &fakeLoopRunner{tasks: h.tasks, fail: map[core.TaskID]error{first.ID: ErrRunFailed}}
+	runner := &fakeLoopRunner{tasks: h.tasks, fail: map[core.TicketID]error{first.ID: ErrRunFailed}}
 	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: goal.ID, Runner: runner.run})
 	if !errors.Is(err, ErrRunFailed) {
 		t.Fatalf("Run() error = %v, want ErrRunFailed", err)
@@ -317,7 +317,7 @@ func TestRunLoopStopsOnFailure(t *testing.T) {
 	if outcome.Stop != StopFailed {
 		t.Fatalf("Stop = %q, want failed", outcome.Stop)
 	}
-	if !equalIDs(runner.order, []core.TaskID{first.ID}) {
+	if !equalIDs(runner.order, []core.TicketID{first.ID}) {
 		t.Fatalf("run order = %v, want only the failed task", runner.order)
 	}
 	stored, err := h.tasks.Get(ctx, first.ID)
@@ -333,7 +333,7 @@ func TestRunLoopRejectsMissingOrNonExecutableGoal(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
-	idea, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Kind: core.KindIdea, Title: "maybe"})
+	idea, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Kind: core.KindIdea, Title: "maybe"})
 	if err != nil {
 		t.Fatalf("Add(idea) error = %v", err)
 	}
@@ -356,7 +356,7 @@ func TestRunLoopSkipsUngroomedOnPathTask(t *testing.T) {
 	project := h.newProject(t)
 	agent := loopAgent(t, h)
 	// Assigned to the agent but ungroomed, so it is still human work.
-	prereq, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "ungroomed", AssigneeID: &agent.ID})
+	prereq, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "ungroomed", AssigneeID: &agent.ID})
 	if err != nil {
 		t.Fatalf("Add(ungroomed) error = %v", err)
 	}
@@ -374,7 +374,7 @@ func TestRunLoopSkipsUngroomedOnPathTask(t *testing.T) {
 	if len(runner.order) != 0 {
 		t.Fatalf("run order = %v, want none", runner.order)
 	}
-	if !equalIDs(outcome.NotRun, []core.TaskID{prereq.ID}) {
+	if !equalIDs(outcome.NotRun, []core.TicketID{prereq.ID}) {
 		t.Fatalf("NotRun = %v, want [%s]", outcome.NotRun, prereq.ID)
 	}
 	if outcome.Remaining != 2 {
@@ -393,7 +393,7 @@ func TestRunLoopReportsUngroomedTaskAfterAgentWork(t *testing.T) {
 	project := h.newProject(t)
 	agent := loopAgent(t, h)
 	ready := addLoopTask(t, h, project, "ready", 0)
-	ungroomed, err := h.tasks.Add(ctx, TaskInput{ProjectID: project.ID, Title: "ungroomed", AssigneeID: &agent.ID})
+	ungroomed, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "ungroomed", AssigneeID: &agent.ID})
 	if err != nil {
 		t.Fatalf("Add(ungroomed) error = %v", err)
 	}
@@ -409,10 +409,10 @@ func TestRunLoopReportsUngroomedTaskAfterAgentWork(t *testing.T) {
 	if outcome.Stop != StopNoReadyWork {
 		t.Fatalf("Stop = %q, want no_ready_work", outcome.Stop)
 	}
-	if !equalIDs(runner.order, []core.TaskID{ready.ID}) {
+	if !equalIDs(runner.order, []core.TicketID{ready.ID}) {
 		t.Fatalf("run order = %v, want only the agent-ready task", runner.order)
 	}
-	if !equalIDs(outcome.NotRun, []core.TaskID{ungroomed.ID}) {
+	if !equalIDs(outcome.NotRun, []core.TicketID{ungroomed.ID}) {
 		t.Fatalf("NotRun = %v, want [%s]", outcome.NotRun, ungroomed.ID)
 	}
 }

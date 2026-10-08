@@ -7,7 +7,7 @@ import (
 
 func TestSnoozeValidate(t *testing.T) {
 	until := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	taskID := TaskID("t-1")
+	taskID := TicketID("t-1")
 	tests := []struct {
 		name    string
 		snooze  Snooze
@@ -41,7 +41,7 @@ func TestTaskReadyAt(t *testing.T) {
 		{"future", &future, false},
 	}
 	for _, tt := range tests {
-		task := Task{NotBefore: tt.notBefore}
+		task := Ticket{NotBefore: tt.notBefore}
 		if got := task.ReadyAt(now); got != tt.want {
 			t.Errorf("%s: ReadyAt() = %v, want %v", tt.name, got, tt.want)
 		}
@@ -50,7 +50,7 @@ func TestTaskReadyAt(t *testing.T) {
 
 func TestTaskKindValid(t *testing.T) {
 	tests := []struct {
-		kind TaskKind
+		kind TicketKind
 		want bool
 	}{
 		{KindTask, true},
@@ -61,14 +61,14 @@ func TestTaskKindValid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		if got := tt.kind.Valid(); got != tt.want {
-			t.Errorf("TaskKind(%q).Valid() = %v, want %v", tt.kind, got, tt.want)
+			t.Errorf("TicketKind(%q).Valid() = %v, want %v", tt.kind, got, tt.want)
 		}
 	}
 }
 
 func TestTaskKindExecutable(t *testing.T) {
 	tests := []struct {
-		kind TaskKind
+		kind TicketKind
 		want bool
 	}{
 		{KindTask, true},
@@ -78,15 +78,67 @@ func TestTaskKindExecutable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		if got := tt.kind.Executable(); got != tt.want {
-			t.Errorf("TaskKind(%q).Executable() = %v, want %v", tt.kind, got, tt.want)
+			t.Errorf("TicketKind(%q).Executable() = %v, want %v", tt.kind, got, tt.want)
+		}
+	}
+}
+
+func TestTaskKindFamily(t *testing.T) {
+	tests := []struct {
+		kind TicketKind
+		want KindFamily
+	}{
+		{KindTask, FamilyExecutable},
+		{KindMilestone, FamilyGate},
+		{KindIdea, FamilyCapture},
+		{"epic", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := tt.kind.Family(); got != tt.want {
+			t.Errorf("TicketKind(%q).Family() = %q, want %q", tt.kind, got, tt.want)
+		}
+	}
+}
+
+func TestTaskKindCapturedByHuman(t *testing.T) {
+	tests := []struct {
+		kind TicketKind
+		want bool
+	}{
+		{KindIdea, true},
+		{KindTask, false},
+		{KindMilestone, false},
+		{"epic", false},
+	}
+	for _, tt := range tests {
+		if got := tt.kind.CapturedByHuman(); got != tt.want {
+			t.Errorf("TicketKind(%q).CapturedByHuman() = %v, want %v", tt.kind, got, tt.want)
+		}
+	}
+}
+
+func TestTaskKindRefineVerb(t *testing.T) {
+	tests := []struct {
+		kind TicketKind
+		want string
+	}{
+		{KindIdea, "groom"},
+		{KindTask, ""},
+		{KindMilestone, ""},
+		{"epic", ""},
+	}
+	for _, tt := range tests {
+		if got := tt.kind.RefineVerb(); got != tt.want {
+			t.Errorf("TicketKind(%q).RefineVerb() = %q, want %q", tt.kind, got, tt.want)
 		}
 	}
 }
 
 func TestTaskKindAllowsStatus(t *testing.T) {
 	tests := []struct {
-		kind   TaskKind
-		status TaskStatus
+		kind   TicketKind
+		status TicketStatus
 		want   bool
 	}{
 		{KindTask, StatusInProgress, true},
@@ -101,23 +153,23 @@ func TestTaskKindAllowsStatus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		if got := tt.kind.AllowsStatus(tt.status); got != tt.want {
-			t.Errorf("TaskKind(%q).AllowsStatus(%q) = %v, want %v", tt.kind, tt.status, got, tt.want)
+			t.Errorf("TicketKind(%q).AllowsStatus(%q) = %v, want %v", tt.kind, tt.status, got, tt.want)
 		}
 	}
 }
 
 func TestTaskIsIdea(t *testing.T) {
-	if !(Task{Kind: KindIdea}).IsIdea() {
+	if !(Ticket{Kind: KindIdea}).IsIdea() {
 		t.Fatal("idea task should report IsIdea")
 	}
-	if (Task{Kind: KindTask}).IsIdea() {
+	if (Ticket{Kind: KindTask}).IsIdea() {
 		t.Fatal("plain task should not report IsIdea")
 	}
 }
 
 func TestTaskStatusValid(t *testing.T) {
 	tests := []struct {
-		status TaskStatus
+		status TicketStatus
 		want   bool
 	}{
 		{StatusTodo, true},
@@ -131,37 +183,37 @@ func TestTaskStatusValid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		if got := tt.status.Valid(); got != tt.want {
-			t.Errorf("TaskStatus(%q).Valid() = %v, want %v", tt.status, got, tt.want)
+			t.Errorf("TicketStatus(%q).Valid() = %v, want %v", tt.status, got, tt.want)
 		}
 	}
 }
 
 func TestTaskValidate(t *testing.T) {
-	base := Task{ID: "t-1", ProjectID: "prj-1", Kind: KindTask, Title: "Do the thing", Status: StatusTodo}
+	base := Ticket{ID: "t-1", ProjectID: "prj-1", Kind: KindTask, Title: "Do the thing", Status: StatusTodo}
 
 	tests := []struct {
 		name    string
-		mutate  func(*Task)
+		mutate  func(*Ticket)
 		wantErr bool
 	}{
-		{"valid", func(*Task) {}, false},
-		{"missing id", func(t *Task) { t.ID = "" }, true},
-		{"missing project", func(t *Task) { t.ProjectID = "" }, true},
-		{"blank title", func(t *Task) { t.Title = "   " }, true},
-		{"unknown kind", func(t *Task) { t.Kind = "epic" }, true},
-		{"unknown status", func(t *Task) { t.Status = "archived" }, true},
-		{"self dependency", func(t *Task) { t.Deps = []TaskID{"t-1"} }, true},
-		{"empty dependency", func(t *Task) { t.Deps = []TaskID{""} }, true},
-		{"duplicate dependency", func(t *Task) { t.Deps = []TaskID{"t-2", "t-2"} }, true},
-		{"valid dependencies", func(t *Task) { t.Deps = []TaskID{"t-2", "t-3"} }, false},
-		{"idea todo", func(t *Task) { t.Kind = KindIdea }, false},
-		{"idea in progress", func(t *Task) { t.Kind = KindIdea; t.Status = StatusInProgress }, true},
-		{"idea assigned", func(t *Task) { t.Kind = KindIdea; id := ActorID("act-1"); t.AssigneeID = &id }, true},
-		{"groomed without criteria", func(t *Task) { t.Groomed = true }, true},
-		{"groomed with criteria", func(t *Task) { t.Groomed = true; t.AcceptanceCriteria = []string{"it works"} }, false},
-		{"criteria without groomed", func(t *Task) { t.AcceptanceCriteria = []string{"it works"} }, false},
-		{"blank criterion", func(t *Task) { t.AcceptanceCriteria = []string{"  "} }, true},
-		{"groomed idea", func(t *Task) { t.Kind = KindIdea; t.Groomed = true; t.AcceptanceCriteria = []string{"it works"} }, true},
+		{"valid", func(*Ticket) {}, false},
+		{"missing id", func(t *Ticket) { t.ID = "" }, true},
+		{"missing project", func(t *Ticket) { t.ProjectID = "" }, true},
+		{"blank title", func(t *Ticket) { t.Title = "   " }, true},
+		{"unknown kind", func(t *Ticket) { t.Kind = "epic" }, true},
+		{"unknown status", func(t *Ticket) { t.Status = "archived" }, true},
+		{"self dependency", func(t *Ticket) { t.Deps = []TicketID{"t-1"} }, true},
+		{"empty dependency", func(t *Ticket) { t.Deps = []TicketID{""} }, true},
+		{"duplicate dependency", func(t *Ticket) { t.Deps = []TicketID{"t-2", "t-2"} }, true},
+		{"valid dependencies", func(t *Ticket) { t.Deps = []TicketID{"t-2", "t-3"} }, false},
+		{"idea todo", func(t *Ticket) { t.Kind = KindIdea }, false},
+		{"idea in progress", func(t *Ticket) { t.Kind = KindIdea; t.Status = StatusInProgress }, true},
+		{"idea assigned", func(t *Ticket) { t.Kind = KindIdea; id := ActorID("act-1"); t.AssigneeID = &id }, true},
+		{"groomed without criteria", func(t *Ticket) { t.Groomed = true }, true},
+		{"groomed with criteria", func(t *Ticket) { t.Groomed = true; t.AcceptanceCriteria = []string{"it works"} }, false},
+		{"criteria without groomed", func(t *Ticket) { t.AcceptanceCriteria = []string{"it works"} }, false},
+		{"blank criterion", func(t *Ticket) { t.AcceptanceCriteria = []string{"  "} }, true},
+		{"groomed idea", func(t *Ticket) { t.Kind = KindIdea; t.Groomed = true; t.AcceptanceCriteria = []string{"it works"} }, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -178,18 +230,18 @@ func TestTaskResolves(t *testing.T) {
 	p := DefaultResolutionPolicy()
 	tests := []struct {
 		name string
-		task Task
+		task Ticket
 		want bool
 	}{
-		{"task todo", Task{Kind: KindTask, Status: StatusTodo}, false},
-		{"task in progress", Task{Kind: KindTask, Status: StatusInProgress}, false},
-		{"task in review", Task{Kind: KindTask, Status: StatusReadyForReview}, true},
-		{"task done", Task{Kind: KindTask, Status: StatusDone}, true},
-		{"milestone in review", Task{Kind: KindMilestone, Status: StatusReadyForReview}, false},
-		{"milestone done", Task{Kind: KindMilestone, Status: StatusDone}, true},
-		{"idea todo", Task{Kind: KindIdea, Status: StatusTodo}, true},
-		{"idea done", Task{Kind: KindIdea, Status: StatusDone}, true},
-		{"idea cancelled", Task{Kind: KindIdea, Status: StatusCancelled}, true},
+		{"task todo", Ticket{Kind: KindTask, Status: StatusTodo}, false},
+		{"task in progress", Ticket{Kind: KindTask, Status: StatusInProgress}, false},
+		{"task in review", Ticket{Kind: KindTask, Status: StatusReadyForReview}, true},
+		{"task done", Ticket{Kind: KindTask, Status: StatusDone}, true},
+		{"milestone in review", Ticket{Kind: KindMilestone, Status: StatusReadyForReview}, false},
+		{"milestone done", Ticket{Kind: KindMilestone, Status: StatusDone}, true},
+		{"idea todo", Ticket{Kind: KindIdea, Status: StatusTodo}, true},
+		{"idea done", Ticket{Kind: KindIdea, Status: StatusDone}, true},
+		{"idea cancelled", Ticket{Kind: KindIdea, Status: StatusCancelled}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -201,10 +253,10 @@ func TestTaskResolves(t *testing.T) {
 }
 
 func TestTaskIsMilestone(t *testing.T) {
-	if !(Task{Kind: KindMilestone}).IsMilestone() {
+	if !(Ticket{Kind: KindMilestone}).IsMilestone() {
 		t.Fatal("milestone task should report IsMilestone")
 	}
-	if (Task{Kind: KindTask}).IsMilestone() {
+	if (Ticket{Kind: KindTask}).IsMilestone() {
 		t.Fatal("plain task should not report IsMilestone")
 	}
 }

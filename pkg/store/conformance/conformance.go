@@ -148,10 +148,10 @@ func testActor(t *testing.T, be store.Backend) {
 func testTask(t *testing.T, be store.Backend) {
 	t.Helper()
 	ctx := context.Background()
-	repo := be.Tasks()
+	repo := be.Tickets()
 
 	notBefore := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	tasks := []*core.Task{
+	tasks := []*core.Ticket{
 		{ID: "t-1", ProjectID: "prj-1", Repo: "backend", Kind: core.KindTask, Title: "one", Status: core.StatusTodo, NotBefore: &notBefore, Snooze: &core.Snooze{Indefinite: true}},
 		{ID: "t-2", ProjectID: "prj-1", Repo: "backend", Kind: core.KindTask, Title: "two", Status: core.StatusDone},
 		{ID: "t-3", ProjectID: "prj-2", Repo: "web", Kind: core.KindTask, Title: "three", Status: core.StatusTodo},
@@ -183,7 +183,7 @@ func testTask(t *testing.T, be store.Backend) {
 		t.Fatalf("Get() missing error = %v, want ErrNotFound", err)
 	}
 
-	byProject, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1"})
+	byProject, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1"})
 	if err != nil {
 		t.Fatalf("List(project) error = %v", err)
 	}
@@ -191,7 +191,7 @@ func testTask(t *testing.T, be store.Backend) {
 		t.Fatalf("List(project) len = %d, want 3", len(byProject))
 	}
 
-	byStatus, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Statuses: []core.TaskStatus{core.StatusTodo}})
+	byStatus, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1", Statuses: []core.TicketStatus{core.StatusTodo}})
 	if err != nil {
 		t.Fatalf("List(status) error = %v", err)
 	}
@@ -200,7 +200,7 @@ func testTask(t *testing.T, be store.Backend) {
 	}
 
 	kind := core.KindMilestone
-	byKind, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Kind: &kind})
+	byKind, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1", Kind: &kind})
 	if err != nil {
 		t.Fatalf("List(kind) error = %v", err)
 	}
@@ -209,7 +209,7 @@ func testTask(t *testing.T, be store.Backend) {
 	}
 
 	repoName := "backend"
-	byRepo, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Repo: &repoName})
+	byRepo, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1", Repo: &repoName})
 	if err != nil {
 		t.Fatalf("List(repo) error = %v", err)
 	}
@@ -262,21 +262,21 @@ func testTask(t *testing.T, be store.Backend) {
 		t.Fatalf("Update(labels t-2) error = %v", err)
 	}
 
-	byLabel, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Labels: []string{"groomed"}})
+	byLabel, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1", Labels: []string{"groomed"}})
 	if err != nil {
 		t.Fatalf("List(label) error = %v", err)
 	}
 	if len(byLabel) != 2 {
 		t.Fatalf("List(label groomed) len = %d, want 2", len(byLabel))
 	}
-	byAllLabels, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Labels: []string{"groomed", "urgent"}})
+	byAllLabels, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1", Labels: []string{"groomed", "urgent"}})
 	if err != nil {
 		t.Fatalf("List(labels) error = %v", err)
 	}
 	if len(byAllLabels) != 1 || byAllLabels[0].ID != "t-1" {
 		t.Fatalf("List(labels groomed+urgent) = %v, want [t-1]", byAllLabels)
 	}
-	byMissing, err := repo.List(ctx, store.TaskFilter{Labels: []string{"missing"}})
+	byMissing, err := repo.List(ctx, store.TicketFilter{Labels: []string{"missing"}})
 	if err != nil {
 		t.Fatalf("List(missing label) error = %v", err)
 	}
@@ -295,21 +295,21 @@ func testTask(t *testing.T, be store.Backend) {
 	if err := repo.Update(ctx, groomedReady); err != nil {
 		t.Fatalf("Update(groomed t-1) error = %v", err)
 	}
-	byGroomed, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Groomed: boolPtr(true)})
+	byGroomed, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1", Groomed: boolPtr(true)})
 	if err != nil {
 		t.Fatalf("List(groomed) error = %v", err)
 	}
 	if len(byGroomed) != 1 || byGroomed[0].ID != "t-1" || !byGroomed[0].Groomed {
 		t.Fatalf("List(groomed) = %v, want [t-1]", byGroomed)
 	}
-	byUngroomed, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Groomed: boolPtr(false)})
+	byUngroomed, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1", Groomed: boolPtr(false)})
 	if err != nil {
 		t.Fatalf("List(ungroomed) error = %v", err)
 	}
 	if len(byUngroomed) != 2 || byUngroomed[0].ID != "m-1" || byUngroomed[1].ID != "t-2" {
 		t.Fatalf("List(ungroomed) = %v, want [m-1 t-2]", byUngroomed)
 	}
-	byAnyGroomed, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1"})
+	byAnyGroomed, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1"})
 	if err != nil {
 		t.Fatalf("List(no groomed filter) error = %v", err)
 	}
@@ -330,9 +330,9 @@ func testTask(t *testing.T, be store.Backend) {
 func testTaskIdeaKind(t *testing.T, be store.Backend) {
 	t.Helper()
 	ctx := context.Background()
-	repo := be.Tasks()
+	repo := be.Tickets()
 
-	tasks := []*core.Task{
+	tasks := []*core.Ticket{
 		{ID: "i-1", ProjectID: "prj-1", Kind: core.KindIdea, Title: "spark", Status: core.StatusTodo},
 		{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "work", Status: core.StatusTodo},
 	}
@@ -351,7 +351,7 @@ func testTaskIdeaKind(t *testing.T, be store.Backend) {
 	}
 
 	kind := core.KindIdea
-	byKind, err := repo.List(ctx, store.TaskFilter{ProjectID: "prj-1", Kind: &kind})
+	byKind, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1", Kind: &kind})
 	if err != nil {
 		t.Fatalf("List(idea) error = %v", err)
 	}
@@ -365,13 +365,13 @@ func testTaskIdeaKind(t *testing.T, be store.Backend) {
 func testTaskDependents(t *testing.T, be store.Backend) {
 	t.Helper()
 	ctx := context.Background()
-	repo := be.Tasks()
+	repo := be.Tickets()
 
-	tasks := []*core.Task{
+	tasks := []*core.Ticket{
 		{ID: "a", ProjectID: "prj-1", Kind: core.KindTask, Title: "a", Status: core.StatusTodo},
-		{ID: "b", ProjectID: "prj-1", Kind: core.KindTask, Title: "b", Description: "tune retries", Status: core.StatusTodo, Deps: []core.TaskID{"a"}},
-		{ID: "c", ProjectID: "prj-1", Kind: core.KindTask, Title: "c", Description: "tune retries", Status: core.StatusTodo, Deps: []core.TaskID{"a", "b"}},
-		{ID: "d", ProjectID: "prj-2", Kind: core.KindTask, Title: "d", Status: core.StatusTodo, Deps: []core.TaskID{"a"}},
+		{ID: "b", ProjectID: "prj-1", Kind: core.KindTask, Title: "b", Description: "tune retries", Status: core.StatusTodo, Deps: []core.TicketID{"a"}},
+		{ID: "c", ProjectID: "prj-1", Kind: core.KindTask, Title: "c", Description: "tune retries", Status: core.StatusTodo, Deps: []core.TicketID{"a", "b"}},
+		{ID: "d", ProjectID: "prj-2", Kind: core.KindTask, Title: "d", Status: core.StatusTodo, Deps: []core.TicketID{"a"}},
 		// e matches the search probe but is not a dependent of a, so the
 		// reverse-edge filter must exclude it.
 		{ID: "e", ProjectID: "prj-1", Kind: core.KindTask, Title: "e", Description: "tune retries", Status: core.StatusTodo},
@@ -382,26 +382,26 @@ func testTaskDependents(t *testing.T, be store.Backend) {
 		}
 	}
 
-	scoped := func(id core.TaskID) store.TaskFilter {
-		return store.TaskFilter{ProjectID: "prj-1", DependsOn: &id}
+	scoped := func(id core.TicketID) store.TicketFilter {
+		return store.TicketFilter{ProjectID: "prj-1", DependsOn: &id}
 	}
-	assertTaskIDs(t, repo, ctx, scoped("a"), []core.TaskID{"b", "c"})
-	assertTaskIDs(t, repo, ctx, scoped("b"), []core.TaskID{"c"})
+	assertTaskIDs(t, repo, ctx, scoped("a"), []core.TicketID{"b", "c"})
+	assertTaskIDs(t, repo, ctx, scoped("b"), []core.TicketID{"c"})
 	assertTaskIDs(t, repo, ctx, scoped("c"), nil)
 	// Without a project scope the filter spans projects.
-	assertTaskIDs(t, repo, ctx, store.TaskFilter{DependsOn: depPtr("a")}, []core.TaskID{"b", "c", "d"})
+	assertTaskIDs(t, repo, ctx, store.TicketFilter{DependsOn: depPtr("a")}, []core.TicketID{"b", "c", "d"})
 	// Search composes with the reverse-edge filter: e matches the probe but does
 	// not depend on a, so the scoped search must drop it. Without the filter the
 	// same query would return b, c, and e.
-	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1"}, "retries", []core.TaskID{"b", "c", "e"})
-	assertTaskSearch(t, repo, ctx, scoped("a"), "retries", []core.TaskID{"b", "c"})
+	assertTaskSearch(t, repo, ctx, store.TicketFilter{ProjectID: "prj-1"}, "retries", []core.TicketID{"b", "c", "e"})
+	assertTaskSearch(t, repo, ctx, scoped("a"), "retries", []core.TicketID{"b", "c"})
 
 	// Updating a task's deps reindexes its outgoing edges.
-	cleared := &core.Task{ID: "c", ProjectID: "prj-1", Kind: core.KindTask, Title: "c", Status: core.StatusTodo}
+	cleared := &core.Ticket{ID: "c", ProjectID: "prj-1", Kind: core.KindTask, Title: "c", Status: core.StatusTodo}
 	if err := repo.Update(ctx, cleared); err != nil {
 		t.Fatalf("Update(c) error = %v", err)
 	}
-	assertTaskIDs(t, repo, ctx, scoped("a"), []core.TaskID{"b"})
+	assertTaskIDs(t, repo, ctx, scoped("a"), []core.TicketID{"b"})
 
 	// Deleting a task removes its outgoing edges but leaves the records of
 	// tasks that still name it as a dependency.
@@ -412,17 +412,17 @@ func testTaskDependents(t *testing.T, be store.Backend) {
 	assertTaskIDs(t, repo, ctx, scoped("b"), nil)
 }
 
-func depPtr(id core.TaskID) *core.TaskID { return &id }
+func depPtr(id core.TicketID) *core.TicketID { return &id }
 
 func boolPtr(value bool) *bool { return &value }
 
-func assertTaskIDs(t *testing.T, repo store.TaskRepo, ctx context.Context, filter store.TaskFilter, want []core.TaskID) {
+func assertTaskIDs(t *testing.T, repo store.TicketRepo, ctx context.Context, filter store.TicketFilter, want []core.TicketID) {
 	t.Helper()
 	tasks, err := repo.List(ctx, filter)
 	if err != nil {
 		t.Fatalf("List(%+v) error = %v", filter, err)
 	}
-	got := make([]core.TaskID, 0, len(tasks))
+	got := make([]core.TicketID, 0, len(tasks))
 	for _, task := range tasks {
 		got = append(got, task.ID)
 	}
@@ -439,9 +439,9 @@ func assertTaskIDs(t *testing.T, repo store.TaskRepo, ctx context.Context, filte
 func testTaskSearch(t *testing.T, be store.Backend) {
 	t.Helper()
 	ctx := context.Background()
-	repo := be.Tasks()
+	repo := be.Tickets()
 
-	tasks := []*core.Task{
+	tasks := []*core.Ticket{
 		{ID: "t-title", ProjectID: "prj-1", Repo: "backend", Kind: core.KindTask, Title: "Terraform notes", Description: "apply in devops", Status: core.StatusTodo},
 		{ID: "t-body", ProjectID: "prj-1", Kind: core.KindTask, Title: "run scripts", Description: "terraform then kubectl", Status: core.StatusInProgress, Labels: []string{"groomed"}},
 		{ID: "t-note", ProjectID: "prj-1", Kind: core.KindMilestone, Title: "unrelated", Description: "nothing here", Status: core.StatusTodo, Notes: []core.Note{{ID: "note-1", Body: "terraform in the notes"}}},
@@ -459,7 +459,7 @@ func testTaskSearch(t *testing.T, be store.Backend) {
 
 	// Repetition must not promote a lower-ranked column: a single title hit still
 	// outranks many description hits, and a description hit outranks many note hits.
-	repeats := []*core.Task{
+	repeats := []*core.Ticket{
 		{ID: "t-rtitle", ProjectID: "prj-3", Kind: core.KindTask, Title: "delta", Description: "x", Status: core.StatusTodo},
 		{ID: "t-rbody", ProjectID: "prj-3", Kind: core.KindTask, Title: "gamma", Description: "delta delta delta delta", Status: core.StatusTodo},
 		{ID: "t-rnote", ProjectID: "prj-3", Kind: core.KindTask, Title: "epsilon", Description: "x", Status: core.StatusTodo, Notes: []core.Note{{ID: "note-r", Body: "delta delta delta delta delta"}}},
@@ -469,32 +469,32 @@ func testTaskSearch(t *testing.T, be store.Backend) {
 			t.Fatalf("Create(%s) error = %v", task.ID, err)
 		}
 	}
-	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-3"}, "delta", []core.TaskID{"t-rtitle", "t-rbody", "t-rnote"})
+	assertTaskSearch(t, repo, ctx, store.TicketFilter{ProjectID: "prj-3"}, "delta", []core.TicketID{"t-rtitle", "t-rbody", "t-rnote"})
 
-	prj := store.TaskFilter{ProjectID: "prj-1"}
+	prj := store.TicketFilter{ProjectID: "prj-1"}
 	milestone := core.KindMilestone
 	todo := core.StatusTodo
 
 	// Title outranks description, which outranks notes.
-	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TaskID{"t-title", "t-body", "t-note"})
-	assertTaskSearch(t, repo, ctx, prj, "terra", []core.TaskID{"t-title", "t-body", "t-note"})     // prefix
-	assertTaskSearch(t, repo, ctx, prj, "TERRAFORM", []core.TaskID{"t-title", "t-body", "t-note"}) // case-insensitive
-	assertTaskSearch(t, repo, ctx, prj, "terraform apply", []core.TaskID{"t-title"})               // all terms
-	assertTaskSearch(t, repo, ctx, prj, "terraform kubectl", []core.TaskID{"t-body"})              // description vs notes
-	assertTaskSearch(t, repo, ctx, prj, "notes", []core.TaskID{"t-title", "t-note"})               // title vs notes
-	assertTaskSearch(t, repo, ctx, prj, "kubernetes", nil)                                         // other project
-	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1", Statuses: []core.TaskStatus{todo}}, "terraform", []core.TaskID{"t-title", "t-note"})
-	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1", Kind: &milestone}, "terraform", []core.TaskID{"t-note"})
+	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TicketID{"t-title", "t-body", "t-note"})
+	assertTaskSearch(t, repo, ctx, prj, "terra", []core.TicketID{"t-title", "t-body", "t-note"})     // prefix
+	assertTaskSearch(t, repo, ctx, prj, "TERRAFORM", []core.TicketID{"t-title", "t-body", "t-note"}) // case-insensitive
+	assertTaskSearch(t, repo, ctx, prj, "terraform apply", []core.TicketID{"t-title"})               // all terms
+	assertTaskSearch(t, repo, ctx, prj, "terraform kubectl", []core.TicketID{"t-body"})              // description vs notes
+	assertTaskSearch(t, repo, ctx, prj, "notes", []core.TicketID{"t-title", "t-note"})               // title vs notes
+	assertTaskSearch(t, repo, ctx, prj, "kubernetes", nil)                                           // other project
+	assertTaskSearch(t, repo, ctx, store.TicketFilter{ProjectID: "prj-1", Statuses: []core.TicketStatus{todo}}, "terraform", []core.TicketID{"t-title", "t-note"})
+	assertTaskSearch(t, repo, ctx, store.TicketFilter{ProjectID: "prj-1", Kind: &milestone}, "terraform", []core.TicketID{"t-note"})
 	backendRepo := "backend"
-	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1", Repo: &backendRepo}, "terraform", []core.TaskID{"t-title"})
-	assertTaskSearch(t, repo, ctx, store.TaskFilter{ProjectID: "prj-1", Labels: []string{"groomed"}}, "terraform", []core.TaskID{"t-body"})
+	assertTaskSearch(t, repo, ctx, store.TicketFilter{ProjectID: "prj-1", Repo: &backendRepo}, "terraform", []core.TicketID{"t-title"})
+	assertTaskSearch(t, repo, ctx, store.TicketFilter{ProjectID: "prj-1", Labels: []string{"groomed"}}, "terraform", []core.TicketID{"t-body"})
 
 	// System notes are not indexed: a term that only appears in a generated note
 	// finds nothing, while a real note on the same task still matches. The note
 	// itself is retained for display.
-	sysPrj := store.TaskFilter{ProjectID: "prj-4"}
+	sysPrj := store.TicketFilter{ProjectID: "prj-4"}
 	assertTaskSearch(t, repo, ctx, sysPrj, "sysprobe", nil)
-	assertTaskSearch(t, repo, ctx, sysPrj, "humanprobe", []core.TaskID{"t-sysnote"})
+	assertTaskSearch(t, repo, ctx, sysPrj, "humanprobe", []core.TicketID{"t-sysnote"})
 	stored, err := repo.Get(ctx, "t-sysnote")
 	if err != nil {
 		t.Fatalf("Get(t-sysnote) error = %v", err)
@@ -515,38 +515,38 @@ func testTaskSearch(t *testing.T, be store.Backend) {
 	}
 
 	// Unmarking reindexes the note, so an update makes it searchable again.
-	unmarked := &core.Task{ID: "t-sysnote", ProjectID: "prj-4", Kind: core.KindTask, Title: "quiet", Description: "nothing here", Status: core.StatusTodo, Notes: []core.Note{
+	unmarked := &core.Ticket{ID: "t-sysnote", ProjectID: "prj-4", Kind: core.KindTask, Title: "quiet", Description: "nothing here", Status: core.StatusTodo, Notes: []core.Note{
 		{ID: "note-sys", Body: "sysprobe only in the generated note"},
 		{ID: "note-human", Body: "humanprobe in a real note"},
 	}}
 	if err := repo.Update(ctx, unmarked); err != nil {
 		t.Fatalf("Update(t-sysnote) error = %v", err)
 	}
-	assertTaskSearch(t, repo, ctx, sysPrj, "sysprobe", []core.TaskID{"t-sysnote"})
+	assertTaskSearch(t, repo, ctx, sysPrj, "sysprobe", []core.TicketID{"t-sysnote"})
 
 	// Empty query returns everything in scope, ordered by title then id.
-	assertTaskSearch(t, repo, ctx, prj, "", []core.TaskID{"t-body", "t-title", "t-note"})
+	assertTaskSearch(t, repo, ctx, prj, "", []core.TicketID{"t-body", "t-title", "t-note"})
 
 	// Repeating a query is deterministic.
-	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TaskID{"t-title", "t-body", "t-note"})
+	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TicketID{"t-title", "t-body", "t-note"})
 
 	// Updates reindex the title, description, and notes.
-	updated := &core.Task{ID: "t-title", ProjectID: "prj-1", Repo: "backend", Kind: core.KindTask, Title: "Rust notes", Description: "cargo build", Status: core.StatusTodo, Notes: []core.Note{{ID: "note-x", Body: "reindexprobe note"}}}
+	updated := &core.Ticket{ID: "t-title", ProjectID: "prj-1", Repo: "backend", Kind: core.KindTask, Title: "Rust notes", Description: "cargo build", Status: core.StatusTodo, Notes: []core.Note{{ID: "note-x", Body: "reindexprobe note"}}}
 	if err := repo.Update(ctx, updated); err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
-	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TaskID{"t-body", "t-note"})
-	assertTaskSearch(t, repo, ctx, prj, "cargo", []core.TaskID{"t-title"})
-	assertTaskSearch(t, repo, ctx, prj, "reindexprobe", []core.TaskID{"t-title"})
+	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TicketID{"t-body", "t-note"})
+	assertTaskSearch(t, repo, ctx, prj, "cargo", []core.TicketID{"t-title"})
+	assertTaskSearch(t, repo, ctx, prj, "reindexprobe", []core.TicketID{"t-title"})
 
 	// Deletes unindex.
 	if err := repo.Delete(ctx, "t-body"); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
-	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TaskID{"t-note"})
+	assertTaskSearch(t, repo, ctx, prj, "terraform", []core.TicketID{"t-note"})
 }
 
-func assertTaskSearch(t *testing.T, repo store.TaskRepo, ctx context.Context, filter store.TaskFilter, query string, want []core.TaskID) {
+func assertTaskSearch(t *testing.T, repo store.TicketRepo, ctx context.Context, filter store.TicketFilter, query string, want []core.TicketID) {
 	t.Helper()
 	hits, err := repo.Search(ctx, filter, query)
 	if err != nil {
@@ -556,16 +556,16 @@ func assertTaskSearch(t *testing.T, repo store.TaskRepo, ctx context.Context, fi
 		t.Fatalf("Search(%q) = %v, want %v", query, taskHitIDs(hits), want)
 	}
 	for i, id := range want {
-		if hits[i].Task.ID != id {
+		if hits[i].Ticket.ID != id {
 			t.Fatalf("Search(%q) = %v, want %v", query, taskHitIDs(hits), want)
 		}
 	}
 }
 
-func taskHitIDs(hits []store.TaskSearchHit) []core.TaskID {
-	out := make([]core.TaskID, 0, len(hits))
+func taskHitIDs(hits []store.TicketSearchHit) []core.TicketID {
+	out := make([]core.TicketID, 0, len(hits))
 	for _, hit := range hits {
-		out = append(out, hit.Task.ID)
+		out = append(out, hit.Ticket.ID)
 	}
 	return out
 }
@@ -574,11 +574,11 @@ func testArtifactSearch(t *testing.T, be store.Backend) {
 	t.Helper()
 	ctx := context.Background()
 	repo := be.Artifacts()
-	taskID := core.TaskID("t-9")
+	taskID := core.TicketID("t-9")
 
 	artifacts := []*core.Artifact{
 		{ID: "art-t", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "Terraform notes", Body: "apply in devops"},
-		{ID: "art-b", ProjectID: "prj-1", TaskID: &taskID, Kind: core.ArtifactMemory, Title: "run scripts", Body: "terraform then kubectl"},
+		{ID: "art-b", ProjectID: "prj-1", TicketID: &taskID, Kind: core.ArtifactMemory, Title: "run scripts", Body: "terraform then kubectl"},
 		{ID: "art-x", ProjectID: "prj-2", Kind: core.ArtifactDoc, Title: "Kubernetes notes", Body: "cluster upgrade"},
 		{ID: "art-n", ProjectID: "prj-1", Kind: core.ArtifactMemory, Title: "unrelated", Brief: "quickstart guide", Body: "nothing here"},
 	}
@@ -600,7 +600,7 @@ func testArtifactSearch(t *testing.T, be store.Backend) {
 	assertSearch(t, repo, ctx, prj, "kubernetes", nil)                                // other project
 	assertSearch(t, repo, ctx, store.ArtifactFilter{ProjectID: "prj-1", Kind: &memory}, "terraform", []core.ArtifactID{"art-t", "art-b"})
 	assertSearch(t, repo, ctx, store.ArtifactFilter{ProjectID: "prj-1", Kind: &memory}, "kubernetes", nil)
-	assertSearch(t, repo, ctx, store.ArtifactFilter{TaskID: &taskID}, "terraform", []core.ArtifactID{"art-b"})
+	assertSearch(t, repo, ctx, store.ArtifactFilter{TicketID: &taskID}, "terraform", []core.ArtifactID{"art-b"})
 
 	// Empty query returns everything in scope, ordered by title then id.
 	assertSearch(t, repo, ctx, prj, "", []core.ArtifactID{"art-b", "art-t", "art-n"})
@@ -667,11 +667,11 @@ func testArtifact(t *testing.T, be store.Backend) {
 	t.Helper()
 	ctx := context.Background()
 	repo := be.Artifacts()
-	taskID := core.TaskID("t-1")
+	taskID := core.TicketID("t-1")
 
 	artifacts := []*core.Artifact{
 		{ID: "art-1", ProjectID: "prj-1", Kind: core.ArtifactSpec, Title: "spec"},
-		{ID: "art-2", ProjectID: "prj-1", TaskID: &taskID, Kind: core.ArtifactMemory, Title: "memory", Brief: "remember briefly", Body: "remember"},
+		{ID: "art-2", ProjectID: "prj-1", TicketID: &taskID, Kind: core.ArtifactMemory, Title: "memory", Brief: "remember briefly", Body: "remember"},
 		{ID: "art-3", ProjectID: "prj-2", Kind: core.ArtifactDoc, Title: "doc"},
 	}
 	for _, artifact := range artifacts {
@@ -703,7 +703,7 @@ func testArtifact(t *testing.T, be store.Backend) {
 		}
 	}
 
-	byTask, err := repo.List(ctx, store.ArtifactFilter{TaskID: &taskID})
+	byTask, err := repo.List(ctx, store.ArtifactFilter{TicketID: &taskID})
 	if err != nil {
 		t.Fatalf("List(task) error = %v", err)
 	}
@@ -756,13 +756,13 @@ func testEvent(t *testing.T, be store.Backend) {
 	t.Helper()
 	ctx := context.Background()
 	repo := be.Events()
-	taskID := core.TaskID("t-1")
+	taskID := core.TicketID("t-1")
 
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	events := []*core.Event{
 		{ID: "ev-1", ProjectID: "prj-1", Kind: core.EventProjectCreated, Summary: "created", CreatedAt: base},
-		{ID: "ev-2", ProjectID: "prj-1", TaskID: &taskID, Kind: core.EventTaskCreated, Summary: "task created", CreatedAt: base.Add(time.Second)},
-		{ID: "ev-3", ProjectID: "prj-1", TaskID: &taskID, Kind: core.EventTaskStatusChanged, Summary: "status", CreatedAt: base.Add(2 * time.Second)},
+		{ID: "ev-2", ProjectID: "prj-1", TicketID: &taskID, Kind: core.EventTaskCreated, Summary: "task created", CreatedAt: base.Add(time.Second)},
+		{ID: "ev-3", ProjectID: "prj-1", TicketID: &taskID, Kind: core.EventTaskStatusChanged, Summary: "status", CreatedAt: base.Add(2 * time.Second)},
 	}
 	for _, event := range events {
 		if err := repo.Append(ctx, event); err != nil {
@@ -781,7 +781,7 @@ func testEvent(t *testing.T, be store.Backend) {
 		t.Fatalf("List() order = [%s %s %s], want newest first [ev-3 ev-2 ev-1]", all[0].ID, all[1].ID, all[2].ID)
 	}
 
-	byTask, err := repo.List(ctx, store.EventFilter{TaskID: &taskID})
+	byTask, err := repo.List(ctx, store.EventFilter{TicketID: &taskID})
 	if err != nil {
 		t.Fatalf("List(task) error = %v", err)
 	}

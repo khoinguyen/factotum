@@ -62,7 +62,7 @@ func TestDBSendStoresLabeledTask(t *testing.T) {
 		t.Errorf("description = %q, want the report body", task.Description)
 	}
 
-	stored, err := backend.Tasks().Get(context.Background(), task.ID)
+	stored, err := backend.Tickets().Get(context.Background(), task.ID)
 	if err != nil {
 		t.Fatalf("stored Get() error = %v", err)
 	}

@@ -11,20 +11,20 @@ import (
 // nextEntry is the lossless structured shape of `task next`, so a JSON
 // consumer gets the same fields as the text table.
 type nextEntry struct {
-	TaskID  string   `json:"task_id" yaml:"task_id"`
-	Score   float64  `json:"score" yaml:"score"`
-	Title   string   `json:"title" yaml:"title"`
-	Kind    string   `json:"kind" yaml:"kind"`
-	Status  string   `json:"status" yaml:"status"`
-	Project string   `json:"project" yaml:"project"`
-	Repo    string   `json:"repo" yaml:"repo"`
-	Labels  []string `json:"labels" yaml:"labels"`
+	TicketID string   `json:"task_id" yaml:"task_id"`
+	Score    float64  `json:"score" yaml:"score"`
+	Title    string   `json:"title" yaml:"title"`
+	Kind     string   `json:"kind" yaml:"kind"`
+	Status   string   `json:"status" yaml:"status"`
+	Project  string   `json:"project" yaml:"project"`
+	Repo     string   `json:"repo" yaml:"repo"`
+	Labels   []string `json:"labels" yaml:"labels"`
 }
 
 // notReadyEntry is the lossless structured shape of `task next --explain`: one
 // task excluded from the ready set and the stable reason it is excluded by.
 type notReadyEntry struct {
-	TaskID     string `json:"task_id" yaml:"task_id"`
+	TicketID   string `json:"task_id" yaml:"task_id"`
 	Title      string `json:"title" yaml:"title"`
 	Status     string `json:"status" yaml:"status"`
 	ReasonCode string `json:"reason_code" yaml:"reason_code"`
@@ -35,11 +35,11 @@ type notReadyEntry struct {
 
 // applyResult is one entry of `task apply` output.
 type applyResult struct {
-	TaskID  string `json:"task_id" yaml:"task_id"`
-	Updated bool   `json:"updated" yaml:"updated"`
-	DryRun  bool   `json:"dry_run,omitempty" yaml:"dry_run,omitempty"`
-	Project string `json:"project" yaml:"project"`
-	Repo    string `json:"repo" yaml:"repo"`
+	TicketID string `json:"task_id" yaml:"task_id"`
+	Updated  bool   `json:"updated" yaml:"updated"`
+	DryRun   bool   `json:"dry_run,omitempty" yaml:"dry_run,omitempty"`
+	Project  string `json:"project" yaml:"project"`
+	Repo     string `json:"repo" yaml:"repo"`
 }
 
 // field is one `key: value` line of single-result text output.

@@ -149,9 +149,9 @@ func TestGroomShowJSONCarriesBodiesAndTasks(t *testing.T) {
 		ReportBody   string `json:"report_body"`
 		DeferredBody string `json:"deferred_body"`
 		Produced     []struct {
-			TaskID string `json:"task_id"`
-			Title  string `json:"title"`
-			Status string `json:"status"`
+			TicketID string `json:"task_id"`
+			Title    string `json:"title"`
+			Status   string `json:"status"`
 		} `json:"produced"`
 	}
 	if err := json.Unmarshal([]byte(r.run("--config", cfgPath, "-o", "json", "groom", "show", sessionID)), &doc); err != nil {
@@ -166,7 +166,7 @@ func TestGroomShowJSONCarriesBodiesAndTasks(t *testing.T) {
 	if !strings.Contains(doc.DeferredBody, "## Questions") {
 		t.Fatalf("deferred_body missing deferred content:\n%s", doc.DeferredBody)
 	}
-	if len(doc.Produced) != 1 || doc.Produced[0].TaskID != producedID || doc.Produced[0].Title != "Extract cache module" {
+	if len(doc.Produced) != 1 || doc.Produced[0].TicketID != producedID || doc.Produced[0].Title != "Extract cache module" {
 		t.Fatalf("produced = %+v, want the task %s", doc.Produced, producedID)
 	}
 }
@@ -206,14 +206,14 @@ func TestGroomShowDeletedProducedTaskIsIdOnly(t *testing.T) {
 
 	var doc struct {
 		Produced []struct {
-			TaskID string `json:"task_id"`
-			Title  string `json:"title"`
+			TicketID string `json:"task_id"`
+			Title    string `json:"title"`
 		} `json:"produced"`
 	}
 	if err := json.Unmarshal([]byte(r.run("--config", cfgPath, "-o", "json", "groom", "show", sessionID)), &doc); err != nil {
 		t.Fatalf("groom show -o json: %v", err)
 	}
-	if len(doc.Produced) != 1 || doc.Produced[0].TaskID != producedID || doc.Produced[0].Title != "" {
+	if len(doc.Produced) != 1 || doc.Produced[0].TicketID != producedID || doc.Produced[0].Title != "" {
 		t.Fatalf("produced = %+v, want the deleted task %s by id alone", doc.Produced, producedID)
 	}
 }

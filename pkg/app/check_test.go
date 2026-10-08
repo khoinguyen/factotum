@@ -46,10 +46,10 @@ func (s *stubCheck) Run(_ context.Context, spec check.Spec) (check.Result, error
 type checkFixture struct {
 	backend store.Backend
 	svc     *CheckService
-	tasks   *TaskService
+	tasks   *TicketService
 	actors  *ActorService
 	stub    *stubCheck
-	task    *core.Task
+	task    *core.Ticket
 }
 
 func newCheckFixture(t *testing.T, stub *stubCheck) *checkFixture {
@@ -59,13 +59,13 @@ func newCheckFixture(t *testing.T, stub *stubCheck) *checkFixture {
 	clock := fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	ids := &seqIDs{}
 	projects := NewProjectService(backend, clock, ids)
-	tasks := NewTaskService(backend, clock, ids)
+	tasks := NewTicketService(backend, clock, ids)
 	actors := NewActorService(backend, clock, ids)
 	project, err := projects.Create(context.Background(), "Acme", "demo", nil)
 	if err != nil {
 		t.Fatalf("project create: %v", err)
 	}
-	task, err := tasks.Add(context.Background(), TaskInput{ProjectID: project.ID, Title: "work", Description: "a body"})
+	task, err := tasks.Add(context.Background(), TicketInput{ProjectID: project.ID, Title: "work", Description: "a body"})
 	if err != nil {
 		t.Fatalf("task add: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestCheckEditingBodyInvalidatesButNoteAndLabelDoNot(t *testing.T) {
 		t.Fatalf("AddNote() error = %v", err)
 	}
 	labels := []string{"human-decided"}
-	if _, err := f.tasks.Set(ctx, f.task.ID, TaskSet{Labels: labels}); err != nil {
+	if _, err := f.tasks.Set(ctx, f.task.ID, TicketSet{Labels: labels}); err != nil {
 		t.Fatalf("Set(labels) error = %v", err)
 	}
 	cached, _ := f.svc.Cached(ctx, f.task.ID, nil)
@@ -161,7 +161,7 @@ func TestCheckEditingBodyInvalidatesButNoteAndLabelDoNot(t *testing.T) {
 	}
 
 	body := "a changed body"
-	if _, err := f.tasks.Set(ctx, f.task.ID, TaskSet{Description: &body}); err != nil {
+	if _, err := f.tasks.Set(ctx, f.task.ID, TicketSet{Description: &body}); err != nil {
 		t.Fatalf("Set(body) error = %v", err)
 	}
 	cached, _ = f.svc.Cached(ctx, f.task.ID, nil)
@@ -249,7 +249,7 @@ func TestCheckStaleOverrideReevaluates(t *testing.T) {
 		t.Fatalf("Decide() error = %v", err)
 	}
 	body := "new body"
-	if _, err := f.tasks.Set(ctx, f.task.ID, TaskSet{Description: &body}); err != nil {
+	if _, err := f.tasks.Set(ctx, f.task.ID, TicketSet{Description: &body}); err != nil {
 		t.Fatalf("Set(body) error = %v", err)
 	}
 	cached, _ := f.svc.Cached(ctx, f.task.ID, nil)
@@ -398,7 +398,7 @@ func TestCheckOnlyWritesTheDerivedCache(t *testing.T) {
 		t.Fatalf("check mutated the task: before %+v, after %+v", before, after)
 	}
 	kind := core.ArtifactTaskCheck
-	artifacts, err := f.backend.Artifacts().List(ctx, store.ArtifactFilter{ProjectID: f.task.ProjectID, TaskID: &f.task.ID, Kind: &kind})
+	artifacts, err := f.backend.Artifacts().List(ctx, store.ArtifactFilter{ProjectID: f.task.ProjectID, TicketID: &f.task.ID, Kind: &kind})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -414,7 +414,7 @@ func TestCheckTitleAndKindInvalidate(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	title := "a new title"
-	if _, err := f.tasks.Set(ctx, f.task.ID, TaskSet{Title: &title}); err != nil {
+	if _, err := f.tasks.Set(ctx, f.task.ID, TicketSet{Title: &title}); err != nil {
 		t.Fatalf("Set(title) error = %v", err)
 	}
 	cached, _ := f.svc.Cached(ctx, f.task.ID, nil)
@@ -422,7 +422,7 @@ func TestCheckTitleAndKindInvalidate(t *testing.T) {
 		t.Fatalf("editing the title did not invalidate: %+v", cached[0])
 	}
 	kind := core.KindMilestone
-	if _, err := f.tasks.Set(ctx, f.task.ID, TaskSet{Kind: &kind}); err != nil {
+	if _, err := f.tasks.Set(ctx, f.task.ID, TicketSet{Kind: &kind}); err != nil {
 		t.Fatalf("Set(kind) error = %v", err)
 	}
 	cached, _ = f.svc.Cached(ctx, f.task.ID, nil)
@@ -449,7 +449,7 @@ func TestCheckResolvesOriginFromIdeaDependency(t *testing.T) {
 	stub := &stubCheck{name: "stub", version: "1"}
 	f := newCheckFixture(t, stub)
 	ctx := context.Background()
-	idea, err := f.tasks.Add(ctx, TaskInput{ProjectID: f.task.ProjectID, Kind: core.KindIdea, Title: "a spark", Description: "the origin body"})
+	idea, err := f.tasks.Add(ctx, TicketInput{ProjectID: f.task.ProjectID, Kind: core.KindIdea, Title: "a spark", Description: "the origin body"})
 	if err != nil {
 		t.Fatalf("Add(idea) error = %v", err)
 	}
@@ -482,7 +482,7 @@ func TestCheckSkipsDanglingOriginDependency(t *testing.T) {
 	stub := &stubCheck{name: "stub", version: "1"}
 	f := newCheckFixture(t, stub)
 	ctx := context.Background()
-	idea, err := f.tasks.Add(ctx, TaskInput{ProjectID: f.task.ProjectID, Kind: core.KindIdea, Title: "gone"})
+	idea, err := f.tasks.Add(ctx, TicketInput{ProjectID: f.task.ProjectID, Kind: core.KindIdea, Title: "gone"})
 	if err != nil {
 		t.Fatalf("Add(idea) error = %v", err)
 	}
@@ -504,7 +504,7 @@ func TestCheckOriginChangeInvalidatesCache(t *testing.T) {
 	stub := &stubCheck{name: "stub", version: "1"}
 	f := newCheckFixture(t, stub)
 	ctx := context.Background()
-	idea, err := f.tasks.Add(ctx, TaskInput{ProjectID: f.task.ProjectID, Kind: core.KindIdea, Title: "a spark", Description: "first"})
+	idea, err := f.tasks.Add(ctx, TicketInput{ProjectID: f.task.ProjectID, Kind: core.KindIdea, Title: "a spark", Description: "first"})
 	if err != nil {
 		t.Fatalf("Add(idea) error = %v", err)
 	}
@@ -516,7 +516,7 @@ func TestCheckOriginChangeInvalidatesCache(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	body := "edited origin"
-	if _, err := f.tasks.Set(ctx, idea.ID, TaskSet{Description: &body}); err != nil {
+	if _, err := f.tasks.Set(ctx, idea.ID, TicketSet{Description: &body}); err != nil {
 		t.Fatalf("Set(origin) error = %v", err)
 	}
 	cached, err := f.svc.Cached(ctx, promoted.ID, nil)
@@ -528,7 +528,7 @@ func TestCheckOriginChangeInvalidatesCache(t *testing.T) {
 	}
 }
 
-func hasLabel(task *core.Task, label string) bool {
+func hasLabel(task *core.Ticket, label string) bool {
 	for _, have := range task.Labels {
 		if have == label {
 			return true

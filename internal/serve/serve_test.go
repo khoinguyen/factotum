@@ -32,7 +32,7 @@ func (s *seqIDs) NewID(prefix string) string {
 type fixture struct {
 	backend   store.Backend
 	projects  *app.ProjectService
-	tasks     *app.TaskService
+	tasks     *app.TicketService
 	actors    *app.ActorService
 	artifacts *app.ArtifactService
 	clock     fixedClock
@@ -47,7 +47,7 @@ func newFixture(t *testing.T) *fixture {
 	return &fixture{
 		backend:   backend,
 		projects:  app.NewProjectService(backend, clock, ids),
-		tasks:     app.NewTaskService(backend, clock, ids),
+		tasks:     app.NewTicketService(backend, clock, ids),
 		actors:    app.NewActorService(backend, clock, ids),
 		artifacts: app.NewArtifactService(backend, clock, ids),
 		clock:     clock,
@@ -63,9 +63,9 @@ func (f *fixture) addProject(t *testing.T, id, name string) *core.Project {
 	return project
 }
 
-func (f *fixture) addTask(t *testing.T, projectID core.ProjectID, title string) *core.Task {
+func (f *fixture) addTask(t *testing.T, projectID core.ProjectID, title string) *core.Ticket {
 	t.Helper()
-	task, err := f.tasks.Add(context.Background(), app.TaskInput{ProjectID: projectID, Title: title})
+	task, err := f.tasks.Add(context.Background(), app.TicketInput{ProjectID: projectID, Title: title})
 	if err != nil {
 		t.Fatalf("Add(%q) error = %v", title, err)
 	}
@@ -273,7 +273,7 @@ func TestPageProjectsReadinessAndRank(t *testing.T) {
 
 // omitRanker drops one ready task from its ranking, reproducing a ranker that
 // omits a startable task the readiness buckets still count.
-type omitRanker struct{ omit core.TaskID }
+type omitRanker struct{ omit core.TicketID }
 
 func (r omitRanker) Name() string { return "omit" }
 
@@ -283,7 +283,7 @@ func (r omitRanker) Rank(_ context.Context, req rank.Request) ([]rank.Scored, er
 		if id == r.omit {
 			continue
 		}
-		out = append(out, rank.Scored{TaskID: id, Score: 1})
+		out = append(out, rank.Scored{TicketID: id, Score: 1})
 	}
 	return out, nil
 }
@@ -299,15 +299,15 @@ func TestNextUpStatsMatchListedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add(agent) error = %v", err)
 	}
-	humanListed, err := f.tasks.Add(context.Background(), app.TaskInput{ProjectID: project.ID, Title: "Human listed"})
+	humanListed, err := f.tasks.Add(context.Background(), app.TicketInput{ProjectID: project.ID, Title: "Human listed"})
 	if err != nil {
 		t.Fatalf("Add(human listed) error = %v", err)
 	}
-	humanOmitted, err := f.tasks.Add(context.Background(), app.TaskInput{ProjectID: project.ID, Title: "Human omitted"})
+	humanOmitted, err := f.tasks.Add(context.Background(), app.TicketInput{ProjectID: project.ID, Title: "Human omitted"})
 	if err != nil {
 		t.Fatalf("Add(human omitted) error = %v", err)
 	}
-	agentTask, err := f.tasks.Add(context.Background(), app.TaskInput{
+	agentTask, err := f.tasks.Add(context.Background(), app.TicketInput{
 		ProjectID:          project.ID,
 		Title:              "Agent task",
 		AssigneeID:         &agent.ID,
@@ -451,7 +451,7 @@ func TestReasonChipWraps(t *testing.T) {
 func TestWaitingReasonRendersEveryBlocker(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
-	var blockers []core.TaskID
+	var blockers []core.TicketID
 	for i := 0; i < 6; i++ {
 		blocker := f.addTask(t, project.ID, fmt.Sprintf("blocker %d", i))
 		blockers = append(blockers, blocker.ID)
@@ -541,12 +541,12 @@ func expectEvent(t *testing.T, events <-chan string, want string, timeout time.D
 	}
 }
 
-func hasTask(tasks []taskView, id core.TaskID) bool {
+func hasTask(tasks []taskView, id core.TicketID) bool {
 	_, ok := findTask(tasks, id)
 	return ok
 }
 
-func findTask(tasks []taskView, id core.TaskID) (taskView, bool) {
+func findTask(tasks []taskView, id core.TicketID) (taskView, bool) {
 	for _, task := range tasks {
 		if task.ID == id {
 			return task, true
@@ -555,8 +555,8 @@ func findTask(tasks []taskView, id core.TaskID) (taskView, bool) {
 	return taskView{}, false
 }
 
-func taskIDs(tasks []taskView) []core.TaskID {
-	out := make([]core.TaskID, 0, len(tasks))
+func taskIDs(tasks []taskView) []core.TicketID {
+	out := make([]core.TicketID, 0, len(tasks))
 	for _, task := range tasks {
 		out = append(out, task.ID)
 	}

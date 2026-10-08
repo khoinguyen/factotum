@@ -93,13 +93,13 @@ func (d *Deps) createFromPlan(ctx context.Context, project *core.Project, plan a
 		return err
 	}
 	created := make([]taskDoc, 0, len(plan.Tasks))
-	tasks := make([]*core.Task, 0, len(plan.Tasks))
+	tasks := make([]*core.Ticket, 0, len(plan.Tasks))
 	for _, proposed := range plan.Tasks {
-		kind := core.TaskKind(proposed.Kind)
+		kind := core.TicketKind(proposed.Kind)
 		if kind == "" {
 			kind = core.KindTask
 		}
-		task, err := d.Tasks.Add(ctx, app.TaskInput{
+		task, err := d.Tasks.Add(ctx, app.TicketInput{
 			ProjectID:   project.ID,
 			Repo:        proposed.Repo,
 			Kind:        kind,
@@ -128,12 +128,12 @@ func (d *Deps) createFromPlan(ctx context.Context, project *core.Project, plan a
 // It reuses core task validation for kind/title and app.CheckRepo for the repo.
 func validatePlan(project *core.Project, plan agent.Plan) error {
 	for i, proposed := range plan.Tasks {
-		kind := core.TaskKind(proposed.Kind)
+		kind := core.TicketKind(proposed.Kind)
 		if kind == "" {
 			kind = core.KindTask
 		}
-		candidate := core.Task{
-			ID:        core.TaskID("proposed"),
+		candidate := core.Ticket{
+			ID:        core.TicketID("proposed"),
 			ProjectID: project.ID,
 			Kind:      kind,
 			Title:     proposed.Title,

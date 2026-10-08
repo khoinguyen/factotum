@@ -33,12 +33,12 @@ func TestParseTaskIntent(t *testing.T) {
 	cases := []struct {
 		name string
 		set  func(map[string]judge.Answer)
-		want func(*testing.T, TaskSet)
+		want func(*testing.T, TicketSet)
 	}{
 		{"status", func(a map[string]judge.Answer) {
 			a["status_stated"] = judge.Answer{Probability: 0.9}
 			a["status"] = judge.Answer{Choice: "done", Confidence: 0.95}
-		}, func(t *testing.T, set TaskSet) {
+		}, func(t *testing.T, set TicketSet) {
 			if set.Status == nil || *set.Status != core.StatusDone {
 				t.Fatalf("Status = %v, want done", set.Status)
 			}
@@ -46,7 +46,7 @@ func TestParseTaskIntent(t *testing.T) {
 		{"kind", func(a map[string]judge.Answer) {
 			a["kind_stated"] = judge.Answer{Probability: 0.9}
 			a["kind"] = judge.Answer{Choice: "milestone", Confidence: 0.95}
-		}, func(t *testing.T, set TaskSet) {
+		}, func(t *testing.T, set TicketSet) {
 			if set.Kind == nil || *set.Kind != core.KindMilestone {
 				t.Fatalf("Kind = %v, want milestone", set.Kind)
 			}
@@ -54,14 +54,14 @@ func TestParseTaskIntent(t *testing.T) {
 		{"priority", func(a map[string]judge.Answer) {
 			a["priority_stated"] = judge.Answer{Probability: 0.9}
 			a["priority"] = judge.Answer{Choice: "50", Confidence: 0.95}
-		}, func(t *testing.T, set TaskSet) {
+		}, func(t *testing.T, set TicketSet) {
 			if set.Priority == nil || *set.Priority != 50 {
 				t.Fatalf("Priority = %v, want 50", set.Priority)
 			}
 		}},
 		{"labels", func(a map[string]judge.Answer) {
 			a[intentLabels+"urgent"] = judge.Answer{Probability: 0.9}
-		}, func(t *testing.T, set TaskSet) {
+		}, func(t *testing.T, set TicketSet) {
 			if len(set.Labels) != 1 || set.Labels[0] != "urgent" {
 				t.Fatalf("Labels = %v, want [urgent]", set.Labels)
 			}
@@ -70,7 +70,7 @@ func TestParseTaskIntent(t *testing.T) {
 			a["not_before_stated"] = judge.Answer{Probability: 0.9}
 			a[whenMode] = judge.Answer{Choice: "relative", Confidence: 0.95}
 			a[whenDayAnchor] = judge.Answer{Choice: "tomorrow", Confidence: 0.95}
-		}, func(t *testing.T, set TaskSet) {
+		}, func(t *testing.T, set TicketSet) {
 			want := time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC)
 			if set.NotBefore == nil || !set.NotBefore.Equal(want) {
 				t.Fatalf("NotBefore = %v, want %s", set.NotBefore, want)

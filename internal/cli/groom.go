@@ -266,11 +266,11 @@ func groomMode(unattended, interactive bool) string {
 // groomScope resolves the session's items: the named ones, or by default every
 // open idea plus every open ungroomed executable task, sorted by id so the
 // kickoff is deterministic.
-func (d *Deps) groomScope(ctx context.Context, projectID core.ProjectID, args []string) ([]*core.Task, error) {
+func (d *Deps) groomScope(ctx context.Context, projectID core.ProjectID, args []string) ([]*core.Ticket, error) {
 	if len(args) > 0 {
-		out := make([]*core.Task, 0, len(args))
+		out := make([]*core.Ticket, 0, len(args))
 		for _, arg := range args {
-			task, err := d.Tasks.Get(ctx, core.TaskID(arg))
+			task, err := d.Tasks.Get(ctx, core.TicketID(arg))
 			if err != nil {
 				return nil, err
 			}
@@ -284,16 +284,16 @@ func (d *Deps) groomScope(ctx context.Context, projectID core.ProjectID, args []
 	}
 
 	ideaKind := core.KindIdea
-	ideas, err := d.Tasks.List(ctx, store.TaskFilter{
+	ideas, err := d.Tasks.List(ctx, store.TicketFilter{
 		ProjectID: projectID,
 		Kind:      &ideaKind,
-		Statuses:  []core.TaskStatus{core.StatusTodo},
+		Statuses:  []core.TicketStatus{core.StatusTodo},
 	})
 	if err != nil {
 		return nil, err
 	}
 	ungroomed := false
-	tasks, err := d.Tasks.List(ctx, store.TaskFilter{
+	tasks, err := d.Tasks.List(ctx, store.TicketFilter{
 		ProjectID: projectID,
 		Groomed:   &ungroomed,
 		Statuses:  groomableTaskStatuses,
@@ -301,7 +301,7 @@ func (d *Deps) groomScope(ctx context.Context, projectID core.ProjectID, args []
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*core.Task, 0, len(ideas)+len(tasks))
+	out := make([]*core.Ticket, 0, len(ideas)+len(tasks))
 	out = append(out, ideas...)
 	for _, task := range tasks {
 		if task.Kind.Executable() {
@@ -315,15 +315,15 @@ func (d *Deps) groomScope(ctx context.Context, projectID core.ProjectID, args []
 // groomableTaskStatuses are the open statuses an ungroomed task can hold and
 // still be work a session should refine. Ready-for-review and resolved work is
 // past grooming.
-var groomableTaskStatuses = []core.TaskStatus{
+var groomableTaskStatuses = []core.TicketStatus{
 	core.StatusTodo, core.StatusInProgress, core.StatusBlocked,
 }
 
-func sortTasksByID(tasks []*core.Task) {
+func sortTasksByID(tasks []*core.Ticket) {
 	sort.Slice(tasks, func(i, j int) bool { return tasks[i].ID < tasks[j].ID })
 }
 
-func groomScopeItems(tasks []*core.Task) []groom.ScopeItem {
+func groomScopeItems(tasks []*core.Ticket) []groom.ScopeItem {
 	items := make([]groom.ScopeItem, 0, len(tasks))
 	for _, task := range tasks {
 		items = append(items, groom.ScopeItem{ID: string(task.ID), Kind: string(task.Kind), Title: task.Title})
@@ -331,7 +331,7 @@ func groomScopeItems(tasks []*core.Task) []groom.ScopeItem {
 	return items
 }
 
-func scopeIDs(tasks []*core.Task) []string {
+func scopeIDs(tasks []*core.Ticket) []string {
 	ids := make([]string, 0, len(tasks))
 	for _, task := range tasks {
 		ids = append(ids, string(task.ID))
@@ -368,7 +368,7 @@ func writeGroomOutput(path, body string) error {
 
 // addGroomArtifact records one session output as a doc artifact linked to the
 // session directory, and to the sole item when the scope is one item.
-func addGroomArtifact(ctx context.Context, artifacts *app.ArtifactService, projectID core.ProjectID, items []*core.Task, sessionID, path, body, title, brief string) (*core.Artifact, error) {
+func addGroomArtifact(ctx context.Context, artifacts *app.ArtifactService, projectID core.ProjectID, items []*core.Ticket, sessionID, path, body, title, brief string) (*core.Artifact, error) {
 	input := app.ArtifactInput{
 		ProjectID: projectID,
 		Kind:      core.ArtifactDoc,
@@ -380,7 +380,7 @@ func addGroomArtifact(ctx context.Context, artifacts *app.ArtifactService, proje
 	}
 	if len(items) == 1 {
 		id := items[0].ID
-		input.TaskID = &id
+		input.TicketID = &id
 	}
 	return artifacts.Add(ctx, input)
 }
@@ -388,7 +388,7 @@ func addGroomArtifact(ctx context.Context, artifacts *app.ArtifactService, proje
 // groomStore is the post-run view of the caller's store: the services bound to a
 // backend re-read from disk after the session finished.
 type groomStore struct {
-	tasks     *app.TaskService
+	tasks     *app.TicketService
 	actors    *app.ActorService
 	artifacts *app.ArtifactService
 	close     func()
@@ -413,7 +413,7 @@ func (d *Deps) reopenStore(ctx context.Context) (groomStore, error) {
 		return groomStore{}, err
 	}
 	return groomStore{
-		tasks:     app.NewTaskService(backend, d.Clock, d.IDs),
+		tasks:     app.NewTicketService(backend, d.Clock, d.IDs),
 		actors:    app.NewActorService(backend, d.Clock, d.IDs),
 		artifacts: app.NewArtifactService(backend, d.Clock, d.IDs),
 		close:     func() { _ = backend.Close() },
@@ -463,9 +463,9 @@ type groomDoc struct {
 // the completion contract: a task groomed and assigned to an agent, or - for an
 // idea - a promoted task that is. An item matching neither means the session
 // stalled or lost work, which unattended mode must never do silently.
-func unattendedUnresolved(ctx context.Context, tasks *app.TaskService, actors *app.ActorService, projectID core.ProjectID, items []*core.Task, deferredBody string) ([]core.TaskID, error) {
-	var unresolved []core.TaskID
-	var projectTasks []*core.Task
+func unattendedUnresolved(ctx context.Context, tasks *app.TicketService, actors *app.ActorService, projectID core.ProjectID, items []*core.Ticket, deferredBody string) ([]core.TicketID, error) {
+	var unresolved []core.TicketID
+	var projectTasks []*core.Ticket
 	for _, item := range items {
 		if strings.Contains(deferredBody, string(item.ID)) {
 			continue
@@ -488,7 +488,7 @@ func unattendedUnresolved(ctx context.Context, tasks *app.TaskService, actors *a
 // itemHandled reports whether an unattended session handled one scoped item: an
 // executable task is handled when it is agent-ready or resolved (the session
 // judged it unnecessary), an idea when a promoted task of it is agent-ready.
-func itemHandled(ctx context.Context, tasks *app.TaskService, actors *app.ActorService, projectID core.ProjectID, item *core.Task, cache *[]*core.Task) (bool, error) {
+func itemHandled(ctx context.Context, tasks *app.TicketService, actors *app.ActorService, projectID core.ProjectID, item *core.Ticket, cache *[]*core.Ticket) (bool, error) {
 	if item.Kind.Executable() {
 		if item.Resolves(core.DefaultResolutionPolicy()) {
 			return true, nil
@@ -496,7 +496,7 @@ func itemHandled(ctx context.Context, tasks *app.TaskService, actors *app.ActorS
 		return agentReady(ctx, actors, item)
 	}
 	if *cache == nil {
-		listed, err := tasks.List(ctx, store.TaskFilter{ProjectID: projectID})
+		listed, err := tasks.List(ctx, store.TicketFilter{ProjectID: projectID})
 		if err != nil {
 			return false, err
 		}
@@ -518,7 +518,7 @@ func itemHandled(ctx context.Context, tasks *app.TaskService, actors *app.ActorS
 }
 
 // agentReady is the agent-bucket rule: groomed and assigned to an agent actor.
-func agentReady(ctx context.Context, actors *app.ActorService, task *core.Task) (bool, error) {
+func agentReady(ctx context.Context, actors *app.ActorService, task *core.Ticket) (bool, error) {
 	if !task.Groomed || task.AssigneeID == nil {
 		return false, nil
 	}
@@ -529,7 +529,7 @@ func agentReady(ctx context.Context, actors *app.ActorService, task *core.Task) 
 	return actor.Kind == core.ActorAgent, nil
 }
 
-func dependsOn(task *core.Task, dep core.TaskID) bool {
+func dependsOn(task *core.Ticket, dep core.TicketID) bool {
 	for _, id := range task.Deps {
 		if id == dep {
 			return true
@@ -538,7 +538,7 @@ func dependsOn(task *core.Task, dep core.TaskID) bool {
 	return false
 }
 
-func joinTaskIDs(ids []core.TaskID) string {
+func joinTaskIDs(ids []core.TicketID) string {
 	parts := make([]string, len(ids))
 	for i, id := range ids {
 		parts[i] = string(id)

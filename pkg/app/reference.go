@@ -17,7 +17,7 @@ const (
 
 // Reference is a task a piece of prose appears to mention.
 type Reference struct {
-	Task       *core.Task
+	Ticket     *core.Ticket
 	Confidence float64
 }
 
@@ -31,7 +31,7 @@ type ReferenceService struct {
 func NewReferenceService(j judge.Judge) *ReferenceService { return &ReferenceService{judge: j} }
 
 // Find returns the candidate the text refers to, or a zero Reference when none does.
-func (s *ReferenceService) Find(ctx context.Context, text string, candidates []*core.Task) (Reference, error) {
+func (s *ReferenceService) Find(ctx context.Context, text string, candidates []*core.Ticket) (Reference, error) {
 	if len(candidates) == 0 {
 		return Reference{}, nil
 	}
@@ -63,14 +63,14 @@ func (s *ReferenceService) Find(ctx context.Context, text string, candidates []*
 	}
 	for _, candidate := range candidates {
 		if string(candidate.ID) == which.Choice {
-			return Reference{Task: candidate, Confidence: which.Confidence}, nil
+			return Reference{Ticket: candidate, Confidence: which.Confidence}, nil
 		}
 	}
 	return Reference{}, nil
 }
 
 // referenceState tags each candidate with its id so the Choice options are the ids.
-func referenceState(text string, candidates []*core.Task) string {
+func referenceState(text string, candidates []*core.Ticket) string {
 	var builder strings.Builder
 	builder.WriteString("TEXT: ")
 	builder.WriteString(text)

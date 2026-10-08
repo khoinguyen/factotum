@@ -6,48 +6,94 @@ import (
 	"time"
 )
 
-type TaskKind string
+type TicketKind string
 
 const (
-	KindTask      TaskKind = "task"
-	KindMilestone TaskKind = "milestone"
+	KindTask      TicketKind = "task"
+	KindMilestone TicketKind = "milestone"
 	// KindIdea is a non-executable capture: an unrefined thought recorded for
 	// later grooming. Ideas never appear in readiness or ranking, are not
 	// assignable, and are promoted into a task rather than executed in place.
-	KindIdea TaskKind = "idea"
+	KindIdea TicketKind = "idea"
 )
 
-func (k TaskKind) Valid() bool {
+func (k TicketKind) Valid() bool {
 	return k == KindTask || k == KindMilestone || k == KindIdea
+}
+
+// KindFamily groups kinds by their role in the workflow: human captures that
+// are refined into work, the executable kind an agent runs, and gates that
+// hold dependents until a milestone resolves.
+type KindFamily string
+
+const (
+	// FamilyCapture is a human capture (idea, and later bug): recorded for
+	// refinement, never executed in place.
+	FamilyCapture KindFamily = "capture"
+	// FamilyExecutable is the agent-facing executable kind (task).
+	FamilyExecutable KindFamily = "executable"
+	// FamilyGate is a milestone that gates its dependents.
+	FamilyGate KindFamily = "gate"
+)
+
+// Family reports the kind's workflow family, or "" for an unknown kind.
+func (k TicketKind) Family() KindFamily {
+	switch k {
+	case KindTask:
+		return FamilyExecutable
+	case KindMilestone:
+		return FamilyGate
+	case KindIdea:
+		return FamilyCapture
+	default:
+		return ""
+	}
 }
 
 // Executable reports whether a kind participates in execution: readiness,
 // ranking, and dependency resolution. Ideas are captures, not work.
-func (k TaskKind) Executable() bool {
+func (k TicketKind) Executable() bool {
 	return k == KindTask || k == KindMilestone
+}
+
+// CapturedByHuman reports whether a kind is a human capture that is refined
+// into work rather than executed in place.
+func (k TicketKind) CapturedByHuman() bool {
+	return k.Family() == FamilyCapture
+}
+
+// RefineVerb names the command a human uses to refine a capture into work, or
+// "" for kinds that are not refined (they are executed or gate directly).
+func (k TicketKind) RefineVerb() string {
+	switch k {
+	case KindIdea:
+		return "groom"
+	default:
+		return ""
+	}
 }
 
 // AllowsStatus reports whether a kind may hold a status. Ideas are captures,
 // so only todo, done, and cancelled apply; other kinds accept any valid status.
-func (k TaskKind) AllowsStatus(s TaskStatus) bool {
+func (k TicketKind) AllowsStatus(s TicketStatus) bool {
 	if k == KindIdea {
 		return s == StatusTodo || s == StatusDone || s == StatusCancelled
 	}
 	return s.Valid()
 }
 
-type TaskStatus string
+type TicketStatus string
 
 const (
-	StatusTodo           TaskStatus = "todo"
-	StatusInProgress     TaskStatus = "in_progress"
-	StatusBlocked        TaskStatus = "blocked"
-	StatusReadyForReview TaskStatus = "ready_for_review"
-	StatusDone           TaskStatus = "done"
-	StatusCancelled      TaskStatus = "cancelled"
+	StatusTodo           TicketStatus = "todo"
+	StatusInProgress     TicketStatus = "in_progress"
+	StatusBlocked        TicketStatus = "blocked"
+	StatusReadyForReview TicketStatus = "ready_for_review"
+	StatusDone           TicketStatus = "done"
+	StatusCancelled      TicketStatus = "cancelled"
 )
 
-func (s TaskStatus) Valid() bool {
+func (s TicketStatus) Valid() bool {
 	switch s {
 	case StatusTodo, StatusInProgress, StatusBlocked, StatusReadyForReview, StatusDone, StatusCancelled:
 		return true
@@ -127,7 +173,7 @@ type MilestoneMeta struct {
 // condition is set.
 type Snooze struct {
 	Until      *time.Time
-	UntilTask  *TaskID
+	UntilTask  *TicketID
 	Indefinite bool
 }
 
@@ -162,19 +208,19 @@ func (s Snooze) Describe() string {
 	}
 }
 
-type Task struct {
-	ID          TaskID
+type Ticket struct {
+	ID          TicketID
 	ProjectID   ProjectID
 	Repo        string
-	Kind        TaskKind
+	Kind        TicketKind
 	Title       string
 	Description string
-	Status      TaskStatus
+	Status      TicketStatus
 	AssigneeID  *ActorID
 	WaitingOn   []ActorID
 	Labels      []string
 	Priority    int
-	Deps        []TaskID
+	Deps        []TicketID
 	Notes       []Note
 	Milestone   *MilestoneMeta
 	NotBefore   *time.Time
@@ -194,11 +240,11 @@ type Task struct {
 
 // ReadyAt reports whether the task's not_before constraint has elapsed at now.
 // A task with no constraint is always ready.
-func (t Task) ReadyAt(now time.Time) bool {
+func (t Ticket) ReadyAt(now time.Time) bool {
 	return t.NotBefore == nil || !t.NotBefore.After(now)
 }
 
-func (t Task) Validate() error {
+func (t Ticket) Validate() error {
 	if t.ID == "" {
 		return fmt.Errorf("%w: task id is required", ErrInvalid)
 	}
@@ -232,7 +278,7 @@ func (t Task) Validate() error {
 		return fmt.Errorf("%w: groomed task %s requires at least one acceptance criterion", ErrInvalid, t.ID)
 	}
 
-	seen := make(map[TaskID]struct{}, len(t.Deps))
+	seen := make(map[TicketID]struct{}, len(t.Deps))
 	for _, dep := range t.Deps {
 		if dep == "" {
 			return fmt.Errorf("%w: task %s has an empty dependency", ErrInvalid, t.ID)
@@ -261,14 +307,14 @@ func (t Task) Validate() error {
 	return nil
 }
 
-func (t Task) IsMilestone() bool {
+func (t Ticket) IsMilestone() bool {
 	return t.Kind == KindMilestone
 }
 
-func (t Task) IsIdea() bool {
+func (t Ticket) IsIdea() bool {
 	return t.Kind == KindIdea
 }
 
-func (t Task) Resolves(policy ResolutionPolicy) bool {
+func (t Ticket) Resolves(policy ResolutionPolicy) bool {
 	return policy.Resolves(t.Kind, t.Status)
 }

@@ -10,9 +10,9 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 )
 
-func (f *fixture) addIdea(t *testing.T, projectID core.ProjectID, title, body string) *core.Task {
+func (f *fixture) addIdea(t *testing.T, projectID core.ProjectID, title, body string) *core.Ticket {
 	t.Helper()
-	task, err := f.tasks.Add(context.Background(), app.TaskInput{
+	task, err := f.tasks.Add(context.Background(), app.TicketInput{
 		ProjectID:   projectID,
 		Kind:        core.KindIdea,
 		Title:       title,
@@ -24,7 +24,7 @@ func (f *fixture) addIdea(t *testing.T, projectID core.ProjectID, title, body st
 	return task
 }
 
-func (f *fixture) promote(t *testing.T, ideaID core.TaskID) *core.Task {
+func (f *fixture) promote(t *testing.T, ideaID core.TicketID) *core.Ticket {
 	t.Helper()
 	task, err := f.tasks.Promote(context.Background(), ideaID)
 	if err != nil {
@@ -33,18 +33,18 @@ func (f *fixture) promote(t *testing.T, ideaID core.TaskID) *core.Task {
 	return task
 }
 
-func (f *fixture) setStatus(t *testing.T, id core.TaskID, status core.TaskStatus) {
+func (f *fixture) setStatus(t *testing.T, id core.TicketID, status core.TicketStatus) {
 	t.Helper()
 	if _, err := f.tasks.SetStatus(context.Background(), id, status); err != nil {
 		t.Fatalf("SetStatus(%s, %s) error = %v", id, status, err)
 	}
 }
 
-func (f *fixture) addArtifact(t *testing.T, projectID core.ProjectID, taskID *core.TaskID, kind core.ArtifactKind, title, body string) *core.Artifact {
+func (f *fixture) addArtifact(t *testing.T, projectID core.ProjectID, taskID *core.TicketID, kind core.ArtifactKind, title, body string) *core.Artifact {
 	t.Helper()
 	artifact, err := f.artifacts.Add(context.Background(), app.ArtifactInput{
 		ProjectID: projectID,
-		TaskID:    taskID,
+		TicketID:  taskID,
 		Kind:      kind,
 		Title:     title,
 		Body:      body,
@@ -55,7 +55,7 @@ func (f *fixture) addArtifact(t *testing.T, projectID core.ProjectID, taskID *co
 	return artifact
 }
 
-func findIdea(ideas []ideaView, id core.TaskID) (ideaView, bool) {
+func findIdea(ideas []ideaView, id core.TicketID) (ideaView, bool) {
 	for _, idea := range ideas {
 		if idea.ID == id {
 			return idea, true
@@ -64,7 +64,7 @@ func findIdea(ideas []ideaView, id core.TaskID) (ideaView, bool) {
 	return ideaView{}, false
 }
 
-func findGroup(groups []taskGroup, id core.TaskID) (taskGroup, bool) {
+func findGroup(groups []taskGroup, id core.TicketID) (taskGroup, bool) {
 	for _, group := range groups {
 		if group.IdeaID == id {
 			return group, true
@@ -107,7 +107,7 @@ func TestIdeaRollupStates(t *testing.T) {
 
 	cases := []struct {
 		name string
-		id   core.TaskID
+		id   core.TicketID
 		from []ideaView
 	}{
 		{"finished", finished.ID, page.FinishedIdeas},
@@ -408,8 +408,8 @@ func fragmentStats(t *testing.T, base string) string {
 	return body[start : start+end]
 }
 
-func groupIDs(groups []taskGroup) []core.TaskID {
-	out := make([]core.TaskID, 0, len(groups))
+func groupIDs(groups []taskGroup) []core.TicketID {
+	out := make([]core.TicketID, 0, len(groups))
 	for _, group := range groups {
 		out = append(out, group.IdeaID)
 	}

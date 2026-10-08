@@ -97,19 +97,19 @@ func (v View) htmlData() *htmlData {
 	}
 
 	for _, scored := range v.ranked() {
-		task := derived.tasks[scored.TaskID]
+		task := derived.tasks[scored.TicketID]
 		entry := htmlNext{
-			ID:       string(scored.TaskID),
+			ID:       string(scored.TicketID),
 			Title:    task.Title,
 			Assignee: v.actorName(task.AssigneeID),
 			Score:    scored.Score,
-			Unblocks: v.Graph.UnblockCount(scored.TaskID),
-			Wave:     derived.waves[scored.TaskID],
+			Unblocks: v.Graph.UnblockCount(scored.TicketID),
+			Wave:     derived.waves[scored.TicketID],
 		}
-		if derived.readyAgent[scored.TaskID] {
+		if derived.readyAgent[scored.TicketID] {
 			data.NextAgent = append(data.NextAgent, entry)
 		}
-		if derived.readyHuman[scored.TaskID] {
+		if derived.readyHuman[scored.TicketID] {
 			data.NextHuman = append(data.NextHuman, entry)
 		}
 	}
@@ -160,17 +160,17 @@ func (v View) htmlData() *htmlData {
 }
 
 func (v View) htmlNode(derived *info, node *TreeNode) *htmlNode {
-	class := v.Classify(node.Task)
+	class := v.Classify(node.Ticket)
 	out := &htmlNode{
-		ID:        string(node.Task.ID),
-		Title:     node.Task.Title,
-		Repo:      node.Task.Repo,
+		ID:        string(node.Ticket.ID),
+		Title:     node.Ticket.Title,
+		Repo:      node.Ticket.Repo,
 		Class:     string(class),
 		ChipLabel: chipLabel(class),
-		ShowWave:  !v.resolved(node.Task),
-		Milestone: node.Task.IsMilestone(),
-		Assignee:  v.actorName(node.Task.AssigneeID),
-		Wave:      derived.waves[node.Task.ID],
+		ShowWave:  !v.resolved(node.Ticket),
+		Milestone: node.Ticket.IsMilestone(),
+		Assignee:  v.actorName(node.Ticket.AssigneeID),
+		Wave:      derived.waves[node.Ticket.ID],
 	}
 	for _, ref := range node.Refs {
 		refTask := derived.tasks[ref]
@@ -210,7 +210,7 @@ func chipLabel(class Class) string {
 	}
 }
 
-func idStrings(ids []core.TaskID) []string {
+func idStrings(ids []core.TicketID) []string {
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, string(id))

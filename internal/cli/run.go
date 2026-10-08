@@ -426,14 +426,14 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 	}
 	interactive := d.runInteractive(cmd, opts.unattended)
 
-	task, err := d.Tasks.Get(cmd.Context(), core.TaskID(taskID))
+	task, err := d.Tasks.Get(cmd.Context(), core.TicketID(taskID))
 	if err != nil {
 		return err
 	}
 
 	progress := d.startRunProgress(runProgressLabel("run "+taskID, sel.backendName, sel.harness.Name()), interactive)
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).Run(cmd.Context(), app.RunInput{
-		TaskID:           task.ID,
+		TicketID:         task.ID,
 		Backend:          sel.backend,
 		Harness:          sel.harness,
 		WorkspaceRoot:    sel.workspace,
@@ -515,7 +515,7 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 	if err != nil {
 		return err
 	}
-	goal, err := d.Tasks.Get(cmd.Context(), core.TaskID(goalID))
+	goal, err := d.Tasks.Get(cmd.Context(), core.TicketID(goalID))
 	if err != nil {
 		return err
 	}
@@ -525,11 +525,11 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 	}
 
 	svc := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs)
-	runner := func(ctx context.Context, taskID core.TaskID) (*app.RunOutcome, error) {
+	runner := func(ctx context.Context, taskID core.TicketID) (*app.RunOutcome, error) {
 		progress := d.startRunProgress(runProgressLabel("run "+string(taskID), sel.backendName, sel.harness.Name()), false)
 		defer progress.stop()
 		return svc.Run(ctx, app.RunInput{
-			TaskID:           taskID,
+			TicketID:         taskID,
 			Backend:          sel.backend,
 			Harness:          sel.harness,
 			WorkspaceRoot:    sel.workspace,
@@ -593,7 +593,7 @@ func runWorkspaceRoot(value string) (string, error) {
 
 // runDoc is the lossless structured shape of `ft run`.
 type runDoc struct {
-	TaskID   string `json:"task_id" yaml:"task_id"`
+	TicketID string `json:"task_id" yaml:"task_id"`
 	Run      string `json:"run" yaml:"run"`
 	Status   string `json:"status" yaml:"status"`
 	ExitCode int    `json:"exit_code" yaml:"exit_code"`
@@ -603,13 +603,13 @@ type runDoc struct {
 	Repo     string `json:"repo" yaml:"repo"`
 }
 
-func (d *Deps) printRunOutcome(task *core.Task, outcome *app.RunOutcome, runErr error) error {
+func (d *Deps) printRunOutcome(task *core.Ticket, outcome *app.RunOutcome, runErr error) error {
 	state := "finished"
 	if runErr != nil {
 		state = "failed"
 	}
 	doc := runDoc{
-		TaskID:   string(task.ID),
+		TicketID: string(task.ID),
 		Run:      state,
 		Status:   string(outcome.Status),
 		ExitCode: outcome.ExitCode,
@@ -634,7 +634,7 @@ func (d *Deps) printRunOutcome(task *core.Task, outcome *app.RunOutcome, runErr 
 	}, d.runHints(task, runErr)...)
 }
 
-func (d *Deps) runHints(task *core.Task, runErr error) []hint {
+func (d *Deps) runHints(task *core.Ticket, runErr error) []hint {
 	id := string(task.ID)
 	if runErr != nil {
 		return []hint{{Command: fmt.Sprintf("ft task get %s", id), About: "inspect the failed run"}}
@@ -700,7 +700,7 @@ func (d *Deps) runProjectHints(project *core.Project, runErr error) []hint {
 // runLoopStepDoc is one iteration of `ft run --goal` in structured output.
 type runLoopStepDoc struct {
 	Iteration int    `json:"iteration" yaml:"iteration"`
-	TaskID    string `json:"task_id" yaml:"task_id"`
+	TicketID  string `json:"task_id" yaml:"task_id"`
 	Title     string `json:"title" yaml:"title"`
 	Run       string `json:"run" yaml:"run"`
 	Status    string `json:"status" yaml:"status"`
@@ -732,7 +732,7 @@ func (d *Deps) printLoopStep(step app.LoopStep) {
 	}
 	d.printFields(
 		f("step", step.Iteration),
-		f("task_id", step.TaskID),
+		f("task_id", step.TicketID),
 		f("title", step.Title),
 		f("run", state),
 		f("status", step.Status),
@@ -742,7 +742,7 @@ func (d *Deps) printLoopStep(step app.LoopStep) {
 	d.printf("\n")
 }
 
-func (d *Deps) printLoopOutcome(goal *core.Task, outcome *app.LoopOutcome, runErr error) error {
+func (d *Deps) printLoopOutcome(goal *core.Ticket, outcome *app.LoopOutcome, runErr error) error {
 	doc := runLoopDoc{
 		Goal:       string(outcome.Goal),
 		GoalKind:   string(outcome.GoalKind),
@@ -783,7 +783,7 @@ func loopStepDoc(step app.LoopStep) runLoopStepDoc {
 	}
 	return runLoopStepDoc{
 		Iteration: step.Iteration,
-		TaskID:    string(step.TaskID),
+		TicketID:  string(step.TicketID),
 		Title:     step.Title,
 		Run:       state,
 		Status:    string(step.Status),
@@ -794,7 +794,7 @@ func loopStepDoc(step app.LoopStep) runLoopStepDoc {
 	}
 }
 
-func (d *Deps) runLoopHints(goal *core.Task, outcome *app.LoopOutcome, runErr error) []hint {
+func (d *Deps) runLoopHints(goal *core.Ticket, outcome *app.LoopOutcome, runErr error) []hint {
 	id := string(goal.ID)
 	if runErr != nil {
 		return []hint{{Command: fmt.Sprintf("ft task get %s", id), About: "inspect the failed goal run"}}

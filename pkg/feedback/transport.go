@@ -13,7 +13,7 @@ import (
 
 // Transport delivers one report to a sink and returns the stored task.
 type Transport interface {
-	Send(ctx context.Context, report Report) (*core.Task, error)
+	Send(ctx context.Context, report Report) (*core.Ticket, error)
 }
 
 // Env is the resolved sink a transport writes to: the opened backend, the
@@ -51,22 +51,22 @@ func DBFactory(env Env) (Transport, error) {
 	}
 	return &dbTransport{
 		projects: app.NewProjectService(env.Backend, env.Clock, env.IDs),
-		tasks:    app.NewTaskService(env.Backend, env.Clock, env.IDs),
+		tasks:    app.NewTicketService(env.Backend, env.Clock, env.IDs),
 		project:  env.Project,
 	}, nil
 }
 
 type dbTransport struct {
 	projects *app.ProjectService
-	tasks    *app.TaskService
+	tasks    *app.TicketService
 	project  core.ProjectID
 }
 
-func (t *dbTransport) Send(ctx context.Context, report Report) (*core.Task, error) {
+func (t *dbTransport) Send(ctx context.Context, report Report) (*core.Ticket, error) {
 	if err := t.ensureProject(ctx); err != nil {
 		return nil, err
 	}
-	task, err := t.tasks.Add(ctx, app.TaskInput{
+	task, err := t.tasks.Add(ctx, app.TicketInput{
 		ProjectID:   t.project,
 		Kind:        core.KindTask,
 		Title:       report.Title(),

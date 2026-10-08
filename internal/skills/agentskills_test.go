@@ -57,3 +57,33 @@ func TestChiefSkillNamesBuilderAsHandoffSource(t *testing.T) {
 		}
 	}
 }
+
+// TestArchitectureReviewerSkillReviewsDocsNotCode guards the architecture
+// reviewer's charter: it reviews a feature's documents (spec, plan, tech design)
+// with a project-wide, zoomed-out view and never drops to line-level code. It
+// must report inconsistency, contradiction, overcomplication, and weak
+// architectural design, judge cross-cutting impact, surface tech-debt/refactor
+// items, hand back a tech-design verdict, and report to the chief.
+func TestArchitectureReviewerSkillReviewsDocsNotCode(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/architecture-reviewer/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"name the documents it reviews", "spec, plan, tech design"},
+		{"hold the project-wide, zoomed-out view", "cross-cutting impact"},
+		{"report inconsistency", "inconsistency"},
+		{"report contradiction", "contradiction"},
+		{"report overcomplication", "overcomplication"},
+		{"report weak architectural design", "weak architectural design"},
+		{"surface tech-debt/refactor items", "tech-debt"},
+		{"hand back a tech-design verdict", "tech-design verdict"},
+		{"refuse to review line-level code", "not line-level code"},
+		{"report to the chief over cmux", "cmux-msg.sh"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("architecture-reviewer skill must %s (missing %q)", req.why, req.text)
+		}
+	}
+}

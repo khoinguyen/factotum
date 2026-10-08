@@ -173,19 +173,58 @@ func WriteProjectTechStack(path, stack string) (bool, error) {
 // setTopLevelKey sets a simple `key = value` (value already a TOML token) in the
 // leading top-level region of a document, before any table header. It replaces
 // an existing line or inserts one after the header comment, so it never lands
-// inside a table and never duplicates the key.
+// inside a table and never duplicates the key. It tracks array nesting, so a
+// hand-edited multi-line array before the key is not mistaken for a table
+// header.
 func setTopLevelKey(text, key, value string) string {
 	lines := strings.Split(text, "\n")
+	depth := 0
 	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "[") {
-			break
+		if depth == 0 {
+			if strings.HasPrefix(strings.TrimSpace(line), "[") {
+				break
+			}
+			if name, ok := keyName(line); ok && name == key {
+				lines[i] = fmt.Sprintf("%s = %s", key, value)
+				return strings.Join(lines, "\n")
+			}
 		}
-		if name, ok := keyName(line); ok && name == key {
-			lines[i] = fmt.Sprintf("%s = %s", key, value)
-			return strings.Join(lines, "\n")
-		}
+		depth = arrayDepth(line, depth)
 	}
 	return insertTopLevel(text, fmt.Sprintf("%s = %s", key, value))
+}
+
+// arrayDepth returns the array-nesting depth after line, starting from depth. It
+// counts `[` and `]` outside quoted strings and comments, so a bracket in a
+// quoted value or an inline comment does not change the depth. Only simple
+// single-line strings are recognized; a multi-line string containing brackets is
+// out of scope.
+func arrayDepth(line string, depth int) int {
+	var quote byte
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quote != 0:
+			if quote == '"' && c == '\\' {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+		case c == '#':
+			return depth
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '[':
+			depth++
+		case c == ']':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return depth
 }
 
 // RunDefaults are the harness and sandbox a run resolves when neither a flag nor

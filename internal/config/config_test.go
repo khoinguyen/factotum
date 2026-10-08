@@ -251,6 +251,30 @@ func TestNoHintsFromProjectFile(t *testing.T) {
 	}
 }
 
+func TestLoadReadsTechStack(t *testing.T) {
+	dir := t.TempDir()
+	project := writeConfig(t, dir, "project.toml", "project = \"acme\"\ntech_stack = \"go\"\n")
+	cfg, err := Load(Input{ProjectPath: project, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TechStack != "go" {
+		t.Fatalf("TechStack = %q, want go", cfg.TechStack)
+	}
+}
+
+func TestLoadTechStackEmptyWhenUnset(t *testing.T) {
+	dir := t.TempDir()
+	project := writeConfig(t, dir, "project.toml", "project = \"acme\"\n")
+	cfg, err := Load(Input{ProjectPath: project, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TechStack != "" {
+		t.Fatalf("TechStack = %q, want empty", cfg.TechStack)
+	}
+}
+
 func TestLoadInvalidTOML(t *testing.T) {
 	dir := t.TempDir()
 	user := writeConfig(t, dir, "user.toml", "not = = toml")

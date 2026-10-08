@@ -37,8 +37,11 @@ const (
 type Config struct {
 	Project      string
 	DefaultActor string
-	NoHints      bool
-	Store        Store
+	// TechStack is the project's recorded language/framework choice from the
+	// project-scoped config; empty when none was recorded.
+	TechStack string
+	NoHints   bool
+	Store     Store
 	// Judge selects the judge provider; TypeSafe is the default. Provider settings,
 	// including the API key, live in the provider's own config table.
 	Judge Judge
@@ -247,6 +250,7 @@ func Load(in Input) (Config, error) {
 
 	cfg := Default()
 	cfg.Project = resolveProject(getenv, project.Project, user.DefaultProject)
+	cfg.TechStack = project.TechStack
 	entry := user.Projects[cfg.Project]
 	cfg.Store = resolveStore(cfg.Project, project.Store, entry, user.Store)
 	cfg.Judge.Provider = firstNonEmpty(project.Judge.Provider, user.Judge.Provider, Default().Judge.Provider)

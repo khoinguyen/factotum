@@ -431,6 +431,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		return err
 	}
 
+	progress := d.startRunProgress(runProgressLabel("run "+taskID, sel.backendName, sel.harness.Name()), interactive)
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).Run(cmd.Context(), app.RunInput{
 		TaskID:           task.ID,
 		Backend:          sel.backend,
@@ -444,6 +445,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		Actor:            d.currentActorID(cmd.Context()),
 		Interactive:      interactive,
 	})
+	progress.stop()
 	if errors.Is(runErr, local.ErrNotOptedIn) {
 		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
 	}
@@ -477,6 +479,7 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 		return err
 	}
 
+	progress := d.startRunProgress(runProgressLabel("run project "+string(project.ID), sel.backendName, sel.harness.Name()), interactive)
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).RunProject(cmd.Context(), app.ProjectRunInput{
 		ProjectID:        project.ID,
 		Backend:          sel.backend,
@@ -489,6 +492,7 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 		Prompt:           prompt,
 		Interactive:      interactive,
 	})
+	progress.stop()
 	if errors.Is(runErr, local.ErrNotOptedIn) {
 		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
 	}
@@ -522,6 +526,8 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 
 	svc := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs)
 	runner := func(ctx context.Context, taskID core.TaskID) (*app.RunOutcome, error) {
+		progress := d.startRunProgress(runProgressLabel("run "+string(taskID), sel.backendName, sel.harness.Name()), false)
+		defer progress.stop()
 		return svc.Run(ctx, app.RunInput{
 			TaskID:           taskID,
 			Backend:          sel.backend,

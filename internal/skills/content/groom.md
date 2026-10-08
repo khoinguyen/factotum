@@ -28,6 +28,12 @@ stdin/stdout, runs it **headless** instead. The recorded `mode` reflects this:
 `local` does; `openshell` and `docker` report it unsupported and `ft groom`
 tells you to rerun with `--unattended`.
 
+A **headless** session narrates live progress on stderr, so a long grill is
+visibly alive: `ft: groom session <id> (sandbox=<b> harness=<h>) started`, then a
+periodic `still running (Ns)` heartbeat. It is written only when stderr is a
+terminal and output is text; an interactive session, `-o json|yaml`, or a
+non-terminal stderr prints none.
+
 `--sandbox` and `--harness` are optional: `ft groom` resolves them like `ft run`
 (flag, env, project `[run]`, machine `[run]`), prompting once on a terminal when
 unset; choosing `local` in that prompt asks to opt in (default no) and records

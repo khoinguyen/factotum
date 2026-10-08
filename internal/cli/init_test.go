@@ -254,8 +254,6 @@ func TestInitGreenfieldNonInteractiveDefault(t *testing.T) {
 	}
 }
 
-// TestInitTechStackFlagNonInteractive pins the non-interactive channel: the flag
-// records the choice without a terminal.
 // TestInitTechStackRequiresProject pins that --tech-stack is only meaningful
 // with -p: without a project registration the choice has nowhere to land, so the
 // flag is a usage error rather than being silently ignored.
@@ -274,6 +272,8 @@ func TestInitTechStackRequiresProject(t *testing.T) {
 	}
 }
 
+// TestInitTechStackFlagNonInteractive pins the non-interactive channel: the flag
+// records the choice without a terminal.
 func TestInitTechStackFlagNonInteractive(t *testing.T) {
 	r := newRunner(t)
 	root := t.TempDir()

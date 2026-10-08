@@ -46,10 +46,12 @@ Non-goals (out of scope for this milestone).
 - **Capture write path.** `POST /api/capture` authenticates with the shared serve token, derives a
   title from the first line, stores an idea or bug via `app.TicketService.Add`, and returns the
   detail URL (`internal/serve/capture.go`). Nothing else happens: the capture is inert history.
-- **Grooming.** `ft groom` runs a task-less `RunProject` session over the project's open
-  captures, writes a durable session manifest (`internal/groom/session.go`), and records the
-  feature's spec/plan/tech-design as artifacts. `ft groom review` records the architecture verdict;
-  a `needs-rework` verdict **blocks** the produced tasks from build.
+- **Grooming.** `ft groom [item...]` runs a task-less `RunProject` session scoped to the named
+  items, or by default to the project's open ideas plus open ungroomed executable tasks (a bug's
+  refine verb is `triage`, not groom). It writes a durable session manifest
+  (`internal/groom/session.go`) and records the feature's spec/plan/tech-design as artifacts.
+  `ft groom review` records the architecture verdict; a `needs-rework` verdict **blocks** the
+  produced tasks from build.
 - **The DAG loop.** `ft run --goal <task|milestone>` drives `RunLoopService`
   (`pkg/app/runloop.go`): it repeatedly runs the highest-ranked agent-ready, groomed, on-path task
   until the goal resolves, work stalls, or a budget is exhausted. A **milestone is a human gate**:
@@ -89,7 +91,8 @@ Process model.
 - One controller worker per project, concurrency 1 by default (a configurable cap, §12), so two
   captures cannot run two grooms over the same graph at once.
 - Graceful shutdown on SIGINT/SIGTERM: stop accepting captures, let the running stage finish or
-  record it as interrupted, persist every pipeline, then exit. Restart reconciles (§4) and resumes.
+  record it as interrupted, persist every pipeline, then exit. Restart reconciles new captures (§4)
+  and re-owns every non-terminal pipeline (§5, "Restart and resume").
 - The daemon never blocks on an interactive prompt: a stage that needs a human becomes a gate
   (§6). When `ft up` runs attached to a terminal it may run the groom session interactively (the
   PO is present); headless it runs unattended.
@@ -105,9 +108,9 @@ the fast path is an optimization".
   daemon already owns the write path, so it knows the moment a capture lands. The controller
   creates a `Pipeline` in state `queued` keyed by the capture's ticket id.
 - **Backstop — reconciliation.** On startup, and on a slow tick, the controller scans the store for
-  **open captures with no pipeline and no linked origin task** and enqueues them. This catches
-  captures stored while the daemon was down, and captures stored by another process (a CLI
-  `ft idea create`, a second `ft serve`). It is idempotent: a capture already in a pipeline is
+  **open captures (ideas and bugs) with no pipeline and no linked origin task** and enqueues them.
+  This catches captures stored while the daemon was down, and captures stored by another process (a
+  CLI `ft idea create`, a second `ft serve`). It is idempotent: a capture already in a pipeline is
   skipped, so a restart never duplicates work.
 
 Config and opt-out (t-ywh4btshch's acceptance).
@@ -132,15 +135,16 @@ type PipelineID string
 
 type PipelineState string
 const (
-    PipelineQueued   PipelineState = "queued"   // enqueued, not started
-    PipelineGrooming PipelineState = "grooming" // groom session running
-    PipelineReview   PipelineState = "review"   // architecture review running
-    PipelineBuilding PipelineState = "building" // build loop running
-    PipelineQA       PipelineState = "qa"       // QA running
-    PipelineRollout  PipelineState = "rollout"  // release/rollout running
-    PipelineDone     PipelineState = "done"     // terminal success
-    PipelineFailed   PipelineState = "failed"   // terminal failure, parked for a human
-    PipelinePaused   PipelineState = "paused"   // operator paused
+    PipelineQueued    PipelineState = "queued"    // enqueued, not started
+    PipelineGrooming  PipelineState = "grooming"  // groom session running
+    PipelineReview    PipelineState = "review"    // architecture review running
+    PipelineBuilding  PipelineState = "building"  // build loop running
+    PipelineQA        PipelineState = "qa"        // QA running
+    PipelineRollout   PipelineState = "rollout"   // release/rollout running
+    PipelineDone      PipelineState = "done"      // terminal success (immutable)
+    PipelineCancelled PipelineState = "cancelled" // terminal, operator-cancelled (immutable)
+    PipelineFailed    PipelineState = "failed"    // parked after a stage failure; retryable
+    PipelinePaused    PipelineState = "paused"    // operator hold; resumable
 )
 
 // Gate is the human action, if any, the pipeline is waiting on. It is
@@ -175,17 +179,16 @@ type Pipeline struct {
 ### Transitions
 
 ```
-             start            groom done         verdict=approve     tasks done         qa pass         promote
- queued ─────────────▶ grooming ─────▶ review ─────────────▶ building ─────▶ qa ─────▶ rollout ─────▶ done
-    ▲                     │              │                      │             │            │
-    │                     │              │ verdict=needs-rework │             │            │ milestone closed
-    │                     │ deferred     ▼ (blocks build)       │             │            ▼
-    │                     │ questions   GateDesignRework       │             │        GateRelease
-    │                     ▼              │                      ▼             ▼
-    │               GateGroomQuestions ──┘ (advisory)     GateMergeApproval  GateRollout
-    │                     │                                    │             │
-    └──── pause/resume ───┴─────────── paused ────────────────┴─────────────┘
-                            any stage failure ──▶ failed (parked; retry or cancel)
+  queued ─▶ grooming ─▶ review ─▶ building ─▶ qa ─▶ rollout ─▶ done
+                │           │          │            │
+                │           │          │            └─ gate: release (milestone closed), then rollout
+                │           │          └─ gate: merge_approval (blocking)
+                │           └─ gate: design_rework (blocking; needs-rework)
+                └─ gate: groom_questions (advisory; does not block)
+
+  A gate holds its phase; clearing the gate resumes the same phase.
+  pause/resume at any phase. A stage that fails after its retry budget → failed
+  (parked; `ft up retry` returns to the phase, or `ft up cancel`).
 ```
 
 Rules.
@@ -208,11 +211,33 @@ Rules.
   after the retry budget.
 - `rollout → done` after the milestone is closed and the rollout stage (if configured) completes.
 - A stage that fails after its retry budget sets `failed` and parks; the operator retries
-  (`ft up retry`) or cancels.
-- `paused` is an operator hold; `resume` returns to the phase it held.
+  (`ft up retry`, which returns it to the phase it failed in) or cancels it (`cancelled`).
+- `paused` is an operator hold; `resume` returns to the phase it held. `failed` and `paused` are
+  non-terminal and reversible; `done` and `cancelled` are the only immutable terminal states.
 
 The state machine is durable: every transition writes the `Pipeline` and appends an event (§7), so
 the dashboard and `ft up status` show exactly where each feature is, and a restart resumes.
+
+### Restart and resume
+
+Reconciliation (§4) only enqueues captures that have no pipeline; the controller separately
+**re-owns every non-terminal pipeline** on startup, so a process that died mid-pipeline does not
+leave it parked forever:
+
+- On startup, list every pipeline whose state is not `done`/`cancelled` and atomically claim it for
+  its project (the claim is what makes exactly one controller own it).
+- `queued` resumes by starting its first stage. A pipeline in an in-flight phase (`grooming`,
+  `review`, `building`, `qa`, `rollout`) resumes by **re-running its current stage**.
+- Stages are written to be **idempotent and resumable**: each checks the durable artifacts it would
+  produce — the groom session manifest, the recorded review verdict, the produced tasks and their
+  PRs, the QA result — and continues from the furthest point reached instead of redoing side
+  effects. A stage whose externally dispatched agent run is still live is re-attached or awaited;
+  one whose run is gone is re-run.
+- `failed` and `paused` are **not** auto-resumed: they stay parked until the operator runs
+  `ft up retry`/`resume`. A restart never silently restarts work the operator deliberately held.
+
+This is the same recovery shape as `ft msg`'s lease/requeue sweep (`docs/msg/design.md` §6): the
+durable claim, not the live process, is the source of truth for ownership.
 
 ## 6. Human gates
 
@@ -250,7 +275,8 @@ controller worker takes a queued pipeline atomically (memory mutex, sqlite trans
 write lock, jsondir lock file). `pkg/store/conformance` grows a `Pipeline` case set: round-trip,
 `ErrAlreadyExists`/`ErrNotFound`, `Validate` (empty id/capture/project, unknown state, unknown
 gate), list filters (project, state, gate), claim concurrency (one winner), and terminal-state
-immutability.
+immutability for `done`/`cancelled` only (`failed`/`paused` stay mutable so `retry`/`resume` can
+move them).
 
 Additive schema only. sqlite gets a forward migration; memory a map; jsonfile a key; jsondir a
 file. No existing entity changes.
@@ -291,9 +317,11 @@ type StageRunner interface {
 
 Production runners, one per phase:
 
-- **groom** — runs the `ft groom` session (`internal/groom` + `RunService.RunProject`), records the
-  session, and returns the produced tasks. Interactive when a terminal PO is attached, else
-  unattended (which defers product questions → `GateGroomQuestions`).
+- **groom** — runs the `ft groom` session (`internal/groom` + `RunService.RunProject`) **scoped to
+  the pipeline's capture id** (`ft groom <capture>`, not a bare `ft groom`, which would scope to
+  the whole backlog and excludes bugs), records the session, and returns the produced tasks.
+  Interactive when a terminal PO is attached, else unattended (which defers product questions →
+  `GateGroomQuestions`).
 - **review** — dispatches an `architecture-reviewer` agent run over the session's docs and records
   `ft groom review --verdict`; `needs-rework` → `GateDesignRework`.
 - **build** — dispatches the `chief` agent run, which drives the builder/reviewer loop and files
@@ -314,17 +342,25 @@ Rollout is the **last pipeline stage**, and its human gate already exists in the
 loop already honors (`pkg/app/runloop.go` stops rather than closing a milestone).
 
 1. When a pipeline starts, `ft up` attaches (or creates) a **release milestone** for the feature
-   and records it as `Pipeline.Milestone`. The groom-produced tasks depend on the milestone as the
-   release gate, so "all tasks done" is well-defined and the milestone is the single release gate.
-2. The build and QA stages drive the produced tasks to done. When the milestone's prerequisites
-   resolve, the pipeline enters `rollout` with `GateRelease`: the milestone is the human gate, and
-   closing it (`ft milestone done` / `ft up release`) is the release decision.
+   and records it as `Pipeline.Milestone`. The milestone **depends on** the groom-produced tasks
+   (the tasks are its prerequisites, the edge the DAG loop expects), so the loop drives the tasks
+   and the milestone is the single release gate. Rollout work depends on the milestone, so it is
+   blocked until the gate is closed.
+2. The build and QA stages drive the produced tasks to done. Once the tasks resolve, the milestone's
+   readiness opens; the pipeline enters `rollout` with `GateRelease`: the milestone is the human
+   gate, and closing it (`ft milestone done` / `ft up release`) is the release decision.
 3. On close, the **rollout stage** runs: the environments/deploy/promote/rollback work of
    t-3p53uzgcve. That task owns the mechanics; `ft up` provides the stage, the `GateRollout`
    promotion gate, and the config (`[up] rollout`). With no rollout configured, the stage is a
    no-op and the pipeline goes straight to `done`.
 4. `done` stores the durable learnings as `ft memory` (the software-factory skill's step 8) so the
    next feature starts from them.
+
+The edge direction matters: the milestone is **downstream** of its prerequisites (it depends on
+them), matching `pkg/app/runloop.go` — `agentReadyOnPath` follows a goal's deps, so a milestone that
+depended on nothing would be `goal_reached` immediately and its tasks would never run. The reverse
+edge ("tasks depend on the milestone") would gate the build behind a gate that can be closed before
+anything is built.
 
 So rollout fits as: **a stage gated by the release milestone, implemented elsewhere, orchestrated
 here.** The daemon never deploys on its own; `GateRelease` and `GateRollout` keep the release
@@ -398,8 +434,6 @@ path.
 3. **Notification channel.** `ft msg` to the operator actor, ntfy, desktop, or dashboard only?
 4. **Concurrency and budget.** `max_parallel = 1` and a per-pipeline agent-run budget of 25 —
    accept, or different numbers?
-5. **One process or two.** `ft up` embeds `ft serve` (recommended); confirm we do not want a
-   separate `ft serve` for dashboard-only use alongside a controller.
 
 ## 14. Alternatives considered and rejected
 

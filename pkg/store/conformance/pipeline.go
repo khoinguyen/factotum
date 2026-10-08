@@ -23,6 +23,7 @@ func testPipeline(t *testing.T, be store.Backend) {
 	t.Run("roundtrip", func(t *testing.T) { testPipelineRoundtrip(t, repo, ctx) })
 	t.Run("validate", func(t *testing.T) { testPipelineValidate(t, repo, ctx) })
 	t.Run("capture-unique", func(t *testing.T) { testPipelineCaptureUnique(t, repo, ctx) })
+	t.Run("identity-immutable", func(t *testing.T) { testPipelineIdentityImmutable(t, repo, ctx) })
 	t.Run("list", func(t *testing.T) { testPipelineList(t, repo, ctx) })
 	t.Run("claim", func(t *testing.T) { testPipelineClaim(t, repo, ctx) })
 	t.Run("claim-concurrency", func(t *testing.T) { testPipelineClaimConcurrency(t, repo, ctx) })
@@ -144,6 +145,50 @@ func testPipelineCaptureUnique(t *testing.T, repo store.PipelineRepo, ctx contex
 	// A different capture in the same project is a distinct pipeline.
 	if err := repo.Create(ctx, pipelineRecord("cap-4", project, "i-cap-2", core.PipelineQueued, core.GateNone)); err != nil {
 		t.Fatalf("Create(other capture) error = %v", err)
+	}
+}
+
+func testPipelineIdentityImmutable(t *testing.T, repo store.PipelineRepo, ctx context.Context) {
+	t.Helper()
+	const project = core.ProjectID("prj-id")
+	const other = core.ProjectID("prj-id-other")
+
+	if err := repo.Create(ctx, pipelineRecord("id-1", project, "i-id-a", core.PipelineQueued, core.GateNone)); err != nil {
+		t.Fatalf("Create(id-1) error = %v", err)
+	}
+	if err := repo.Create(ctx, pipelineRecord("id-2", project, "i-id-b", core.PipelineQueued, core.GateNone)); err != nil {
+		t.Fatalf("Create(id-2) error = %v", err)
+	}
+
+	// A pipeline is keyed by its (project, capture); moving it onto a capture
+	// another pipeline already drives must not silently create a second
+	// pipeline for that capture.
+	target, err := repo.Get(ctx, "id-1")
+	if err != nil {
+		t.Fatalf("Get(id-1) error = %v", err)
+	}
+	target.CaptureID = "i-id-b"
+	if err := repo.Update(ctx, target); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("Update(capture change) error = %v, want ErrConflict", err)
+	}
+
+	// Changing the project is refused for the same reason.
+	target, err = repo.Get(ctx, "id-1")
+	if err != nil {
+		t.Fatalf("Get(id-1) error = %v", err)
+	}
+	target.ProjectID = other
+	if err := repo.Update(ctx, target); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("Update(project change) error = %v, want ErrConflict", err)
+	}
+
+	// The rejected updates left the stored pipeline untouched.
+	stored, err := repo.Get(ctx, "id-1")
+	if err != nil {
+		t.Fatalf("Get(id-1) after rejected updates error = %v", err)
+	}
+	if stored.ProjectID != project || stored.CaptureID != "i-id-a" {
+		t.Fatalf("Get(id-1) = %s/%s, want %s/i-id-a", stored.ProjectID, stored.CaptureID, project)
 	}
 }
 

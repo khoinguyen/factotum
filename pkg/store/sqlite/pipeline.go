@@ -175,8 +175,8 @@ func (r *pipelineRepo) Update(ctx context.Context, pipeline *core.Pipeline) erro
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var currentState string
-	err = tx.QueryRowContext(ctx, "SELECT state FROM pipelines WHERE id = ?", string(pipeline.ID)).Scan(&currentState)
+	var currentProject, currentCapture, currentState string
+	err = tx.QueryRowContext(ctx, "SELECT project_id, capture_id, state FROM pipelines WHERE id = ?", string(pipeline.ID)).Scan(&currentProject, &currentCapture, &currentState)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: pipeline %s", core.ErrNotFound, pipeline.ID)
 	}
@@ -185,6 +185,9 @@ func (r *pipelineRepo) Update(ctx context.Context, pipeline *core.Pipeline) erro
 	}
 	if core.PipelineState(currentState).Terminal() {
 		return fmt.Errorf("%w: pipeline %s is %s and immutable", core.ErrConflict, pipeline.ID, currentState)
+	}
+	if currentProject != string(pipeline.ProjectID) || currentCapture != string(pipeline.CaptureID) {
+		return fmt.Errorf("%w: pipeline %s identity is immutable", core.ErrConflict, pipeline.ID)
 	}
 
 	data, err := encode(pipeline)

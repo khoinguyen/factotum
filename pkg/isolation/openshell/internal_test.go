@@ -1,9 +1,33 @@
 package openshell
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
+
+// TestProviderNotFound pins that only a genuine gateway not-found is treated as
+// removal; any other failure is transient and must not be.
+func TestProviderNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"transient", errors.New("connection refused"), false},
+		{"gateway not found", errors.New("gateway not found"), false},
+		{"not-found code", errors.New(`code: 'Some requested entity was not found', message: "provider not found"`), true},
+		{"provider not found", errors.New(`provider not found`), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := providerNotFound(tc.err); got != tc.want {
+				t.Errorf("providerNotFound(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
 
 func TestEnvSliceOverrideWins(t *testing.T) {
 	t.Setenv("FT_ENV_DUP", "host")

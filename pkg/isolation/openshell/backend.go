@@ -12,9 +12,11 @@
 //   - Upload uses `sandbox upload` (the only working bulk path); Download
 //     streams file contents out with `exec` + base64, because the CLI's
 //     `sandbox download` is broken against BusyBox images.
-//   - Stop cancels the run's live commands; Delete tears the sandbox and every
-//     provider it created down, retrying the asynchronous provider cleanup so
-//     no credential material leaks into gateway state.
+//   - Stop cancels the run's live commands and stops the sandbox so no remote
+//     process outlives its client; a later Exec, Upload, or Download starts it
+//     again. Delete tears the sandbox and every provider it created down,
+//     retrying the asynchronous provider cleanup so no credential material leaks
+//     into gateway state.
 //   - A custom Spec.Image.Entrypoint is rejected with ErrUnsupported: the
 //     sandbox runs the backend's own keep-alive init and the workload is
 //     started with `sandbox exec`.
@@ -210,6 +212,13 @@ type environment struct {
 	// sandboxGone records a completed `sandbox delete`, so a retried Delete
 	// skips it instead of failing on an already-removed sandbox.
 	sandboxGone bool
+	// stopped records a completed `sandbox stop`, so a later Exec/Upload/
+	// Download starts the sandbox again before using it.
+	stopped bool
+
+	// startMu serializes a lazy restart after Stop, so concurrent Execs cannot
+	// race to start the same sandbox.
+	startMu sync.Mutex
 }
 
 // runningProcess is a live command tracked so Stop can end it.
@@ -307,6 +316,9 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 	if cmd.TTY {
 		return nil, fmt.Errorf("%w: interactive tty over the openShell CLI", isolation.ErrNoTerminal)
 	}
+	if err := b.ensureRunning(ctx, env); err != nil {
+		return nil, err
+	}
 
 	var runCtx context.Context
 	var cancel context.CancelFunc
@@ -358,6 +370,9 @@ func (b *Backend) execArgs(name, workdir string, env map[string]string, argv []s
 func (b *Backend) Upload(ctx context.Context, h isolation.Handle, files []isolation.File) error {
 	env, err := b.lookup(h)
 	if err != nil {
+		return err
+	}
+	if err := b.ensureRunning(ctx, env); err != nil {
 		return err
 	}
 	return b.uploadFiles(ctx, env, files)
@@ -435,6 +450,9 @@ func (b *Backend) Download(ctx context.Context, h isolation.Handle, paths []stri
 	}
 	if len(paths) == 0 {
 		return nil, nil
+	}
+	if err := b.ensureRunning(ctx, env); err != nil {
+		return nil, err
 	}
 	requests := make([]pathRequest, 0, len(paths))
 	args := []string{"sandbox", "exec", "-n", env.name, "--no-login-shell", "--", "sh", "-c", downloadScript, "--"}
@@ -522,14 +540,38 @@ func (b *Backend) Logs(ctx context.Context, h isolation.Handle, opts isolation.L
 	return events, nil
 }
 
-// Stop cancels the run's live commands and is idempotent. It keeps the sandbox
-// (and its workspace) alive, so the handle stays usable.
-func (b *Backend) Stop(_ context.Context, h isolation.Handle) error {
+// Stop cancels the run's live commands and stops the sandbox, terminating the
+// workload a prior Exec left running: killing the local `sandbox exec` client
+// alone does not end the remote process. It keeps the sandbox (no delete) so the
+// handle stays usable: the next Exec, Upload, or Download starts it again. It is
+// idempotent, because `sandbox stop` on an already-stopped sandbox is a no-op.
+func (b *Backend) Stop(ctx context.Context, h isolation.Handle) error {
 	env, err := b.lookup(h)
 	if err != nil {
 		return err
 	}
 	env.stop()
+	if _, err := b.run.Run(ctx, b.cmd("sandbox", "stop", env.name), nil); err != nil {
+		return fmt.Errorf("openshell: stop sandbox %q: %w", env.name, err)
+	}
+	env.markStopped()
+	return nil
+}
+
+// ensureRunning starts a sandbox that a prior Stop stopped, so the handle stays
+// usable after Stop. A start failure is reported and the stopped state is kept,
+// so a retry starts it again. startMu serializes the restart so concurrent
+// operations cannot race.
+func (b *Backend) ensureRunning(ctx context.Context, env *environment) error {
+	env.startMu.Lock()
+	defer env.startMu.Unlock()
+	if !env.isStopped() {
+		return nil
+	}
+	if _, err := b.run.Run(ctx, b.cmd("sandbox", "start", env.name), nil); err != nil {
+		return fmt.Errorf("openshell: start sandbox %q: %w", env.name, err)
+	}
+	env.markRunning()
 	return nil
 }
 
@@ -761,6 +803,18 @@ func safeProfileID(id string) bool {
 	return true
 }
 
+// providerNotFound reports whether err is the gateway's not-found response for
+// a provider, meaning the provider is already gone. Any other failure is
+// transient and must not be mistaken for removal.
+func providerNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "some requested entity was not found") ||
+		strings.Contains(msg, "provider not found")
+}
+
 // deleteProvider removes a provider, retrying while the asynchronous sandbox
 // deletion settles. A provider that no longer exists counts as removed. A
 // provider that cannot be removed is reported, never swallowed: it may still
@@ -769,9 +823,11 @@ func (b *Backend) deleteProvider(ctx context.Context, provider string) error {
 	deadline := time.Now().Add(b.opts.ProviderCleanupTimeout)
 	var last error
 	for {
-		// A provider that is already gone is a success, so a retried Delete
-		// does not spin on "not found".
-		if _, err := b.run.Run(ctx, b.cmd("provider", "get", provider), nil); err != nil {
+		// A provider that is genuinely gone is a success, so a retried Delete
+		// does not spin on "not found". Only a not-found response proves that;
+		// a transient `get` failure falls through so the delete is still
+		// attempted and a real provider is never leaked.
+		if _, err := b.run.Run(ctx, b.cmd("provider", "get", provider), nil); providerNotFound(err) {
 			return nil
 		}
 		if _, err := b.run.Run(ctx, b.cmd("provider", "delete", provider), nil); err == nil {
@@ -793,9 +849,16 @@ func (b *Backend) deleteProvider(ctx context.Context, provider string) error {
 
 // writePolicy renders the effective policy to a temp file and returns its path
 // and a cleanup function. A caller-supplied Raw document is honored verbatim;
-// otherwise the hardened template is rendered. The identity is seeded from the
-// image's user (a harness's requested non-root identity), then a policy or
-// backend override; Build rejects root.
+// otherwise the hardened template is rendered with the caller's filesystem
+// paths merged in. The identity is seeded from the image's user (a harness's
+// requested non-root identity), then a policy or backend override; Build rejects
+// root.
+//
+// Policy.DefaultDeny is always satisfied on the rendered path: the template
+// carries no network_policies unless the run names hosts, so egress is
+// deny-by-default whether the flag is set or not. OpenShell cannot express
+// allow-all egress, so a false value stays fail-closed rather than opening the
+// sandbox.
 func (b *Backend) writePolicy(p isolation.Policy, imageUser string) (string, func(), error) {
 	user, group := splitUser(imageUser)
 	runAsUser := firstNonEmpty(p.RunAsUser, user, b.opts.RunAsUser)
@@ -811,6 +874,8 @@ func (b *Backend) writePolicy(p isolation.Policy, imageUser string) (string, fun
 			HarnessBinary: b.opts.HarnessBinary,
 			RunAsUser:     runAsUser,
 			RunAsGroup:    runAsGroup,
+			ReadOnly:      append([]string(nil), p.ReadOnly...),
+			ReadWrite:     append([]string(nil), p.ReadWrite...),
 		})
 		if err != nil {
 			return "", nil, err
@@ -976,6 +1041,24 @@ func (e *environment) isSandboxGone() bool {
 func (e *environment) markSandboxGone() {
 	e.mu.Lock()
 	e.sandboxGone = true
+	e.mu.Unlock()
+}
+
+func (e *environment) isStopped() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopped
+}
+
+func (e *environment) markStopped() {
+	e.mu.Lock()
+	e.stopped = true
+	e.mu.Unlock()
+}
+
+func (e *environment) markRunning() {
+	e.mu.Lock()
+	e.stopped = false
 	e.mu.Unlock()
 }
 

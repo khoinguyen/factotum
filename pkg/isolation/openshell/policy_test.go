@@ -463,6 +463,44 @@ func TestBuildIsDeterministic(t *testing.T) {
 	}
 }
 
+// TestBuildMergesCallerFilesystemPaths pins that caller-supplied ReadOnly and
+// ReadWrite paths are merged into the hardened template (additive only, so the
+// baseline can never be dropped) and deduplicated.
+func TestBuildMergesCallerFilesystemPaths(t *testing.T) {
+	p, err := openshell.Build(openshell.Options{
+		ReadOnly:  []string{"/usr", "/srv/ro", "/srv/ro"},
+		ReadWrite: []string{"/tmp", "/srv/rw"},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !contains(p.FilesystemPolicy.ReadOnly, "/usr") {
+		t.Errorf("ReadOnly %v dropped a baseline path", p.FilesystemPolicy.ReadOnly)
+	}
+	if !contains(p.FilesystemPolicy.ReadOnly, "/srv/ro") {
+		t.Errorf("ReadOnly %v missing the caller path", p.FilesystemPolicy.ReadOnly)
+	}
+	if n := countPath(p.FilesystemPolicy.ReadOnly, "/srv/ro"); n != 1 {
+		t.Errorf("ReadOnly contains /srv/ro %d times, want 1", n)
+	}
+	if !contains(p.FilesystemPolicy.ReadWrite, "/tmp") {
+		t.Errorf("ReadWrite %v dropped a baseline path", p.FilesystemPolicy.ReadWrite)
+	}
+	if !contains(p.FilesystemPolicy.ReadWrite, "/srv/rw") {
+		t.Errorf("ReadWrite %v missing the caller path", p.FilesystemPolicy.ReadWrite)
+	}
+}
+
+func countPath(values []string, want string) int {
+	n := 0
+	for _, v := range values {
+		if v == want {
+			n++
+		}
+	}
+	return n
+}
+
 func contains(values []string, want string) bool {
 	for _, v := range values {
 		if v == want {

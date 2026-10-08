@@ -3,11 +3,12 @@
 // readiness), ranks startable work through pkg/rank, and watches the event log
 // to push live updates over SSE. Reads are open.
 //
-// It is one app with a write side too: /capture stores a natural-language idea
-// through the same pkg/app TicketService, gated by a shared token. The token is
-// the only authentication; the read side stays open and live. Enrichment of a
-// captured idea is deferred to the grooming step, so a capture stores the raw
-// sentence immediately.
+// It is one app with a write side too: the shadcn/ui app renders /capture and
+// posts a natural-language idea or bug to /api/capture, which stores it through
+// the same pkg/app TicketService, gated by a shared token. The token is the only
+// authentication; the read side stays open and live. Enrichment of a capture is
+// deferred to the grooming step, so a capture stores the raw sentence
+// immediately.
 //
 // The dashboard is idea-centric: ideas are the primary unit, rolled up from the
 // tasks promoted from them (the origin edge), with drill-down to a task, idea,
@@ -17,11 +18,9 @@ package serve
 import (
 	"bytes"
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"io/fs"
 	"net/http"
 	"sort"
@@ -35,22 +34,6 @@ import (
 	"github.com/khoinguyen/factotum/pkg/store"
 	"github.com/khoinguyen/factotum/web"
 )
-
-//go:embed capture.html dashboard.css
-var templateFS embed.FS
-
-var templates = template.Must(template.ParseFS(templateFS, "capture.html"))
-
-// dashboardCSS styles the capture write page. The read side is the shadcn/ui app
-// (web/), so this stylesheet no longer renders a server-side dashboard; the
-// write side keeps it until its own port (t-3g3qpqlhli).
-var dashboardCSS = func() template.CSS {
-	css, err := templateFS.ReadFile("dashboard.css")
-	if err != nil {
-		panic("serve: embedded dashboard.css: " + err.Error())
-	}
-	return template.CSS(css)
-}()
 
 const (
 	defaultPoll   = 500 * time.Millisecond
@@ -154,6 +137,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case path == "/app" || strings.HasPrefix(path, "/app/"):
 		s.handleApp(w, r)
 	case path == "/capture":
+		s.getOrHead(s.handleAppIndex)(w, r)
+	case path == "/api/capture":
 		s.routeCapture(w, r)
 	case strings.HasPrefix(path, "/api/idea/"):
 		s.getOrHead(s.handleIdea)(w, r)
@@ -212,9 +197,9 @@ func methodNotAllowed(w http.ResponseWriter) {
 	http.Error(w, "read-only dashboard: method not allowed", http.StatusMethodNotAllowed)
 }
 
-// handleAppIndex serves the embedded app shell for a read-side route (the
-// dashboard root and the /idea, /task, /memory, /doc client routes). The client
-// router resolves the path and fetches data from the matching /api endpoint.
+// handleAppIndex serves the embedded app shell for a client route (the
+// dashboard root plus /capture, /idea, /task, /memory, /doc). The client router
+// resolves the path and fetches data from the matching /api endpoint.
 func (s *Server) handleAppIndex(w http.ResponseWriter, r *http.Request) {
 	data, err := fs.ReadFile(s.options.Assets, "index.html")
 	if err != nil {
@@ -223,14 +208,6 @@ func (s *Server) handleAppIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(data))
-}
-
-func (s *Server) render(w http.ResponseWriter, name string, data any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	if err := templates.ExecuteTemplate(w, name, data); err != nil {
-		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
-	}
 }
 
 // writeJSON encodes v as the response body. The dashboard projections are the
@@ -464,7 +441,6 @@ type pageData struct {
 	Title          string
 	Project        string
 	Snapshot       string
-	CSS            template.CSS
 	Stats          pageStats
 	NextAgent      []taskView
 	NextHuman      []taskView
@@ -610,7 +586,6 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		Title:    s.title(snapshot),
 		Project:  s.projectLabel(snapshot),
 		Snapshot: now.UTC().Format(time.RFC3339),
-		CSS:      dashboardCSS,
 	}
 	page.Stats = pageStats{
 		Scope:  len(vs.ids),

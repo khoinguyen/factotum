@@ -119,3 +119,35 @@ func TestGroomReviewRejectsBadInput(t *testing.T) {
 		t.Fatal("unknown session error = nil, want an error")
 	}
 }
+
+// TestGroomReviewNeedsReworkReassertsBlock guards the gate against going
+// silently open: a produced task moved out of blocked (started) is re-blocked by
+// a repeated needs-rework, and the reported set matches the real graph state.
+func TestGroomReviewNeedsReworkReassertsBlock(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("idea", "create", "-p", projectID, "-t", "Maybe cache")
+	sessionID, producedID := seedGroomSession(t, r, projectID, cfgPath, "Extract cache module")
+
+	r.run("--config", cfgPath, "groom", "review", sessionID, "--verdict", "needs-rework", "-b", "Wrong boundary.")
+	r.run("--config", cfgPath, "task", "start", producedID)
+	if got := r.run("--config", cfgPath, "task", "get", producedID); !strings.Contains(got, "(in_progress)") {
+		t.Fatalf("task start did not move the produced task out of blocked:\n%s", got)
+	}
+
+	out := r.run("--config", cfgPath, "groom", "review", sessionID, "--verdict", "needs-rework", "-b", "Still wrong.")
+	if !strings.Contains(out, "blocked: "+producedID) {
+		t.Fatalf("re-review did not report the re-asserted block:\n%s", out)
+	}
+	if got := r.run("--config", cfgPath, "task", "get", producedID); !strings.Contains(got, "(blocked)") {
+		t.Fatalf("a repeated needs-rework left the gate open:\n%s", got)
+	}
+	dataDir := filepath.Dir(r.path)
+	session, err := groom.ReadSession(dataDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(session.Blocked) != 1 || session.Blocked[0] != producedID {
+		t.Fatalf("manifest blocked = %v, want [%s]", session.Blocked, producedID)
+	}
+}

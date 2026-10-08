@@ -185,6 +185,23 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    task-named workspace, so the primary workspace stays chief + dashboard; keep its worktrees — never
    delete work handed to Khoi.
 
+## After grooming: dispatch the architecture review
+
+A grooming session ends with a feature's spec, plan, and tech design. Before any of the feature is
+built, dispatch the **architecture reviewer** on those docs — it is a role like any other, so use
+the short kickoff `opencode --prompt "load the architecture-reviewer skill; you are
+architecture-reviewer-<session>" --auto`. The reviewer reads the session's docs
+(`ft groom show <session>`), records its findings on the origin idea, and records one verdict with
+`ft groom review <session> --verdict ...`.
+
+- **`needs-rework` blocks the feature from build.** `ft groom review` blocks the tasks the session
+  produced; do not dispatch builders for them. Fix the findings and re-review.
+- **`approve` / `approve-with-changes` unblocks the build.** Carry on with the builder/reviewer
+  pair.
+
+Never skip the review to move faster: an unreviewed design that ships is the failure this role
+exists to prevent.
+
 ## Keep your own context small
 
 - Read **reports**, not diffs. Ask a subagent for a one-screen summary if the report is long.

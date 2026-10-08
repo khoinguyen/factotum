@@ -87,3 +87,48 @@ func TestArchitectureReviewerSkillReviewsDocsNotCode(t *testing.T) {
 		}
 	}
 }
+
+// TestArchitectureReviewerSkillWiresTheGroomingGate guards the grooming wiring:
+// dispatched on a session's docs, the reviewer records its findings on the
+// origin item and records one verdict with `ft groom review`, whose needs-rework
+// verdict blocks the feature from build.
+func TestArchitectureReviewerSkillWiresTheGroomingGate(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/architecture-reviewer/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"name the grooming review dispatch", "grooming review"},
+		{"read the session's docs", "ft groom show"},
+		{"record findings on the origin item", "origin item"},
+		{"record one verdict with ft groom review", "ft groom review"},
+		{"name the blocking verdict", "needs-rework"},
+		{"state the build gate", "blocks the feature"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("architecture-reviewer skill must %s (missing %q)", req.why, req.text)
+		}
+	}
+}
+
+// TestChiefSkillDispatchesArchitectureReviewAfterGroom guards the loop wiring:
+// after a grooming session produces feature docs, the chief dispatches the
+// architecture reviewer on them and a failing verdict blocks the build.
+func TestChiefSkillDispatchesArchitectureReviewAfterGroom(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/chief/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"dispatch the architecture reviewer after grooming", "after grooming"},
+		{"name the reviewer role", "architecture-reviewer"},
+		{"record the verdict with ft groom review", "ft groom review"},
+		{"block the build on a failing verdict", "blocks the feature from build"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("chief skill must %s (missing %q)", req.why, req.text)
+		}
+	}
+}

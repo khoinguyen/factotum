@@ -52,7 +52,11 @@ write.
 `app.MessageService` so a receiver on another host can message through the same
 project backend the dashboard reads. The verbs mirror the CLI: `POST send`,
 `GET inbox`, `GET get/<id>`, `POST read`, and the receiver protocol `POST
-ack|nack|register|claim|heartbeat|deregister`. Sends and reads both require the
+ack|nack|register|claim|heartbeat|deregister`. An item (`inbox` under
+`messages`, `get` under `message`, and `claim`) carries
+`id/from/to/task_id/body/reply_to/state/created_at/project` - a superset of the
+`ft msg inbox -o json` list entry, which adds `body`/`reply_to` so a remote
+reader need not fetch again. Sends and reads both require the
 shared serve token (`[serve] token` or `FACTOTUM_SERVE_TOKEN`) in the
 `Authorization: Bearer` header - private agent comms are not world-readable -
 and the transport is off when no token or no scoped project is configured

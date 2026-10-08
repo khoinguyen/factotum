@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -134,6 +134,35 @@ test("receiver acks failed when injection throws", async () => {
   await receiver.dispose();
 });
 
+test("dispose waits for an in-flight register and deregisters", async () => {
+  let releaseRegister;
+  const calls = [];
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    if (argv[2] === "register") {
+      await new Promise((resolve) => { releaseRegister = resolve; });
+      return { code: 0, stdout: JSON.stringify({ run_id: "run-9" }), stderr: "" };
+    }
+    return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+  };
+  const receiver = createFactotumReceiver({
+    config: BASE_CONFIG,
+    run,
+    inject: async () => {},
+    setIntervalFn: () => 1,
+    clearIntervalFn: () => {},
+  });
+  const started = receiver.start();
+  await waitFor(() => releaseRegister !== undefined);
+  const disposed = receiver.dispose();
+  releaseRegister();
+  await Promise.all([started.catch(() => {}), disposed]);
+  assert.ok(
+    calls.some((c) => c.includes("msg agent deregister --run run-9")),
+    "dispose deregisters the run whose register was still in flight",
+  );
+});
+
 test("makeInjector sends a user message as a follow-up", async () => {
   const calls = [];
   const pi = { sendUserMessage: async (text, options) => calls.push({ text, options }) };
@@ -188,10 +217,11 @@ test("the factory wires session_start to register and session_shutdown to deregi
   process.env.CALLS = callsPath;
   try {
     factotumMsg(pi);
+    // session_start resolves once registration completes, so the shutdown below
+    // cannot race the run id.
     await handlers.get("session_start")();
-    await waitFor(() => existsSync(callsPath) && readFileSync(callsPath, "utf8").includes("msg agent register"), 5000);
-  } finally {
     await handlers.get("session_shutdown")();
+  } finally {
     for (const [key, value] of previous) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

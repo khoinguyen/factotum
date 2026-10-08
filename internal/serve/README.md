@@ -62,7 +62,10 @@ shared serve token (`[serve] token` or `FACTOTUM_SERVE_TOKEN`) in the
 and the transport is off when no token or no scoped project is configured
 (403), so an unauthenticated request never reaches the store. The claim
 endpoint returns `{"found":false}` with 200 for an empty long-poll, so a receiver
-loop distinguishes "nothing yet" from an error.
+loop distinguishes "nothing yet" from an error. The shipped receivers (opencode
+plugin, pi extension) take this transport when `FACTOTUM_MSG_URL` points at the
+hub, authenticating with `FACTOTUM_SERVE_TOKEN`, and fall back to the local `ft`
+binary when it is unset.
 
 ## Reason-chip wrapping (t-mw2k6rwonj)
 

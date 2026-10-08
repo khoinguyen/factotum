@@ -247,7 +247,7 @@ ft msg send <address|ticket-id> <text> -p <project>; ft msg inbox -p <project> [
 ft msg agent register|claim|ack|nack|heartbeat|deregister ...   # receiver protocol, JSON in/out
 ```
 
-A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`); `ft msg read` is idempotent and `--from` defaults to the configured actor. A receiver registers with `ft msg agent register`, long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode harness stages that plugin (per the `FACTOTUM_*` env it sets) when the run has an actor. For a receiver on another host, the same protocol rides `ft serve` at `/api/msg/*` (token-gated by `serve.token`); a local `ft msg ...` and a remote HTTP client are two transports over one store.
+A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`); `ft msg read` is idempotent and `--from` defaults to the configured actor. A receiver registers with `ft msg agent register`, long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode harness stages that plugin (per the `FACTOTUM_*` env it sets) when the run has an actor. For a receiver on another host, the same protocol rides `ft serve` at `/api/msg/*` (token-gated by `serve.token`); the shipped receivers take the HTTP transport when `FACTOTUM_MSG_URL` points at a hub (auth via `FACTOTUM_SERVE_TOKEN`) and fall back to the local `ft` binary when it is unset. A local `ft msg ...` and a remote HTTP client are two transports over one store.
 
 ## Diagnose the optional subsystems
 

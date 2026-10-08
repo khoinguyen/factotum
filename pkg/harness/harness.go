@@ -30,6 +30,12 @@ const (
 	EnvTask    = "FACTOTUM_TASK_ID"
 	EnvBin     = "FACTOTUM_BIN"
 	EnvHarness = "FACTOTUM_HARNESS"
+	// EnvMsgURL is the base URL of a remote `ft serve` hub a receiver speaks the
+	// token-gated HTTP transport to. With it unset the receiver falls back to the
+	// local ft store.
+	EnvMsgURL = "FACTOTUM_MSG_URL"
+	// EnvServeToken is the bearer token authenticating the receiver to that hub.
+	EnvServeToken = "FACTOTUM_SERVE_TOKEN"
 )
 
 // MessagingEnabled reports whether env carries enough receiver configuration to

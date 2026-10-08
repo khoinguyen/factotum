@@ -233,8 +233,10 @@ ft serve --bind 0.0.0.0:8484      # reachable from another device
 ```
 
 Capture is enabled by the machine-scoped `serve.token` (or `FACTOTUM_SERVE_TOKEN`); with no token it
-is disabled and the read side stays open. The app is embedded at `/` — `mise run build-web` rebuilds
-it into `web/dist`.
+is disabled and the read side stays open. `serve.url` (or `FACTOTUM_MSG_URL`) names a hub's base URL:
+`ft run` hands it and `serve.token` to a launched receiver, so a remote agent reaches the message
+transport over `/api/msg/*` instead of the local store. The app is embedded at `/` — `mise run
+build-web` rebuilds it into `web/dist`.
 
 ## Commands (reference)
 

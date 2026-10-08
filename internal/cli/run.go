@@ -443,6 +443,8 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		Args:             sel.args,
 		Prompt:           prompt,
 		Actor:            d.currentActorID(cmd.Context()),
+		MsgURL:           d.Config.Serve.URL,
+		ServeToken:       d.Config.Serve.Token,
 		Interactive:      interactive,
 	})
 	progress.stop()
@@ -538,6 +540,8 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 			Model:            sel.model,
 			Args:             sel.args,
 			Actor:            d.currentActorID(ctx),
+			MsgURL:           d.Config.Serve.URL,
+			ServeToken:       d.Config.Serve.Token,
 		})
 	}
 

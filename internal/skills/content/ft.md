@@ -314,14 +314,14 @@ staged receiver extension loads.
 
 An isolating backend imposes a policy on the run. The OpenShell policy
 (`pkg/isolation/openshell`, checked-in template `policy.yaml`) is deny-by-default:
-the sandbox reaches no host until the project opts in, so OpenCode's phone-home
-to `models.opencode.ai` and `registry.npmjs.org` stays denied. The workload runs
-as a non-root identity, filesystem access is limited to read-only system paths
-plus the workdir and `/tmp`, and no credential value is placed in the sandbox: a
-configured credential is attached through a provider that injects a placeholder.
-The policy advisor stays `manual`; agent-authored rules are never auto-approved.
+the sandbox reaches no host until a project opts in, except the model provider
+endpoint (`openrouter.ai` for OpenRouter), which the credential provider attaches
+from `run.provider` + `run.credential_env`. OpenCode's phone-home to
+`models.opencode.ai` and `registry.npmjs.org` is optional and stays denied until a
+project opts in. The workload runs non-root with no credential value in the
+sandbox; filesystem and the `manual` advisor are pinned by `policy.yaml`.
 
-A project opts in to the hosts it needs by committing
+A project opts in to extra hosts by committing
 `.factotum/openshell-policy.yaml`:
 
 ```yaml
@@ -332,8 +332,8 @@ allow_hosts:
 
 Only `allow_hosts` is honored. Any other key is rejected, so a project can widen
 egress but never weaken the identity, filesystem, or credential defaults. `ft run`
-loads the policy next to the active project config (a custom `-c` uses its sibling
-`openshell-policy.yaml`); with no policy file present it warns that egress is deny-all.
+resolves it next to the active project config (a custom `-c` uses its sibling
+`openshell-policy.yaml`); with no policy file it warns that egress is deny-all.
 
 `ft run <task>` drives one task end-to-end: it resolves the task's repositories into a
 workspace, runs the harness with the task as its prompt, and reflects progress into the store.

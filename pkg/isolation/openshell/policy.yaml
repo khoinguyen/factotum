@@ -5,8 +5,11 @@
 #
 #   - Egress is deny-by-default: there is deliberately no network_policies
 #     section, so the sandbox reaches nothing until a project opts in by host
-#     name (see .factotum/openshell-policy.yaml). In particular OpenCode's
-#     phone-home to models.opencode.ai and registry.npmjs.org stays denied.
+#     name (see .factotum/openshell-policy.yaml). The model provider endpoint is
+#     the one exception: it is attached by the OpenShell credential provider
+#     (from run.provider), not listed here. OpenCode's phone-home to
+#     models.opencode.ai and registry.npmjs.org is optional and stays denied
+#     until a project opts in.
 #   - The shipped OpenCode image declares no USER, so a non-root identity is
 #     mandatory; run_as_user/run_as_group are required and root is rejected.
 #   - No credential value ever appears here. Secrets are attached through an

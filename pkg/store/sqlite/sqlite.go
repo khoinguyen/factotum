@@ -79,7 +79,7 @@ const migrateConsent = "yes"
 
 // currentSchemaVersion is the schema version this binary writes. It is a var so
 // tests can exercise pending and failing migrations.
-var currentSchemaVersion = 7
+var currentSchemaVersion = 8
 
 // nowFunc is overridable in tests so backup names are deterministic.
 var nowFunc = time.Now
@@ -98,6 +98,7 @@ var migrations = []migration{
 	{version: 5, apply: migrateV5},
 	{version: 6, apply: migrateV6},
 	{version: 7, apply: migrateV7},
+	{version: 8, apply: migrateV8},
 }
 
 // migrateV1 creates the base schema and the pre-release additive columns.

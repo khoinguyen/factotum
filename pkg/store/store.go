@@ -238,6 +238,10 @@ type PipelineFilter struct {
 // MessageRepo: Create/Get/List/Update plus an atomic Claim. See
 // docs/up/design.md §7.
 type PipelineRepo interface {
+	// Create stores a new pipeline. It returns ErrAlreadyExists when the id is
+	// taken, or when another pipeline already drives the same (project,
+	// capture): one pipeline per capture, so a repeated capture cannot start a
+	// second one.
 	Create(ctx context.Context, pipeline *core.Pipeline) error
 	Get(ctx context.Context, id core.PipelineID) (*core.Pipeline, error)
 	List(ctx context.Context, filter PipelineFilter) ([]*core.Pipeline, error)

@@ -39,29 +39,60 @@ func migrateV7(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
+// migrateV8 adds a UNIQUE(project_id, capture_id) index so the store enforces
+// one pipeline per capture. Before it existed, two processes could each create
+// a pipeline for the same capture (design §4's cross-process idempotency race);
+// Create's explicit check catches the common case and this index is the hard
+// backstop. The pipelines table is new in v7, so there are no pre-existing
+// duplicates for the index to reject.
+func migrateV8(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, "CREATE UNIQUE INDEX IF NOT EXISTS idx_pipelines_capture_unique ON pipelines(project_id, capture_id)"); err != nil {
+		return fmt.Errorf("pipelines capture unique index: %w", err)
+	}
+	return nil
+}
+
 type pipelineRepo struct{ db *sql.DB }
 
 func (r *pipelineRepo) Create(ctx context.Context, pipeline *core.Pipeline) error {
 	if err := pipeline.Validate(); err != nil {
 		return err
 	}
-	exists, err := rowExists(ctx, r.db, "SELECT 1 FROM pipelines WHERE id = ?", string(pipeline.ID))
+	// Begin an immediate transaction (the DSN sets _txlock=immediate) so the
+	// existence checks and the insert are atomic: a concurrent create for the
+	// same capture cannot slip a second row past the checks.
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin pipeline create: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	exists, err := rowExistsTx(ctx, tx, "SELECT 1 FROM pipelines WHERE id = ?", string(pipeline.ID))
 	if err != nil {
 		return err
 	}
 	if exists {
 		return fmt.Errorf("%w: pipeline %s", core.ErrAlreadyExists, pipeline.ID)
 	}
+	captureTaken, err := rowExistsTx(ctx, tx,
+		"SELECT 1 FROM pipelines WHERE project_id = ? AND capture_id = ?",
+		string(pipeline.ProjectID), string(pipeline.CaptureID))
+	if err != nil {
+		return err
+	}
+	if captureTaken {
+		return fmt.Errorf("%w: pipeline for capture %s in project %s", core.ErrAlreadyExists, pipeline.CaptureID, pipeline.ProjectID)
+	}
 	data, err := encode(pipeline)
 	if err != nil {
 		return err
 	}
-	if _, err := r.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		"INSERT INTO pipelines (id, project_id, capture_id, state, gate, created_at, updated_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		string(pipeline.ID), string(pipeline.ProjectID), string(pipeline.CaptureID), string(pipeline.State), string(pipeline.Gate), formatTimeKey(pipeline.CreatedAt), formatTimeKey(pipeline.UpdatedAt), data); err != nil {
 		return fmt.Errorf("insert pipeline: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (r *pipelineRepo) Get(ctx context.Context, id core.PipelineID) (*core.Pipeline, error) {

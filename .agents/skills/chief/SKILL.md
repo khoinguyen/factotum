@@ -152,7 +152,9 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    - to the builder: the task id, the branch `ft/<t>-<short-brief>`, that `reviewer-<t>` will review
      the PR, and that the chief is `chief` (find it with `cmux find-window --content chief`, or use the
      ref you give them).
-   - to the reviewer: the task id, that `builder-<t>` will send the hand-off, and the same chief note.
+   - to the reviewer: the task id, that the **handoff comes from `builder-<t>`** (his `cmux-msg.sh`
+     message once the PR is pushed), that your kickoff only wires him in, not the handoff — so wait
+     for the builder, and do not check the branch or ping him before it — and the same chief note.
 5. **Wait.** They run the build → hand-off → triage → verdict loop between themselves. Do not read
    their diffs. Wait for the builder (or reviewer) to report back to you. They run unattended and must
    never block on an interactive prompt; if one stalls on a question, nudge it with `cmux-msg.sh

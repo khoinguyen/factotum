@@ -36,8 +36,8 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 		Short: "Run a grooming session over a project's ideas and tasks",
 		Long: "Run a task-less grooming session over every repository of the project. `ft groom`\n" +
 			"resolves the scope - the named items, or by default every open idea plus every open\n" +
-			"ungroomed task - injects a session kickoff naming the scope and the absolute paths of\n" +
-			"the report and deferred-questions files, runs the durable grooming prompt through the\n" +
+			"ungroomed task - injects a session kickoff naming the scope and the workspace-relative\n" +
+			"paths of the report and deferred-questions files, runs the durable grooming prompt through the\n" +
 			"run service, and records the two outputs as doc artifacts. With --unattended the kickoff\n" +
 			"tells the session there is no product owner: it defers every product question and still\n" +
 			"finishes agent-ready, and the run fails if any scoped item is left neither agent-ready\n" +

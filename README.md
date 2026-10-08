@@ -1,254 +1,237 @@
 # Factotum
 
-A toolset for managing agentic coding work: projects (which may span many repositories), the
-task graph of mixed human and agent work, milestones, and the specs, docs, and memory around them.
+`ft` manages agentic coding work: **projects** (which may span many repositories), the **task graph**
+of mixed human and agent work, and the specs, docs, and memory around them. It is agent-first — it
+ranks the next tasks to do, marks which ones an agent may start, and records every mutation.
 
-> Status: early, but working end to end. The `ft` CLI manages projects, actors, tasks,
-> milestones, artifacts, and an append-only event log, with pluggable storage backends and
-> pluggable graph renderers.
+> Status: early, but working end to end. Storage backends, next-task rankers, output renderers,
+> agent harnesses, and isolation backends are all pluggable.
 
 ## Why
 
-A coding project rarely maps to one repository. It may span a backend, a frontend, a data repo,
-and a devops repo — plus the humans and agents working across all of them. Factotum is the
-generalist that keeps that work ordered: what exists, what depends on what, what is ready next,
-and who is waiting on whom.
+A coding project rarely maps to one repository. It may span a backend, a frontend, a data repo, and
+a devops repo — plus the humans and agents working across all of them. Factotum is the generalist
+that keeps that work ordered: what exists, what depends on what, what is ready next, and who is
+waiting on whom.
+
+## Install
+
+Prerequisites: [mise](https://mise.jdx.dev) (it installs the pinned Go toolchain, linter, Node, and
+pnpm). From a clone:
+
+```sh
+git clone <this repo> factotum && cd factotum
+mise install       # pinned Go, golangci-lint, Node, and pnpm
+mise run build     # -> ./bin/ft (also builds the embedded web UI)
+mise run install   # -> ~/.local/bin/ft
+```
+
+`mise run build` writes `./bin/ft` only; `mise run install` is the separate step that updates the
+installed CLI. Both stamp the git SHA into `ft version`, so a binary is identifiable. Use `./bin/ft`
+(or put `./bin` on your `PATH`) if you did not install.
 
 ## Quickstart
 
+This registers a project in a per-project store and creates your first task. It uses the installed
+`ft`; the same commands work through `./bin/ft`.
+
+<!-- quickstart:begin -->
 ```sh
-mise install
-mise run ci
+# Register this directory as a project: writes ~/.factotum/config.toml and
+# pins the project id in ./.factotum/config.toml.
+ft init -p acme
 
-# Build the CLI (binary: bin/ft)
-mise run build
+# Create your first task and capture its id.
+task=$(ft task create -t "Try Factotum" -b "My first task." | sed -n 's/^task_id: //p')
 
-# Install it to ~/.local/bin/ft (explicit; build never touches the installed CLI)
-mise run install
-
-# Use the in-memory backend, or pick jsondir / jsonfile / sqlite
-./bin/ft --store sqlite --store-opt path=.factotum/factotum.db project create "Acme"
+# See it, read it back, and rank what to start next.
+ft task list
+ft task get "$task"
+ft task next
 ```
+<!-- quickstart:end -->
 
-## Concepts
+`ft init -p <name>` slugs the name into a project id, or derives one from the git remote (else the
+directory name) when no name is given. Registration makes the project the default, so later commands
+need no `-p`. See [Projects and repositories](#projects-and-repositories) for what it writes.
 
-- **Project** — spans many repositories. Each repository carries a name, optional URL, local
-  path, and a **brief** describing its purpose (`--repo name=<k>,url=,path=,brief=`), managed
-  with `project repo create|list|update|delete`.
-- **Actor** — a human or an agent, registered once and referenced by ID or name. The ID is the
-  slug of the name (`Khoi` → `khoi`, `Claude Code` → `claude-code`).
-- **Task** — a unit of work with a body (`--body` or `--body-file`), dependencies, status, an
-  optional **repository** (`--repo <name>`, one of the project's repos), assignee, waiting-on,
-  notes, and labels.
-- **Milestone** — a task of kind `milestone` that gates a release.
-- **Resolution** — a regular task unblocks its dependents when it is *resolved*
-  (`ready_for_review`, `done`, or `cancelled`); a milestone unblocks only when explicitly `done`.
-- **Artifact** — a spec, doc, or memory note, searchable across a project.
-- **Event** — every mutation is recorded in an append-only audit log.
+## The core loop
 
-## Example session
+A task moves `todo → in_progress → ready_for_review → done`. The status verbs are the whole
+interface; run `--help` on any of them, or follow the `Next:` block each command prints.
 
 ```sh
-ft actor create --kind agent claude
-ft actor create --kind human Khoi
-
-PID=$(ft project create "Acme" \
-  --repo "name=backend,url=git@example.com:acme/backend.git,path=repos/backend,brief=Go API service" \
-  --repo "name=web,path=repos/web,brief=Next.js frontend" | sed -n 's/^project: //p')
-T1=$(ft task create --project "$PID" --title "Write the spec" | sed -n 's/^task_id: //p')
-T2=$(ft task create --project "$PID" --title "Build the API" --dep "$T1" | sed -n 's/^task_id: //p')
-M=$(ft milestone create --project "$PID" --title "v0.1 release" | sed -n 's/^task_id: //p')
-ft task create --project "$PID" --title "Deploy v0.1" --dep "$M"
-
-# What can the agent or a human pick up next?
-ft task next --project "$PID" --for claude
-ft graph render --project "$PID" --format agent
-
-# Agent finishes an agent task and submits it for review; dependents unblock.
-ft task review "$T1"
-
-# Human-readable report for review
-ft graph render --project "$PID" --format html --layout tree --out dag.html
-
-# Audit trail
-ft event list --project "$PID"
+ft task start <task>    # todo -> in_progress
+ft task review <task>   # in_progress -> ready_for_review (unblocks dependents)
+ft task done <task>     # accepted and finished
+ft task reopen <task>   # back to todo, e.g. after a failed review
 ```
 
-## Commands
+The verbs also work at the top level: `ft done <task>` == `ft task done <task>` ==
+`ft task set <task> status=done`. Other statuses: `ft task block` / `cancel`, and `snooze` to park
+work out of ranking (`--until +7d`, `--until-task <task>`, or `--indefinite`).
+
+Everything else you need while working:
+
+- **Dependencies** gate readiness: `--dep <blocking-task>` on create, or `ft task dep create`. A
+  task is ready only once its dependencies are *resolved* (`ready_for_review`, `done`, or
+  `cancelled`); a milestone unblocks only when explicitly `done`. Cycles are rejected.
+- **Claim** the highest-ranked ready task instead of copying an id: `ft task claim --for <actor>
+  [--start]`.
+- **Notes** are history attached to a task: `ft task note create <task> -b "..." [--link pr=<url>]`.
+  A note never changes a grooming verdict — fold a decision into the task **body** to make it count.
+- **Groomed** is what an agent may start: a task with at least one acceptance criterion, marked
+  explicitly. Only groomed work appears in `ft task next --for <agent> --groomed`.
+
+```sh
+ft task create -p acme -t "Add retry to the uploader" \
+  --groomed --acceptance "a flaky upload retries then succeeds (test)" \
+  --body "Context and acceptance criteria." --dep <blocking-task>
+ft task next --for claude --groomed   # the buildable shortlist for an agent
+```
+
+Suggestions are context-aware and go to **stderr**, so pipes stay clean. Suppress them with
+`--no-hints`, `FACTOTUM_NO_HINTS=1`, or `no_hints = true` in config.
+
+## Projects and repositories
+
+Configuration has two scopes, merged `env > project file > user file > defaults`:
+
+- `~/.factotum/config.toml` — machine-scoped, not committed: `default_project`, a
+  `[projects.<id>]` registry mapping each project to its `db_path`, and machine-only settings.
+- `./.factotum/config.toml` — project-scoped, committed: `project = "<id>"` plus optional overrides.
+  Machine-local paths must never appear here.
+
+`ft init` wires both up; `ft project` and `ft project repo` manage them afterward:
+
+```sh
+ft init -p acme                       # register the current directory as project "acme"
+ft project create acme \
+  --repo "backend,url=git@github.com:acme/backend.git,brief=Go API service" \
+  --repo "web,brief=Next.js frontend"
+ft project repo create acme web --url git@github.com:acme/web.git --path repos/web
+ft project repo list acme
+ft project list
+```
+
+A **project** spans repositories; each **repository** carries a name, optional URL and local path,
+and a **brief**. Tasks may target one repo with `-r/--repo <name>`. Any command that takes
+`-p/--project` falls back to the configured default; mutating commands error when none is set, while
+list/filter commands fall back to all.
+
+## Capture ideas and bugs
+
+Ideas and bugs are non-executable captures over the same storage as tasks. They are never in
+`task next` or the ready set, and are not assignable. Refining one creates a linked executable task
+and keeps the capture as history.
+
+```sh
+ft idea create -p acme -t "A half-formed thought" -b "what if?"
+ft idea promote <idea>          # groom into an executable task linked to the idea
+ft bug create -p acme -t "It crashes on save" -b "steps to reproduce"
+ft bug triage <bug>             # triage into an executable task linked to the bug
+ft idea list && ft bug list
+```
+
+`ft task promote` is the peer of `ft idea promote` / `ft bug triage` for a task of kind `idea` or
+`bug`. Both surfaces also have `list`, `search`, and `get`.
+
+## Run agents
+
+`ft run <task>` resolves the task's repositories into a workspace, prepares the selected **isolation
+backend**, runs the selected **harness**, captures the output, and reflects progress into the store.
+A successful run moves the task to `ready_for_review`.
+
+```sh
+ft run <task> --sandbox local --harness opencode --allow-host   # dev-only, unsandboxed
+ft run --goal <task|milestone> --sandbox openshell --harness opencode --max-tasks 5
+```
+
+- `--sandbox` and `--harness` resolve flag > `FACTOTUM_RUN_*` > committed project `[run]` > machine
+  `[run]`. On a terminal an unset one prompts once and saves the answer; non-interactively, an
+  unset one is an error. The `local` backend is unsandboxed and must be opted in explicitly
+  (`--allow-host` or `run.allow_host`).
+- Sandboxes: `local` (dev only), `openshell`, and `docker`. Harness: `opencode`. An isolating
+  backend runs the harness's image as a non-root user under its policy; a configured credential is
+  attached as a provider placeholder, never placed in the sandbox.
+- `--goal` repeatedly runs the highest-ranked **agent-ready, groomed, on-path** task until the goal
+  is reached, work stalls, or `--max-tasks` is exhausted. A task goal resolves on its own; a
+  milestone is a human gate, so the loop stops `no_ready_work` until a human closes it.
+- With `--prompt-file`/`--prompt-artifact` and no task id, `ft run` runs the prompt once over every
+  repository and writes nothing to the graph.
+
+The machine-scoped `[run]` table holds the launcher settings (`sandbox`, `harness`, `workspace`,
+`model`, `args`, `refresh`, `allow_host`, `provider`, `credential_env`):
+
+```toml
+# ~/.factotum/config.toml — machine-scoped.
+[run]
+sandbox = "openshell"       # or docker; local is unsandboxed and needs allow_host
+harness = "opencode"
+provider = "openrouter"
+credential_env = "OPENROUTER_API_KEY"
+```
+
+Only `sandbox` and `harness` are read from a committed project `[run]` (project intent); host-scoped
+settings (`workspace`, `allow_host`, credentials) are read from the machine file only, so a committed
+file never carries a host path or opts into the unsandboxed backend.
+
+## Groom a project
+
+`ft groom` runs a task-less session over the project's open ideas and ungroomed tasks, using the
+durable prompt at `docs/grooming/prompt.md`, and records its report and deferred questions as doc
+artifacts. It resolves sandbox and harness exactly like `ft run`.
+
+```sh
+ft groom                 # every open idea + ungroomed task
+ft groom <idea|task>...  # a specific scope
+ft groom --unattended    # no product owner: defer product questions, still finish agent-ready
+ft groom list            # past sessions
+ft groom show <session>  # a session's report, deferred questions, and produced tasks
+```
+
+## Serve the dashboard
+
+`ft serve` is a live, idea-centric dashboard over the graph (reads are open and SSE-live; the read
+pages have no mutating endpoints). Its `/capture` page turns a sentence into a stored idea or bug,
+gated by a shared token.
+
+```sh
+ft serve                          # 127.0.0.1:8484, configured project
+ft serve --all                    # every registered project
+ft serve --bind 0.0.0.0:8484      # reachable from another device
+```
+
+Capture is enabled by the machine-scoped `serve.token` (or `FACTOTUM_SERVE_TOKEN`); with no token it
+is disabled and the read side stays open. The app is embedded at `/` — `mise run build-web` rebuilds
+it into `web/dist`.
+
+## Commands (reference)
 
 | Area | Commands |
 | --- | --- |
-| Project | `project create`, `project list`, `project get`, `project delete` |
-| Repositories | `project repo create`, `repo list`, `repo update`, `repo delete` |
+| Setup | `init [-u\|-p [name]]`, `doctor`, `feedback create`, `version`, `skill list\|get\|lint` |
+| Project | `project create\|list\|get\|delete`, `project repo create\|list\|update\|delete` |
 | Actor | `actor create --kind human\|agent`, `actor list` |
-| Task | `task create --repo <name>`, `task list --repo <name>`, `task get`, `task update`, `task set field=value...`, `task apply -f`, `task edit`, `task delete` |
-| Snooze | `task snooze --until <date>\|--until-task <task>\|--indefinite`, `task unsnooze` |
-| Dependencies | `task dep create`, `task dep delete` (cycles are rejected) |
-| Assignment | `task assign --actor <ref>` / `--unassign` |
-| Status | `task start\|review\|done\|reopen\|block\|cancel`, or the top-level shortcuts `ft start\|review\|done\|reopen\|block\|cancel` |
-| Notes | `task note create --body ... [--link kind=url]` |
-| Ranking | `task next -p <project> \| -a/--all [--for <actor>] [--repo <name>] [--toward <task>] [--rank unblock\|milestone\|toward\|composite]` |
-| Milestone | `milestone create`, `milestone list`, `milestone done` |
-| Artifacts | `doc create --kind spec\|doc\|memory`, `doc list`, `doc search` |
-| Rendering | `graph render --format agent\|json\|tree\|html\|dot\|mermaid [--layout tree\|waves]` |
+| Task | `task create`, `task list`, `task get`, `task update`, `task set field=value...`, `task search`, `task context`, `task apply`, `task edit`, `task delete` |
+| Lifecycle | `task start\|review\|done\|reopen\|block\|cancel`, `task claim`, `task assign`, `task snooze\|unsnooze`, `task wait` |
+| Graph | `task dep create\|delete`, `task next`, `graph render --format summary\|agent\|json\|tree\|html\|dot\|mermaid` |
+| Grooming | `task check`, `task decide`, `task promote`, `groom [item...]`, `groom list\|show` |
+| Notes | `task note create [--system]` |
+| Capture | `idea create\|list\|get\|search\|promote`, `bug create\|list\|get\|search\|triage` |
+| Artifacts | `doc create --kind spec\|doc\|memory`, `doc list\|get\|search`, `memory create\|list\|get\|update\|delete\|search\|context\|reindex` |
+| Milestone | `milestone create\|list\|done` |
+| Run & serve | `run`, `groom`, `serve` |
 | Audit | `event list` |
 
-Global flags: `-c/--config`, `--store`, `--store-opt key=value`, `--actor`, `-o/--output text|json|yaml`,
-`--no-hints`.
+Global flags: `-c/--config`, `--user-config`, `--store`, `--store-opt key=value`, `--actor`,
+`-o/--output text|json|yaml`, `--full`, `--no-hints`. Common shorthands: `-p/--project`,
+`-t/--title`, `-b/--body`, `-r/--repo`, `-k/--kind`, `-s/--status`, `-d/--dep`, `-n/--limit`.
+`ft task next` takes either `-p/--project` or `-a/--all`, never both.
 
-Common flags carry shorthands: `-p/--project`, `-t/--title`, `-b/--body`, `-r/--repo`, `-k/--kind`,
-`-s/--status`, `-d/--dep`, `-n/--limit`, and `-a` (`--all` on `task next`, `--actor` on `task
-assign`). `task next` takes either `-p/--project` or `-a/--all` (ready tasks across every project),
-never both.
-
-Every command that takes `-p/--project` falls back to the configured project (`project` in the
-project file, or `default_project` in the machine file) when the flag is omitted; mutating commands
-error if no default is configured.
-
-Text output follows one convention:
-
-- commands that report a single result print yaml-like `key: value` lines in
-  `id/action/kind/title/status/project/repo` order, ending with `project` then `repo`
-  (e.g. `task_id: t-xxx`, `created: true`, `title: ...`, `project: factotum`,
-  `repo: github:org/repo`);
-- list commands print a table with `PROJECT` and, where relevant, a trailing `REPO` column;
-- `get` prints a human-readable block, including the `project` and shortened `repo`.
-
-Repository references are shortened for display: `github:org/repo` (from a full `https`/scp URL or
-an already-short `provider:org/repo`), `Local` for a local checkout, and `-` when absent. On a
-terminal the shortened form is a clickable link to the browsable URL; piped output stays plain.
-
-`-o json` / `-o yaml` remain the machine-readable interfaces and are unaffected.
-
-Invalid invocations (wrong argument count, or a missing required flag) print the command's help to
-stderr and exit with status `2`, instead of a terse one-line error.
-
-`task set <task> field=value...` assigns several fields at once, validating each type: `status`,
-`kind`, `priority` (integer), `repo`, `title`, `labels` (comma-separated), `body`, and `not_before`.
-Long text can come from a file (`body=@notes.md`) or stdin (`body=-`). `not_before` accepts a date
-(`2026-10-01`), an RFC3339 timestamp, or a relative offset (`+7d`, `+36h`, `+1w`); an empty value
-clears it. A task whose `not_before` is in the future is excluded from readiness and `task next`
-until the time passes, then becomes ready with no manual step.
-
-`task get -o json|yaml` prints a round-trippable task document. Edit it and feed it back with
-`task apply -f <file>` (format inferred from the extension; override with `--format`), or open it
-in `$EDITOR` with `task edit <task>`. `id` and `project_id` are immutable, and command-managed
-relations (`assignee`, `deps`, `waiting_on`) may be echoed back unchanged but any modification is
-rejected. The document also carries a read-only `base` block: the field values it was derived from.
-`task apply` three-way merges the document against that base and the stored task, so a document
-produced before a concurrent change still applies when the two touched different fields; a field
-both changed to different values fails, naming it (e.g. `conflicting fields: title`). A
-hand-written document without a `base` is compared directly to the current task, and its
-`updated_at` remains a compare-and-swap token (`created_at` is carried for information only).
-
-## Search
-
-`ft doc search <query>` and `ft memory search <query>` share one lexical
-full-text search over artifact titles and bodies. The query is split into terms
-on non-alphanumeric characters; every term must match, case-insensitively, as a
-token prefix — `terra` matches `terraform`, and `infra-as-code` matches `infra`,
-`as`, and `code`. Results are ranked by relevance with title matches ahead of
-body-only matches, then by title and id, so the order is deterministic. An empty
-query returns everything in scope. On SQLite this is an FTS5 index with bm25
-ranking; the memory and JSON backends apply the same rules, so every backend
-returns the same order. No network or embeddings are involved.
-
-### Vector recall (optional `[embed]`)
-
-Configuring the machine-scoped `[embed]` table adds vector recall on top of the lexical
-search above, so `ft memory search` also finds paraphrases that share no tokens. The
-recommended model is `nomic-embed-text` served by a local Ollama — small, fast, and no
-API key:
-
-```toml
-[embed]
-provider = "ollama"
-endpoint = "http://127.0.0.1:11434"
-model = "nomic-embed-text"
-```
-
-The same selection is available through the environment, without editing a file:
-`FACTOTUM_EMBED_PROVIDER`, `FACTOTUM_EMBED_ENDPOINT`, `FACTOTUM_EMBED_MODEL` (plus
-`FACTOTUM_EMBED_COMMAND`). Providers are `ollama` and `openai` (any OpenAI-compatible
-endpoint, including OpenAI itself), and `command` for a one-shot stdio embedder.
-
-Alternatives: `mxbai-embed-large`, or `bge-m3` when multilingual recall matters, both
-local via Ollama; `text-embedding-3-small` against an OpenAI-compatible endpoint
-(`provider = "openai"`, with `api_key`). Only models whose name contains `nomic` get
-model-specific query/document prefixes (`search_query:` / `search_document:`,
-`pkg/embed/embed.go`); every other model is embedded unprefixed.
-
-Two limits to know before switching models: dimensions are fixed per index, and a change
-of model is detected as a mismatch, so run `ft memory reindex` to re-embed the whole
-index. Writes stay best-effort — a memory is created even when the embedder is down, and
-its skipped vector is backfilled by the next edit or `ft memory reindex`.
-
-Deleting a memory (`ft memory delete`) drops its vector too, best-effort: the artifact is
-removed first, then the side index forgets its vector. The embedder is not called, so an
-outage never blocks a delete; but if the index write itself fails, `ft` warns
-`memory vector not removed` and the delete still succeeds, leaving an orphan vector. No
-command garbage-collects orphans — `ft memory reindex` re-embeds the memories that still
-exist but does not prune ids that are gone — though an orphan stays invisible because only
-live memories are recalled.
-
-A misconfigured provider disables vector recall instead of failing: an unknown provider,
-or `command` with no command, records the reason and warns once per command at the first
-vector operation (`memory create`/`update`/`search`, `memory reindex`), for example
-`embed provider "command" is not usable (check endpoint/command); vector recall disabled`.
-Writes and searches then stay lexical, and `ft memory reindex` is a usage error until the
-provider is fixed. `ft doctor` reports these same problems (and an endpoint with no model,
-which is silently lexical at runtime), so use it to diagnose.
-
-## Soak gates
-
-A release is not trustworthy the moment it ships; you usually want a soak period
-before declaring it good. Model that as a verification milestone that depends on
-the release, carries a `not_before` deadline, and resolves only on explicit
-sign-off. There is no auto-pass, so a human must confirm the soak succeeded.
-
-```sh
-# 1. The release milestone.
-ft milestone create -p factotum -t "Release v1.4"
-
-# 2. The gate: a milestone that depends on the release and waits a week.
-gate=$(ft task create -p factotum -t "Verify v1.4 soak" -k milestone \
-  --dep <release> --no-hints | sed -n 's/^task_id: //p')
-ft task set "$gate" not_before=+7d
-
-# 3. While the soak runs, the gate is not ready and is absent from task next.
-ft task next -p factotum
-
-# 4. Once the soak passes, a human verifies and resolves the gate; dependents
-#    then unblock. Resolution is an explicit status change, never automatic.
-ft task done "$gate"
-```
-
-Until `not_before` passes the gate is excluded from readiness and `task next`;
-once it passes it becomes ready with no manual step. Auto-resolution from
-metrics (for example an error-budget or SLO gate) is intentionally out of scope;
-revisit a dedicated `gate` kind only if metrics-driven gates are needed.
-
-## Next-step suggestions
-
-After text output, `ft` prints a short `Next:` block of natural follow-up commands to **stderr**, so
-pipes and redirections stay clean:
-
-```sh
-$ ft task get APS-10803
-(todo) APS-10803: Executor loop + reaper (multi-replica, SKIP LOCKED claims)
-repo: backend
-assignee: (agent) agent
-...
-
-Next:
-  ft task start APS-10803                   begin work
-  ft task assign APS-10803 --actor <actor>  claim it (see ft actor list)
-```
-
-Suggestions are context-aware: `task next` points at `task get` for the top task, `task get`
-points at the next status transition (or at a blocking dependency when one is unmet), and mutations
-point at the relevant inspection command. They are suppressed for `-o json`, by `--no-hints`, by
-`FACTOTUM_NO_HINTS=1`, or by `no_hints = true` in the config file.
+Text output has one shape: single results print yaml-like `key: value` lines
+(`task_id`, `kind`, `title`, `status`, ending `project`, `repo`); lists print a table; `get` prints a
+human block. `-o json|yaml` is the machine-readable interface.
 
 ## Storage backends
 
@@ -258,78 +241,44 @@ Every backend passes the shared contract suite in `pkg/store/conformance`.
 | --- | --- | --- |
 | Memory | `--store memory` | Ephemeral; the default. |
 | JSON file | `--store jsonfile --store-opt path=...` | Single document, atomic writes. |
-| JSON dir | `--store jsondir --store-opt path=...` | Directory of markdown + YAML frontmatter; per-file atomic writes. |
-| SQLite | `--store sqlite --store-opt path=...` | Pure-Go driver (`modernc.org/sqlite`). |
+| JSON dir | `--store jsondir --store-opt path=...` | Directory of markdown + YAML frontmatter. |
+| SQLite | `--store sqlite --store-opt path=...` | Pure-Go driver; the backend `ft init` registers. |
 
-### Schema migrations
+SQLite versions its schema with `PRAGMA user_version` and migrates on open, backing the file up
+first. A database written by a newer binary is rejected rather than modified. A one-time
+`migrate_from` option moves a legacy `jsonfile` store into a `jsondir`.
 
-The SQLite backend versions its schema with `PRAGMA user_version`. On open it
-applies any pending migration steps in order, each in its own transaction. When
-an existing database predates the binary, the file is backed up first to
-`<path>.bak-v<from>-<UTC timestamp>` (keeping the five most recent) before it is
-changed, so a failed migration leaves the original intact. A database written by
-a newer binary is rejected with a clear error rather than modified.
+## Memory and search
 
-To move an existing single-document `jsonfile` store into a `jsondir`, point the
-new backend at the legacy document with `migrate_from`:
+Memory is a first-class, searchable artifact for durable agent knowledge. Each entry is a `title`, a
+one-line `brief` (what it is and when to load it), and a full `body`; `ft` stores them verbatim.
 
 ```sh
-ft --store jsondir --store-opt path=<dir> --store-opt migrate_from=<old.json> task list
+ft memory create -p acme -t "Deploys" --brief "when shipping" -b "The deploy path is ..."
+ft memory context -p acme      # briefs of all memory: when to load which
+ft memory search "<query>" -p acme
 ```
 
-The one-time migration writes each entity as a markdown document, then renames
-the original to `<old.json>.bak-<UTC timestamp>`. It refuses to overwrite a
-non-empty target directory and is a no-op once the source is gone, so the option
-is safe to leave in place.
-
-## Performance
-
-Two tiers, both exposed as `mise` tasks:
-
-- `mise run bench` — in-process hot-path benchmarks (`go test -bench ./pkg/...`), including direct
-  store `List`/`Search`/event-list micro-benchmarks and jsonfile write amplification. The budgets
-  live in `pkg/app/bench_test.go`; CI runs the smoke tier (`TestHotPathBudgetSmoke`).
-- `mise run perf` — the end-to-end scale harness (`cmd/ftscale`). It seeds synthetic datasets at
-  1k/10k/50k/100k tasks (plus 1k/10k artifacts and events) in a throwaway store per backend, runs
-  each hot command as a real subprocess (so process startup is included; the memory backend, which
-  cannot cross a process boundary, is measured in-process), and reports p50/p95 and output bytes per
-  backend and scale. Results append to `.perf/results.jsonl`, so the next run shows the delta. This
-  is a manual/nightly target, not CI: the heavy graph render is superlinear and the 100k tier takes
-  tens of minutes.
-
-Budgets (p95, warm): hot path (task next/get/set/start/done/claim) < 100ms at <=10k and < 250ms at
-50k; heavier (list, render, search, context) < 250ms at <=10k and < 500ms at 50k; point ops
-(get/set by id) < 25ms at any scale. Every result over budget prints `OVER` and is listed at the
-end of a run; `-strict` makes the command exit non-zero. jsonfile is capped at 1k tasks
-(`perf.JSONFileSeedCap`) because it rewrites its whole document on every write and seeds in O(n^2)
-(see t-ewr3xidxtk), while its write cost grows linearly with state size.
-
-```sh
-mise run perf                                                # full matrix -> .perf/results.jsonl
-mise run perf-quick                                          # 1k tasks, all backends
-go run ./cmd/ftscale -backends sqlite -tasks 1000,10000 -iterations 3
-go run ./cmd/ftscale -strict -tasks 1000                     # exit non-zero on a budget breach
-```
+`ft doc search`, `ft memory search`, and `ft task search` share one lexical, token-prefix,
+deterministic search — no network. Configuring the optional machine-scoped `[embed]` table (for
+example a local Ollama `nomic-embed-text`) adds vector recall on top, so paraphrase matches are
+found too; writes stay best-effort and `ft memory reindex` backfills. `ft doctor` diagnoses a
+configured-but-broken provider.
 
 ## Design
 
-- **Hexagonal architecture.** A pure domain core (`pkg/core`) surrounded by ports and adapters.
-- **Pluggable from day one.** Storage backends, next-task rankers, output renderers, and CLI
-  commands are registered plugins (`pkg/registry`).
+- **Hexagonal.** A pure domain core (`pkg/core`) surrounded by ports and adapters; every capability
+  (storage, rankers, renderers, harnesses, isolation, commands) is a registered plugin.
 - **Agent-first, human-readable.** `graph render --format agent` emits compact text for agents;
   `--format html` emits a self-contained report for humans.
-- **Append-only event log.** Every mutation records an event, which powers the audit trail and the
-  report's activity history.
-
-## Repository layout
+- **Append-only event log.** Every mutation records an event, powering the audit trail.
 
 ```
 cmd/factotum        CLI entrypoint
 internal/cli        Cobra command tree
 internal/config     TOML + env + flag configuration
-pkg/registry        generic plugin registry
 pkg/core            pure domain model and resolution policy
-pkg/graph           DAG engine: readiness, waves, cycles, canonical parents
+pkg/graph           DAG engine: readiness, waves, cycles
 pkg/store           storage ports, adapters, and the conformance suite
 pkg/rank            next-task rankers
 pkg/render          agent/json/tree/html/dot/mermaid renderers
@@ -338,23 +287,14 @@ pkg/app             use-case services
 
 ## Development
 
-This project is developed test-first. See [AGENTS.md](AGENTS.md) for the workflow and the
-definition of done.
-
-### Real-embedding tests
-
-Vector recall is tested with fakes by default, so `mise run ci` stays hermetic and offline. To
-exercise a real embedding model, run the opt-in integration test:
+Developed test-first; see [AGENTS.md](AGENTS.md) for the workflow and definition of done. `ft` is
+managed by `ft` — start from the graph:
 
 ```sh
-mise run test-embed                                  # starts a llama.cpp container, then removes it
-FACTOTUM_EMBED_TEST_ENDPOINT=http://127.0.0.1:8080 mise run test-embed   # or use an endpoint you run
+mise run ci                 # fmt-check, lint, test, cover, build, smoke-web, smoke-quickstart
+ft task next                # the highest-ranked ready task
+ft graph render --project factotum --format agent
 ```
 
-With no endpoint set the task starts `ghcr.io/ggml-org/llama.cpp:server`, caches the pinned
-`nomic-ai/nomic-embed-text-v1.5-GGUF:Q4_K_M` model in the `ft-llamacpp-models` Docker volume (so
-re-runs skip the download), waits for health, runs `TestRealEmbedding*`, then removes the
-container. The tests assert that a tokenless paraphrase (`provisioning` → the Terraform memory) is
-recalled, that vectors persist to the side index and `ft memory reindex` re-embeds against the
-model, and that a changed model is detected as a mismatch. `TestRealEmbeddingRecallEval` prints
-lexical versus vector recall@1/recall@3 and MRR over a handful of labeled memories.
+`ft skill get ft` prints the embedded agent skill, and `ft skill lint` checks the embedded skills
+against the live CLI. Vector recall has an opt-in real-embedding test: `mise run test-embed`.

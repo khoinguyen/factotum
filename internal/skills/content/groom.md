@@ -75,6 +75,7 @@ so it can be read back:
 ft groom list                     # past sessions: id, date, mode, scope, produced counts
 ft groom list -p <project>
 ft groom show <session>           # the report, the deferred questions, and the tasks it produced
+ft groom show <session> -p <project>
 ```
 
 `ft groom list` prints a table (`SESSION`, `DATE`, `MODE`, `SCOPE`, `PRODUCED`) and,
@@ -88,6 +89,11 @@ session produced, read live from the graph (their current kind, status, and
 title; a task since deleted is named by id alone). As `-o json|yaml` it adds
 `report_body`, `deferred_body`, `spec_body`, `plan_body`, `tech_design_body`,
 and a `produced` list of `{task_id, kind, title, status}`.
+
+Both commands default to the configured project. `--project` reads another
+project's sessions from the store the machine config registers for it, so a
+non-default project's session is reachable without changing directory or editing
+the project file; asking for a project a session does not belong to is an error.
 
 The produced set is a window diff - the tasks that appeared in the project while
 the session ran - not strict authorship. In a single-operator session that is

@@ -36,10 +36,10 @@ func TestProjectDataDirIsAbsolutePerBackend(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := projectDataDir(config.Config{Store: config.Store{
+			got, err := projectDataDir(config.Store{
 				Backend: tt.backend,
 				Options: map[string]string{"path": tt.path},
-			}})
+			})
 			if err != nil {
 				t.Fatalf("projectDataDir error = %v", err)
 			}

@@ -57,7 +57,7 @@ func (d *Deps) runGroomReview(cmd *cobra.Command, sessionID string, opts groomRe
 		return usageError(cmd, "%v", err)
 	}
 
-	dataDir, err := projectDataDir(d.Config)
+	dataDir, err := projectDataDir(d.Config.Store)
 	if err != nil {
 		return err
 	}

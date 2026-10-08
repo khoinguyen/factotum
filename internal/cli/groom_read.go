@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/internal/groom"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -28,7 +29,7 @@ func newGroomListCommand(deps *Deps) *cobra.Command {
 			"it produced. Filter with --project; without one the configured project is used.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			resolved := string(deps.resolveProject(projectID))
-			dataDir, err := projectDataDir(deps.Config)
+			dataDir, err := deps.groomDataDir(projectID)
 			if err != nil {
 				return err
 			}
@@ -65,22 +66,29 @@ func newGroomListCommand(deps *Deps) *cobra.Command {
 }
 
 func newGroomShowCommand(deps *Deps) *cobra.Command {
+	var projectID string
 	cmd := &cobra.Command{
 		Use:   "show <session>",
 		Short: "Show a grooming session's report, deferred questions, feature docs, and produced tasks",
 		Long: "Print one recorded grooming session: its scope and mode, the captured report, the\n" +
 			"deferred questions, the feature spec, plan, and tech design, and the tasks the session\n" +
 			"produced. The bodies come from the doc artifacts `ft groom` recorded; the produced tasks\n" +
-			"are read live from the graph.",
+			"are read live from the graph. Use --project to read another project's sessions; without\n" +
+			"one the configured project is used.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dataDir, err := projectDataDir(deps.Config)
+			dataDir, err := deps.groomDataDir(projectID)
 			if err != nil {
 				return err
 			}
 			session, err := groom.ReadSession(dataDir, args[0])
 			if err != nil {
 				return err
+			}
+			if projectID != "" {
+				if resolved := string(deps.resolveProject(projectID)); session.Project != "" && session.Project != resolved {
+					return fmt.Errorf("grooming session %s belongs to project %s, not %s", session.ID, session.Project, resolved)
+				}
 			}
 			reportBody, err := deps.sessionOutputBody(cmd.Context(), session.Report, groom.ReportPath(dataDir, session.ID))
 			if err != nil {
@@ -167,7 +175,26 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 			}, groomShowHints(doc.Project)...)
 		},
 	}
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "read another project's sessions (defaults to the configured project)")
 	return cmd
+}
+
+// groomDataDir resolves the data dir holding a project's grooming sessions. The
+// configured project (or an unset --project) reads the caller's store; another
+// project is resolved through the machine-scoped project registry, so a session
+// recorded under a different store is reachable without changing directory or
+// editing the project file. A project with no registry entry falls back to the
+// configured store, where its sessions were written.
+func (d *Deps) groomDataDir(projectFlag string) (string, error) {
+	resolved := d.resolveProject(projectFlag)
+	if resolved != "" && string(resolved) != d.Config.Project {
+		if st, ok, err := config.StoreFor(d.UserConfigPath, string(resolved)); err != nil {
+			return "", err
+		} else if ok {
+			return projectDataDir(st)
+		}
+	}
+	return projectDataDir(d.Config.Store)
 }
 
 // groomSessionListDoc is the lossless structured shape of `ft groom list`.

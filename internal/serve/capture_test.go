@@ -2,8 +2,8 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -13,34 +13,33 @@ import (
 
 const testToken = "s3cret"
 
-// noRedirectClient stops at the capture redirect, so a test can assert the 303
-// and its Location instead of following into the idea page.
-var noRedirectClient = &http.Client{
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-}
-
-func postForm(t *testing.T, target string, form url.Values) *http.Response {
+// postCapture sends a JSON capture write with the token in the Authorization
+// header, the only credential the write side accepts.
+func postCapture(t *testing.T, target, token, body string) *http.Response {
 	t.Helper()
-	resp, err := noRedirectClient.PostForm(target, form)
-	if err != nil {
-		t.Fatalf("PostForm(%s) error = %v", target, err)
-	}
-	return resp
-}
-
-func postBearer(t *testing.T, target, token, text string) *http.Response {
-	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(url.Values{"text": {text}}.Encode()))
+	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := noRedirectClient.Do(req)
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Do() error = %v", err)
 	}
 	return resp
+}
+
+func decodeCapture(t *testing.T, resp *http.Response) captureResult {
+	t.Helper()
+	defer func() { _ = resp.Body.Close() }()
+	var result captureResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("Decode(capture) error = %v", err)
+	}
+	return result
 }
 
 func ideas(t *testing.T, f *fixture, project core.ProjectID) []*core.Ticket {
@@ -53,19 +52,43 @@ func ideas(t *testing.T, f *fixture, project core.ProjectID) []*core.Ticket {
 	return list
 }
 
-// TestCapturePageRendersForm proves the write side is a page of the same app,
-// reachable at /capture and shaped for a phone: a text field and a token field
-// posting back to /capture.
-func TestCapturePageRendersForm(t *testing.T) {
+// TestCapturePageServesSPA proves the capture page is a page of the same app:
+// GET /capture returns the shadcn/ui shell so the client router renders the
+// form, not the retired server-rendered page.
+func TestCapturePageServesSPA(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
 	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
 
-	body := getBody(t, ts.URL+"/capture")
-	for _, want := range []string{`action="/capture"`, `name="text"`, `name="token"`, "Capture"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("capture page missing %q:\n%s", want, body)
-		}
+	if body := getBody(t, ts.URL+"/capture"); !strings.Contains(body, `id="root"`) {
+		t.Fatalf("GET /capture is not the SPA shell:\n%s", body)
+	}
+}
+
+// TestCaptureConfigReportsState proves the app can tell whether capture is
+// enabled before showing a form: the config endpoint mirrors captureEnabled.
+func TestCaptureConfigReportsState(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+
+	cases := []struct {
+		name    string
+		opts    Options
+		enabled bool
+	}{
+		{"scoped with token", Options{Project: project.ID, Token: testToken, Tasks: f.tasks}, true},
+		{"no token", Options{Project: project.ID, Tasks: f.tasks}, false},
+		{"all projects", Options{All: true, Token: testToken, Tasks: f.tasks}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newTestServer(t, f, tc.opts)
+			var config captureConfig
+			getDoc(t, ts.URL+"/api/capture", &config)
+			if config.Enabled != tc.enabled {
+				t.Fatalf("config.enabled = %v, want %v", config.Enabled, tc.enabled)
+			}
+		})
 	}
 }
 
@@ -77,15 +100,15 @@ func TestCaptureRequiresToken(t *testing.T) {
 	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
 
 	cases := []struct {
-		name string
-		form url.Values
+		name  string
+		token string
 	}{
-		{"missing token", url.Values{"text": {"an idea"}}},
-		{"wrong token", url.Values{"text": {"an idea"}, "token": {"nope"}}},
+		{"missing token", ""},
+		{"wrong token", "nope"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := postForm(t, ts.URL+"/capture", tc.form)
+			resp := postCapture(t, ts.URL+"/api/capture", tc.token, `{"text":"an idea"}`)
 			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusUnauthorized {
 				t.Fatalf("status = %d, want 401", resp.StatusCode)
@@ -98,24 +121,45 @@ func TestCaptureRequiresToken(t *testing.T) {
 	}
 }
 
-// TestCaptureWithFormToken proves an authenticated form write stores an idea and
-// redirects the browser to its detail page.
-func TestCaptureWithFormToken(t *testing.T) {
+// TestCaptureQueryTokenIsRejected proves the token is header-only: a token in
+// the query string never authenticates, so a shared token cannot leak through
+// logs or a Referer header.
+func TestCaptureQueryTokenIsRejected(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
 	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
 
-	resp := postForm(t, ts.URL+"/capture", url.Values{"text": {"Add a dark mode"}, "token": {testToken}})
+	resp := postCapture(t, ts.URL+"/api/capture?token="+testToken, "", `{"text":"sneaky"}`)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
-	loc := resp.Header.Get("Location")
-	if !strings.HasPrefix(loc, "/idea/") {
-		t.Fatalf("Location = %q, want /idea/<id>", loc)
+	if got := ideas(t, f, project.ID); len(got) != 0 {
+		t.Fatalf("query-token write created %d ideas, want 0", len(got))
+	}
+}
+
+// TestCaptureStoresIdea proves an authenticated JSON write stores an idea and
+// returns the detail URL the app navigates to.
+func TestCaptureStoresIdea(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
+
+	resp := postCapture(t, ts.URL+"/api/capture", testToken, `{"text":"Add a dark mode"}`)
+	if resp.StatusCode != http.StatusCreated {
+		_ = resp.Body.Close()
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	result := decodeCapture(t, resp)
+	if result.Kind != core.KindIdea {
+		t.Fatalf("result.kind = %q, want idea", result.Kind)
+	}
+	if result.ID == "" || !strings.HasPrefix(result.URL, "/idea/") {
+		t.Fatalf("result = %+v, want an id and /idea URL", result)
 	}
 
-	task, err := f.tasks.Get(context.Background(), core.TicketID(strings.TrimPrefix(loc, "/idea/")))
+	task, err := f.tasks.Get(context.Background(), result.ID)
 	if err != nil {
 		t.Fatalf("Get(captured) error = %v", err)
 	}
@@ -128,36 +172,52 @@ func TestCaptureWithFormToken(t *testing.T) {
 	if task.Title != "Add a dark mode" {
 		t.Fatalf("title = %q, want the sentence", task.Title)
 	}
+	if result.URL != "/idea/"+string(task.ID) {
+		t.Fatalf("result.url = %q, want the captured idea page", result.URL)
+	}
 }
 
-// TestCaptureAcceptsBearerToken proves a non-browser client can authenticate
-// with the Authorization header instead of a form field.
-func TestCaptureAcceptsBearerToken(t *testing.T) {
+// TestCaptureStoresBug proves the same write side captures a defect: a bug kind
+// is stored and returned, so the app can offer idea-or-bug capture.
+func TestCaptureStoresBug(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
 	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
 
-	resp := postBearer(t, ts.URL+"/capture", testToken, "From a script")
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	resp := postCapture(t, ts.URL+"/api/capture", testToken, `{"kind":"bug","text":"It crashes on save"}`)
+	if resp.StatusCode != http.StatusCreated {
+		_ = resp.Body.Close()
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
 	}
-	if got := ideas(t, f, project.ID); len(got) != 1 {
-		t.Fatalf("captured %d ideas, want 1", len(got))
+	result := decodeCapture(t, resp)
+	if result.Kind != core.KindBug {
+		t.Fatalf("result.kind = %q, want bug", result.Kind)
+	}
+	task, err := f.tasks.Get(context.Background(), result.ID)
+	if err != nil {
+		t.Fatalf("Get(captured) error = %v", err)
+	}
+	if task.Kind != core.KindBug {
+		t.Fatalf("captured task kind = %q, want bug", task.Kind)
 	}
 }
 
-// TestCaptureRejectsBearerLengthMismatch is the cheap companion to the
-// constant-time comparison: a token that only shares a prefix never passes.
-func TestCaptureRejectsBearerLengthMismatch(t *testing.T) {
+// TestCaptureRejectsUnknownKind proves the kind is validated at the boundary: a
+// client cannot ask the capture write side to store executable work.
+func TestCaptureRejectsUnknownKind(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
 	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
 
-	resp := postBearer(t, ts.URL+"/capture", testToken+"x", "sneaky")
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	for _, kind := range []string{"task", "milestone", "nonsense"} {
+		resp := postCapture(t, ts.URL+"/api/capture", testToken, `{"kind":"`+kind+`","text":"x"}`)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("kind %q status = %d, want 400", kind, resp.StatusCode)
+		}
+	}
+	if got := ideas(t, f, project.ID); len(got) != 0 {
+		t.Fatalf("invalid-kind captures created %d ideas, want 0", len(got))
 	}
 }
 
@@ -169,7 +229,11 @@ func TestCaptureRejectsEmptyText(t *testing.T) {
 	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
 
 	for _, text := range []string{"", "   ", "\n\t"} {
-		resp := postForm(t, ts.URL+"/capture", url.Values{"text": {text}, "token": {testToken}})
+		body, err := json.Marshal(captureRequest{Text: text})
+		if err != nil {
+			t.Fatalf("Marshal() error = %v", err)
+		}
+		resp := postCapture(t, ts.URL+"/api/capture", testToken, string(body))
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Fatalf("text %q status = %d, want 400", text, resp.StatusCode)
@@ -180,24 +244,66 @@ func TestCaptureRejectsEmptyText(t *testing.T) {
 	}
 }
 
+// TestCaptureRejectsMalformedBody proves a non-JSON body is a bad request, not
+// a panic or a 500.
+func TestCaptureRejectsMalformedBody(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
+
+	resp := postCapture(t, ts.URL+"/api/capture", testToken, "not json")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestCaptureRejectsOversizedBody proves the body is bounded: a runaway client
+// cannot make the server buffer an unbounded payload.
+func TestCaptureRejectsOversizedBody(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
+
+	big, err := json.Marshal(captureRequest{Text: strings.Repeat("x", maxCaptureBytes+1)})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	resp := postCapture(t, ts.URL+"/api/capture", testToken, string(big))
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestCaptureRejectsBearerLengthMismatch is the cheap companion to the
+// constant-time comparison: a token that only shares a prefix never passes.
+func TestCaptureRejectsBearerLengthMismatch(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
+
+	resp := postCapture(t, ts.URL+"/api/capture", testToken+"x", `{"text":"sneaky"}`)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
 // TestCaptureDisabledWithoutToken proves writes fail closed: with no configured
-// token the endpoint refuses and the page says so, rather than allowing an
-// anonymous write.
+// token the endpoint refuses rather than allowing an anonymous write.
 func TestCaptureDisabledWithoutToken(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
 	ts := newTestServer(t, f, Options{Project: project.ID, Tasks: f.tasks})
 
-	resp := postForm(t, ts.URL+"/capture", url.Values{"text": {"an idea"}})
+	resp := postCapture(t, ts.URL+"/api/capture", testToken, `{"text":"an idea"}`)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 when capture is not configured", resp.StatusCode)
 	}
 	if got := ideas(t, f, project.ID); len(got) != 0 {
 		t.Fatalf("disabled capture created %d ideas, want 0", len(got))
-	}
-	if body := getBody(t, ts.URL+"/capture"); !strings.Contains(body, "not configured") {
-		t.Fatalf("capture page should say capture is not configured:\n%s", body)
 	}
 }
 
@@ -208,7 +314,7 @@ func TestCaptureDisabledForAllProjects(t *testing.T) {
 	one := f.addProject(t, "one", "One")
 	ts := newTestServer(t, f, Options{All: true, Token: testToken, Tasks: f.tasks})
 
-	resp := postForm(t, ts.URL+"/capture", url.Values{"text": {"an idea"}, "token": {testToken}})
+	resp := postCapture(t, ts.URL+"/api/capture", testToken, `{"text":"an idea"}`)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 in all-projects mode", resp.StatusCode)
@@ -224,7 +330,7 @@ func TestCaptureMethodNotAllowed(t *testing.T) {
 	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
 
 	for _, method := range []string{http.MethodPut, http.MethodDelete, http.MethodPatch} {
-		req, err := http.NewRequest(method, ts.URL+"/capture", strings.NewReader(""))
+		req, err := http.NewRequest(method, ts.URL+"/api/capture", strings.NewReader("{}"))
 		if err != nil {
 			t.Fatalf("NewRequest(%s) error = %v", method, err)
 		}
@@ -290,12 +396,17 @@ func TestCaptureTruncatesLongTitle(t *testing.T) {
 	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
 
 	long := strings.Repeat("word ", 60)
-	resp := postForm(t, ts.URL+"/capture", url.Values{"text": {long}, "token": {testToken}})
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	body, err := json.Marshal(captureRequest{Text: long})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
 	}
-	task, err := f.tasks.Get(context.Background(), core.TicketID(strings.TrimPrefix(resp.Header.Get("Location"), "/idea/")))
+	resp := postCapture(t, ts.URL+"/api/capture", testToken, string(body))
+	if resp.StatusCode != http.StatusCreated {
+		_ = resp.Body.Close()
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	result := decodeCapture(t, resp)
+	task, err := f.tasks.Get(context.Background(), result.ID)
 	if err != nil {
 		t.Fatalf("Get(captured) error = %v", err)
 	}

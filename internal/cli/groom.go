@@ -146,6 +146,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		Args:             sel.args,
 		Prompt:           prompt,
 		Capture:          capture,
+		StoreEnv:         d.storeEnv(),
 		Interactive:      interactive,
 		OnResolve:        d.warnLocalPlan,
 	})

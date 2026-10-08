@@ -116,6 +116,34 @@ func (d *Deps) resolveSandboxFlag(cmd *cobra.Command, opts runOptions) (string, 
 	return opts.sandbox, nil
 }
 
+// storeEnv is the store configuration a run hands its launched session, so the
+// session's child ft reads the same store instead of resolving one - possibly
+// the real user database - from the checkout's project or user config. It names
+// the resolved backend and formats the options as config.Load parses them. A
+// file-backed store's path is made absolute because the session runs with a
+// different working directory than ft, so a relative path would name a
+// different file (or none) inside the checkout.
+func (d *Deps) storeEnv() map[string]string {
+	store := d.Config.Store
+	if store.Backend == "" {
+		return nil
+	}
+	env := map[string]string{harnesspkg.EnvStore: store.Backend}
+	options := make(map[string]string, len(store.Options))
+	for key, value := range store.Options {
+		options[key] = value
+	}
+	if path := options["path"]; path != "" && path != ":memory:" && !filepath.IsAbs(path) {
+		if abs, err := filepath.Abs(path); err == nil {
+			options["path"] = abs
+		}
+	}
+	if formatted := config.FormatStoreOptions(options); formatted != "" {
+		env[harnesspkg.EnvStoreOpts] = formatted
+	}
+	return env
+}
+
 // resolveRunPrompt resolves the optional prompt override for a run from a file
 // or an artifact body. An empty result means the run uses the task-derived
 // prompt (a task-less run always has a source). The two sources are mutually
@@ -462,6 +490,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		Actor:            d.currentActorID(cmd.Context()),
 		MsgURL:           d.Config.Serve.URL,
 		ServeToken:       d.Config.Serve.Token,
+		StoreEnv:         d.storeEnv(),
 		Interactive:      interactive,
 		OnResolve:        d.warnLocalPlan,
 	})
@@ -510,6 +539,7 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 		Model:            sel.model,
 		Args:             sel.args,
 		Prompt:           prompt,
+		StoreEnv:         d.storeEnv(),
 		Interactive:      interactive,
 		OnResolve:        d.warnLocalPlan,
 	})
@@ -561,6 +591,7 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 			Actor:            d.currentActorID(ctx),
 			MsgURL:           d.Config.Serve.URL,
 			ServeToken:       d.Config.Serve.Token,
+			StoreEnv:         d.storeEnv(),
 			OnResolve:        d.warnLocalPlan,
 		})
 	}

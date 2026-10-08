@@ -67,6 +67,12 @@ type RunInput struct {
 	// ServeToken is the bearer token authenticating the receiver to that hub.
 	// It is injected only alongside a MsgURL.
 	ServeToken string
+	// StoreEnv is the caller's resolved store configuration (backend and
+	// options) to hand the harness, so the session's child ft reads that store
+	// instead of resolving one from the checkout's project or user config. It is
+	// keyed by the harness environment variable names (FACTOTUM_STORE,
+	// FACTOTUM_STORE_OPTS). Empty injects nothing.
+	StoreEnv map[string]string
 	// OutputLimit caps the agent output stored in the run note; 0 uses the
 	// service default.
 	OutputLimit int
@@ -140,7 +146,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		model:       in.Model,
 		args:        in.Args,
 		interactive: in.Interactive,
-		env:         receiverEnv(project, task, in.Actor, in.MsgURL, in.ServeToken),
+		env:         mergeEnv(runEnv(project, task, in.Actor, in.MsgURL, in.ServeToken), in.StoreEnv),
 		labels:      map[string]string{"project": string(project.ID), "task": string(task.ID)},
 		// The run is about to start: record it before Exec so a harness or wait
 		// failure is observable, and abort if the event cannot be written.
@@ -216,6 +222,12 @@ type ProjectRunInput struct {
 	// provide a terminal. A backend that cannot attach one reports
 	// isolation.ErrNoTerminal.
 	Interactive bool
+	// StoreEnv is the caller's resolved store configuration (backend and
+	// options) to hand the harness, so the session's child ft reads that store
+	// instead of resolving one from the checkout's project or user config. It is
+	// keyed by the harness environment variable names (FACTOTUM_STORE,
+	// FACTOTUM_STORE_OPTS). Empty injects nothing.
+	StoreEnv map[string]string
 	// OnResolve, when non-nil, is called with the resolved workspace plan after
 	// resolution and before the harness runs, so a caller can advise on how the
 	// repos were materialized while there is still time to abort.
@@ -279,6 +291,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		model:       in.Model,
 		args:        in.Args,
 		interactive: in.Interactive,
+		env:         mergeEnv(map[string]string{harnesspkg.EnvProject: string(project.ID)}, in.StoreEnv),
 		labels:      map[string]string{"project": string(project.ID)},
 		capture:     in.Capture,
 	})
@@ -408,20 +421,23 @@ func captureFiles(ctx context.Context, backend isolation.IsolationBackend, h iso
 	return out, nil
 }
 
-// receiverEnv builds the environment a harness with a message receiver plugin
-// uses to register the session. The actor is the run's explicit actor; a run
-// with no actor has no receiver, so the plugin is not installed and the session
-// is unmanaged. A configured hub URL adds the URL and token that make a launched
-// remote receiver speak the token-gated HTTP transport; with no URL the receiver
-// falls back to the local ft store, so no hub env is set.
-func receiverEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgURL, serveToken string) map[string]string {
-	if project.ID == "" || actor == nil || *actor == "" {
+// runEnv builds the environment a launched run hands its harness. It always
+// names the run's project, so the session's child ft resolves that project
+// rather than whatever project the checkout pins. When the run names an actor it
+// also installs the receiver identity (actor, task) a message plugin registers
+// with; a run with no actor has no receiver, so the plugin is not installed and
+// the session is unmanaged. A configured hub URL adds the URL and token that make
+// a launched remote receiver speak the token-gated HTTP transport; with no URL
+// the receiver falls back to the local ft store, so no hub env is set.
+func runEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgURL, serveToken string) map[string]string {
+	if project.ID == "" {
 		return nil
 	}
-	env := map[string]string{
-		harnesspkg.EnvProject: string(project.ID),
-		harnesspkg.EnvActor:   string(*actor),
+	env := map[string]string{harnesspkg.EnvProject: string(project.ID)}
+	if actor == nil || *actor == "" {
+		return env
 	}
+	env[harnesspkg.EnvActor] = string(*actor)
 	if task.ID != "" {
 		env[harnesspkg.EnvTask] = string(task.ID)
 	}
@@ -432,6 +448,22 @@ func receiverEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, 
 		}
 	}
 	return env
+}
+
+// mergeEnv layers environment maps left to right, later values winning, and
+// returns nil when every layer is empty, so a run with no environment stays
+// clean rather than carrying an empty map.
+func mergeEnv(layers ...map[string]string) map[string]string {
+	var out map[string]string
+	for _, layer := range layers {
+		for key, value := range layer {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[key] = value
+		}
+	}
+	return out
 }
 
 // runPrompt returns the prompt a harness receives: the caller-supplied override

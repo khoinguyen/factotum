@@ -48,7 +48,7 @@ func TestRunCommandDrivesTaskToReview(t *testing.T) {
 	r.runHarness = harnessfake.New("opencode")
 
 	out := r.run("run", taskID, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
-	for _, want := range []string{"task_id: " + taskID, "run: finished", "status: ready_for_review", "exit_code: 0"} {
+	for _, want := range []string{"task_id: " + taskID, "run: finished", "status: ready_for_review", "exit_code: 0", "complete: true"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("run output missing %q:\n%s", want, out)
 		}

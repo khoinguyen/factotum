@@ -20,6 +20,24 @@ import (
 	"github.com/khoinguyen/factotum/pkg/registry"
 )
 
+// Receiver environment keys. A harness with a message receiver plugin reads
+// these to register the session and claim messages; they are generic so every
+// receiver adapter (opencode, pi) speaks the same contract. A run with no
+// project or actor simply has no receiver.
+const (
+	EnvProject = "FACTOTUM_PROJECT"
+	EnvActor   = "FACTOTUM_ACTOR"
+	EnvTask    = "FACTOTUM_TASK_ID"
+	EnvBin     = "FACTOTUM_BIN"
+	EnvHarness = "FACTOTUM_HARNESS"
+)
+
+// MessagingEnabled reports whether env carries enough receiver configuration to
+// register a session: a project and an actor.
+func MessagingEnabled(env map[string]string) bool {
+	return env[EnvProject] != "" && env[EnvActor] != ""
+}
+
 // Request is one agent run: the instruction and the knobs around it.
 type Request struct {
 	// Prompt is the instruction the agent executes.

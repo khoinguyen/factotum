@@ -50,7 +50,7 @@ ft serve                        # live dashboard + token-gated capture; also -p 
 ```
 `ft serve` is an idea-centric live dashboard: ideas roll up their promoted tasks as
 finished/active/blocked/captured, grouped board, drill-down; reads open, SSE live. Its write
-side: `/capture` stores a sentence as an idea, gated by `serve.token` / `FACTOTUM_SERVE_TOKEN` (no token or `--all` disables); grooming enriches it later.
+side: `/capture` stores a sentence as an idea, gated by `serve.token` / `FACTOTUM_SERVE_TOKEN` (no token or `--all` disables); grooming enriches it later. The shadcn/ui web app (Vite + React + Tailwind) is served under `/app` from the same binary: `mise run build-web` builds `web/` into `web/dist`, which `go:embed` bakes into `ft`; it reads `/api/snapshot` and refetches on the `/events` SSE stream, so a mutation appears live.
 
 ## Move work through its lifecycle
 

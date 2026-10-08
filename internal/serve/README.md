@@ -12,6 +12,20 @@ capture write (`/capture`). Its tests are layered:
   reason-chip fix was verified out of band in headless Chrome; the procedure is
   recorded here so the CSS test has a reproducible reference.
 
+## shadcn/ui web app
+
+`ft serve` also hosts the shadcn/ui app (Vite + React + TypeScript + Tailwind)
+under `/app`, served from `web/dist`, which `web/web.go` embeds with `go:embed`.
+`mise run build-web` builds it; `mise run build` embeds the result. The app reads
+`/api/snapshot` (the same projection the rendered pages use) and refetches on the
+`/events` SSE stream, so both views stay live and cannot drift.
+
+Go tests inject a small in-memory asset tree (`Options.Assets`) so they do not
+depend on a frontend build. `mise run smoke-web` is the end-to-end check against
+the real binary: it starts `ft serve` on a throwaway store, fetches the SPA shell
+and its hashed asset from `/app`, mutates the graph through a second `ft`
+process, and asserts a live SSE `update` plus the new task in `/api/snapshot`.
+
 ## Capture auth
 
 Writes need a shared token from the machine config (`[serve] token`) or

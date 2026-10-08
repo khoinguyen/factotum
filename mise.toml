@@ -1,6 +1,8 @@
 [tools]
 go = "1.26.4"
 golangci-lint = "2.13.2"
+node = "24.20.0"
+pnpm = "10.12.2"
 
 [tasks.fmt]
 description = "Format Go code"
@@ -19,10 +21,12 @@ fi
 
 [tasks.lint]
 description = "Run linters"
+depends = ["build-web"]
 run = "golangci-lint run"
 
 [tasks.test]
 description = "Run tests with the race detector"
+depends = ["build-web"]
 run = "go test -race ./..."
 
 [tasks.test-embed]
@@ -72,6 +76,7 @@ go test -count=1 -run TestRealEmbedding -v ./internal/cli/
 
 [tasks.cover]
 description = "Run tests and print total coverage"
+depends = ["build-web"]
 run = "go test -race -covermode=atomic -coverprofile=coverage.out ./... && go tool cover -func=coverage.out"
 
 [tasks.bench]
@@ -104,8 +109,22 @@ run = "FACTOTUM_OPENSHELL_TEST=1 go test -count=1 -run TestConformance -v ./pkg/
 description = "Opt-in live IsolationBackend conformance for the docker backend (needs a running docker daemon; creates and deletes its own containers)"
 run = "FACTOTUM_DOCKER_TEST=1 go test -count=1 -run TestConformance -v ./pkg/isolation/docker/"
 
+[tasks.web-install]
+description = "Install the web/ frontend dependencies from the frozen lockfile"
+run = "pnpm --dir web install --frozen-lockfile"
+
+[tasks.build-web]
+description = "Build the shadcn/ui frontend into web/dist (embedded into the Go binary)"
+depends = ["web-install"]
+run = "pnpm --dir web build"
+
+[tasks.web-dev]
+description = "Run the Vite dev server for the frontend (proxies /api and /events to ft serve)"
+run = "pnpm --dir web dev"
+
 [tasks.build]
 description = "Build the ft CLI to ./bin/ft (never the installed binary)"
+depends = ["build-web"]
 run = """
 mkdir -p bin
 version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -120,6 +139,11 @@ version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
 go build -ldflags "-X github.com/khoinguyen/factotum/pkg/version.Version=$version" -o "$HOME/.local/bin/ft" ./cmd/factotum
 """
 
+[tasks.smoke-web]
+description = "End-to-end smoke: ft serve serves the embedded app and a mutation pushes a live SSE update"
+depends = ["build"]
+run = "bash scripts/smoke-web.sh"
+
 [tasks.hooks]
 description = "Install the git pre-commit hook"
 run = """
@@ -131,4 +155,4 @@ echo "installed .git/hooks/pre-commit"
 
 [tasks.ci]
 description = "Full check: format, lint, test, coverage, build"
-depends = ["fmt-check", "lint", "test", "cover", "build"]
+depends = ["fmt-check", "lint", "test", "cover", "build", "smoke-web"]

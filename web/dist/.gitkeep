@@ -1,0 +1,2 @@
+# Placeholder so go:embed finds web/dist on a fresh clone.
+# `mise run build-web` replaces its contents with the built Vite bundle.

@@ -15,12 +15,16 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"net/http"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -30,6 +34,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/graph"
 	"github.com/khoinguyen/factotum/pkg/rank"
 	"github.com/khoinguyen/factotum/pkg/store"
+	"github.com/khoinguyen/factotum/web"
 )
 
 //go:embed dashboard.html detail.html capture.html dashboard.css
@@ -77,6 +82,10 @@ type Options struct {
 	// Tasks is the app service that stores a captured idea. Nil disables
 	// capture. It is required only for writes, so a read-only server may omit it.
 	Tasks *app.TicketService
+	// Assets is the built shadcn/ui app served under /app. Nil falls back to the
+	// bundle embedded in the binary (web.Dist), which is what production uses;
+	// tests inject a small in-memory tree.
+	Assets fs.FS
 	// Poll is how often the event log is checked for a change. It defaults to
 	// 500ms, comfortably under the one-second freshness target.
 	Poll time.Duration
@@ -112,6 +121,9 @@ func New(opts Options) (*Server, error) {
 	if opts.Recent <= 0 {
 		opts.Recent = defaultRecent
 	}
+	if opts.Assets == nil {
+		opts.Assets = web.Dist()
+	}
 	if !opts.All && opts.Project == "" {
 		opts.All = true
 	}
@@ -136,8 +148,12 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.getOrHead(s.handleIndex)(w, r)
 	case path == "/fragment":
 		s.getOrHead(s.handleFragment)(w, r)
+	case path == "/api/snapshot":
+		s.getOrHead(s.handleSnapshot)(w, r)
 	case path == "/events":
 		s.getOnly(s.handleEvents)(w, r)
+	case path == "/app" || strings.HasPrefix(path, "/app/"):
+		s.handleApp(w, r)
 	case path == "/capture":
 		s.routeCapture(w, r)
 	case strings.HasPrefix(path, "/idea/"):
@@ -209,6 +225,59 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	}
 }
 
+// handleSnapshot serves the dashboard state as JSON for the shadcn/ui app. It is
+// the same projection the server-rendered pages use, so the two views cannot
+// drift; the app refetches it whenever /events reports a change.
+func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	page, err := s.page(r.Context())
+	if err != nil {
+		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(page.snapshot()); err != nil {
+		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleApp serves the embedded shadcn/ui single-page app under /app. A request
+// for a real file (index.html, a hashed asset) is served from the bundle; any
+// other path is a client-side route, so it falls back to index.html. A missing
+// asset is still a 404 so a broken build fails loudly instead of rendering the
+// app shell over a blank script.
+func (s *Server) handleApp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		methodNotAllowed(w)
+		return
+	}
+	rel := strings.TrimPrefix(r.URL.Path, "/app/")
+	if rel == "" || rel == r.URL.Path {
+		rel = "index.html"
+	}
+	cache := "public, max-age=31536000, immutable"
+	if rel == "index.html" {
+		cache = "no-store"
+	}
+	if _, err := fs.Stat(s.options.Assets, rel); err != nil {
+		if path.Ext(rel) != "" {
+			http.NotFound(w, r)
+			return
+		}
+		rel = "index.html"
+		cache = "no-store"
+	}
+	data, err := fs.ReadFile(s.options.Assets, rel)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", cache)
+	http.ServeContent(w, r, rel, time.Time{}, bytes.NewReader(data))
+}
+
 // handleEvents streams server-sent events. It sends a hello on connect, then an
 // update whenever the newest event id changes, which is how a task status change
 // reaches the page without a manual reload. Every client shares one broker poll,
@@ -261,60 +330,60 @@ func (s *Server) latestEventID(ctx context.Context) (string, error) {
 
 // pageStats are the unambiguous graph counts shown in the header.
 type pageStats struct {
-	Scope      int
-	Ideas      int
-	Done       int
-	ReadyAgent int
-	ReadyHuman int
-	Blocked    int
-	Cycles     int
-	Waves      int
+	Scope      int `json:"scope"`
+	Ideas      int `json:"ideas"`
+	Done       int `json:"done"`
+	ReadyAgent int `json:"ready_agent"`
+	ReadyHuman int `json:"ready_human"`
+	Blocked    int `json:"blocked"`
+	Cycles     int `json:"cycles"`
+	Waves      int `json:"waves"`
 }
 
 // taskView is one executable task projected for the work board and next-up lists.
 type taskView struct {
-	ID          core.TicketID
-	Title       string
-	Repo        string
-	Class       string
-	Chip        string
-	Reason      string
-	Detail      string
-	Assignee    string
-	Wave        int
-	Unblocks    int
-	Milestone   bool
-	Score       float64
-	URL         string
-	Origin      core.TicketID
-	OriginTitle string
+	ID          core.TicketID `json:"id"`
+	Title       string        `json:"title"`
+	Repo        string        `json:"repo,omitempty"`
+	Class       string        `json:"class"`
+	Chip        string        `json:"chip"`
+	Reason      string        `json:"reason,omitempty"`
+	Detail      string        `json:"detail,omitempty"`
+	Assignee    string        `json:"assignee,omitempty"`
+	Wave        int           `json:"wave,omitempty"`
+	Unblocks    int           `json:"unblocks,omitempty"`
+	Milestone   bool          `json:"milestone,omitempty"`
+	Score       float64       `json:"score,omitempty"`
+	URL         string        `json:"url"`
+	Origin      core.TicketID `json:"origin,omitempty"`
+	OriginTitle string        `json:"origin_title,omitempty"`
 }
 
 type updateView struct {
-	Time    string
-	Summary string
+	Time    string `json:"time"`
+	Summary string `json:"summary"`
 }
 
 // artifactView is one artifact projected for a link chip or a detail page.
 type artifactView struct {
-	ID    core.ArtifactID
-	Kind  string
-	Title string
-	Brief string
-	Body  string
-	URL   string
+	ID    core.ArtifactID `json:"id"`
+	Kind  string          `json:"kind"`
+	Title string          `json:"title"`
+	Brief string          `json:"brief,omitempty"`
+	Body  string          `json:"body,omitempty"`
+	URL   string          `json:"url"`
 }
 
 // taskLink is a compact reference to a task, used inside idea and task detail
 // pages where the full work-board projection is unnecessary.
 type taskLink struct {
-	ID     core.TicketID
-	Title  string
-	Class  string
-	Chip   string
-	Reason string
-	Detail string
-	URL    string
+	ID     core.TicketID `json:"id"`
+	Title  string        `json:"title"`
+	Class  string        `json:"class"`
+	Chip   string        `json:"chip"`
+	Reason string        `json:"reason,omitempty"`
+	Detail string        `json:"detail,omitempty"`
+	URL    string        `json:"url"`
 }
 
 // noteView is one note rendered on a task detail page.
@@ -335,19 +404,19 @@ type linkView struct {
 // ideaView is one idea rolled up from the tasks promoted from it. State is one
 // of finished, active, blocked, or captured.
 type ideaView struct {
-	ID          core.TicketID
-	Title       string
-	Description string
-	Repo        string
-	State       string
-	Chip        string
-	URL         string
-	Total       int
-	Done        int
-	Active      int
-	Blocked     int
-	Tasks       []taskLink
-	Artifacts   []artifactView
+	ID          core.TicketID  `json:"id"`
+	Title       string         `json:"title"`
+	Description string         `json:"description,omitempty"`
+	Repo        string         `json:"repo,omitempty"`
+	State       string         `json:"state"`
+	Chip        string         `json:"chip"`
+	URL         string         `json:"url"`
+	Total       int            `json:"total"`
+	Done        int            `json:"done"`
+	Active      int            `json:"active"`
+	Blocked     int            `json:"blocked"`
+	Tasks       []taskLink     `json:"tasks,omitempty"`
+	Artifacts   []artifactView `json:"artifacts,omitempty"`
 }
 
 // taskGroup is a set of tasks sharing an origin idea. Ungrouped marks the bucket
@@ -393,6 +462,52 @@ type pageData struct {
 	CapturedIdeas  []ideaView
 	Updates        []updateView
 	Flags          []string
+}
+
+// snapshotJSON is the /api/snapshot document the shadcn/ui app consumes. It is
+// the same projection the server-rendered pages use, marshaled for the client.
+type snapshotJSON struct {
+	Title     string        `json:"title"`
+	Project   string        `json:"project"`
+	Snapshot  string        `json:"snapshot"`
+	Stats     pageStats     `json:"stats"`
+	NextAgent []taskView    `json:"next_agent"`
+	NextHuman []taskView    `json:"next_human"`
+	InFlight  []taskView    `json:"in_flight"`
+	Waiting   []taskView    `json:"waiting"`
+	Ideas     ideaBoardJSON `json:"ideas"`
+	Updates   []updateView  `json:"updates"`
+	Flags     []string      `json:"flags"`
+}
+
+// ideaBoardJSON is the four-lane ideas board as the app renders it.
+type ideaBoardJSON struct {
+	Blocked  []ideaView `json:"blocked"`
+	Active   []ideaView `json:"active"`
+	Finished []ideaView `json:"finished"`
+	Captured []ideaView `json:"captured"`
+}
+
+// snapshot flattens pageData into the JSON document the SPA fetches.
+func (p *pageData) snapshot() snapshotJSON {
+	return snapshotJSON{
+		Title:     p.Title,
+		Project:   p.Project,
+		Snapshot:  p.Snapshot,
+		Stats:     p.Stats,
+		NextAgent: p.NextAgent,
+		NextHuman: p.NextHuman,
+		InFlight:  p.InFlight,
+		Waiting:   p.Waiting,
+		Ideas: ideaBoardJSON{
+			Blocked:  p.BlockedIdeas,
+			Active:   p.ActiveIdeas,
+			Finished: p.FinishedIdeas,
+			Captured: p.CapturedIdeas,
+		},
+		Updates: p.Updates,
+		Flags:   p.Flags,
+	}
 }
 
 // Lane returns the ideas-board lane for key. It keeps the template free of

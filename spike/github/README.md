@@ -14,9 +14,12 @@ personal account, which matters where a paid plan changes the answer (private wi
 
 **Recommend the local-index hybrid.** The port surface is not GitHub-shaped, and no arrangement of
 GitHub primitives satisfies it on its own. GitHub issues are the durable, human-visible **system of
-record for task content**; a local index (the design sketched in the cancelled idea t-ewr3xidxtk:
-per-file JSON or SQLite, an in-memory inverted index, a file watcher) is the **read model,
-serialization layer, and CAS authority**. Writes flow through the index to the issue; reads are
+record for task content**; a local index is the **read model, serialization layer, and CAS
+authority**. That local half already exists: **`pkg/store/jsondir`**, the shipped partitioned/indexed
+backend (registered in `pkg/store/builtins`, passes `conformance.Run`; migration from the
+single-document store is t-bhizhhclcn, search-index parity is t-bbyg7tyypx, successor idea
+t-aa5c2dqqki). The older design idea t-ewr3xidxtk is still `cancelled` — use the shipped package; do
+not reopen a dead idea or build a second index. Writes flow through the index to the issue; reads are
 served from the index; drift is reconciled against the issue by ETag / `updated_at`.
 
 Two findings drive the recommendation:
@@ -24,7 +27,7 @@ Two findings drive the recommendation:
 1. **GitHub cannot do the CAS the port demands.** `If-Match` on an issue `PATCH` is rejected
    outright — `400 Conditional request headers are not allowed in unsafe requests unless supported
    by the endpoint`. Conditional **reads** work (`If-None-Match` → `304`), so the ETag is a usable
-   change token, but it cannot be enforced server-side on a write. `UpdateExpected` has to be
+   change detector, but it cannot be enforced server-side on a write. `UpdateExpected` has to be
    serialized somewhere, and GitHub offers no such place.
 2. **Half the `Backend` interface has no GitHub representation at all.** `EventRepo`,
    `MessageRepo`, and `RunRepo` (and, for a multi-repo project, `ProjectRepo`) are not issues.
@@ -38,11 +41,14 @@ wants — better than the label/search convention the task body assumed. Details
 
 ## How this was verified
 
-`probe.sh` creates throwaway repositories on the authenticated account, exercises each primitive,
-and deletes them. What was run for real (live API, private repo `khoinguyen/ft-spike-*`) vs. taken
-from the docs is called out per claim. The probe account has **no `delete_repo` scope**, so the
-throwaway repos could not be deleted by the probe; they are private and empty of sensitive content
-and need manual removal or a one-time `gh auth refresh -s delete_repo` (see Cleanup at the end).
+The decisive outputs quoted below came from an **ad-hoc probe run** against three live throwaway
+repos on the authenticated account: `khoinguyen/ft-github-spike-1791454543` (issues, deps, CAS,
+labels, milestones, search) and `khoinguyen/ft-wiki-probe-1791454706` + `khoinguyen/ft-wiki-pub-1791454718`
+(wikis). [`probe.sh`](probe.sh) is that run **cleaned up and made reproducible**; it creates
+`ft-spike-probe-*` / `ft-spike-wiki-*` instead, so its repo names differ from the ad-hoc ones.
+What was run for real (live API) vs. taken from the docs is called out per claim. The account token
+has **no `delete_repo` scope**, so neither the ad-hoc repos nor `probe.sh`'s own repos can be
+deleted without a one-time `gh auth refresh -s delete_repo` (see Cleanup).
 
 ---
 
@@ -62,7 +68,7 @@ An issue is the task document. The clean fields title it; everything else needs 
 | `Status` (6 states) | `state` open/closed only | **no** | 6→2. Fix: label `status:<s>`, with `done`/`cancelled` also closing the issue; the index keeps the two consistent |
 | `AssigneeID` | `assignees[].login` | partial | login, not factotum `ActorID`; assignee changes are silently dropped without push access |
 | `WaitingOn []ActorID` | none | **no** | Fix: labels `waiting-on:<actor>` |
-| `Labels []string` | `labels[].name` | partial | **label names cannot contain commas** — `{"name":"a,b"}` → `422 Validation Failed`; commas appear in user labels and in the store's label filter (comma-separated). Fix: escape/reject, or keep labels index-side |
+| `Labels []string` | `labels[].name` | partial | **label names cannot contain commas** — `{"name":"a,b"}` → `422 Validation Failed`; labels are arbitrary strings in the port, and GitHub's own list endpoint takes `labels` as a comma-separated query, so a comma-bearing label can be neither stored nor filtered. (The factotum CLI's `--label` is repeatable AND and does not split on commas, `internal/cli/task.go`, so this is a GitHub-side limit only.) Fix: escape/reject, or keep labels index-side |
 | `Priority int` | none (issue fields are org-owned only) | **no** | Fix: label `p:<n>` or index-side |
 | `Deps []TicketID` | issue dependencies (`blocked_by`) | partial | native and clean within a repo; **cross-repo dependencies are not expressible**, and the conformance creates a cross-project dep. Fix: native edges for same-repo, label `dep:<id>` fallback for cross-repo |
 | `Notes []Note` | issue comments | **no** | comment ids/`created_at`/`user` map, but `Note.System`, `Note.Links`, and note ids need body front-matter; generated (system) notes would surface as human noise in the issue thread |
@@ -178,9 +184,9 @@ and `Limit`. GitHub offers issue timelines, but:
   nowhere to go.
 - No append of a custom event, no guaranteed `Since`/`Limit` semantics, and retention/rate limits.
 
-**Unclean mapping / cannot satisfy.** Fix: the index owns an append-only event log (the jsonfile
-backend already models this; t-ewr3xidxtk proposes a per-shard JSONL log). This is the same
-`EventRepo` that `MessageRepo`/`RunRepo` need, so the hybrid supplies all three.
+**Unclean mapping / cannot satisfy.** Fix: the index owns an append-only event log (`pkg/store/jsondir`
+is the local half; per-shard JSONL is the shape to extend it with). This is the same `EventRepo`
+that `MessageRepo`/`RunRepo` need, so the hybrid supplies all three.
 
 ## Out of scope in the task body, decisive for the verdict
 
@@ -203,21 +209,25 @@ that passes `conformance.Run` must implement these repos locally.
 
 GitHub cannot host the CAS. The contract must live in the index:
 
-1. **Token.** The index stores each task's CAS token alongside the issue pointer. The token is the
-   issue's ETag (strong, from a conditional `GET`) or its `updated_at`; prefer the ETag and fall
-   back to `updated_at` when a token is absent.
+1. **Token (the compared value is a time, not an ETag).** The port's signature is
+   `UpdateExpected(ctx, task, expected time.Time)` and it compares the stored `UpdatedAt`, so the
+   index's CAS token is the task's **`UpdatedAt` (`time.Time`)** — the same type the port compares.
+   The index also caches the issue's ETag (and remote `updated_at`) beside it, but those are only
+   change detectors for the conditional `GET` and drift reconciliation; they are never the value
+   `UpdateExpected` compares. An opaque ETag *cannot* be compared to the caller's `time.Time`.
 2. **`UpdateExpected(task, expected)`.**
-   1. Compare `expected` to the index's stored token for `task.ID`. Mismatch → `core.ErrConflict`,
-      no write.
+   1. Compare `expected` to the index's stored `UpdatedAt` for `task.ID`. Mismatch →
+      `core.ErrConflict`, no write.
    2. Acquire the per-task write lock (a process mutex for a single instance; a lock file for a
       shared directory — reuse the jsondir design).
    3. `PATCH` the issue, then re-`GET` (or read the PATCH response) to capture the new ETag /
       `updated_at`.
-   4. Store the new token and commit the index change.
+   4. Store the issue's new `updated_at` as the index's CAS token (refresh the cached ETag too),
+      then commit the index change.
    5. On network or partial failure: do **not** report success. Mark the index entry dirty and
       reconcile on the next sync, so the caller can retry.
 3. **Reconciliation.** A file watcher / poll pulls `updated_at` for tracked issues; when a remote
-   change lands, re-fetch, reindex, and update the token. A local pending write whose base token
+   change lands, re-fetch, reindex, and update the stored `UpdatedAt`. A local pending write whose base `UpdatedAt`
    changed underneath is surfaced as `ErrConflict` rather than silently clobbering.
 4. **Cross-machine limit.** Two `ft` processes on different hosts with independent indexes still
    race: each index CAS succeeds locally, then both `PATCH`. GitHub applies last-writer-wins with no
@@ -230,7 +240,7 @@ GitHub cannot host the CAS. The contract must live in the index:
 **Why not the alternatives:** best-effort read-compare-write has a TOCTOU race and cannot honestly
 return `ErrConflict`; the git-ref mutex is heavy for every write and still does not compare
 `UpdatedAt` the way the port specifies. The index is the only layer that can compare `expected` to
-a token and refuse atomically, and it is needed anyway for Search, DependsOn composition, Events,
+the stored `UpdatedAt` and refuse atomically, and it is needed anyway for Search, DependsOn composition, Events,
 Messages, and Runs.
 
 ---
@@ -253,8 +263,7 @@ GitHub-only):
   - `NotBefore`, `Snooze`, `WaitingOn`, `Priority`, `Groomed`, `AcceptanceCriteria`, `MilestoneMeta`,
     `Notes[].System`, `Links` — no primitives.
   - `Kind` vs. GitHub Milestone collision.
-  - label names containing commas (the suite's `Labels` filter is comma-separated over arbitrary
-    strings; GitHub rejects commas).
+  - label names containing commas (the port's labels are arbitrary strings; GitHub rejects commas).
 - **`TaskCaptureKinds`** — fine via `kind:` labels.
 - **`TaskDependents`** — cross-project edges; deterministic ordering; `Delete` removes outgoing
   edges; composition with `Search`. Native `blocking` covers same-repo edges only; the rest is
@@ -273,8 +282,9 @@ identity lookups**; everything else is the local index. That split is the whole 
 ## Follow-ups (for the implementation task t-mlgrurpe67)
 
 - Decide the issue↔task identity scheme and front-matter format before any write path.
-- Reuse the jsondir/index design from t-ewr3xidxtk (reopened from `cancelled`) rather than
-  inventing a second local store; the multi-writer and watcher decisions there apply directly.
+- Extend **`pkg/store/jsondir`** as the local half rather than inventing a second store; the
+  multi-writer and watcher decisions made there apply directly. (Its search-index parity is
+  t-bbyg7tyypx; do not reopen the cancelled idea t-ewr3xidxtk.)
 - Treat `task_check` artifacts as index-only.
 - Revisit the wiki only if targeting plans with private wikis; prefer repo-tree files.
 - Consider splitting `Backend` into capability interfaces (core vs. runtime) so a future backend can
@@ -284,11 +294,12 @@ identity lookups**; everything else is the local index. That split is the whole 
 
 ## Cleanup
 
-The probe account lacked `delete_repo`, so these private throwaway repositories remain and should
+The probe account lacked `delete_repo`, so the three ad-hoc throwaway repositories remain and should
 be deleted (`gh auth refresh -h github.com -s delete_repo` once, or via the web UI):
 
 - `khoinguyen/ft-github-spike-1791454543`
 - `khoinguyen/ft-wiki-probe-1791454706`
 - `khoinguyen/ft-wiki-pub-1791454718`
 
-`probe.sh` requires create **and** delete scope to clean up after itself.
+`probe.sh` creates `ft-spike-probe-*` / `ft-spike-wiki-*` and requires create **and** delete scope
+to clean them up after itself.

@@ -28,6 +28,7 @@ type state struct {
 	Events    []core.Event    `json:"events,omitempty"`
 	Messages  []core.Message  `json:"messages,omitempty"`
 	Runs      []core.Run      `json:"runs,omitempty"`
+	Pipelines []core.Pipeline `json:"pipelines,omitempty"`
 }
 
 type Backend struct {
@@ -111,6 +112,9 @@ func (b *Backend) Artifacts() store.ArtifactRepo {
 func (b *Backend) Events() store.EventRepo     { return &eventRepo{backend: b} }
 func (b *Backend) Messages() store.MessageRepo { return &messageRepo{backend: b} }
 func (b *Backend) Runs() store.RunRepo         { return &runRepo{backend: b} }
+func (b *Backend) Pipelines() store.PipelineRepo {
+	return &pipelineRepo{backend: b}
+}
 
 type projectRepo struct{ backend *Backend }
 
@@ -862,6 +866,108 @@ func (r *runRepo) Delete(_ context.Context, id core.RunID) error {
 func (b *Backend) runIndex(id core.RunID) (int, bool) {
 	for i, run := range b.state.Runs {
 		if run.ID == id {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+type pipelineRepo struct{ backend *Backend }
+
+func (r *pipelineRepo) Create(_ context.Context, pipeline *core.Pipeline) error {
+	if err := pipeline.Validate(); err != nil {
+		return err
+	}
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	if _, ok := r.backend.pipelineIndex(pipeline.ID); ok {
+		return fmt.Errorf("%w: pipeline %s", core.ErrAlreadyExists, pipeline.ID)
+	}
+	r.backend.state.Pipelines = append(r.backend.state.Pipelines, clone.Pipeline(*pipeline))
+	return r.backend.persist()
+}
+
+func (r *pipelineRepo) Get(_ context.Context, id core.PipelineID) (*core.Pipeline, error) {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	index, ok := r.backend.pipelineIndex(id)
+	if !ok {
+		return nil, fmt.Errorf("%w: pipeline %s", core.ErrNotFound, id)
+	}
+	cloned := clone.Pipeline(r.backend.state.Pipelines[index])
+	return &cloned, nil
+}
+
+func (r *pipelineRepo) List(_ context.Context, filter store.PipelineFilter) ([]*core.Pipeline, error) {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	out := make([]*core.Pipeline, 0, len(r.backend.state.Pipelines))
+	for _, pipeline := range r.backend.state.Pipelines {
+		if !store.MatchesPipelineFilter(&pipeline, filter) {
+			continue
+		}
+		cloned := clone.Pipeline(pipeline)
+		out = append(out, &cloned)
+	}
+	sort.Slice(out, func(i, j int) bool { return store.ComparePipelines(out[i], out[j]) < 0 })
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+func (r *pipelineRepo) Update(_ context.Context, pipeline *core.Pipeline) error {
+	if err := pipeline.Validate(); err != nil {
+		return err
+	}
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	index, ok := r.backend.pipelineIndex(pipeline.ID)
+	if !ok {
+		return fmt.Errorf("%w: pipeline %s", core.ErrNotFound, pipeline.ID)
+	}
+	if r.backend.state.Pipelines[index].State.Terminal() {
+		return fmt.Errorf("%w: pipeline %s is %s and immutable", core.ErrConflict, pipeline.ID, r.backend.state.Pipelines[index].State)
+	}
+	r.backend.state.Pipelines[index] = clone.Pipeline(*pipeline)
+	return r.backend.persist()
+}
+
+func (r *pipelineRepo) Claim(_ context.Context, req store.PipelineClaimRequest) (*core.Pipeline, error) {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	var (
+		best  core.Pipeline
+		bestI = -1
+	)
+	for i, pipeline := range r.backend.state.Pipelines {
+		if pipeline.State != core.PipelineQueued {
+			continue
+		}
+		if req.ProjectID != "" && pipeline.ProjectID != req.ProjectID {
+			continue
+		}
+		if bestI < 0 || store.ComparePipelines(&pipeline, &best) < 0 {
+			best = pipeline
+			bestI = i
+		}
+	}
+	if bestI < 0 {
+		return nil, fmt.Errorf("%w: no queued pipeline for project %s", core.ErrNotFound, req.ProjectID)
+	}
+	best.State = core.PipelineGrooming
+	best.UpdatedAt = time.Now().UTC()
+	r.backend.state.Pipelines[bestI] = best
+	if err := r.backend.persist(); err != nil {
+		return nil, err
+	}
+	cloned := clone.Pipeline(best)
+	return &cloned, nil
+}
+
+func (b *Backend) pipelineIndex(id core.PipelineID) (int, bool) {
+	for i, pipeline := range b.state.Pipelines {
+		if pipeline.ID == id {
 			return i, true
 		}
 	}

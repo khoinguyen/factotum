@@ -60,6 +60,10 @@ type runRecord struct {
 	run core.Run
 }
 
+type pipelineRecord struct {
+	pipeline core.Pipeline
+}
+
 type Backend struct {
 	mu        sync.Mutex
 	root      string
@@ -70,6 +74,7 @@ type Backend struct {
 	events    []core.Event
 	messages  map[core.MessageID]*messageRecord
 	runs      map[core.RunID]*runRecord
+	pipelines map[core.PipelineID]*pipelineRecord
 }
 
 func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
@@ -95,6 +100,7 @@ func open(_ context.Context, root string) (store.Backend, error) {
 		artifacts: make(map[core.ArtifactID]*artifactRecord),
 		messages:  make(map[core.MessageID]*messageRecord),
 		runs:      make(map[core.RunID]*runRecord),
+		pipelines: make(map[core.PipelineID]*pipelineRecord),
 	}
 	if err := b.load(); err != nil {
 		return nil, err
@@ -129,6 +135,7 @@ func (b *Backend) Artifacts() store.ArtifactRepo { return &artifactRepo{backend:
 func (b *Backend) Events() store.EventRepo       { return &eventRepo{backend: b} }
 func (b *Backend) Messages() store.MessageRepo   { return &messageRepo{backend: b} }
 func (b *Backend) Runs() store.RunRepo           { return &runRepo{backend: b} }
+func (b *Backend) Pipelines() store.PipelineRepo { return &pipelineRepo{backend: b} }
 
 // --- loading ---
 
@@ -149,6 +156,9 @@ func (b *Backend) load() error {
 		return err
 	}
 	if err := b.loadRuns(); err != nil {
+		return err
+	}
+	if err := b.loadPipelines(); err != nil {
 		return err
 	}
 	return b.loadEvents()
@@ -252,6 +262,23 @@ func (b *Backend) loadRuns() error {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 		b.runs[run.ID] = &runRecord{run: run}
+		return nil
+	})
+}
+
+func (b *Backend) loadPipelines() error {
+	return b.readJSON("pipelines", func(name string, data []byte) error {
+		var pipeline core.Pipeline
+		if err := json.Unmarshal(data, &pipeline); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		if _, ok := b.pipelines[pipeline.ID]; ok {
+			return fmt.Errorf("%s: duplicate pipeline id %s", name, pipeline.ID)
+		}
+		if err := checkID("pipeline", string(pipeline.ID)); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		b.pipelines[pipeline.ID] = &pipelineRecord{pipeline: pipeline}
 		return nil
 	})
 }
@@ -1297,6 +1324,126 @@ func (b *Backend) writeRun(run core.Run) error {
 		return fmt.Errorf("encode run %s: %w", run.ID, err)
 	}
 	return writeFileAtomic(b.dataPath("runs", string(run.ID)), data)
+}
+
+// --- pipelines ---
+
+type pipelineRepo struct{ backend *Backend }
+
+func (r *pipelineRepo) Create(_ context.Context, pipeline *core.Pipeline) error {
+	if err := pipeline.Validate(); err != nil {
+		return err
+	}
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.pipelines[pipeline.ID]; ok {
+		return fmt.Errorf("%w: pipeline %s", core.ErrAlreadyExists, pipeline.ID)
+	}
+	if err := checkID("pipeline", string(pipeline.ID)); err != nil {
+		return err
+	}
+	if err := b.writePipeline(*pipeline); err != nil {
+		return err
+	}
+	b.pipelines[pipeline.ID] = &pipelineRecord{pipeline: clone.Pipeline(*pipeline)}
+	return nil
+}
+
+func (r *pipelineRepo) Get(_ context.Context, id core.PipelineID) (*core.Pipeline, error) {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	record, ok := b.pipelines[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: pipeline %s", core.ErrNotFound, id)
+	}
+	cloned := clone.Pipeline(record.pipeline)
+	return &cloned, nil
+}
+
+func (r *pipelineRepo) List(_ context.Context, filter store.PipelineFilter) ([]*core.Pipeline, error) {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]*core.Pipeline, 0, len(b.pipelines))
+	for _, record := range b.pipelines {
+		if !store.MatchesPipelineFilter(&record.pipeline, filter) {
+			continue
+		}
+		cloned := clone.Pipeline(record.pipeline)
+		out = append(out, &cloned)
+	}
+	sort.Slice(out, func(i, j int) bool { return store.ComparePipelines(out[i], out[j]) < 0 })
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+func (r *pipelineRepo) Update(_ context.Context, pipeline *core.Pipeline) error {
+	if err := pipeline.Validate(); err != nil {
+		return err
+	}
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	record, ok := b.pipelines[pipeline.ID]
+	if !ok {
+		return fmt.Errorf("%w: pipeline %s", core.ErrNotFound, pipeline.ID)
+	}
+	if record.pipeline.State.Terminal() {
+		return fmt.Errorf("%w: pipeline %s is %s and immutable", core.ErrConflict, pipeline.ID, record.pipeline.State)
+	}
+	if err := b.writePipeline(*pipeline); err != nil {
+		return err
+	}
+	b.pipelines[pipeline.ID] = &pipelineRecord{pipeline: clone.Pipeline(*pipeline)}
+	return nil
+}
+
+func (r *pipelineRepo) Claim(_ context.Context, req store.PipelineClaimRequest) (*core.Pipeline, error) {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var (
+		best   core.Pipeline
+		bestID core.PipelineID
+		found  bool
+	)
+	for id, record := range b.pipelines {
+		pipeline := record.pipeline
+		if pipeline.State != core.PipelineQueued {
+			continue
+		}
+		if req.ProjectID != "" && pipeline.ProjectID != req.ProjectID {
+			continue
+		}
+		if !found || store.ComparePipelines(&pipeline, &best) < 0 {
+			best = pipeline
+			bestID = id
+			found = true
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("%w: no queued pipeline for project %s", core.ErrNotFound, req.ProjectID)
+	}
+	best.State = core.PipelineGrooming
+	best.UpdatedAt = time.Now().UTC()
+	if err := b.writePipeline(best); err != nil {
+		return nil, err
+	}
+	b.pipelines[bestID] = &pipelineRecord{pipeline: best}
+	cloned := clone.Pipeline(best)
+	return &cloned, nil
+}
+
+func (b *Backend) writePipeline(pipeline core.Pipeline) error {
+	data, err := json.Marshal(pipeline)
+	if err != nil {
+		return fmt.Errorf("encode pipeline %s: %w", pipeline.ID, err)
+	}
+	return writeFileAtomic(b.dataPath("pipelines", string(pipeline.ID)), data)
 }
 
 func removeFile(path string) error {

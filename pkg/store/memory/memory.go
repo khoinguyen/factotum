@@ -23,6 +23,7 @@ type Backend struct {
 	events    []core.Event
 	messages  map[core.MessageID]core.Message
 	runs      map[core.RunID]core.Run
+	pipelines map[core.PipelineID]core.Pipeline
 }
 
 func New() *Backend {
@@ -33,6 +34,7 @@ func New() *Backend {
 		artifacts: make(map[core.ArtifactID]core.Artifact),
 		messages:  make(map[core.MessageID]core.Message),
 		runs:      make(map[core.RunID]core.Run),
+		pipelines: make(map[core.PipelineID]core.Pipeline),
 	}
 }
 
@@ -50,6 +52,9 @@ func (b *Backend) Artifacts() store.ArtifactRepo {
 func (b *Backend) Events() store.EventRepo     { return &eventRepo{backend: b} }
 func (b *Backend) Messages() store.MessageRepo { return &messageRepo{backend: b} }
 func (b *Backend) Runs() store.RunRepo         { return &runRepo{backend: b} }
+func (b *Backend) Pipelines() store.PipelineRepo {
+	return &pipelineRepo{backend: b}
+}
 
 type projectRepo struct{ backend *Backend }
 
@@ -732,4 +737,96 @@ func (r *runRepo) Delete(_ context.Context, id core.RunID) error {
 	}
 	delete(r.backend.runs, id)
 	return nil
+}
+
+type pipelineRepo struct{ backend *Backend }
+
+func (r *pipelineRepo) Create(_ context.Context, pipeline *core.Pipeline) error {
+	if err := pipeline.Validate(); err != nil {
+		return err
+	}
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	if _, ok := r.backend.pipelines[pipeline.ID]; ok {
+		return fmt.Errorf("%w: pipeline %s", core.ErrAlreadyExists, pipeline.ID)
+	}
+	r.backend.pipelines[pipeline.ID] = clone.Pipeline(*pipeline)
+	return nil
+}
+
+func (r *pipelineRepo) Get(_ context.Context, id core.PipelineID) (*core.Pipeline, error) {
+	r.backend.mu.RLock()
+	defer r.backend.mu.RUnlock()
+	pipeline, ok := r.backend.pipelines[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: pipeline %s", core.ErrNotFound, id)
+	}
+	cloned := clone.Pipeline(pipeline)
+	return &cloned, nil
+}
+
+func (r *pipelineRepo) List(_ context.Context, filter store.PipelineFilter) ([]*core.Pipeline, error) {
+	r.backend.mu.RLock()
+	defer r.backend.mu.RUnlock()
+	out := make([]*core.Pipeline, 0, len(r.backend.pipelines))
+	for _, pipeline := range r.backend.pipelines {
+		if !store.MatchesPipelineFilter(&pipeline, filter) {
+			continue
+		}
+		cloned := clone.Pipeline(pipeline)
+		out = append(out, &cloned)
+	}
+	sort.Slice(out, func(i, j int) bool { return store.ComparePipelines(out[i], out[j]) < 0 })
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+func (r *pipelineRepo) Update(_ context.Context, pipeline *core.Pipeline) error {
+	if err := pipeline.Validate(); err != nil {
+		return err
+	}
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	current, ok := r.backend.pipelines[pipeline.ID]
+	if !ok {
+		return fmt.Errorf("%w: pipeline %s", core.ErrNotFound, pipeline.ID)
+	}
+	if current.State.Terminal() {
+		return fmt.Errorf("%w: pipeline %s is %s and immutable", core.ErrConflict, pipeline.ID, current.State)
+	}
+	r.backend.pipelines[pipeline.ID] = clone.Pipeline(*pipeline)
+	return nil
+}
+
+func (r *pipelineRepo) Claim(_ context.Context, req store.PipelineClaimRequest) (*core.Pipeline, error) {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	var (
+		best   core.Pipeline
+		bestID core.PipelineID
+		found  bool
+	)
+	for id, pipeline := range r.backend.pipelines {
+		if pipeline.State != core.PipelineQueued {
+			continue
+		}
+		if req.ProjectID != "" && pipeline.ProjectID != req.ProjectID {
+			continue
+		}
+		if !found || store.ComparePipelines(&pipeline, &best) < 0 {
+			best = pipeline
+			bestID = id
+			found = true
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("%w: no queued pipeline for project %s", core.ErrNotFound, req.ProjectID)
+	}
+	best.State = core.PipelineGrooming
+	best.UpdatedAt = time.Now().UTC()
+	r.backend.pipelines[bestID] = best
+	cloned := clone.Pipeline(best)
+	return &cloned, nil
 }

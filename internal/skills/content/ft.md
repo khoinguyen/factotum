@@ -359,8 +359,8 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode --allow-host
   with `--allow-host`, `run.allow_host`, or the interactive prompt above; the opt-in
   is machine-scoped and is ignored from the committed project file.
 - The `openshell` backend runs the harness in a non-root sandbox under the
-  deny-by-default policy above; it needs the `openshell` CLI and a gateway, and
-  attaches a configured credential as a provider placeholder, never a value.
+  deny-by-default policy above; it needs the CLI and a gateway, attaches the
+  credential as a provider placeholder, and imports a missing provider profile.
 - The `docker` backend runs the harness in a per-task container from the
   harness's image, mounting only the resolved workspace at its same absolute
   path. It needs the `docker` CLI and a daemon, refuses a policy it cannot

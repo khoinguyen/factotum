@@ -349,15 +349,15 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode --allow-host
   graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error (exit 1).
 - `--sandbox`/`--harness` are optional: they resolve flag > `FACTOTUM_RUN_*` > committed
   project `[run]` > machine `[run]`. On a terminal an unset one prompts once and saves to
-  the chosen config; without a terminal it is an error. A committed project `[run]` may set
-  only `sandbox`/`harness`; the machine table also holds workspace/model/args/allow_host/credential_env. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
+  the chosen config; choosing `local` there asks to opt in (default no) and records
+  `run.allow_host = true` in the user config. A committed project `[run]` may set only `sandbox`/`harness`; the machine table also holds workspace/model/args/allow_host/credential_env. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
 - `provider` and `credential_env` name the credential a harness may use and the
   variable it arrives under, e.g. `provider = "openrouter"` with
   `credential_env = "OPENROUTER_API_KEY"`; the value is read from the host
   environment and handed to the isolating backend, never placed in the sandbox.
 - The `local` backend is unsandboxed and refuses to run until explicitly opted in
-  with `--allow-host` or `run.allow_host`; the opt-in is machine-scoped and is
-  ignored from the committed project file.
+  with `--allow-host`, `run.allow_host`, or the interactive prompt above; the opt-in
+  is machine-scoped and is ignored from the committed project file.
 - The `openshell` backend runs the harness in a non-root sandbox under the
   deny-by-default policy above; it needs the `openshell` CLI and a gateway, and
   attaches a configured credential as a provider placeholder, never a value.

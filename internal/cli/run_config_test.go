@@ -2,13 +2,21 @@ package cli
 
 import (
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
+	"github.com/khoinguyen/factotum/internal/config"
+	"github.com/khoinguyen/factotum/pkg/app"
+	"github.com/khoinguyen/factotum/pkg/harness"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
+	"github.com/khoinguyen/factotum/pkg/registry"
 )
 
 // TestRunResolvesSelectionFromConfig pins the resolution order for the harness
@@ -202,5 +210,122 @@ func TestGroomResolvesSelectionFromConfig(t *testing.T) {
 	out := r.run("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath, "--workspace", t.TempDir())
 	if !strings.Contains(out, "run: finished") {
 		t.Fatalf("groom without flags did not resolve config:\n%s", out)
+	}
+}
+
+// newOptInDeps builds a Deps whose run adapters are in-memory fakes, so a test
+// can exercise the interactive selection without executing a real backend.
+func newOptInDeps(t *testing.T, p Prompter) *Deps {
+	t.Helper()
+	dir := t.TempDir()
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, io.Discard, io.Discard, func(string) string { return "" })
+	deps.Config.Project = "factotum"
+	deps.UserConfigPath = filepath.Join(dir, "user-config.toml")
+	deps.ProjectConfigPath = filepath.Join(dir, "project-config.toml")
+	deps.Prompt = p
+	deps.RunBackends = registry.New[IsolationBackendFactory]()
+	for _, name := range []string{"local", "docker"} {
+		name := name
+		if err := deps.RunBackends.Register(name, func(config.Run, io.Writer) (isolation.IsolationBackend, error) {
+			return isofake.New(name), nil
+		}); err != nil {
+			t.Fatalf("register backend %q: %v", name, err)
+		}
+	}
+	deps.RunHarnesses = registry.New[HarnessFactory]()
+	if err := deps.RunHarnesses.Register("opencode", func(config.Run) (harness.Harness, error) {
+		return harnessfake.New("opencode"), nil
+	}); err != nil {
+		t.Fatalf("register harness: %v", err)
+	}
+	return deps
+}
+
+// TestResolveRunSelectionLocalOptIn pins the interactive local opt-in: choosing
+// local asks explicitly (default no), and on yes records run.allow_host in the
+// host-scoped user config while the committable pick lands in the chosen scope.
+// Declining aborts without saving, and a non-local sandbox never asks.
+func TestResolveRunSelectionLocalOptIn(t *testing.T) {
+	tests := []struct {
+		name          string
+		scope         string
+		backend       string
+		hasConfirm    bool
+		confirm       bool
+		wantErr       bool
+		wantAllowHost bool
+	}{
+		{"local accepted records opt-in", "user", "local", true, true, false, true},
+		{"local declined aborts without saving", "user", "local", true, false, true, false},
+		{"project scope still opts in via the user config", "project", "local", true, true, false, true},
+		{"non-local skips the opt-in prompt", "user", "docker", false, false, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &scriptedPrompter{t: t, inputs: []string{tc.backend, "opencode", tc.scope}}
+			if tc.hasConfirm {
+				p.confirms = []bool{tc.confirm}
+			}
+			deps := newOptInDeps(t, p)
+
+			cmd := &cobra.Command{Use: "run"}
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cfg := config.Run{}
+			err := deps.resolveRunSelection(cmd, &cfg)
+			asked := strings.Join(p.asked, "\n")
+			if got := strings.Contains(asked, "confirm:"); got != tc.hasConfirm {
+				t.Fatalf("opt-in prompt asked = %v, want %v (asked=%v)", got, tc.hasConfirm, p.asked)
+			}
+			if tc.wantErr {
+				if !errors.Is(err, ErrUsage) {
+					t.Fatalf("declined opt-in error = %v, want a usage error", err)
+				}
+				for _, path := range []string{deps.UserConfigPath, deps.ProjectConfigPath} {
+					if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+						t.Fatalf("declined opt-in wrote %s: %v", path, statErr)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveRunSelection() error = %v", err)
+			}
+			if cfg.Sandbox != tc.backend || cfg.Harness != "opencode" {
+				t.Fatalf("resolved = %q/%q, want %q/opencode", cfg.Sandbox, cfg.Harness, tc.backend)
+			}
+			if cfg.AllowHost != tc.wantAllowHost {
+				t.Fatalf("cfg.AllowHost = %v, want %v", cfg.AllowHost, tc.wantAllowHost)
+			}
+
+			user := readFile(t, deps.UserConfigPath)
+			if got := strings.Contains(user, `sandbox = "`+tc.backend+`"`); got != (tc.scope == "user") {
+				t.Fatalf("user config sandbox presence = %v, want %v:\n%s", got, tc.scope == "user", user)
+			}
+			if got := strings.Contains(user, "allow_host = true"); got != tc.wantAllowHost {
+				t.Fatalf("user config allow_host = %v, want %v:\n%s", got, tc.wantAllowHost, user)
+			}
+			if tc.scope == "project" {
+				project := readFile(t, deps.ProjectConfigPath)
+				if !strings.Contains(project, `sandbox = "`+tc.backend+`"`) {
+					t.Fatalf("project config missing the sandbox pick:\n%s", project)
+				}
+				if strings.Contains(project, "allow_host") {
+					t.Fatalf("allow_host leaked into the committed project config:\n%s", project)
+				}
+			}
+
+			loaded, err := config.Load(config.Input{
+				UserPath:    deps.UserConfigPath,
+				ProjectPath: deps.ProjectConfigPath,
+				Getenv:      func(string) string { return "" },
+			})
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if loaded.Run.Sandbox != tc.backend || loaded.Run.AllowHost != tc.wantAllowHost {
+				t.Fatalf("reloaded Run = %+v, want sandbox %q allow_host %v", loaded.Run, tc.backend, tc.wantAllowHost)
+			}
+		})
 	}
 }

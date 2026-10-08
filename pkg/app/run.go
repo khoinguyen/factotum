@@ -182,6 +182,11 @@ type ProjectRunInput struct {
 	Args  []string
 	// Prompt is the instruction the harness receives, used verbatim.
 	Prompt string
+	// Capture names workspace-relative paths whose contents are read out of the
+	// environment after the harness runs, before the environment is torn down.
+	// The files are returned in ProjectRunOutcome.Captured. A path the run
+	// never wrote is omitted, so the caller decides how to report it.
+	Capture []string
 }
 
 // ProjectRunOutcome records what a task-less run did. There is no task status:
@@ -194,6 +199,9 @@ type ProjectRunOutcome struct {
 	Workspace string
 	// Checkouts are the project's repos materialized for the run.
 	Checkouts []workspace.Checkout
+	// Captured holds the contents of the requested Capture paths, keyed by the
+	// path as requested. A requested path the run did not write is absent.
+	Captured map[string][]byte
 }
 
 // RunProject runs one prompt over all of a project's repositories without a
@@ -233,6 +241,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		model:   in.Model,
 		args:    in.Args,
 		labels:  map[string]string{"project": string(project.ID)},
+		capture: in.Capture,
 	})
 	if err != nil {
 		return nil, err
@@ -245,6 +254,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		Complete:  res.complete,
 		Workspace: plan.Root,
 		Checkouts: plan.Checkouts,
+		Captured:  res.captured,
 	}
 	if res.exitCode != 0 {
 		return outcome, fmt.Errorf("%w: exit code %d", ErrRunFailed, res.exitCode)
@@ -262,6 +272,9 @@ type harnessRun struct {
 	model   string
 	args    []string
 	labels  map[string]string
+	// capture names workspace-relative paths read out of the environment after
+	// the command exits and before the environment is deleted.
+	capture []string
 	// onStart runs after the command is built and before Exec; a task run uses
 	// it to record the run-started event and abort if it cannot be written. Nil
 	// means no pre-exec hook.
@@ -273,6 +286,9 @@ type harnessResult struct {
 	exitCode int
 	output   string
 	complete bool
+	// captured holds the requested capture paths' contents, keyed by the path as
+	// requested. Nil when the run requested no capture.
+	captured map[string][]byte
 }
 
 // runHarness prepares the selected backend, runs the harness command in the
@@ -322,7 +338,29 @@ func (s *RunService) runHarness(ctx context.Context, r harnessRun) (harnessResul
 	if err != nil {
 		return harnessResult{}, err
 	}
-	return harnessResult{exitCode: result.ExitCode, output: parsed.Output, complete: parsed.Complete}, nil
+	captured, err := captureFiles(ctx, r.backend, handle, r.capture)
+	if err != nil {
+		return harnessResult{}, err
+	}
+	return harnessResult{exitCode: result.ExitCode, output: parsed.Output, complete: parsed.Complete, captured: captured}, nil
+}
+
+// captureFiles reads the requested workspace-relative paths out of the
+// environment before the caller deletes it, so a run can return files its
+// harness wrote inside the workspace. It is a no-op without requested paths.
+func captureFiles(ctx context.Context, backend isolation.IsolationBackend, h isolation.Handle, paths []string) (map[string][]byte, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	files, err := backend.Download(ctx, h, paths)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]byte, len(files))
+	for _, f := range files {
+		out[f.Path] = f.Content
+	}
+	return out, nil
 }
 
 // runPrompt returns the prompt a harness receives: the caller-supplied override

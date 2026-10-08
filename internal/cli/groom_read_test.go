@@ -35,10 +35,9 @@ func seedGroomSession(t *testing.T, r *runner, projectID, cfgPath, producedTitle
 	base.Program(isolation.ExecResult{Stdout: []byte("groomed\n"), ExitCode: 0})
 	backend := groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
 		prompt := cmd.Argv[len(cmd.Argv)-1]
-		mustWrite(t, kickoffPath(prompt, "Write the report to: "),
+		stageGroomOutputs(t, base, prompt,
 			"# Grooming report - 2026-10-08\n\n## Summary\n\n- items groomed: 1\n\n"+
-				"## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n")
-		mustWrite(t, kickoffPath(prompt, "Write the deferred questions to: "),
+				"## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n",
 			"# Deferred questions\n\n## Questions\n\n- Which cache? (item: t-x, owner: PO)\n\n## Resolved\n")
 		if producedTitle != "" {
 			producedID = firstField(t, r.run("task", "create", "-p", projectID, "-t", producedTitle))

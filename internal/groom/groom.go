@@ -7,6 +7,7 @@ package groom
 import (
 	_ "embed"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -15,6 +16,11 @@ const (
 	// SessionsDirName is the directory, under the project data dir, that holds
 	// every grooming session's outputs.
 	SessionsDirName = "grooming-sessions"
+	// StagingDirName is the workspace-relative directory a session writes its
+	// outputs into. It lives inside the run workspace (never the project data
+	// dir), so a sandboxed harness is allowed to write it; `ft groom` copies the
+	// files out to SessionsDirName when the session ends.
+	StagingDirName = ".ft-groom"
 	// ReportFileName is the deterministic name of a session's report.
 	ReportFileName = "report.md"
 	// DeferredQuestionsFileName is the deterministic name of a session's
@@ -66,15 +72,30 @@ func SessionDir(dataDir, sessionID string) string {
 	return filepath.Join(dataDir, SessionsDirName, sessionID)
 }
 
-// ReportPath returns the absolute path a session writes its report to.
+// ReportPath returns the absolute durable path of a session's captured report:
+// where `ft groom` copies the report the session staged inside its workspace.
 func ReportPath(dataDir, sessionID string) string {
 	return filepath.Join(SessionDir(dataDir, sessionID), ReportFileName)
 }
 
-// DeferredQuestionsPath returns the absolute path a session writes its
-// deferred-questions file to.
+// DeferredQuestionsPath returns the absolute durable path of a session's
+// captured deferred-questions file.
 func DeferredQuestionsPath(dataDir, sessionID string) string {
 	return filepath.Join(SessionDir(dataDir, sessionID), DeferredQuestionsFileName)
+}
+
+// StagedReportPath returns the workspace-relative path a session writes its
+// report to. It is relative so the harness writes inside its own workspace,
+// which a sandboxed backend allows; `ft groom` reads it back and copies it to
+// ReportPath.
+func StagedReportPath(sessionID string) string {
+	return path.Join(StagingDirName, sessionID, ReportFileName)
+}
+
+// StagedDeferredQuestionsPath returns the workspace-relative path a session
+// writes its deferred-questions file to.
+func StagedDeferredQuestionsPath(sessionID string) string {
+	return path.Join(StagingDirName, sessionID, DeferredQuestionsFileName)
 }
 
 // ScopeItem is one item a grooming session covers, as named in the kickoff.
@@ -100,10 +121,13 @@ neither agent-ready nor deferred is incomplete.
 `
 
 // Kickoff returns the block `ft groom` appends to the durable session prompt. It
-// names the project, every scoped item, and the absolute paths the session must
-// write, and restates the templates' section contract, so the harness has the
-// scope and the deterministic outputs without re-reading the code. When
-// unattended is set it also carries the no-product-owner override.
+// names the project, every scoped item, and the workspace-relative paths the
+// session must write, and restates the templates' section contract, so the
+// harness has the scope and the deterministic outputs without re-reading the
+// code. The paths are relative to the session's working directory, so a
+// sandboxed harness writes inside its own workspace and `ft groom` captures the
+// files from there. When unattended is set it also carries the no-product-owner
+// override.
 func Kickoff(project string, items []ScopeItem, reportPath, deferredPath string, unattended bool) string {
 	var b strings.Builder
 	b.WriteString("## Session kickoff\n\n")
@@ -118,7 +142,8 @@ func Kickoff(project string, items []ScopeItem, reportPath, deferredPath string,
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "Write the report to: %s\n", reportPath)
-	fmt.Fprintf(&b, "Write the deferred questions to: %s\n\n", deferredPath)
+	fmt.Fprintf(&b, "Write the deferred questions to: %s\n", deferredPath)
+	b.WriteString("Both paths are relative to your working directory; create their parent directory if it is absent.\n\n")
 	fmt.Fprintf(&b, "Report sections, in order: %s\n", strings.Join(ReportSections(), ", "))
 	fmt.Fprintf(&b, "Deferred-questions sections, in order: %s\n", strings.Join(DeferredQuestionsSections(), ", "))
 	if unattended {

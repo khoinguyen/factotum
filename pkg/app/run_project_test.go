@@ -142,6 +142,31 @@ func TestRunProjectFailureReportsExitCode(t *testing.T) {
 	}
 }
 
+// TestRunProjectCapturesRequestedFiles proves a task-less run can read declared
+// files back out of the environment before it is torn down: a session that
+// writes its outputs inside the workspace has them requested by
+// workspace-relative path. A requested path the session never wrote is omitted,
+// so the caller decides how to report it.
+func TestRunProjectCapturesRequestedFiles(t *testing.T) {
+	f := newProjectRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("done"), ExitCode: 0})
+	f.backend.Stage(isolation.File{Path: "out/report.md", Content: []byte("# report\n")})
+
+	outcome, err := f.run(t, ProjectRunInput{
+		Prompt:  "groom",
+		Capture: []string{"out/report.md", "out/deferred.md"},
+	})
+	if err != nil {
+		t.Fatalf("RunProject() error = %v", err)
+	}
+	if got := string(outcome.Captured["out/report.md"]); got != "# report\n" {
+		t.Fatalf("captured report = %q, want the staged content", got)
+	}
+	if _, ok := outcome.Captured["out/deferred.md"]; ok {
+		t.Fatalf("captured a path the session never wrote: %+v", outcome.Captured)
+	}
+}
+
 func TestRunProjectRequiresBackendAndHarness(t *testing.T) {
 	f := newProjectRunFixture(t)
 	if _, err := f.svc.RunProject(context.Background(), ProjectRunInput{ProjectID: f.project.ID, WorkspaceRoot: f.root, Prompt: "p"}); err == nil {

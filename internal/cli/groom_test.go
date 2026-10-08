@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/internal/config"
+	"github.com/khoinguyen/factotum/internal/groom"
 	"github.com/khoinguyen/factotum/pkg/app"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
@@ -85,7 +86,23 @@ func kickoffPath(prompt, label string) string {
 	return ""
 }
 
-// writingGroomBackend returns a backend whose Exec writes the report and the
+// stageGroomOutputs stages the two outputs a session would write, at the
+// workspace-relative paths the kickoff names, into the fake environment's
+// filesystem so the run service captures them.
+func stageGroomOutputs(t *testing.T, base *isofake.Backend, prompt, reportBody, deferredBody string) {
+	t.Helper()
+	report := kickoffPath(prompt, "Write the report to: ")
+	deferred := kickoffPath(prompt, "Write the deferred questions to: ")
+	if report == "" || deferred == "" {
+		t.Fatalf("prompt kickoff does not name both outputs:\n%s", prompt)
+	}
+	base.Stage(
+		isolation.File{Path: report, Content: []byte(reportBody)},
+		isolation.File{Path: deferred, Content: []byte(deferredBody)},
+	)
+}
+
+// writingGroomBackend returns a backend whose Exec stages the report and the
 // deferred-questions file named in the injected kickoff, so `ft groom` captures
 // them.
 func writingGroomBackend(t *testing.T) groomBackend {
@@ -94,16 +111,9 @@ func writingGroomBackend(t *testing.T) groomBackend {
 	base.Program(isolation.ExecResult{Stdout: []byte("groomed\n"), ExitCode: 0})
 	return groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
 		prompt := cmd.Argv[len(cmd.Argv)-1]
-		report := kickoffPath(prompt, "Write the report to: ")
-		deferred := kickoffPath(prompt, "Write the deferred questions to: ")
-		if report == "" || deferred == "" {
-			t.Fatalf("prompt kickoff does not name both outputs:\n%s", prompt)
-		}
-		if err := os.MkdirAll(filepath.Dir(report), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		mustWrite(t, report, "# Grooming report - 2026-10-07\n\n## Summary\n\n## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n")
-		mustWrite(t, deferred, "# Deferred questions\n\n## Questions\n\n## Resolved\n")
+		stageGroomOutputs(t, base, prompt,
+			"# Grooming report - 2026-10-07\n\n## Summary\n\n## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n",
+			"# Deferred questions\n\n## Questions\n\n## Resolved\n")
 	}}
 }
 
@@ -153,17 +163,21 @@ func TestGroomCommandInjectsKickoffAndCapturesOutputs(t *testing.T) {
 		t.Fatalf("kickoff includes the already-groomed task %s:\n%s", groomedID, prompt)
 	}
 
-	// Both outputs exist at the deterministic session path and are doc artifacts.
-	reportPath := kickoffPath(prompt, "Write the report to: ")
-	deferredPath := kickoffPath(prompt, "Write the deferred questions to: ")
-	if !filepath.IsAbs(reportPath) || !filepath.IsAbs(deferredPath) {
-		t.Fatalf("kickoff paths must be absolute, got report=%q deferred=%q", reportPath, deferredPath)
+	// The kickoff names workspace-relative output paths, so the session never
+	// writes outside its workspace; ft copies both into the durable session dir.
+	reportRel := kickoffPath(prompt, "Write the report to: ")
+	deferredRel := kickoffPath(prompt, "Write the deferred questions to: ")
+	for _, rel := range []string{reportRel, deferredRel} {
+		if filepath.IsAbs(rel) || !strings.HasPrefix(rel, groom.StagingDirName+"/") {
+			t.Fatalf("kickoff output path %q is not workspace-relative under %s", rel, groom.StagingDirName)
+		}
 	}
-	if _, err := os.Stat(reportPath); err != nil {
-		t.Fatalf("report not captured at %s: %v", reportPath, err)
-	}
-	if _, err := os.Stat(deferredPath); err != nil {
-		t.Fatalf("deferred questions not captured at %s: %v", deferredPath, err)
+	dataDir := filepath.Dir(r.path)
+	sessionID := firstField(t, out)
+	for _, path := range []string{groom.ReportPath(dataDir, sessionID), groom.DeferredQuestionsPath(dataDir, sessionID)} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("output not captured at %s: %v", path, err)
+		}
 	}
 	docs := r.run("doc", "list", "-p", projectID)
 	for _, want := range []string{"Grooming report", "Grooming deferred questions"} {
@@ -189,7 +203,7 @@ func TestGroomCommandLeavesNoPartialArtifactWhenOneOutputMissing(t *testing.T) {
 	r.runBackend = groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
 		prompt := cmd.Argv[len(cmd.Argv)-1]
 		report := kickoffPath(prompt, "Write the report to: ")
-		mustWrite(t, report, "# Grooming report\n")
+		base.Stage(isolation.File{Path: report, Content: []byte("# Grooming report\n")})
 	}}
 	r.runHarness = harnessfake.New("opencode")
 
@@ -348,8 +362,7 @@ func TestGroomUnattendedCompletesOrDefers(t *testing.T) {
 				if !strings.Contains(prompt, "## Unattended mode") {
 					t.Errorf("unattended kickoff is missing the override:\n%s", prompt)
 				}
-				mustWrite(t, kickoffPath(prompt, "Write the report to: "), reportBody)
-				mustWrite(t, kickoffPath(prompt, "Write the deferred questions to: "), deferredBody)
+				stageGroomOutputs(t, base, prompt, reportBody, deferredBody)
 			}}
 			r.runBackend = backend
 			r.runHarness = harnessfake.New("opencode")
@@ -394,8 +407,9 @@ func TestGroomUnattendedReadsSessionWrites(t *testing.T) {
 		prompt := cmd.Argv[len(cmd.Argv)-1]
 		// The session edits the graph through its own ft process.
 		groomAssign(t, r, taskID)
-		mustWrite(t, kickoffPath(prompt, "Write the report to: "), "# Grooming report\n\n## Summary\n\n## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n")
-		mustWrite(t, kickoffPath(prompt, "Write the deferred questions to: "), "# Deferred questions\n\n## Questions\n\n## Resolved\n")
+		stageGroomOutputs(t, base, prompt,
+			"# Grooming report\n\n## Summary\n\n## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n",
+			"# Deferred questions\n\n## Questions\n\n## Resolved\n")
 	}}
 	r.runBackend = backend
 	r.runHarness = harnessfake.New("opencode")

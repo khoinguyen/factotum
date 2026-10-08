@@ -44,16 +44,31 @@ func TestRunArgsMountOnlyWorkspace(t *testing.T) {
 	}
 }
 
-// TestExecArgsInjectKeysNotValues pins that env values never appear in argv:
-// exec passes `--env KEY` and the value travels in the client environment.
+// TestExecArgsInjectKeysNotValues pins that plain env values never appear in
+// argv: exec passes `--env KEY` and the value travels in the client environment.
 func TestExecArgsInjectKeysNotValues(t *testing.T) {
-	args := execArgs("fttest", "/ws", map[string]string{"B": "2", "A": "1"}, []string{"sh", "-c", "true"}, false)
+	args := execArgs("fttest", "/ws", map[string]string{"B": "2", "A": "1"}, "", []string{"sh", "-c", "true"}, false)
 	joined := strings.Join(args, "\x00")
 	if strings.Contains(joined, "=1") || strings.Contains(joined, "=2") {
 		t.Fatalf("exec args embed a value: %v", args)
 	}
 	if !contains(args, "--env", "A") || !contains(args, "--env", "B") {
 		t.Fatalf("exec args %v do not inject the env keys", args)
+	}
+}
+
+// TestExecArgsStageSecretsInFile pins that a credential is passed by file path,
+// not by value: exec references `--env-file` and carries no secret.
+func TestExecArgsStageSecretsInFile(t *testing.T) {
+	args := execArgs("fttest", "/ws", map[string]string{"A": "1"}, "/run/ft.env", []string{"sh"}, false)
+	if !contains(args, "--env-file", "/run/ft.env") {
+		t.Fatalf("exec args %v do not reference the credential file", args)
+	}
+	if !contains(args, "--env", "A") {
+		t.Fatalf("exec args %v dropped the plain env", args)
+	}
+	if strings.Contains(strings.Join(args, "\x00"), "sekret") {
+		t.Fatalf("exec args embed a secret: %v", args)
 	}
 }
 

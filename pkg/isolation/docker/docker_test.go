@@ -558,9 +558,45 @@ func TestDownloadCopiesOutAndOmitsMissing(t *testing.T) {
 	}
 }
 
-// TestStopCancelsRunningCommands pins that Stop ends tracked executions,
-// keeps the container, and is idempotent.
-func TestStopCancelsRunningCommands(t *testing.T) {
+// TestDownloadSurfacesDaemonFault pins that a failed copy is only treated as a
+// missing path when the container is reachable: a daemon or container fault is
+// surfaced, not masked as omitted content.
+func TestDownloadSurfacesDaemonFault(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fault   string
+		inspect error
+	}{
+		{"daemon down", "Cannot connect to the Docker daemon", errors.New("Cannot connect to the Docker daemon")},
+		{"unknown container", "No such container", errors.New("No such container: fttest")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &fakeRunner{}
+			be := newBackend(r)
+			h := prepared(t, be, isolation.Spec{})
+			t.Cleanup(func() { _ = be.Delete(context.Background(), h) })
+
+			r.runFn = func(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+				switch {
+				case hasPrefix(args, "cp"):
+					return nil, errors.New(tc.fault)
+				case hasPrefix(args, "inspect"):
+					return nil, tc.inspect
+				}
+				return nil, nil
+			}
+			if _, err := be.Download(context.Background(), h, []string{"a.txt"}); err == nil {
+				t.Fatalf("Download() error = nil, want the %s fault surfaced", tc.name)
+			}
+		})
+	}
+}
+
+// TestStopTerminatesWorkload pins that Stop ends tracked executions and stops
+// the container itself, so a remote process started by an exec cannot linger
+// until Delete. It keeps the container (no `rm`) for a restart and is
+// idempotent.
+func TestStopTerminatesWorkload(t *testing.T) {
 	r := &fakeRunner{}
 	proc := &fakeProcess{waitCh: make(chan struct{})}
 	r.startFn = func(context.Context, []string, docker.StartInput) (docker.Process, error) {
@@ -580,6 +616,10 @@ func TestStopCancelsRunningCommands(t *testing.T) {
 	if !proc.wasKilled() {
 		t.Fatal("Stop() did not cancel the running command")
 	}
+	stop, ok := r.first("stop")
+	if !ok || !hasSeq(stop.args, "stop", "--timeout", "1", "fttest") {
+		t.Errorf("Stop() did not stop the container: %v", r.ran())
+	}
 	if _, err := ex.Wait(context.Background()); err != nil {
 		t.Fatalf("Wait() after Stop error = %v", err)
 	}
@@ -588,6 +628,33 @@ func TestStopCancelsRunningCommands(t *testing.T) {
 	}
 	if r.count("rm") != 0 {
 		t.Error("Stop() removed the container, want it kept for restart")
+	}
+}
+
+// TestExecRestartsStoppedContainer pins that Stop keeps the container's state
+// for a restart: the next Exec starts it again, while an Exec on a running
+// container does not pay for a redundant start.
+func TestExecRestartsStoppedContainer(t *testing.T) {
+	r := &fakeRunner{}
+	be := newBackend(r)
+	h := prepared(t, be, isolation.Spec{})
+	t.Cleanup(func() { _ = be.Delete(context.Background(), h) })
+
+	if _, err := be.Exec(context.Background(), h, isolation.Command{Argv: []string{"sh", "-c", "true"}}); err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	if r.count("start") != 0 {
+		t.Errorf("Exec() started a running container: %v", r.ran())
+	}
+
+	if err := be.Stop(context.Background(), h); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if _, err := be.Exec(context.Background(), h, isolation.Command{Argv: []string{"sh", "-c", "true"}}); err != nil {
+		t.Fatalf("Exec(after Stop) error = %v", err)
+	}
+	if _, ok := r.first("start", "fttest"); !ok {
+		t.Errorf("Exec(after Stop) did not restart the container: %v", r.ran())
 	}
 }
 
@@ -650,6 +717,14 @@ func TestHandleHygiene(t *testing.T) {
 func TestAttachCredential(t *testing.T) {
 	t.Run("with resolver", func(t *testing.T) {
 		r := &fakeRunner{}
+		var envFile string
+		r.startFn = func(_ context.Context, args []string, _ docker.StartInput) (docker.Process, error) {
+			if p, ok := flagValue(args, "--env-file"); ok {
+				b, _ := os.ReadFile(p)
+				envFile = string(b)
+			}
+			return &fakeProcess{}, nil
+		}
 		be := docker.New(docker.Options{
 			Runner:      r,
 			NewName:     func() string { return "fttest" },
@@ -665,11 +740,16 @@ func TestAttachCredential(t *testing.T) {
 			t.Fatalf("Exec() error = %v", err)
 		}
 		start := r.started()[0]
-		if !hasSeq(start.args, "--env", "KEY") {
-			t.Errorf("exec args %v missing --env KEY", start.args)
+		if _, ok := flagValue(start.args, "--env-file"); !ok {
+			t.Fatalf("exec args %v missing --env-file", start.args)
 		}
-		if start.env["KEY"] != "sekret" {
-			t.Errorf("exec env = %v, want the secret via the client environment", start.env)
+		if envFile != "KEY=sekret\n" {
+			t.Errorf("env-file = %q, want the secret in the file", envFile)
+		}
+		for k, v := range start.env {
+			if k == "KEY" || v == "sekret" {
+				t.Errorf("exec env = %v, want the secret out of the client environment", start.env)
+			}
 		}
 		for _, a := range start.args {
 			if strings.Contains(a, "sekret") {

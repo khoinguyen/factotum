@@ -125,13 +125,15 @@ list/filter commands fall back to all.
 
 Ideas and bugs are non-executable captures over the same storage as tasks. They are never in
 `task next` or the ready set, and are not assignable. Refining one creates a linked executable task
-and keeps the capture as history.
+and keeps the capture as history. Grooming precedes promotion: `promote`/`triage` require at least
+one `--acceptance` criterion and an agent `--actor`, so the linked task lands groomed and assigned
+(agent-ready) rather than in the human bucket; without them they error and ask for what is missing.
 
 ```sh
 ft idea create -p acme -t "A half-formed thought" -b "what if?"
-ft idea promote <idea>          # groom into an executable task linked to the idea
+ft idea promote <idea> --acceptance "<observable result>" --actor <agent>  # groom + assign
 ft bug create -p acme -t "It crashes on save" -b "steps to reproduce"
-ft bug triage <bug>             # triage into an executable task linked to the bug
+ft bug triage <bug> --acceptance "<observable result>" --actor <agent>     # triage + assign
 ft idea list && ft bug list
 ```
 

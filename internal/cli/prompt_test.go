@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/khoinguyen/factotum/pkg/agent"
 	"github.com/khoinguyen/factotum/pkg/agent/fake"
@@ -131,6 +134,107 @@ func TestPromptApplySkipsExistingAndCreatesNew(t *testing.T) {
 	}
 	if !strings.Contains(list, "Ship login") {
 		t.Fatalf("the missing task should still be created:\n%s", list)
+	}
+}
+
+// TestPromptApplyStructuredOutputCarriesSkipped pins the machine-readable shape
+// of `ft prompt -y`: one array of task documents, each tagged `created` or
+// `skipped`, so a scripted re-run can tell what was written and what was left
+// alone.
+func TestPromptApplyStructuredOutputCarriesSkipped(t *testing.T) {
+	cases := []struct {
+		name   string
+		format string
+		parse  func(t *testing.T, out string) []promptOutcome
+	}{
+		{"json", "json", parsePromptJSON},
+		{"yaml", "yaml", parsePromptYAML},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			projectID := firstField(t, r.run("project", "create", "Acme"))
+			r.run("task", "create", "--project", projectID, "--title", "Add auth")
+			planAgent(t, r,
+				agent.Task{Title: "Add auth"},
+				agent.Task{Title: "Ship login"},
+			)
+
+			out := r.run("prompt", "--project", projectID, "--yes", "-o", tc.format, "build", "login")
+			outcomes := tc.parse(t, out)
+			if len(outcomes) != 2 {
+				t.Fatalf("structured output has %d entries, want 2:\n%s", len(outcomes), out)
+			}
+			byTitle := map[string]promptOutcome{}
+			for _, o := range outcomes {
+				byTitle[o.Title] = o
+			}
+			if created, ok := byTitle["Ship login"]; !ok || !created.Created || created.Skipped {
+				t.Fatalf("new task should be reported created exactly once: %+v\n%s", byTitle, out)
+			}
+			if skipped, ok := byTitle["Add auth"]; !ok || !skipped.Skipped || skipped.Created {
+				t.Fatalf("existing task should be reported skipped exactly once: %+v\n%s", byTitle, out)
+			}
+			if byTitle["Add auth"].ProjectID != projectID {
+				t.Fatalf("skipped entry should carry the project: %+v", byTitle["Add auth"])
+			}
+		})
+	}
+}
+
+type promptOutcome struct {
+	Title     string `json:"title" yaml:"title"`
+	ProjectID string `json:"project_id" yaml:"project_id"`
+	Created   bool   `json:"created" yaml:"created"`
+	Skipped   bool   `json:"skipped" yaml:"skipped"`
+}
+
+func parsePromptJSON(t *testing.T, out string) []promptOutcome {
+	t.Helper()
+	var entries []promptOutcome
+	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+		t.Fatalf("decode json: %v\n%s", err, out)
+	}
+	return entries
+}
+
+func parsePromptYAML(t *testing.T, out string) []promptOutcome {
+	t.Helper()
+	var entries []promptOutcome
+	if err := yaml.Unmarshal([]byte(out), &entries); err != nil {
+		t.Fatalf("decode yaml: %v\n%s", err, out)
+	}
+	return entries
+}
+
+func TestPromptApplyWarnsAboutSkipped(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	planAgent(t, r, agent.Task{Title: "Add auth"}, agent.Task{Title: "Ship login"})
+	r.run("prompt", "--project", projectID, "--yes", "build", "login")
+
+	stdout, stderr := r.runSplit("prompt", "--project", projectID, "--yes", "build", "login")
+	if !strings.Contains(stderr, "skipped 2 task(s) already present in "+projectID) {
+		t.Fatalf("a re-run should warn about the skipped duplicates on stderr:\n%s", stderr)
+	}
+	if strings.Contains(stdout, "warning") {
+		t.Fatalf("warnings must stay off stdout so structured output parses:\n%s", stdout)
+	}
+}
+
+func TestPromptApplySkipsExistingTitleCaseAndWhitespaceInsensitive(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("task", "create", "--project", projectID, "--title", "Add Auth")
+	planAgent(t, r, agent.Task{Title: "  add auth  "})
+
+	out := r.run("prompt", "--project", projectID, "--yes", "build", "login")
+	if !strings.Contains(out, "skipped: true") {
+		t.Fatalf("a case/whitespace variant of an existing title should be skipped:\n%s", out)
+	}
+	list := r.run("task", "list", "--project", projectID)
+	if got := strings.Count(strings.ToLower(list), "add auth"); got != 1 {
+		t.Fatalf("a variant title created a duplicate (appears %d times):\n%s", got, list)
 	}
 }
 

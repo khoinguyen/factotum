@@ -135,7 +135,14 @@ func (d *Deps) createFromPlan(ctx context.Context, project *core.Project, plan a
 	if len(skipped) > 0 {
 		d.warnf("skipped %d task(s) already present in %s", len(skipped), project.ID)
 	}
-	return d.emit(created, func() {
+	entries := make([]promptEntry, 0, len(created)+len(skipped))
+	for _, doc := range created {
+		entries = append(entries, promptEntry{taskDoc: doc, Created: true})
+	}
+	for _, task := range skipped {
+		entries = append(entries, promptEntry{taskDoc: taskDocFrom(task), Skipped: true})
+	}
+	return d.emit(entries, func() {
 		first := true
 		for _, task := range tasks {
 			if !first {
@@ -152,6 +159,16 @@ func (d *Deps) createFromPlan(ctx context.Context, project *core.Project, plan a
 			d.printFields(d.taskFields(task, f("skipped", true))...)
 		}
 	})
+}
+
+// promptEntry is one outcome of `ft prompt -y`: a task document tagged with
+// whether it was created now or skipped because its normalized title already
+// matched. The embedded taskDoc is inlined so structured output keeps the same
+// document shape as the text output and as `ft task apply`.
+type promptEntry struct {
+	taskDoc `yaml:",inline"`
+	Created bool `json:"created,omitempty" yaml:"created,omitempty"`
+	Skipped bool `json:"skipped,omitempty" yaml:"skipped,omitempty"`
 }
 
 // normalizeTitle is the idempotency key for plan matching: case-insensitive,

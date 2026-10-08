@@ -123,6 +123,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		model:       in.Model,
 		args:        in.Args,
 		interactive: in.Interactive,
+		env:         receiverEnv(project, task, in.Actor),
 		labels:      map[string]string{"project": string(project.ID), "task": string(task.ID)},
 		// The run is about to start: record it before Exec so a harness or wait
 		// failure is observable, and abort if the event cannot be written.
@@ -283,7 +284,10 @@ type harnessRun struct {
 	prompt  string
 	model   string
 	args    []string
-	labels  map[string]string
+	// env is the receiver environment (project/actor/task) a harness with a
+	// message plugin reads; nil for a run with no receiver.
+	env    map[string]string
+	labels map[string]string
 	// interactive builds the harness's TUI invocation and asks for a terminal.
 	interactive bool
 	// capture names workspace-relative paths read out of the environment after
@@ -312,6 +316,7 @@ func (s *RunService) runHarness(ctx context.Context, r harnessRun) (harnessResul
 		Prompt:      r.prompt,
 		Model:       r.model,
 		Workdir:     runWorkdir(r.plan),
+		Env:         r.env,
 		Args:        r.args,
 		Labels:      r.labels,
 		Interactive: r.interactive,
@@ -376,6 +381,24 @@ func captureFiles(ctx context.Context, backend isolation.IsolationBackend, h iso
 		out[f.Path] = f.Content
 	}
 	return out, nil
+}
+
+// receiverEnv builds the environment a harness with a message receiver plugin
+// uses to register the session. The actor is the run's explicit actor; a run
+// with no actor has no receiver, so the plugin is not installed and the session
+// is unmanaged.
+func receiverEnv(project *core.Project, task *core.Ticket, actor *core.ActorID) map[string]string {
+	if project.ID == "" || actor == nil || *actor == "" {
+		return nil
+	}
+	env := map[string]string{
+		harnesspkg.EnvProject: string(project.ID),
+		harnesspkg.EnvActor:   string(*actor),
+	}
+	if task.ID != "" {
+		env[harnesspkg.EnvTask] = string(task.ID)
+	}
+	return env
 }
 
 // runPrompt returns the prompt a harness receives: the caller-supplied override

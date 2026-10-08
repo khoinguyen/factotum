@@ -552,6 +552,77 @@ func TestDanglingDepRendersMissingID(t *testing.T) {
 	}
 }
 
+// TestAllProjectsCrossProjectDepRendersTitleClass proves that in all-projects
+// mode a dependency in another project renders with its title and class instead
+// of a blank link, because the detail view loads every project rather than just
+// the task's own.
+func TestAllProjectsCrossProjectDepRendersTitleClass(t *testing.T) {
+	f := newFixture(t)
+	mine := f.addProject(t, "acme", "Acme")
+	other := f.addProject(t, "other", "Other")
+
+	task := f.addTask(t, mine.ID, "Depends on another project")
+	foreign := f.addTask(t, other.ID, "Foreign blocker")
+	if _, err := f.tasks.AddDep(context.Background(), task.ID, foreign.ID); err != nil {
+		t.Fatalf("AddDep() error = %v", err)
+	}
+
+	ts := newTestServer(t, f, Options{All: true})
+	var doc taskPageJSON
+	getDoc(t, ts.URL+"/api/task/"+string(task.ID), &doc)
+
+	var dep taskLink
+	for _, candidate := range doc.Deps {
+		if candidate.ID == foreign.ID {
+			dep = candidate
+		}
+	}
+	if dep.ID != foreign.ID {
+		t.Fatalf("task deps = %+v, want the cross-project id %s", doc.Deps, foreign.ID)
+	}
+	if dep.Title != foreign.Title {
+		t.Fatalf("cross-project dep title = %q, want %q", dep.Title, foreign.Title)
+	}
+	if dep.Class == "" {
+		t.Fatalf("cross-project dep class is empty, want a class")
+	}
+	if dep.URL != "/task/"+string(foreign.ID) {
+		t.Fatalf("cross-project dep url = %q, want /task/%s", dep.URL, foreign.ID)
+	}
+}
+
+// TestDanglingIdeaDepRoutesToIdea proves a dependency outside the scoped
+// snapshot that is an idea links to its /idea/ page rather than /task/, even
+// though the idea itself is out of scope.
+func TestDanglingIdeaDepRoutesToIdea(t *testing.T) {
+	f := newFixture(t)
+	mine := f.addProject(t, "acme", "Acme")
+	other := f.addProject(t, "other", "Other")
+
+	task := f.addTask(t, mine.ID, "Depends on an out-of-scope idea")
+	foreign := f.addIdea(t, other.ID, "Foreign idea", "")
+	if _, err := f.tasks.AddDep(context.Background(), task.ID, foreign.ID); err != nil {
+		t.Fatalf("AddDep() error = %v", err)
+	}
+
+	ts := newTestServer(t, f, Options{Project: mine.ID})
+	var doc taskPageJSON
+	getDoc(t, ts.URL+"/api/task/"+string(task.ID), &doc)
+
+	var dep taskLink
+	for _, candidate := range doc.Deps {
+		if candidate.ID == foreign.ID {
+			dep = candidate
+		}
+	}
+	if dep.ID != foreign.ID {
+		t.Fatalf("task deps = %+v, want the dangling idea id %s", doc.Deps, foreign.ID)
+	}
+	if dep.URL != "/idea/"+string(foreign.ID) {
+		t.Fatalf("dangling idea dep url = %q, want /idea/%s", dep.URL, foreign.ID)
+	}
+}
+
 // TestDetailPagesAreReadOnly proves the drill-down stays inside the read-only
 // boundary: no detail page accepts a mutation.
 func TestDetailPagesAreReadOnly(t *testing.T) {

@@ -26,18 +26,16 @@
 // Limits, stated honestly. Docker's CLI cannot confine a filesystem or network
 // after the fact, so Prepare and ApplyPolicy reject a non-empty Policy with
 // isolation.ErrUnsupported rather than pretending, and an interactive TTY is
-// refused. Credential values are never placed in container metadata or in argv:
-// an attached credential is injected per-exec through the docker client's own
-// environment (`docker exec --env KEY`), so it never appears in `docker
-// inspect`. It is visible in the docker CLI process's environment to the same
-// user (`ps eww`) — the same exposure a direct host-process backend has, not a
-// wider one. The workload gets a writable HOME (DefaultHome, overridable
-// through Spec.Env), since a non-root uid with no passwd entry otherwise gets
-// HOME=/ and cannot write it. Two known limitations: a workspace path
-// containing a comma is not supported by `--mount`, and Download treats any
-// `docker cp` failure — a missing path or a daemon fault — as an omitted path,
-// honoring the port's "missing paths are omitted" contract at the cost of
-// hiding a daemon error.
+// refused. A credential value never enters container metadata, argv, or the
+// docker CLI's own environment: an attached credential is staged in a 0600 file
+// and passed to the exec with `--env-file`, so it is not visible to `ps eww`
+// and does not appear in `docker inspect`. Stop stops the container, which
+// terminates the workload a prior Exec left running, but keeps the container so
+// a later Exec starts it again. The workload gets a writable HOME (DefaultHome,
+// overridable through Spec.Env), since a non-root uid with no passwd entry
+// otherwise gets HOME=/ and cannot write it. Download surfaces a daemon or
+// container fault and only omits a path that is genuinely absent. One known
+// limitation: a workspace path containing a comma is not supported by `--mount`.
 package docker
 
 import (
@@ -55,6 +53,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -82,6 +81,11 @@ const (
 	// DefaultReadyTimeout bounds how long Prepare waits for a container to
 	// report that it is running.
 	DefaultReadyTimeout = 30 * time.Second
+	// stopGraceSeconds is the SIGTERM grace `docker stop` gives the workload
+	// before SIGKILL. The default of 10s makes every Stop slow when the
+	// keep-alive init ignores SIGTERM; a short grace bounds Stop while still
+	// letting a well-behaved workload flush.
+	stopGraceSeconds = 1
 
 	// readyPollInterval is how often Prepare re-checks that the container is up.
 	readyPollInterval = 200 * time.Millisecond
@@ -92,7 +96,13 @@ const (
 	scratchPrefix  = "ft-docker-ws-"
 	uploadPrefix   = "ft-docker-upload-"
 	downloadPrefix = "ft-docker-download-"
+	secretPrefix   = "ft-docker-env-"
 )
+
+// errPathMissing marks a copy failure that is a genuinely absent path rather
+// than a daemon or container fault, so Download can omit it per the port's
+// contract without hiding a fault.
+var errPathMissing = errors.New("isolation/docker: path missing")
 
 // CredentialResolver resolves a provider credential reference to its secret
 // value. It is supplied by the launcher, so the backend never reads a secret
@@ -194,9 +204,15 @@ type environment struct {
 	workdir string
 	owned   bool
 
-	mu    sync.Mutex
-	env   map[string]string
-	procs map[*execution]*runningProcess
+	mu      sync.Mutex
+	env     map[string]string
+	secrets map[string]struct{}
+	stopped bool
+	procs   map[*execution]*runningProcess
+
+	// startMu serializes a lazy restart after Stop, so concurrent Execs cannot
+	// race to start the same container.
+	startMu sync.Mutex
 }
 
 // runningProcess is a live command tracked so Stop can end it.
@@ -233,6 +249,7 @@ func (b *Backend) Prepare(ctx context.Context, spec isolation.Spec) (isolation.H
 		workdir: workdir,
 		owned:   owned,
 		env:     clone(spec.Env),
+		secrets: map[string]struct{}{},
 		procs:   map[*execution]*runningProcess{},
 	}
 	// A non-root uid with no passwd entry gets HOME=/ and cannot write it; the
@@ -291,10 +308,11 @@ func runArgs(name string, spec isolation.Spec, workdir, image string) []string {
 	return args
 }
 
-// execArgs is one `docker exec` invocation. Environment keys are injected
+// execArgs is one `docker exec` invocation. Plain environment keys are injected
 // without values (`--env KEY`); the values travel in the docker client's
-// environment, so no secret is ever in argv.
-func execArgs(name, workdir string, env map[string]string, argv []string, interactive bool) []string {
+// environment. Credential values are staged in envFile and passed with
+// `--env-file`, so no secret appears in argv or in the CLI's environment.
+func execArgs(name, workdir string, env map[string]string, envFile string, argv []string, interactive bool) []string {
 	args := []string{"exec"}
 	if interactive {
 		args = append(args, "--interactive")
@@ -304,6 +322,9 @@ func execArgs(name, workdir string, env map[string]string, argv []string, intera
 	}
 	for _, k := range sortedKeys(env) {
 		args = append(args, "--env", k)
+	}
+	if envFile != "" {
+		args = append(args, "--env-file", envFile)
 	}
 	args = append(args, name)
 	args = append(args, argv...)
@@ -322,6 +343,9 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 	if cmd.TTY {
 		return nil, fmt.Errorf("%w: interactive tty over the docker CLI", isolation.ErrNoTerminal)
 	}
+	if err := b.ensureRunning(ctx, env); err != nil {
+		return nil, err
+	}
 
 	var runCtx context.Context
 	var cancel context.CancelFunc
@@ -331,11 +355,18 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 		runCtx, cancel = context.WithCancel(ctx)
 	}
 
-	effective := mergeEnv(env.snapshot(), cmd.Env)
-	args := execArgs(env.name, cmd.Workdir, effective, cmd.Argv, cmd.Stdin != nil)
-	proc, err := b.run.Start(runCtx, args, StartInput{Stdin: cmd.Stdin, Env: effective})
+	specEnv, secrets := env.snapshotWithSecrets()
+	plain, secret := splitSecrets(specEnv, secrets, cmd.Env)
+	envFile, err := writeEnvFile(secret)
 	if err != nil {
 		cancel()
+		return nil, fmt.Errorf("isolation/docker: stage credential env: %w", err)
+	}
+	args := execArgs(env.name, cmd.Workdir, plain, envFile, cmd.Argv, cmd.Stdin != nil)
+	proc, err := b.run.Start(runCtx, args, StartInput{Stdin: cmd.Stdin, Env: plain})
+	if err != nil {
+		cancel()
+		removeFile(envFile)
 		return nil, fmt.Errorf("isolation/docker: exec: %w", err)
 	}
 
@@ -349,6 +380,7 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 	go func() {
 		code, waitErr := proc.Wait()
 		wg.Wait()
+		removeFile(envFile)
 		env.untrack(ex)
 		cancel()
 		ex.finish(code, waitErr)
@@ -360,6 +392,9 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 func (b *Backend) Upload(ctx context.Context, h isolation.Handle, files []isolation.File) error {
 	env, err := b.lookup(h)
 	if err != nil {
+		return err
+	}
+	if err := b.ensureRunning(ctx, env); err != nil {
 		return err
 	}
 	return b.uploadFiles(ctx, env, files)
@@ -399,7 +434,7 @@ func (b *Backend) uploadFiles(ctx context.Context, env *environment, files []iso
 
 // mkdir creates a directory inside the container.
 func (b *Backend) mkdir(ctx context.Context, name, dir string) error {
-	args := execArgs(name, "", nil, []string{"sh", "-c", `mkdir -p "$1"`, "--", dir}, false)
+	args := execArgs(name, "", nil, "", []string{"sh", "-c", `mkdir -p "$1"`, "--", dir}, false)
 	if _, err := b.run.Run(ctx, args, nil); err != nil {
 		return fmt.Errorf("isolation/docker: mkdir %q: %w", dir, err)
 	}
@@ -417,7 +452,10 @@ func (b *Backend) Download(ctx context.Context, h isolation.Handle, paths []stri
 	for _, p := range paths {
 		files, err := b.downloadOne(ctx, env, p, resolvePath(env.workdir, p))
 		if err != nil {
-			continue // a missing path is omitted, not an error
+			if errors.Is(err, errPathMissing) {
+				continue // a missing path is omitted, not an error
+			}
+			return nil, err
 		}
 		out = append(out, files...)
 	}
@@ -433,7 +471,10 @@ func (b *Backend) downloadOne(ctx context.Context, env *environment, display, gu
 	}
 	defer func() { _ = os.RemoveAll(stage) }()
 	if _, err := b.run.Run(ctx, []string{"cp", env.name + ":" + guest, stage}, nil); err != nil {
-		return nil, err
+		if fault := b.containerFault(ctx, env.name, err); fault != nil {
+			return nil, fault
+		}
+		return nil, errPathMissing
 	}
 
 	base := filepath.Join(stage, path.Base(guest))
@@ -499,14 +540,49 @@ func (b *Backend) Logs(ctx context.Context, h isolation.Handle, opts isolation.L
 	return events, nil
 }
 
-// Stop cancels the run's live commands and is idempotent. It keeps the
-// container so the handle stays usable.
-func (b *Backend) Stop(_ context.Context, h isolation.Handle) error {
+// Stop cancels the run's live commands and stops the container, terminating the
+// workload a prior Exec left running. It keeps the container (no `rm`) so the
+// handle stays usable: the next Exec or Upload starts it again. It is
+// idempotent, because `docker stop` on an already-stopped container is a no-op.
+func (b *Backend) Stop(ctx context.Context, h isolation.Handle) error {
 	env, err := b.lookup(h)
 	if err != nil {
 		return err
 	}
 	env.stop()
+	args := []string{"stop", "--timeout", strconv.Itoa(stopGraceSeconds), env.name}
+	if _, err := b.run.Run(ctx, args, nil); err != nil {
+		return fmt.Errorf("isolation/docker: stop container %q: %w", env.name, err)
+	}
+	env.markStopped()
+	return nil
+}
+
+// ensureRunning starts a container that a prior Stop stopped, so the handle
+// stays usable after Stop. A start failure is reported and the stopped state is
+// kept, so a retry starts it again. startMu serializes the restart so
+// concurrent Execs cannot race.
+func (b *Backend) ensureRunning(ctx context.Context, env *environment) error {
+	env.startMu.Lock()
+	defer env.startMu.Unlock()
+	if !env.isStopped() {
+		return nil
+	}
+	if _, err := b.run.Run(ctx, []string{"start", env.name}, nil); err != nil {
+		return fmt.Errorf("isolation/docker: start container %q: %w", env.name, err)
+	}
+	env.markRunning()
+	return nil
+}
+
+// containerFault reports whether a failed copy is a daemon or container fault
+// rather than an absent path: it probes the container and returns the failure
+// when the container is unreachable. A reachable container means the requested
+// path was absent, which the port omits.
+func (b *Backend) containerFault(ctx context.Context, name string, cause error) error {
+	if _, err := b.run.Run(ctx, []string{"inspect", "--format", "{{.Id}}", name}, nil); err != nil {
+		return fmt.Errorf("isolation/docker: download from %q: %w", name, errors.Join(cause, err))
+	}
 	return nil
 }
 
@@ -591,7 +667,7 @@ func (b *Backend) attach(ctx context.Context, env *environment, c isolation.Cred
 	if err != nil {
 		return fmt.Errorf("isolation/docker: resolve credential %q: %w", c.Provider, err)
 	}
-	env.set(c.EnvVar, value)
+	env.setSecret(c.EnvVar, value)
 	return nil
 }
 
@@ -682,19 +758,102 @@ func mergeEnv(layers ...map[string]string) map[string]string {
 	return out
 }
 
-func (e *environment) snapshot() map[string]string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	out := make(map[string]string, len(e.env))
-	for k, v := range e.env {
-		out[k] = v
+// splitSecrets partitions the effective environment into plain values, which
+// ride in the docker client's environment as `--env KEY`, and credential values,
+// which are staged in a file and passed with `--env-file`. A per-command value
+// that shadows a credential is not the secret, so it stays plain.
+func splitSecrets(spec, secrets, cmd map[string]string) (map[string]string, map[string]string) {
+	effective := mergeEnv(spec, cmd)
+	secret := make(map[string]string, len(secrets))
+	for k, v := range secrets {
+		if _, overridden := cmd[k]; overridden {
+			continue
+		}
+		secret[k] = v
 	}
-	return out
+	for k := range secret {
+		delete(effective, k)
+	}
+	return effective, secret
 }
 
-func (e *environment) set(key, value string) {
+// writeEnvFile stages credential values in a 0600 file for `docker exec
+// --env-file`. It returns an empty path when there is nothing to stage.
+func writeEnvFile(env map[string]string) (string, error) {
+	if len(env) == 0 {
+		return "", nil
+	}
+	f, err := os.CreateTemp("", secretPrefix)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, k := range sortedKeys(env) {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(env[k])
+		b.WriteByte('\n')
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
+}
+
+// removeFile removes a staged file, tolerating an empty path.
+func removeFile(path string) {
+	if path != "" {
+		_ = os.Remove(path)
+	}
+}
+
+// snapshotWithSecrets returns the full environment and the subset of values
+// that are credentials, taken under one lock so a concurrent AttachCredential
+// cannot split the two views.
+func (e *environment) snapshotWithSecrets() (map[string]string, map[string]string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	env := make(map[string]string, len(e.env))
+	for k, v := range e.env {
+		env[k] = v
+	}
+	secrets := make(map[string]string, len(e.secrets))
+	for k := range e.secrets {
+		if v, ok := e.env[k]; ok {
+			secrets[k] = v
+		}
+	}
+	return env, secrets
+}
+
+func (e *environment) setSecret(key, value string) {
 	e.mu.Lock()
 	e.env[key] = value
+	e.secrets[key] = struct{}{}
+	e.mu.Unlock()
+}
+
+func (e *environment) isStopped() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopped
+}
+
+func (e *environment) markStopped() {
+	e.mu.Lock()
+	e.stopped = true
+	e.mu.Unlock()
+}
+
+func (e *environment) markRunning() {
+	e.mu.Lock()
+	e.stopped = false
 	e.mu.Unlock()
 }
 

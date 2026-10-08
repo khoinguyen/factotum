@@ -407,6 +407,16 @@ func testUnsupported(t *testing.T, be isolation.IsolationBackend, cfg config) {
 		}
 		assertUnsupported(t, "Exec(TTY)", err)
 	})
+
+	// No backend honors a custom image entrypoint, so Prepare must reject a
+	// non-empty one with ErrUnsupported rather than silently dropping it.
+	t.Run("Entrypoint", func(t *testing.T) {
+		ph, err := be.Prepare(ctx, isolation.Spec{Image: isolation.Image{Entrypoint: []string{"opencode"}}})
+		if err == nil {
+			_ = be.Delete(context.Background(), ph)
+		}
+		assertUnsupported(t, "Prepare(entrypoint)", err)
+	})
 }
 
 // testCredentials pins credential handling: a backend either attaches a

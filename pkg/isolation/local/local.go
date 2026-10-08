@@ -11,7 +11,8 @@
 //   - loud: a successful Prepare writes an unsandboxed warning naming the risk;
 //   - honest about its limits: it cannot enforce a filesystem, network, or
 //     identity Policy and returns isolation.ErrUnsupported rather than pretending
-//     to, and it has no separate environment log stream.
+//     to, cannot override an image entrypoint (the harness command is executed
+//     directly), and it has no separate environment log stream.
 //
 // Model credentials are never read from the host by this backend, and the run
 // does not inherit the full host environment: only a small allowlist of
@@ -177,6 +178,9 @@ func (b *Backend) Prepare(ctx context.Context, spec isolation.Spec) (isolation.H
 	}
 	if !emptyPolicy(spec.Policy) {
 		return nil, fmt.Errorf("%w: cannot enforce a policy on the host", isolation.ErrUnsupported)
+	}
+	if len(spec.Image.Entrypoint) > 0 {
+		return nil, fmt.Errorf("%w: cannot override the image entrypoint on the host; the harness command is executed directly", isolation.ErrUnsupported)
 	}
 	b.warnUnsandboxed()
 

@@ -2,13 +2,40 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
 )
+
+func artifactTitles(artifacts []artifactView) []string {
+	out := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		out = append(out, artifact.Title)
+	}
+	return out
+}
+
+// getDoc fetches a read-side JSON document and decodes it into v, failing on any
+// non-200 so a missing or rejected endpoint is loud.
+func getDoc(t *testing.T, url string, v any) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("Get(%s) error = %v", url, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Get(%s) status = %d, want 200", url, resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatalf("Decode(%s) error = %v", url, err)
+	}
+}
 
 func (f *fixture) addIdea(t *testing.T, projectID core.ProjectID, title, body string) *core.Ticket {
 	t.Helper()
@@ -233,10 +260,10 @@ func TestWaitingTasksGroupedByOriginEdge(t *testing.T) {
 	}
 }
 
-// TestIdeaDetailPage proves the drill-down from an idea to its promoted tasks
-// and artifacts: /idea/<id> renders the idea, each promoted task linking to
+// TestIdeaDetailAPI proves the drill-down from an idea to its promoted tasks
+// and artifacts: /api/idea/<id> returns the idea, each promoted task linking to
 // /task/<id>, and each attached artifact linking to its detail page.
-func TestIdeaDetailPage(t *testing.T) {
+func TestIdeaDetailAPI(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
 
@@ -246,18 +273,28 @@ func TestIdeaDetailPage(t *testing.T) {
 	f.addArtifact(t, project.ID, &promoted.ID, core.ArtifactMemory, "Gotcha memory", "remember this")
 
 	ts := newTestServer(t, f, Options{Project: project.ID})
-	body := getBody(t, ts.URL+"/idea/"+string(idea.ID))
+	var doc ideaView
+	getDoc(t, ts.URL+"/api/idea/"+string(idea.ID), &doc)
 
-	for _, want := range []string{
-		"Spark of a plan",
-		"the full idea body",
-		string(promoted.ID),
-		"/task/" + string(promoted.ID),
-		"Design note",
-		"Gotcha memory",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("idea detail missing %q:\n%s", want, body)
+	if doc.Title != "Spark of a plan" || doc.Description != "the full idea body" {
+		t.Fatalf("idea doc = %+v", doc)
+	}
+	var task taskLink
+	for _, candidate := range doc.Tasks {
+		if candidate.ID == promoted.ID {
+			task = candidate
+		}
+	}
+	if task.ID != promoted.ID {
+		t.Fatalf("idea tasks = %+v, want promoted %s", doc.Tasks, promoted.ID)
+	}
+	if task.URL != "/task/"+string(promoted.ID) {
+		t.Fatalf("promoted task url = %q, want /task/%s", task.URL, promoted.ID)
+	}
+	titles := artifactTitles(doc.Artifacts)
+	for _, want := range []string{"Design note", "Gotcha memory"} {
+		if !slices.Contains(titles, want) {
+			t.Fatalf("idea artifacts = %v, want %q", titles, want)
 		}
 	}
 }
@@ -286,19 +323,18 @@ func TestBugIsACaptureOnTheBoard(t *testing.T) {
 	}
 
 	ts := newTestServer(t, f, Options{Project: project.ID})
-	body := getBody(t, ts.URL+"/idea/"+string(bug.ID))
-	for _, want := range []string{"It crashes on save", "· bug"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("bug detail missing %q:\n%s", want, body)
-		}
+	var doc ideaView
+	getDoc(t, ts.URL+"/api/idea/"+string(bug.ID), &doc)
+	if doc.Title != "It crashes on save" || doc.Kind != core.KindBug {
+		t.Fatalf("bug detail = %+v, want the bug capture", doc)
 	}
-	resp, err := http.Get(ts.URL + "/task/" + string(bug.ID))
+	resp, err := http.Get(ts.URL + "/api/task/" + string(bug.ID))
 	if err != nil {
-		t.Fatalf("GET /task/<bug> error = %v", err)
+		t.Fatalf("GET /api/task/<bug> error = %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("GET /task/<bug> status = %d, want 404 (a capture is not a task)", resp.StatusCode)
+		t.Fatalf("GET /api/task/<bug> status = %d, want 404 (a capture is not a task)", resp.StatusCode)
 	}
 }
 
@@ -332,7 +368,7 @@ func TestBugRollsUpWithPromotedTasks(t *testing.T) {
 	}
 }
 
-func TestTaskDetailPage(t *testing.T) {
+func TestTaskDetailAPI(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
 
@@ -345,19 +381,26 @@ func TestTaskDetailPage(t *testing.T) {
 	f.addArtifact(t, project.ID, &task.ID, core.ArtifactMemory, "Task memory", "the memory body")
 
 	ts := newTestServer(t, f, Options{Project: project.ID})
-	body := getBody(t, ts.URL+"/task/"+string(task.ID))
+	var doc taskPageJSON
+	getDoc(t, ts.URL+"/api/task/"+string(task.ID), &doc)
 
-	for _, want := range []string{
-		task.Title,
-		string(blocker.ID),
-		"/task/" + string(blocker.ID),
-		"Origin capture",
-		"/idea/" + string(idea.ID),
-		"Task memory",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("task detail missing %q:\n%s", want, body)
+	if doc.Title != task.Title {
+		t.Fatalf("task title = %q, want %q", doc.Title, task.Title)
+	}
+	var dep taskLink
+	for _, candidate := range doc.Deps {
+		if candidate.ID == blocker.ID {
+			dep = candidate
 		}
+	}
+	if dep.ID != blocker.ID || dep.URL != "/task/"+string(blocker.ID) {
+		t.Fatalf("task deps = %+v, want blocker %s", doc.Deps, blocker.ID)
+	}
+	if doc.Origin == nil || doc.Origin.ID != idea.ID || doc.Origin.URL != "/idea/"+string(idea.ID) {
+		t.Fatalf("task origin = %+v, want idea %s", doc.Origin, idea.ID)
+	}
+	if !slices.Contains(artifactTitles(doc.Artifacts), "Task memory") {
+		t.Fatalf("task artifacts = %v, want Task memory", artifactTitles(doc.Artifacts))
 	}
 }
 
@@ -372,11 +415,13 @@ func TestArtifactDetailPages(t *testing.T) {
 
 	ts := newTestServer(t, f, Options{Project: project.ID})
 
-	memoryBody := getBody(t, ts.URL+"/memory/"+string(memory.ID))
-	for _, want := range []string{"A memory", "memory body", "/task/" + string(task.ID)} {
-		if !strings.Contains(memoryBody, want) {
-			t.Fatalf("memory detail missing %q:\n%s", want, memoryBody)
-		}
+	var memoryDoc artifactPageJSON
+	getDoc(t, ts.URL+"/api/memory/"+string(memory.ID), &memoryDoc)
+	if memoryDoc.Title != "A memory" || memoryDoc.Body != "memory body" {
+		t.Fatalf("memory doc = %+v", memoryDoc)
+	}
+	if memoryDoc.AttachedTo == nil || memoryDoc.AttachedTo.ID != task.ID {
+		t.Fatalf("memory attached_to = %+v, want task %s", memoryDoc.AttachedTo, task.ID)
 	}
 
 	for _, artifact := range []struct {
@@ -384,17 +429,18 @@ func TestArtifactDetailPages(t *testing.T) {
 		id   core.ArtifactID
 		body string
 	}{
-		{"/doc/" + string(doc.ID), doc.ID, "doc body"},
-		{"/doc/" + string(spec.ID), spec.ID, "spec body"},
+		{"/api/doc/" + string(doc.ID), doc.ID, "doc body"},
+		{"/api/doc/" + string(spec.ID), spec.ID, "spec body"},
 	} {
-		body := getBody(t, ts.URL+artifact.path)
-		if !strings.Contains(body, artifact.body) {
-			t.Fatalf("artifact %s detail missing body:\n%s", artifact.id, body)
+		var got artifactPageJSON
+		getDoc(t, ts.URL+artifact.path, &got)
+		if got.Body != artifact.body {
+			t.Fatalf("artifact %s body = %q, want %q", artifact.id, got.Body, artifact.body)
 		}
 	}
 
 	// Kind is enforced by the route: a memory is not a doc, and vice versa.
-	for _, path := range []string{"/doc/" + string(memory.ID), "/memory/" + string(doc.ID)} {
+	for _, path := range []string{"/api/doc/" + string(memory.ID), "/api/memory/" + string(doc.ID)} {
 		resp, err := http.Get(ts.URL + path)
 		if err != nil {
 			t.Fatalf("Get(%s) error = %v", path, err)
@@ -411,7 +457,7 @@ func TestDetailPagesRejectUnknownIDs(t *testing.T) {
 	project := f.addProject(t, "acme", "Acme")
 	ts := newTestServer(t, f, Options{Project: project.ID})
 
-	for _, path := range []string{"/idea/t-nope", "/task/t-nope", "/memory/art-nope", "/doc/art-nope", "/idea/", "/task/"} {
+	for _, path := range []string{"/api/idea/t-nope", "/api/task/t-nope", "/api/memory/art-nope", "/api/doc/art-nope", "/api/idea/", "/api/task/"} {
 		resp, err := http.Get(ts.URL + path)
 		if err != nil {
 			t.Fatalf("Get(%s) error = %v", path, err)
@@ -434,9 +480,9 @@ func TestDetailPagesAreReadOnly(t *testing.T) {
 	ts := newTestServer(t, f, Options{Project: project.ID})
 
 	paths := []string{
-		"/idea/" + string(idea.ID),
-		"/task/" + string(task.ID),
-		"/doc/" + string(artifact.ID),
+		"/api/idea/" + string(idea.ID),
+		"/api/task/" + string(task.ID),
+		"/api/doc/" + string(artifact.ID),
 	}
 	for _, path := range paths {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
@@ -457,7 +503,8 @@ func TestDetailPagesAreReadOnly(t *testing.T) {
 }
 
 // TestFiguresAreLive proves the header figures are recomputed on every refresh
-// rather than frozen at page load: a status change is reflected in /fragment.
+// rather than frozen at page load: a status change is reflected in the snapshot
+// the app refetches over SSE.
 func TestFiguresAreLive(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
@@ -465,31 +512,14 @@ func TestFiguresAreLive(t *testing.T) {
 	task := f.promote(t, idea.ID)
 	ts := newTestServer(t, f, Options{Project: project.ID})
 
-	before := fragmentStats(t, ts.URL)
-	if !strings.Contains(before, ">0</dd>") {
-		t.Fatalf("expected a zero figure before any work starts:\n%s", before)
-	}
+	var before snapshotJSON
+	getDoc(t, ts.URL+"/api/snapshot", &before)
 	f.setStatus(t, task.ID, core.StatusInProgress)
-	after := fragmentStats(t, ts.URL)
-	if after == before {
-		t.Fatal("fragment figures did not change after a status change")
+	var after snapshotJSON
+	getDoc(t, ts.URL+"/api/snapshot", &after)
+	if after.Stats == before.Stats {
+		t.Fatalf("snapshot figures did not change after a status change: %+v", before.Stats)
 	}
-}
-
-// fragmentStats returns the stats section of the fragment, which is the live
-// region refreshed over SSE.
-func fragmentStats(t *testing.T, base string) string {
-	t.Helper()
-	body := getBody(t, base+"/fragment")
-	start := strings.Index(body, `<dl class="stats">`)
-	if start < 0 {
-		t.Fatalf("fragment has no stats block:\n%s", body)
-	}
-	end := strings.Index(body[start:], "</dl>")
-	if end < 0 {
-		t.Fatalf("stats block is not closed:\n%s", body)
-	}
-	return body[start : start+end]
 }
 
 func groupIDs(groups []taskGroup) []core.TicketID {

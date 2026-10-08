@@ -250,7 +250,7 @@ func TestCaptureDoesNotCloseReadSide(t *testing.T) {
 	f.addTask(t, project.ID, "Fix the widget")
 	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
 
-	for _, path := range []string{"/", "/fragment"} {
+	for _, path := range []string{"/", "/api/snapshot"} {
 		if body := getBody(t, ts.URL+path); body == "" {
 			t.Fatalf("GET %s returned an empty body", path)
 		}

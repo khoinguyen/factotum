@@ -801,6 +801,9 @@ func (r *pipelineRepo) Update(_ context.Context, pipeline *core.Pipeline) error 
 	if current.State.Terminal() {
 		return fmt.Errorf("%w: pipeline %s is %s and immutable", core.ErrConflict, pipeline.ID, current.State)
 	}
+	if current.ProjectID != pipeline.ProjectID || current.CaptureID != pipeline.CaptureID {
+		return fmt.Errorf("%w: pipeline %s identity is immutable", core.ErrConflict, pipeline.ID)
+	}
 	r.backend.pipelines[pipeline.ID] = clone.Pipeline(*pipeline)
 	return nil
 }

@@ -245,6 +245,9 @@ type PipelineRepo interface {
 	Create(ctx context.Context, pipeline *core.Pipeline) error
 	Get(ctx context.Context, id core.PipelineID) (*core.Pipeline, error)
 	List(ctx context.Context, filter PipelineFilter) ([]*core.Pipeline, error)
+	// Update writes mutable pipeline fields. (ProjectID, CaptureID) is the
+	// pipeline's identity and is immutable: changing either returns
+	// ErrConflict, as does updating a terminal pipeline.
 	Update(ctx context.Context, pipeline *core.Pipeline) error
 
 	// Claim atomically selects the oldest queued pipeline for the project and

@@ -1400,6 +1400,9 @@ func (r *pipelineRepo) Update(_ context.Context, pipeline *core.Pipeline) error 
 	if record.pipeline.State.Terminal() {
 		return fmt.Errorf("%w: pipeline %s is %s and immutable", core.ErrConflict, pipeline.ID, record.pipeline.State)
 	}
+	if record.pipeline.ProjectID != pipeline.ProjectID || record.pipeline.CaptureID != pipeline.CaptureID {
+		return fmt.Errorf("%w: pipeline %s identity is immutable", core.ErrConflict, pipeline.ID)
+	}
 	if err := b.writePipeline(*pipeline); err != nil {
 		return err
 	}

@@ -339,19 +339,14 @@ func (s *CheckService) specFor(ctx context.Context, task *core.Ticket) (check.Sp
 // dependency is history, not an origin, so it is skipped rather than failing the
 // read: a read command must not break because a dependency was deleted.
 func (s *CheckService) origin(ctx context.Context, task *core.Ticket) (*check.Origin, error) {
-	for _, dep := range task.Deps {
-		depTask, err := s.backend.Tickets().Get(ctx, dep)
-		if errors.Is(err, core.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if depTask.Kind.CapturedByHuman() {
-			return &check.Origin{ID: string(depTask.ID), Title: depTask.Title, Body: depTask.Description}, nil
-		}
+	capture, err := originTicket(ctx, s.backend, task)
+	if err != nil {
+		return nil, err
 	}
-	return nil, nil
+	if capture == nil {
+		return nil, nil
+	}
+	return &check.Origin{ID: string(capture.ID), Title: capture.Title, Body: capture.Description}, nil
 }
 
 // decorate adds the current note count, which is not part of the hash: notes are

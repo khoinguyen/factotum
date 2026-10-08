@@ -150,6 +150,32 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID) (*
 	return task, nil
 }
 
+// Origin returns the immutable capture (idea or bug) this ticket was refined
+// from, or nil when it has none. Promotion writes the capture as the ticket's
+// first dependency; the first capture dependency wins.
+func (s *TicketService) Origin(ctx context.Context, task *core.Ticket) (*core.Ticket, error) {
+	return originTicket(ctx, s.backend, task)
+}
+
+// originTicket resolves the capture a ticket was refined from: the first
+// dependency that is a human capture. A dangling dependency is history, not an
+// origin, so it is skipped rather than failing the read.
+func originTicket(ctx context.Context, backend store.Backend, task *core.Ticket) (*core.Ticket, error) {
+	for _, dep := range task.Deps {
+		depTask, err := backend.Tickets().Get(ctx, dep)
+		if errors.Is(err, core.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if depTask.Kind.CapturedByHuman() {
+			return depTask, nil
+		}
+	}
+	return nil, nil
+}
+
 type TicketUpdate struct {
 	Kind               *core.TicketKind
 	Repo               *string

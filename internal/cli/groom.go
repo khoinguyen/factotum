@@ -41,7 +41,9 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 			"run service, and records the two outputs as doc artifacts. With --unattended the kickoff\n" +
 			"tells the session there is no product owner: it defers every product question and still\n" +
 			"finishes agent-ready, and the run fails if any scoped item is left neither agent-ready\n" +
-			"nor deferred. The sandbox and harness resolve like `ft run`: --sandbox/--harness, then\n" +
+			"nor deferred. On a terminal the session runs attached to it (the agent's TUI) so the\n" +
+			"PO can answer the grill; --unattended, or a pipe or redirect, runs it headless.\n" +
+			"The sandbox and harness resolve like `ft run`: --sandbox/--harness, then\n" +
 			"FACTOTUM_RUN_*, then the [run] config table (project over user), prompting once on a\n" +
 			"terminal when unset; choosing the local backend in that prompt asks to opt in\n" +
 			"(default no) and records run.allow_host in the user config.",
@@ -124,6 +126,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	if err != nil {
 		return err
 	}
+	interactive := d.runInteractive(cmd, opts.unattended)
 
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).RunProject(ctx, app.ProjectRunInput{
 		ProjectID:        project.ID,
@@ -136,9 +139,13 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		Args:             sel.args,
 		Prompt:           prompt,
 		Capture:          []string{stagedReport, stagedDeferred},
+		Interactive:      interactive,
 	})
 	if errors.Is(runErr, local.ErrNotOptedIn) {
 		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
+	}
+	if err := d.interactiveUnsupported(cmd, interactive, sel.backendName, runErr); err != nil {
+		return err
 	}
 	if runErr != nil {
 		return runErr
@@ -196,10 +203,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		}
 	}
 
-	mode := "interactive"
-	if opts.unattended {
-		mode = "unattended"
-	}
+	mode := groomMode(opts.unattended, interactive)
 
 	produced, err := producedTaskIDs(ctx, post.tasks, project.ID, before)
 	if err != nil {
@@ -241,6 +245,20 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 			f("repo", d.repoValue("")),
 		)
 	}, groomHints(project.ID, sessionID, report.ID)...)
+}
+
+// groomMode names a session's mode for its manifest and output. A session is
+// unattended when it has no product owner (--unattended), interactive when it is
+// attached to a terminal so a PO can answer the grill, and headless otherwise.
+func groomMode(unattended, interactive bool) string {
+	switch {
+	case unattended:
+		return "unattended"
+	case interactive:
+		return "interactive"
+	default:
+		return "headless"
+	}
 }
 
 // groomScope resolves the session's items: the named ones, or by default every

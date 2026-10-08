@@ -254,12 +254,21 @@ func TestLogsUnsupported(t *testing.T) {
 	}
 }
 
-func TestExecTTYUnsupported(t *testing.T) {
-	b, _ := newBackend(t, local.Options{})
+// TestExecTTYAttachesTerminal pins that an interactive command runs with the
+// host terminal attached instead of being refused: the command reads its stdin
+// and writes its stdout to the terminal, so a TUI agent can converse. In this
+// mode stdout is not captured from a pipe; a session that must leave a record
+// writes it as a file inside the environment.
+func TestExecTTYAttachesTerminal(t *testing.T) {
+	var out bytes.Buffer
+	b, _ := newBackend(t, local.Options{Stdin: strings.NewReader("hello from the po\n"), Stdout: &out, Stderr: &out})
 	h := prepare(t, b, isolation.Spec{})
-	_, err := b.Exec(context.Background(), h, isolation.Command{Argv: []string{"sh", "-c", "true"}, TTY: true})
-	if !errors.Is(err, isolation.ErrUnsupported) {
-		t.Fatalf("Exec(TTY) error = %v, want ErrUnsupported", err)
+	res := run(t, b, h, isolation.Command{Argv: []string{"sh", "-c", "cat"}, TTY: true})
+	if res.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want 0", res.ExitCode)
+	}
+	if got := out.String(); got != "hello from the po\n" {
+		t.Fatalf("terminal output = %q, want the echoed stdin", got)
 	}
 }
 

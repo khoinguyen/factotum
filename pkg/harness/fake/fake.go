@@ -107,6 +107,7 @@ func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 		Argv:    []string{h.name},
 		Env:     clone(req.Env),
 		Workdir: req.Workdir,
+		TTY:     req.Interactive,
 	}
 	if req.Model != "" {
 		cmd.Argv = append(cmd.Argv, "--model", req.Model)

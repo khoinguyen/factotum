@@ -320,7 +320,7 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 		return nil, errors.New("isolation/docker: empty argv")
 	}
 	if cmd.TTY {
-		return nil, fmt.Errorf("%w: interactive tty over the docker CLI", isolation.ErrUnsupported)
+		return nil, fmt.Errorf("%w: interactive tty over the docker CLI", isolation.ErrNoTerminal)
 	}
 
 	var runCtx context.Context

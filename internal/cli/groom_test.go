@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,7 +142,7 @@ func TestGroomCommandInjectsKickoffAndCapturesOutputs(t *testing.T) {
 
 	out := r.run("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
 		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
-	for _, want := range []string{"session: groom-", "scope:", "report: art-", "deferred: art-", "run: finished", "mode: interactive", "project: " + projectID} {
+	for _, want := range []string{"session: groom-", "scope:", "report: art-", "deferred: art-", "run: finished", "mode: headless", "project: " + projectID} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("groom output missing %q:\n%s", want, out)
 		}
@@ -184,6 +185,61 @@ func TestGroomCommandInjectsKickoffAndCapturesOutputs(t *testing.T) {
 		if !strings.Contains(docs, want) {
 			t.Fatalf("doc list missing %q:\n%s", want, docs)
 		}
+	}
+}
+
+// TestGroomInteractiveOnTerminalAttachesAgent pins the mode selection: on a
+// terminal without --unattended the session runs attached (the harness command
+// requests a TTY) and the manifest records mode interactive. --unattended on the
+// same terminal stays headless and records mode unattended.
+func TestGroomInteractiveOnTerminalAttachesAgent(t *testing.T) {
+	tests := []struct {
+		name       string
+		unattended bool
+		wantTTY    bool
+		wantMode   string
+	}{
+		{"terminal without unattended attaches", false, true, "interactive"},
+		{"terminal with unattended stays headless", true, false, "unattended"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			r.isTerminal = func(io.Writer) bool { return true }
+			r.stdinTerminal = func(io.Reader) bool { return true }
+			projectID, cfgPath := tasklessContext(t, r)
+			r.run("actor", "create", "builder", "--kind", "agent")
+			taskID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Add widget"))
+			groomAssign(t, r, taskID)
+
+			promptPath := filepath.Join(t.TempDir(), "prompt.md")
+			mustWrite(t, promptPath, "# Grooming session prompt\n")
+
+			backend := writingGroomBackend(t)
+			r.runBackend = backend
+			r.runHarness = harnessfake.New("opencode")
+
+			args := []string{"--config", cfgPath, "groom", "-p", projectID,
+				"--prompt-file", promptPath, "--sandbox", "fake", "--harness", "fake",
+				"--workspace", t.TempDir(), taskID}
+			if tc.unattended {
+				args = append(args, "--unattended")
+			}
+			out, err := runGroomCapture(r, args...)
+			if err != nil {
+				t.Fatalf("groom error = %v\n%s", err, out)
+			}
+			if !strings.Contains(out, "mode: "+tc.wantMode) {
+				t.Fatalf("groom output missing mode %q:\n%s", tc.wantMode, out)
+			}
+			cmds := backend.Commands()
+			if len(cmds) != 1 {
+				t.Fatalf("Exec called %d times, want 1", len(cmds))
+			}
+			if cmds[0].TTY != tc.wantTTY {
+				t.Fatalf("TTY = %v, want %v", cmds[0].TTY, tc.wantTTY)
+			}
+		})
 	}
 }
 

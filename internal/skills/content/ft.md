@@ -306,7 +306,7 @@ model flag, prompt delivery, completion detection, and output parsing. The first
 harness is OpenCode (image `ghcr.io/anomalyco/opencode`, binary `opencode`). A
 headless run is `opencode run --model <provider/model> <prompt>`: the prompt is
 the final positional argument, the agent's answer is read from stdout, and
-progress and the banner go to stderr. The model and its credentials come from the
+progress and the banner go to stderr; an interactive run instead launches the OpenCode TUI (`opencode --model <m> --prompt <prompt>`) attached to a terminal so a human can converse. The model and its credentials come from the
 configured provider, never hardcoded: the model is passed through as the model
 flag, and a configured credential is declared as a provider reference that the
 isolation backend resolves. A local run uses the host `opencode` binary
@@ -346,7 +346,7 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode --allow-host
 - `--prompt-file <path>` or `--prompt-artifact <id>` supplies a stored prompt: with a task it
   replaces the task prompt, and with no task id it runs the prompt once over every repository
   of the configured project (a task-less session such as grooming), writing nothing to the task
-  graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error (exit 1).
+  graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error (exit 1). On a terminal a single-task or task-less run runs **interactive** (the agent attached, the OpenCode TUI) so a human can answer it; `--unattended`, a piped/redirected stdin/stdout, or `--goal` runs **headless**. Interactive output stays live and is not captured; it needs a backend that can attach a terminal (`local`; not `openshell`/`docker`, which tell you to rerun with `--unattended`).
 - `--sandbox`/`--harness` are optional: they resolve flag > `FACTOTUM_RUN_*` > committed
   project `[run]` > machine `[run]`. On a terminal an unset one prompts once and saves to
   the chosen config; choosing `local` there asks to opt in (default no) and records

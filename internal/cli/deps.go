@@ -77,6 +77,10 @@ type Deps struct {
 	// IsTerminal reports whether a writer is attached to a terminal. It defaults
 	// to a real isatty check; tests override it to simulate a human session.
 	IsTerminal func(io.Writer) bool
+	// IsTerminalReader reports whether a reader (stdin) is attached to a
+	// terminal. It defaults to a real isatty check; tests override it to
+	// simulate an interactive stdin.
+	IsTerminalReader func(io.Reader) bool
 
 	// output is the buffer that replaced stdout while bounding is active.
 	output *boundedOutput
@@ -164,18 +168,19 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 		getenv = func(string) string { return "" }
 	}
 	deps := &Deps{
-		Clock:          clock,
-		IDs:            ids,
-		Out:            out,
-		Err:            errOut,
-		Getenv:         getenv,
-		IsTerminal:     isTerminalWriter,
-		Judge:          newJudge(getenv, config.Config{}),
-		Agent:          agent.Disabled{},
-		Embedder:       embed.Disabled{},
-		StoreFactories: registry.New[store.Factory](),
-		Rankers:        rank.Builtins(),
-		Renderers:      render.Builtins(),
+		Clock:            clock,
+		IDs:              ids,
+		Out:              out,
+		Err:              errOut,
+		Getenv:           getenv,
+		IsTerminal:       isTerminalWriter,
+		IsTerminalReader: isTerminalReader,
+		Judge:            newJudge(getenv, config.Config{}),
+		Agent:            agent.Disabled{},
+		Embedder:         embed.Disabled{},
+		StoreFactories:   registry.New[store.Factory](),
+		Rankers:          rank.Builtins(),
+		Renderers:        render.Builtins(),
 	}
 	deps.Commands = builtinCommands()
 	deps.FeedbackTransports = feedback.Builtins()

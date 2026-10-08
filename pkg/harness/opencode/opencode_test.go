@@ -164,6 +164,55 @@ func TestCommandBuildsHeadlessInvocation(t *testing.T) {
 	}
 }
 
+// TestCommandBuildsInteractiveInvocation pins the conversational mode: an
+// interactive request builds the OpenCode TUI (no `run` subcommand) with the
+// model flag and `--prompt` carrying the kickoff, and marks the command as
+// needing a terminal. A headless request never sets TTY.
+func TestCommandBuildsInteractiveInvocation(t *testing.T) {
+	tests := []struct {
+		name string
+		opts opencode.Options
+		req  harness.Request
+		want []string
+	}{
+		{
+			name: "tui with the kickoff as the prompt",
+			req:  harness.Request{Prompt: "groom these items", Interactive: true, Model: "opencode-go/deepseek-v4.1-flash"},
+			want: []string{"opencode", "--model", "opencode-go/deepseek-v4.1-flash", "--prompt", "groom these items"},
+		},
+		{
+			name: "configured model and args pass through",
+			opts: opencode.Options{Model: "provider/configured", Args: []string{"--agent", "build"}},
+			req:  harness.Request{Prompt: "hi", Interactive: true, Args: []string{"--pure"}},
+			want: []string{"opencode", "--model", "provider/configured", "--agent", "build", "--pure", "--prompt", "hi"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := opencode.New(tc.opts).Command(tc.req)
+			if err != nil {
+				t.Fatalf("Command() error = %v", err)
+			}
+			if strings.Join(cmd.Argv, "\x00") != strings.Join(tc.want, "\x00") {
+				t.Errorf("argv = %q, want %q", cmd.Argv, tc.want)
+			}
+			if !cmd.TTY {
+				t.Error("TTY = false, want true for an interactive request")
+			}
+		})
+	}
+}
+
+func TestCommandHeadlessIsNotTTY(t *testing.T) {
+	cmd, err := opencode.New(opencode.Options{}).Command(harness.Request{Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Command() error = %v", err)
+	}
+	if cmd.TTY {
+		t.Error("TTY = true, want false for a headless request")
+	}
+}
+
 func TestCommandCarriesEnv(t *testing.T) {
 	env := map[string]string{"HOME": "/tmp", "NO_COLOR": "1"}
 	cmd, err := opencode.New(opencode.Options{}).Command(harness.Request{Prompt: "hi", Env: env})

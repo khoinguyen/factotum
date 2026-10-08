@@ -59,7 +59,7 @@ func TestGroomListShowsSessions(t *testing.T) {
 	sessionID, _ := seedGroomSession(t, r, projectID, cfgPath, "Extract cache module")
 
 	out := r.run("--config", cfgPath, "groom", "list", "-p", projectID)
-	for _, want := range []string{"SESSION", "DATE", "MODE", "SCOPE", "PRODUCED", sessionID, "interactive",
+	for _, want := range []string{"SESSION", "DATE", "MODE", "SCOPE", "PRODUCED", sessionID, "headless",
 		time.Now().UTC().Format("2006-01-02")} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("groom list output missing %q:\n%s", want, out)
@@ -98,8 +98,8 @@ func TestGroomListJSONIsStable(t *testing.T) {
 		t.Fatalf("groom list returned %d sessions, want 1: %+v", len(docs), docs)
 	}
 	got := docs[0]
-	if got.Session != sessionID || got.Project != projectID || got.Mode != "interactive" {
-		t.Fatalf("session doc = %+v, want session %s project %s mode interactive", got, sessionID, projectID)
+	if got.Session != sessionID || got.Project != projectID || got.Mode != "headless" {
+		t.Fatalf("session doc = %+v, want session %s project %s mode headless", got, sessionID, projectID)
 	}
 	if got.Created == "" {
 		t.Fatal("session doc has no created timestamp")

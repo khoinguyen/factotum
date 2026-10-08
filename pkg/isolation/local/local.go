@@ -75,6 +75,12 @@ type Options struct {
 	// A nil resolver makes AttachCredential return ErrUnsupported, keeping the
 	// backend from reaching into the host environment on its own.
 	Credentials CredentialResolver
+	// Stdin, Stdout, and Stderr are the terminal streams an interactive (TTY)
+	// command is attached to. A nil value uses the process's own os.Stdin,
+	// os.Stdout, or os.Stderr; tests inject buffers to observe the attachment.
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
 }
 
 // CredentialResolver resolves a provider credential reference to its secret
@@ -90,6 +96,9 @@ type Backend struct {
 	allowHost bool
 	warn      io.Writer
 	creds     CredentialResolver
+	stdin     io.Reader
+	stdout    io.Writer
+	stderr    io.Writer
 	seq       atomic.Int64
 
 	mu      sync.Mutex
@@ -107,9 +116,35 @@ func New(opts Options) *Backend {
 		allowHost: opts.AllowHost,
 		warn:      opts.Warn,
 		creds:     opts.Credentials,
+		stdin:     opts.Stdin,
+		stdout:    opts.Stdout,
+		stderr:    opts.Stderr,
 		envs:      map[string]*environment{},
 		deleted:   map[string]struct{}{},
 	}
+}
+
+// terminalStdin, terminalStdout, and terminalStderr return the streams an
+// interactive command is attached to, defaulting to the process's own.
+func (b *Backend) terminalStdin() io.Reader {
+	if b.stdin != nil {
+		return b.stdin
+	}
+	return os.Stdin
+}
+
+func (b *Backend) terminalStdout() io.Writer {
+	if b.stdout != nil {
+		return b.stdout
+	}
+	return os.Stdout
+}
+
+func (b *Backend) terminalStderr() io.Writer {
+	if b.stderr != nil {
+		return b.stderr
+	}
+	return os.Stderr
 }
 
 // environment is the per-run host state: a workspace root, the accumulated
@@ -202,9 +237,6 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 	if len(cmd.Argv) == 0 {
 		return nil, errors.New("isolation/local: empty argv")
 	}
-	if cmd.TTY {
-		return nil, fmt.Errorf("%w: interactive tty on the host", isolation.ErrUnsupported)
-	}
 
 	var (
 		runCtx context.Context
@@ -220,6 +252,11 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 	c := exec.CommandContext(runCtx, cmd.Argv[0], cmd.Argv[1:]...)
 	c.Dir = firstNonEmpty(cmd.Workdir, env.root)
 	c.Env = mergeEnv(baseEnv(), env.snapshot(), cmd.Env)
+
+	if cmd.TTY {
+		return b.execAttached(c, env, cmd, cancel)
+	}
+
 	configureProcessGroup(c)
 	c.Cancel = func() error {
 		if exited.Load() {
@@ -259,6 +296,37 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 		waitErr := c.Wait()
 		exited.Store(true)
 		wg.Wait()
+		env.untrack(proc)
+		cancel()
+		ex.finish(c.ProcessState, waitErr)
+	}()
+	return ex, nil
+}
+
+// execAttached runs an interactive command with the host terminal attached, so a
+// TUI agent can render and read input. The child keeps the caller's process
+// group: the terminal's foreground group owns job control, so signals like
+// Ctrl-C reach the agent. Its output is shown live rather than captured through
+// a pipe; a session that must leave a record writes it inside the environment.
+func (b *Backend) execAttached(c *exec.Cmd, env *environment, cmd isolation.Command, cancel context.CancelFunc) (isolation.Execution, error) {
+	if cmd.Stdin != nil {
+		c.Stdin = bytes.NewReader(cmd.Stdin)
+	} else {
+		c.Stdin = b.terminalStdin()
+	}
+	c.Stdout = b.terminalStdout()
+	c.Stderr = b.terminalStderr()
+
+	ex := newExecution()
+	if err := c.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("isolation/local: start %q: %w", cmd.Argv[0], err)
+	}
+
+	proc := &process{cancel: cancel}
+	env.track(proc)
+	go func() {
+		waitErr := c.Wait()
 		env.untrack(proc)
 		cancel()
 		ex.finish(c.ProcessState, waitErr)

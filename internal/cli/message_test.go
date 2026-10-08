@@ -39,6 +39,34 @@ func TestMessageSendInboxRead(t *testing.T) {
 	}
 }
 
+func TestMessageReadJSONCarriesReadNotSent(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+
+	sentJSON := r.run("msg", "send", "actor:claude", "hello", "--project", projectID, "-o", "json")
+	if !strings.Contains(sentJSON, `"sent": true`) {
+		t.Fatalf("send json missing sent:true:\n%s", sentJSON)
+	}
+	messageID := firstField(t, r.run("msg", "send", "actor:claude", "second", "--project", projectID))
+
+	readJSON := r.run("msg", "read", messageID, "-o", "json")
+	if !strings.Contains(readJSON, `"read": true`) || strings.Contains(readJSON, `"sent"`) {
+		t.Fatalf("read json should carry read:true and no sent:\n%s", readJSON)
+	}
+}
+
+func TestMessageSendReplyTo(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	first := firstField(t, r.run("msg", "send", "actor:claude", "first", "--project", projectID))
+	second := firstField(t, r.run("msg", "send", "actor:claude", "second", "--project", projectID, "--reply-to", first))
+
+	got := r.run("msg", "get", second)
+	if !strings.Contains(got, "reply_to: "+first) {
+		t.Fatalf("get should show reply_to %s:\n%s", first, got)
+	}
+}
+
 func TestMessageSendResolvesTicket(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

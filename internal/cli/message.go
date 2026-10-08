@@ -22,6 +22,15 @@ type messageSendResult struct {
 	Project string `json:"project" yaml:"project"`
 }
 
+// messageReadResult is the single-result shape of `ft msg read`.
+type messageReadResult struct {
+	ID      string `json:"id" yaml:"id"`
+	Read    bool   `json:"read" yaml:"read"`
+	To      string `json:"to" yaml:"to"`
+	State   string `json:"state" yaml:"state"`
+	Project string `json:"project" yaml:"project"`
+}
+
 // messageEntry is one row of `ft msg inbox`.
 type messageEntry struct {
 	ID      string `json:"id" yaml:"id"`
@@ -36,7 +45,7 @@ type messageEntry struct {
 func newMessageCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "msg", Short: "Send and read durable agent messages"}
 
-	var sendProject, sendFrom, sendBody string
+	var sendProject, sendFrom, sendBody, sendReplyTo string
 	var sendLinks []string
 	send := &cobra.Command{
 		Use:   "send <address|ticket-id> [text]",
@@ -69,13 +78,18 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			message, err := deps.Messages.Send(cmd.Context(), app.SendMessageInput{
+			input := app.SendMessageInput{
 				ProjectID: project,
 				From:      from,
 				Target:    args[0],
 				Body:      body,
 				Links:     links,
-			})
+			}
+			if sendReplyTo != "" {
+				replyTo := core.MessageID(sendReplyTo)
+				input.ReplyTo = &replyTo
+			}
+			message, err := deps.Messages.Send(cmd.Context(), input)
 			if err != nil {
 				return err
 			}
@@ -89,6 +103,7 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 	send.Flags().StringVar(&sendFrom, "from", "", "sender actor (id or name; defaults to the configured actor)")
 	send.Flags().StringVarP(&sendBody, "body", "b", "", "message body (use - to read stdin)")
 	send.Flags().StringArrayVar(&sendLinks, "link", nil, "attach a link as kind=url (repeatable)")
+	send.Flags().StringVar(&sendReplyTo, "reply-to", "", "message id this message replies to")
 
 	var inboxProject, inboxAddress, inboxActor, inboxRun string
 	var inboxStates []string
@@ -164,7 +179,7 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result := messageSendResult{ID: string(message.ID), To: string(message.To), State: string(message.State), Project: string(message.ProjectID)}
+			result := messageReadResult{ID: string(message.ID), Read: true, To: string(message.To), State: string(message.State), Project: string(message.ProjectID)}
 			return deps.emit(result, func() {
 				deps.printFields(f("message_id", message.ID), f("read", true), f("to", message.To), f("state", message.State), f("project", message.ProjectID))
 			})
@@ -200,6 +215,9 @@ func printMessageBlock(deps *Deps, message *core.Message) {
 	deps.printf("to: %s\n", message.To)
 	if message.TaskID != nil {
 		deps.printf("task: %s\n", *message.TaskID)
+	}
+	if message.ReplyTo != nil {
+		deps.printf("reply_to: %s\n", *message.ReplyTo)
 	}
 	deps.printf("project: %s\n", message.ProjectID)
 	deps.printf("created_at: %s\n", message.CreatedAt.UTC().Format(time.RFC3339))

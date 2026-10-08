@@ -216,4 +216,37 @@ func TestMessageInboxAndRead(t *testing.T) {
 	}
 }
 
+func TestMessageReadLeavesFailedTerminal(t *testing.T) {
+	f := newMessageFixture(t)
+	ctx := context.Background()
+	failed := &core.Message{
+		ID:        "m-failed",
+		ProjectID: "prj-1",
+		To:        core.ActorAddress("act-1"),
+		Body:      "boom",
+		State:     core.MessageFailed,
+		Error:     "boom",
+		CreatedAt: f.clock.Now(),
+		UpdatedAt: f.clock.Now(),
+	}
+	if err := f.backend.Messages().Create(ctx, failed); err != nil {
+		t.Fatalf("create failed message: %v", err)
+	}
+
+	got, err := f.messages.Read(ctx, "m-failed")
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got.State != core.MessageFailed || got.Error != "boom" {
+		t.Fatalf("Read(failed) = %+v, want failed/boom unchanged", got)
+	}
+	events, err := f.backend.Events().List(ctx, store.EventFilter{ProjectID: "prj-1", Kinds: []core.EventKind{core.EventMessageRead}})
+	if err != nil {
+		t.Fatalf("List(events) error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("message.read events = %d, want 0 for a terminal message", len(events))
+	}
+}
+
 func taskPtr(id core.TicketID) *core.TicketID { return &id }

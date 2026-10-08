@@ -150,7 +150,8 @@ func (s *MessageService) Read(ctx context.Context, id core.MessageID) (*core.Mes
 	if err != nil {
 		return nil, err
 	}
-	if message.State == core.MessageRead {
+	// read and failed are terminal; reading never resurrects a failed message.
+	if message.State == core.MessageRead || message.State == core.MessageFailed {
 		return message, nil
 	}
 	now := s.clock.Now()

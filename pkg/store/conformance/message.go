@@ -41,6 +41,7 @@ func testMessage(t *testing.T, be store.Backend) {
 	t.Run("validate", func(t *testing.T) { testMessageValidate(t, repo, ctx) })
 	t.Run("list", func(t *testing.T) { testMessageList(t, repo, ctx) })
 	t.Run("claim", func(t *testing.T) { testMessageClaim(t, repo, ctx) })
+	t.Run("claim-project-scope", func(t *testing.T) { testMessageClaimProjectScope(t, repo, ctx) })
 	t.Run("claim-addressing", func(t *testing.T) { testMessageClaimAddressing(t, repo, ctx) })
 	t.Run("claim-concurrency", func(t *testing.T) { testMessageClaimConcurrency(t, repo, ctx) })
 	t.Run("ack", func(t *testing.T) { testMessageAck(t, repo, ctx) })
@@ -272,6 +273,33 @@ func testMessageClaim(t *testing.T, repo store.MessageRepo, ctx context.Context)
 		t.Fatalf("Claim() empty error = %v, want ErrNotFound", err)
 	}
 }
+
+func testMessageClaimProjectScope(t *testing.T, repo store.MessageRepo, ctx context.Context) {
+	t.Helper()
+	const project = core.ProjectID("prj-scope")
+	message := queuedMessage("scope-1", project, core.ActorAddress("act-1"), msgBase)
+	if err := repo.Create(ctx, message); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// A claim scoped to another project must not see this project's mailbox.
+	wrong := store.ClaimRequest{ProjectID: "prj-other", RunID: "run-1", Recipient: store.ClaimRecipient{ActorID: actorPtr("act-1")}}
+	if _, err := repo.Claim(ctx, wrong); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("cross-project Claim() error = %v, want ErrNotFound", err)
+	}
+
+	// The owning project claims it.
+	right := store.ClaimRequest{ProjectID: project, RunID: "run-1", Recipient: store.ClaimRecipient{ActorID: actorPtr("act-1")}}
+	claimed, err := repo.Claim(ctx, right)
+	if err != nil {
+		t.Fatalf("scoped Claim() error = %v", err)
+	}
+	if claimed.ID != "scope-1" {
+		t.Fatalf("scoped Claim() = %s, want scope-1", claimed.ID)
+	}
+}
+
+func actorPtr(id core.ActorID) *core.ActorID { return &id }
 
 func testMessageClaimAddressing(t *testing.T, repo store.MessageRepo, ctx context.Context) {
 	t.Helper()
@@ -624,10 +652,12 @@ func testRun(t *testing.T, be store.Backend) {
 	repo := be.Runs()
 
 	created := msgBase
+	taskOne := core.TicketID("t-1")
 	run := &core.Run{
 		ID:         "run-1",
 		ProjectID:  "prj-1",
 		ActorID:    "act-1",
+		TaskID:     &taskOne,
 		Harness:    "opencode",
 		Host:       "host-a",
 		PID:        42,
@@ -649,6 +679,7 @@ func testRun(t *testing.T, be store.Backend) {
 		ID:         "run-dup",
 		ProjectID:  "prj-1",
 		ActorID:    "act-1",
+		TaskID:     &taskOne,
 		Harness:    "opencode",
 		Host:       "host-a",
 		PID:        42,
@@ -688,11 +719,13 @@ func testRun(t *testing.T, be store.Backend) {
 		t.Fatalf("heartbeat run = %+v, want SeenAt/LeaseUntil moved", beaten)
 	}
 
-	// A second, stale run.
+	// A second, stale run on a different task.
+	taskTwo := core.TicketID("t-2")
 	stale := &core.Run{
 		ID:         "run-stale",
 		ProjectID:  "prj-1",
 		ActorID:    "act-2",
+		TaskID:     &taskTwo,
 		Host:       "host-b",
 		PID:        7,
 		CreatedAt:  created,
@@ -728,6 +761,21 @@ func testRun(t *testing.T, be store.Backend) {
 	}
 	if len(byActorRuns) != 1 || byActorRuns[0].ID != "run-1" {
 		t.Fatalf("List(actor) = %v, want [run-1]", runIDs(byActorRuns))
+	}
+
+	byTask, err := repo.List(ctx, store.RunFilter{ProjectID: "prj-1", Task: &taskOne})
+	if err != nil {
+		t.Fatalf("List(task) error = %v", err)
+	}
+	if len(byTask) != 1 || byTask[0].ID != "run-1" {
+		t.Fatalf("List(task t-1) = %v, want [run-1]", runIDs(byTask))
+	}
+	byOtherTask, err := repo.List(ctx, store.RunFilter{ProjectID: "prj-1", Task: &taskTwo})
+	if err != nil {
+		t.Fatalf("List(task t-2) error = %v", err)
+	}
+	if len(byOtherTask) != 1 || byOtherTask[0].ID != "run-stale" {
+		t.Fatalf("List(task t-2) = %v, want [run-stale]", runIDs(byOtherTask))
 	}
 
 	if err := repo.Delete(ctx, "run-1"); err != nil {

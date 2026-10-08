@@ -311,15 +311,23 @@ func (d *Deps) registerProject(cmd *cobra.Command, p Prompter, interactive bool,
 }
 
 // ensureProject opens the project's store and creates the project entity when it
-// is absent, so a freshly initialized project can take tasks immediately.
+// is absent, so a freshly initialized project can take tasks immediately. It
+// carries the caller's store options (for example `migrate=yes`) into the open,
+// so the consent the guard asks for is the consent init honors; path is forced
+// to the project database init just derived.
 func (d *Deps) ensureProject(cmd *cobra.Command, id, name string, repos []core.Repository, dbPath string) (*core.Project, bool, error) {
 	factory, err := d.StoreFactories.MustLookup("sqlite")
 	if err != nil {
 		return nil, false, err
 	}
+	options := map[string]string{}
+	for key, value := range d.Config.Store.Options {
+		options[key] = value
+	}
+	options["path"] = dbPath
 	backend, err := factory(cmd.Context(), store.Config{
 		Backend: "sqlite",
-		Options: map[string]string{"path": dbPath},
+		Options: options,
 		Noticef: func(format string, args ...any) {
 			_, _ = fmt.Fprintf(d.Err, "ft: "+format+"\n", args...)
 		},

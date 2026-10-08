@@ -257,6 +257,60 @@ func TestMigrateOlderWithConsentBacksUpAndMigrates(t *testing.T) {
 	}
 }
 
+func TestMigrateConsentDoesNotBypassNewerRejection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "factotum.db")
+	raw := openRaw(t, path)
+	if _, err := raw.Exec("PRAGMA user_version = " + itoa(currentSchemaVersion+1)); err != nil {
+		t.Fatalf("stamp newer version: %v", err)
+	}
+	_ = raw.Close()
+
+	_, err := Open(context.Background(), consentedConfig(path))
+	if err == nil {
+		t.Fatal("Open() with consent on a newer database should still be rejected")
+	}
+	if !strings.Contains(err.Error(), "newer than this binary supports") {
+		t.Fatalf("Open() error = %q, want the newer-version rejection", err)
+	}
+}
+
+func TestMigrateConsentValue(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name    string
+		value   string
+		consent bool
+	}{
+		{name: "yes", value: "yes", consent: true},
+		{name: "case-insensitive", value: "YES", consent: true},
+		{name: "trimmed", value: "  yes  ", consent: true},
+		{name: "no", value: "no", consent: false},
+		{name: "absent", value: "", consent: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "factotum.db")
+			unstampedDB(t, path)
+			cfg := sqliteConfig(path)
+			if tt.value != "" {
+				cfg.Options["migrate"] = tt.value
+			}
+			backend, err := Open(ctx, cfg)
+			if !tt.consent {
+				if err == nil {
+					_ = backend.Close()
+					t.Fatalf("Open(migrate=%q) error = nil, want a consent refusal", tt.value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Open(migrate=%q) error = %v, want consent accepted", tt.value, err)
+			}
+			_ = backend.Close()
+		})
+	}
+}
+
 func TestMigrateFailingStepRollsBack(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "factotum.db")

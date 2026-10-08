@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"database/sql"
 	"errors"
 	"io"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/store/builtins"
@@ -113,6 +116,47 @@ func TestInitRegistersProjectFromGit(t *testing.T) {
 	got := r.run("--store", "sqlite", "--store-opt", "path="+db, "project", "get", "widget")
 	if !strings.Contains(got, "widget") {
 		t.Fatalf("project entity was not created in its store:\n%s", got)
+	}
+}
+
+// TestInitProjectConsentsToMigration pins that the consent the store guard
+// advertises (`--store-opt migrate=yes`) reaches the project store init opens:
+// an older-schema database at the derived path is backed up and migrated
+// instead of leaving the project unregistered.
+func TestInitProjectConsentsToMigration(t *testing.T) {
+	t.Chdir(t.TempDir())
+	home := t.TempDir()
+	dotFactotum := filepath.Join(home, ".factotum")
+	if err := os.MkdirAll(dotFactotum, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	db := filepath.Join(dotFactotum, "widget.db")
+	raw, err := sql.Open("sqlite", db)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := raw.Exec("CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL)"); err != nil {
+		t.Fatalf("create old schema: %v", err)
+	}
+	_ = raw.Close()
+
+	detect := func(string) (gitRepo, bool) {
+		return gitRepo{Root: "/work/widget", Remote: "git@github.com:acme/widget.git"}, true
+	}
+	out := runRoot(t, home, detect, "--store", "sqlite", "--store-opt", "migrate=yes", "init", "-p")
+	if !strings.Contains(out, "project: widget") {
+		t.Fatalf("init -p with consent did not register the project:\n%s", out)
+	}
+	backups, err := filepath.Glob(db + ".bak-*")
+	if err != nil {
+		t.Fatalf("glob backups: %v", err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("init -p consent should back up before migrating, got %v", backups)
+	}
+	shown := runRoot(t, home, detect, "--store", "sqlite", "--store-opt", "path="+db, "project", "get", "widget")
+	if !strings.Contains(shown, "widget") {
+		t.Fatalf("project entity missing after the consented migration:\n%s", shown)
 	}
 }
 

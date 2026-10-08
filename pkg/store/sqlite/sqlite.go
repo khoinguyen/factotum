@@ -70,7 +70,7 @@ const backupRetention = 5
 
 // currentSchemaVersion is the schema version this binary writes. It is a var so
 // tests can exercise pending and failing migrations.
-var currentSchemaVersion = 5
+var currentSchemaVersion = 6
 
 // nowFunc is overridable in tests so backup names are deterministic.
 var nowFunc = time.Now
@@ -87,6 +87,7 @@ var migrations = []migration{
 	{version: 3, apply: migrateV3},
 	{version: 4, apply: migrateV4},
 	{version: 5, apply: migrateV5},
+	{version: 6, apply: migrateV6},
 }
 
 // migrateV1 creates the base schema and the pre-release additive columns.
@@ -309,9 +310,22 @@ func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
 			return nil, fmt.Errorf("create state dir: %w", err)
 		}
 	}
-	db, err := sql.Open("sqlite", path)
+	// An in-memory database must live on one connection, or each pool
+	// connection would see an empty schema. A file database gets a busy
+	// timeout and immediate transactions, so a claim waits for a concurrent
+	// writer instead of failing with SQLITE_BUSY.
+	var dsn string
+	if path == ":memory:" {
+		dsn = "file::memory:"
+	} else {
+		dsn = "file:" + path + "?_pragma=busy_timeout(5000)&_txlock=immediate"
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	if path == ":memory:" {
+		db.SetMaxOpenConns(1)
 	}
 	backend := &Backend{db: db, path: path, noticef: cfg.Noticef}
 	if err := backend.Migrate(ctx); err != nil {
@@ -439,7 +453,9 @@ func (b *Backend) Actors() store.ActorRepo     { return &actorRepo{db: b.db} }
 func (b *Backend) Artifacts() store.ArtifactRepo {
 	return &artifactRepo{db: b.db}
 }
-func (b *Backend) Events() store.EventRepo { return &eventRepo{db: b.db} }
+func (b *Backend) Events() store.EventRepo     { return &eventRepo{db: b.db} }
+func (b *Backend) Messages() store.MessageRepo { return &messageRepo{db: b.db} }
+func (b *Backend) Runs() store.RunRepo         { return &runRepo{db: b.db} }
 
 type projectRepo struct{ db *sql.DB }
 

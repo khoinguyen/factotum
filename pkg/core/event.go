@@ -36,6 +36,11 @@ const (
 	EventArtifactCreated EventKind = "artifact.created"
 	EventArtifactUpdated EventKind = "artifact.updated"
 	EventArtifactDeleted EventKind = "artifact.deleted"
+
+	EventMessageSent    EventKind = "message.sent"
+	EventMessageClaimed EventKind = "message.claimed"
+	EventMessageRead    EventKind = "message.read"
+	EventMessageFailed  EventKind = "message.failed"
 )
 
 func (k EventKind) Valid() bool {
@@ -47,7 +52,8 @@ func (k EventKind) Valid() bool {
 		EventTaskNoteAdded, EventTaskSnoozed, EventTaskUnsnoozed,
 		EventTaskRunStarted, EventTaskRunFinished,
 		EventActorCreated, EventActorUpdated, EventActorDeleted,
-		EventArtifactCreated, EventArtifactUpdated, EventArtifactDeleted:
+		EventArtifactCreated, EventArtifactUpdated, EventArtifactDeleted,
+		EventMessageSent, EventMessageClaimed, EventMessageRead, EventMessageFailed:
 		return true
 	default:
 		return false

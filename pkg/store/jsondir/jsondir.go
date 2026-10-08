@@ -52,6 +52,14 @@ type artifactRecord struct {
 	extra    map[string]*yaml.Node
 }
 
+type messageRecord struct {
+	message core.Message
+}
+
+type runRecord struct {
+	run core.Run
+}
+
 type Backend struct {
 	mu        sync.Mutex
 	root      string
@@ -60,6 +68,8 @@ type Backend struct {
 	actors    map[core.ActorID]*actorRecord
 	artifacts map[core.ArtifactID]*artifactRecord
 	events    []core.Event
+	messages  map[core.MessageID]*messageRecord
+	runs      map[core.RunID]*runRecord
 }
 
 func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
@@ -83,6 +93,8 @@ func open(_ context.Context, root string) (store.Backend, error) {
 		projects:  make(map[core.ProjectID]*projectRecord),
 		actors:    make(map[core.ActorID]*actorRecord),
 		artifacts: make(map[core.ArtifactID]*artifactRecord),
+		messages:  make(map[core.MessageID]*messageRecord),
+		runs:      make(map[core.RunID]*runRecord),
 	}
 	if err := b.load(); err != nil {
 		return nil, err
@@ -115,6 +127,8 @@ func (b *Backend) Tickets() store.TicketRepo     { return &taskRepo{backend: b} 
 func (b *Backend) Actors() store.ActorRepo       { return &actorRepo{backend: b} }
 func (b *Backend) Artifacts() store.ArtifactRepo { return &artifactRepo{backend: b} }
 func (b *Backend) Events() store.EventRepo       { return &eventRepo{backend: b} }
+func (b *Backend) Messages() store.MessageRepo   { return &messageRepo{backend: b} }
+func (b *Backend) Runs() store.RunRepo           { return &runRepo{backend: b} }
 
 // --- loading ---
 
@@ -129,6 +143,12 @@ func (b *Backend) load() error {
 		return err
 	}
 	if err := b.loadArtifacts(); err != nil {
+		return err
+	}
+	if err := b.loadMessages(); err != nil {
+		return err
+	}
+	if err := b.loadRuns(); err != nil {
 		return err
 	}
 	return b.loadEvents()
@@ -200,6 +220,65 @@ func (b *Backend) loadArtifacts() error {
 		b.artifacts[artifact.ID] = &artifactRecord{artifact: artifact, extra: extra}
 		return nil
 	})
+}
+
+func (b *Backend) loadMessages() error {
+	return b.readJSON("messages", func(name string, data []byte) error {
+		var message core.Message
+		if err := json.Unmarshal(data, &message); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		if _, ok := b.messages[message.ID]; ok {
+			return fmt.Errorf("%s: duplicate message id %s", name, message.ID)
+		}
+		if err := checkID("message", string(message.ID)); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		b.messages[message.ID] = &messageRecord{message: message}
+		return nil
+	})
+}
+
+func (b *Backend) loadRuns() error {
+	return b.readJSON("runs", func(name string, data []byte) error {
+		var run core.Run
+		if err := json.Unmarshal(data, &run); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		if _, ok := b.runs[run.ID]; ok {
+			return fmt.Errorf("%s: duplicate run id %s", name, run.ID)
+		}
+		if err := checkID("run", string(run.ID)); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		b.runs[run.ID] = &runRecord{run: run}
+		return nil
+	})
+}
+
+// readJSON invokes visit for every .json file in dir, in name order. A missing
+// directory is not an error: the store is simply empty.
+func (b *Backend) readJSON(dir string, visit func(name string, data []byte) error) error {
+	entries, err := os.ReadDir(filepath.Join(b.root, dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(b.root, dir, entry.Name()))
+		if err != nil {
+			return fmt.Errorf("read %s/%s: %w", dir, entry.Name(), err)
+		}
+		if err := visit(filepath.Join(dir, entry.Name()), data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // readDocs invokes visit for every .md file in dir, in name order. A missing
@@ -274,6 +353,10 @@ func (b *Backend) loadEvents() error {
 
 func (b *Backend) docPath(dir, id string) string {
 	return filepath.Join(b.root, dir, id+".md")
+}
+
+func (b *Backend) dataPath(dir, id string) string {
+	return filepath.Join(b.root, dir, id+".json")
 }
 
 // checkID rejects ids that would escape the layout when used as a filename.
@@ -844,6 +927,376 @@ func containsKind(kinds []core.EventKind, kind core.EventKind) bool {
 		}
 	}
 	return false
+}
+
+// --- messages ---
+
+type messageRepo struct{ backend *Backend }
+
+func (r *messageRepo) Create(_ context.Context, message *core.Message) error {
+	if err := message.Validate(0); err != nil {
+		return err
+	}
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.messages[message.ID]; ok {
+		return fmt.Errorf("%w: message %s", core.ErrAlreadyExists, message.ID)
+	}
+	if err := checkID("message", string(message.ID)); err != nil {
+		return err
+	}
+	if err := b.writeMessage(*message); err != nil {
+		return err
+	}
+	b.messages[message.ID] = &messageRecord{message: clone.Message(*message)}
+	return nil
+}
+
+func (r *messageRepo) Get(_ context.Context, id core.MessageID) (*core.Message, error) {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	record, ok := b.messages[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: message %s", core.ErrNotFound, id)
+	}
+	message := clone.Message(record.message)
+	return &message, nil
+}
+
+func (r *messageRepo) List(_ context.Context, filter store.MessageFilter) ([]*core.Message, error) {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]*core.Message, 0, len(b.messages))
+	for _, record := range b.messages {
+		if !store.MatchesMessageFilter(&record.message, filter) {
+			continue
+		}
+		message := clone.Message(record.message)
+		out = append(out, &message)
+	}
+	sort.Slice(out, func(i, j int) bool { return store.CompareMessages(out[i], out[j]) < 0 })
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+func (r *messageRepo) Update(_ context.Context, message *core.Message) error {
+	if err := message.Validate(0); err != nil {
+		return err
+	}
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.messages[message.ID]; !ok {
+		return fmt.Errorf("%w: message %s", core.ErrNotFound, message.ID)
+	}
+	if err := b.writeMessage(*message); err != nil {
+		return err
+	}
+	b.messages[message.ID] = &messageRecord{message: clone.Message(*message)}
+	return nil
+}
+
+func (r *messageRepo) Claim(ctx context.Context, req store.ClaimRequest) (*core.Message, error) {
+	return store.AwaitClaim(ctx, req.Wait, func() (*core.Message, error) { return r.claimOnce(req) })
+}
+
+func (r *messageRepo) claimOnce(req store.ClaimRequest) (*core.Message, error) {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var (
+		best   core.Message
+		bestID core.MessageID
+		found  bool
+	)
+	for id, record := range b.messages {
+		message := record.message
+		if !store.Claimable(&message, req) {
+			continue
+		}
+		if !found || store.CompareMessages(&message, &best) < 0 {
+			best = message
+			bestID = id
+			found = true
+		}
+	}
+	if !found {
+		return nil, nil
+	}
+	now := time.Now().UTC()
+	lease := req.Lease
+	if lease <= 0 {
+		lease = store.DefaultMessageLease
+	}
+	until := now.Add(lease)
+	runID := req.RunID
+	best.State = core.MessageDelivered
+	best.RunID = &runID
+	best.LeaseUntil = &until
+	best.DeliveredAt = &now
+	best.Attempts++
+	best.UpdatedAt = now
+	if err := b.writeMessage(best); err != nil {
+		return nil, err
+	}
+	b.messages[bestID] = &messageRecord{message: best}
+	cloned := clone.Message(best)
+	return &cloned, nil
+}
+
+func (r *messageRepo) Ack(_ context.Context, req store.AckRequest) error {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	record, ok := b.messages[req.ID]
+	if !ok {
+		return fmt.Errorf("%w: message %s", core.ErrNotFound, req.ID)
+	}
+	message := record.message
+	now := time.Now().UTC()
+	switch req.State {
+	case core.MessageRead:
+		if message.State == core.MessageRead {
+			return nil
+		}
+		if err := checkAckOwner(message, req.RunID); err != nil {
+			return err
+		}
+		message.State = core.MessageRead
+		message.ReadAt = &now
+	case core.MessageFailed:
+		if message.State == core.MessageFailed {
+			return nil
+		}
+		if err := checkAckOwner(message, req.RunID); err != nil {
+			return err
+		}
+		message.State = core.MessageFailed
+		message.Error = req.Error
+	default:
+		return fmt.Errorf("%w: ack state %q must be read or failed", core.ErrInvalid, req.State)
+	}
+	message.UpdatedAt = now
+	if err := b.writeMessage(message); err != nil {
+		return err
+	}
+	b.messages[req.ID] = &messageRecord{message: message}
+	return nil
+}
+
+// checkAckOwner requires a delivered message owned by runID.
+func checkAckOwner(message core.Message, runID core.RunID) error {
+	if message.State != core.MessageDelivered {
+		return fmt.Errorf("%w: message %s is %s, not delivered", core.ErrInvalid, message.ID, message.State)
+	}
+	if message.RunID == nil || *message.RunID != runID {
+		return fmt.Errorf("%w: message %s is not owned by run %s", core.ErrInvalid, message.ID, runID)
+	}
+	return nil
+}
+
+func (r *messageRepo) Nack(_ context.Context, id core.MessageID, runID core.RunID, reason string) error {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	record, ok := b.messages[id]
+	if !ok {
+		return fmt.Errorf("%w: message %s", core.ErrNotFound, id)
+	}
+	message := record.message
+	if err := checkAckOwner(message, runID); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	message.Error = reason
+	message.UpdatedAt = now
+	if message.Attempts >= store.MaxMessageAttempts {
+		message.State = core.MessageFailed
+	} else {
+		message.State = core.MessageQueued
+		message.RunID = nil
+		message.LeaseUntil = nil
+	}
+	if err := b.writeMessage(message); err != nil {
+		return err
+	}
+	b.messages[id] = &messageRecord{message: message}
+	return nil
+}
+
+func (r *messageRepo) RequeueExpired(_ context.Context, now time.Time, maxAttempts int) (int, error) {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	moved := 0
+	for id, record := range b.messages {
+		message := record.message
+		if message.State != core.MessageDelivered || message.LeaseUntil == nil || message.LeaseUntil.After(now) {
+			continue
+		}
+		if message.Attempts >= maxAttempts {
+			message.State = core.MessageFailed
+			message.Error = "lease expired"
+		} else {
+			message.State = core.MessageQueued
+			message.RunID = nil
+			message.LeaseUntil = nil
+		}
+		message.UpdatedAt = now
+		if err := b.writeMessage(message); err != nil {
+			return moved, err
+		}
+		b.messages[id] = &messageRecord{message: message}
+		moved++
+	}
+	return moved, nil
+}
+
+func (r *messageRepo) Prune(_ context.Context, before time.Time, states []core.MessageState) (int, error) {
+	if len(states) == 0 {
+		return 0, nil
+	}
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	removed := 0
+	for id, record := range b.messages {
+		message := record.message
+		if !message.State.Terminal() || !message.UpdatedAt.Before(before) {
+			continue
+		}
+		prunable := false
+		for _, state := range states {
+			if message.State == state {
+				prunable = true
+				break
+			}
+		}
+		if !prunable {
+			continue
+		}
+		if err := removeFile(b.dataPath("messages", string(id))); err != nil {
+			return removed, err
+		}
+		delete(b.messages, id)
+		removed++
+	}
+	return removed, nil
+}
+
+func (b *Backend) writeMessage(message core.Message) error {
+	data, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("encode message %s: %w", message.ID, err)
+	}
+	return writeFileAtomic(b.dataPath("messages", string(message.ID)), data)
+}
+
+// --- runs ---
+
+type runRepo struct{ backend *Backend }
+
+func (r *runRepo) Register(_ context.Context, run *core.Run) (*core.Run, error) {
+	if err := run.Validate(); err != nil {
+		return nil, err
+	}
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, record := range b.runs {
+		existing := record.run
+		if existing.ProjectID == run.ProjectID && existing.ActorID == run.ActorID && existing.Host == run.Host && existing.PID == run.PID {
+			existing.TaskID = run.TaskID
+			existing.Harness = run.Harness
+			existing.CanInject = run.CanInject
+			existing.SeenAt = run.SeenAt
+			existing.LeaseUntil = run.LeaseUntil
+			if err := b.writeRun(existing); err != nil {
+				return nil, err
+			}
+			b.runs[id] = &runRecord{run: existing}
+			cloned := clone.Run(existing)
+			return &cloned, nil
+		}
+	}
+	if err := checkID("run", string(run.ID)); err != nil {
+		return nil, err
+	}
+	if err := b.writeRun(*run); err != nil {
+		return nil, err
+	}
+	b.runs[run.ID] = &runRecord{run: clone.Run(*run)}
+	cloned := clone.Run(*run)
+	return &cloned, nil
+}
+
+func (r *runRepo) Heartbeat(_ context.Context, id core.RunID, now time.Time, lease time.Duration) error {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	record, ok := b.runs[id]
+	if !ok {
+		return fmt.Errorf("%w: run %s", core.ErrNotFound, id)
+	}
+	run := record.run
+	run.SeenAt = now
+	run.LeaseUntil = now.Add(lease)
+	if err := b.writeRun(run); err != nil {
+		return err
+	}
+	b.runs[id] = &runRecord{run: run}
+	return nil
+}
+
+func (r *runRepo) List(_ context.Context, filter store.RunFilter) ([]*core.Run, error) {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := filter.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	out := make([]*core.Run, 0, len(b.runs))
+	for _, record := range b.runs {
+		run := record.run
+		if !store.MatchRunFilter(&run, filter, now) {
+			continue
+		}
+		cloned := clone.Run(run)
+		out = append(out, &cloned)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+func (r *runRepo) Delete(_ context.Context, id core.RunID) error {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.runs[id]; !ok {
+		return fmt.Errorf("%w: run %s", core.ErrNotFound, id)
+	}
+	if err := removeFile(b.dataPath("runs", string(id))); err != nil {
+		return err
+	}
+	delete(b.runs, id)
+	return nil
+}
+
+func (b *Backend) writeRun(run core.Run) error {
+	data, err := json.Marshal(run)
+	if err != nil {
+		return fmt.Errorf("encode run %s: %w", run.ID, err)
+	}
+	return writeFileAtomic(b.dataPath("runs", string(run.ID)), data)
 }
 
 func removeFile(path string) error {

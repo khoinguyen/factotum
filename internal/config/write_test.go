@@ -312,3 +312,92 @@ func TestAddProjectEntryQuotesUnsafeID(t *testing.T) {
 		t.Fatalf("Project = %q, want %q", cfg.Project, "weird id")
 	}
 }
+
+// TestWriteProjectTechStackReplacesAfterMultilineArray pins the hardening for
+// hand-edited configs: a top-level multi-line array before the key must not be
+// mistaken for a table header, so the existing tech_stack is replaced in place
+// rather than duplicated.
+func TestWriteProjectTechStackReplacesAfterMultilineArray(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := "# hand edited\nproject = \"acme\"\nmatrix = [\n  [1, 2],\n  [3, 4],\n]\ntech_stack = \"go\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	wrote, err := WriteProjectTechStack(path, "rust")
+	if err != nil {
+		t.Fatalf("WriteProjectTechStack() error = %v", err)
+	}
+	if !wrote {
+		t.Fatal("wrote = false, want true")
+	}
+	got := readFile(t, path)
+	if strings.Count(got, "tech_stack") != 1 {
+		t.Fatalf("tech_stack should appear once, got:\n%s", got)
+	}
+	if !strings.Contains(got, `tech_stack = "rust"`) {
+		t.Fatalf("tech_stack not replaced:\n%s", got)
+	}
+	if !strings.Contains(got, "matrix = [") {
+		t.Fatalf("the hand-edited array was lost:\n%s", got)
+	}
+	cfg, err := Load(Input{ProjectPath: path, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v (duplicate or invalid key?)", err)
+	}
+	if cfg.TechStack != "rust" {
+		t.Fatalf("TechStack = %q, want rust", cfg.TechStack)
+	}
+}
+
+// TestWriteProjectTechStackIgnoresBracketsInStrings pins that an unbalanced
+// bracket inside a quoted value does not fool the nesting scan into treating the
+// rest of the file as array contents.
+func TestWriteProjectTechStackIgnoresBracketsInStrings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := "project = \"acme\"\nbanner = \"a[unclosed\"\ntech_stack = \"go\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := WriteProjectTechStack(path, "rust"); err != nil {
+		t.Fatalf("WriteProjectTechStack() error = %v", err)
+	}
+	got := readFile(t, path)
+	if strings.Count(got, "tech_stack") != 1 {
+		t.Fatalf("tech_stack should appear once, got:\n%s", got)
+	}
+	if !strings.Contains(got, `tech_stack = "rust"`) {
+		t.Fatalf("tech_stack not replaced:\n%s", got)
+	}
+}
+
+// TestWriteProjectTechStackStopsAtTableHeader pins that the scan still stops at a
+// real table header: a top-level key is inserted at the top, never inside a table.
+func TestWriteProjectTechStackStopsAtTableHeader(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := "# hand edited\nproject = \"acme\"\n\n[run]\nsandbox = \"local\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := WriteProjectTechStack(path, "go"); err != nil {
+		t.Fatalf("WriteProjectTechStack() error = %v", err)
+	}
+	got := readFile(t, path)
+	tech := strings.Index(got, "tech_stack")
+	run := strings.Index(got, "[run]")
+	if tech < 0 || run < 0 || tech > run {
+		t.Fatalf("tech_stack should be inserted above [run]:\n%s", got)
+	}
+	cfg, err := Load(Input{ProjectPath: path, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TechStack != "go" {
+		t.Fatalf("TechStack = %q, want go", cfg.TechStack)
+	}
+}

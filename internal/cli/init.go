@@ -143,6 +143,9 @@ func newInitCommand(deps *Deps) *cobra.Command {
 			if userOnly && project {
 				return usageError(cmd, "--user-only and --project are mutually exclusive")
 			}
+			if techStack != "" && !project {
+				return usageError(cmd, "--tech-stack requires --project")
+			}
 			name := ""
 			if len(args) == 1 {
 				if !project {

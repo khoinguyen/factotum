@@ -74,10 +74,32 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (*core.M
 	return message, nil
 }
 
+// LoopRole reports whether ref names a chief-loop role and returns it as the
+// actor id that addresses the role's mailbox. The roles are the task-scoped
+// builder-<task>, reviewer-<task>, and qa-<task>, plus the singleton chief. A
+// role is an ordinary actor id, so a peer addresses it as actor:<role> and a
+// receiver that registered under it claims its messages; the sugar just lets a
+// sender (and ft msg send) name the peer without a cmux surface or a colon.
+func LoopRole(ref string) (core.ActorID, bool) {
+	if ref == "chief" {
+		return core.ActorID(ref), true
+	}
+	for _, prefix := range []string{"builder-", "reviewer-", "qa-"} {
+		if strings.HasPrefix(ref, prefix) && len(ref) > len(prefix) {
+			return core.ActorID(ref), true
+		}
+	}
+	return "", false
+}
+
 // resolveTarget turns a send target into the stored address and, for task
-// targets, the originating task id (section 4 resolution).
+// targets, the originating task id (section 4 resolution). A bare loop role is
+// sugar for its actor address; any other bare token is ticket sugar.
 func (s *MessageService) resolveTarget(ctx context.Context, project core.ProjectID, target string) (core.Address, *core.TicketID, error) {
 	if !strings.ContainsRune(target, ':') {
+		if actor, ok := LoopRole(target); ok {
+			return core.ActorAddress(actor), nil, nil
+		}
 		return s.resolveTask(ctx, project, core.TicketID(target))
 	}
 	kind, id, err := core.ParseAddress(target)

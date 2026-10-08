@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/harness/opencode"
+	"github.com/khoinguyen/factotum/pkg/harness/pi"
 )
 
 // messageSendResult is the single-result shape of `ft msg send`.
@@ -188,8 +191,102 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(send, inbox, get, read, newMessageAgentCommand(deps))
+	cmd.AddCommand(send, inbox, get, read, newMessageInstallCommand(deps), newMessageAgentCommand(deps))
 	return cmd
+}
+
+// receiverFile is the receiver source filename both harnesses load from their
+// plugin directory.
+const receiverFile = "factotum-msg.js"
+
+// messageInstallResult is the single-result shape of `ft msg install`.
+type messageInstallResult struct {
+	Installed bool   `json:"installed" yaml:"installed"`
+	Harness   string `json:"harness" yaml:"harness"`
+	Path      string `json:"path" yaml:"path"`
+}
+
+// newMessageInstallCommand stages a receiver plugin where a harness loads it.
+// OpenCode loads global plugins from <config>/opencode/plugins, so the default
+// installs the receiver once and every session on the machine loads it —
+// including a loop agent launched directly by cmux in a worktree, which never
+// goes through `ft run`. pi loads project-local extensions, so its default is
+// the agent's working directory. The plugin is inert without FACTOTUM_PROJECT
+// and FACTOTUM_ACTOR, so a global install is safe for ordinary sessions.
+func newMessageInstallCommand(deps *Deps) *cobra.Command {
+	var harness, dir string
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Stage a receiver plugin where a harness loads it",
+		Args:  cobra.NoArgs,
+		// Install writes a file; it never reads or writes the caller's store, so
+		// it works even when no project store is configured.
+		Annotations: map[string]string{annotationNoCallerStore: "true"},
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			content, err := receiverBytes(harness)
+			if err != nil {
+				return err
+			}
+			target := dir
+			if target == "" {
+				wd, err := os.Getwd()
+				if err != nil {
+					return fmt.Errorf("resolve working directory: %w", err)
+				}
+				if target, err = receiverDir(harness, deps.Getenv, wd); err != nil {
+					return err
+				}
+			}
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return fmt.Errorf("create receiver dir: %w", err)
+			}
+			path := filepath.Join(target, receiverFile)
+			if err := os.WriteFile(path, content, 0o644); err != nil {
+				return fmt.Errorf("write receiver: %w", err)
+			}
+			result := messageInstallResult{Installed: true, Harness: harness, Path: path}
+			return deps.emit(result, func() {
+				deps.printFields(f("installed", true), f("harness", harness), f("path", path))
+			})
+		},
+	}
+	cmd.Flags().StringVar(&harness, "harness", "opencode", "receiver harness (opencode or pi)")
+	cmd.Flags().StringVar(&dir, "dir", "", "plugin directory to install into (defaults per harness)")
+	return cmd
+}
+
+// receiverBytes returns the embedded receiver source for a harness.
+func receiverBytes(harness string) ([]byte, error) {
+	switch harness {
+	case "opencode":
+		return opencode.MsgPluginBytes(), nil
+	case "pi":
+		return pi.MsgExtensionBytes(), nil
+	default:
+		return nil, fmt.Errorf("%w: unknown harness %q (want opencode or pi)", core.ErrInvalid, harness)
+	}
+}
+
+// receiverDir resolves the default directory a receiver is staged into: the
+// OpenCode global plugin dir (per the XDG config home), or the pi project
+// extension dir under the agent's working directory.
+func receiverDir(harness string, getenv func(string) string, wd string) (string, error) {
+	switch harness {
+	case "opencode":
+		base := getenv("XDG_CONFIG_HOME")
+		if base == "" {
+			home := getenv("HOME")
+			if home == "" {
+				return "", fmt.Errorf("%w: cannot resolve the OpenCode config dir; set XDG_CONFIG_HOME or HOME, or pass --dir", core.ErrInvalid)
+			}
+			base = filepath.Join(home, ".config")
+		}
+		return filepath.Join(base, "opencode", "plugins"), nil
+	case "pi":
+		return filepath.Join(wd, ".pi", "extensions"), nil
+	default:
+		return "", fmt.Errorf("%w: unknown harness %q (want opencode or pi)", core.ErrInvalid, harness)
+	}
 }
 
 // agentRegisterResult is the JSON shape `ft msg agent register` returns.
@@ -485,7 +582,10 @@ func printMessageBlock(deps *Deps, message *core.Message) {
 }
 
 // resolveMessageFrom resolves the sender actor: the flag when set, else the
-// configured actor. An empty result means a system message.
+// configured actor. A sender that names a loop role (builder-<t>, reviewer-<t>,
+// qa-<t>, chief) is accepted even when no Actor record exists yet, because a
+// loop session registers its role as a run, not as a store actor. An empty
+// result means a system message.
 func (d *Deps) resolveMessageFrom(ctx context.Context, flag string) (*core.ActorID, error) {
 	ref := flag
 	if ref == "" {
@@ -496,6 +596,9 @@ func (d *Deps) resolveMessageFrom(ctx context.Context, flag string) (*core.Actor
 	}
 	actor, err := d.Actors.Resolve(ctx, ref)
 	if err != nil {
+		if role, ok := app.LoopRole(ref); ok {
+			return &role, nil
+		}
 		return nil, fmt.Errorf("sender actor: %w", err)
 	}
 	id := actor.ID

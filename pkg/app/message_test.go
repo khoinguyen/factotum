@@ -49,6 +49,84 @@ func (f *messageFixture) addTask(t *testing.T, id core.TicketID, assignee *core.
 	}
 }
 
+func TestLoopRole(t *testing.T) {
+	cases := []struct {
+		ref  string
+		want core.ActorID
+		ok   bool
+	}{
+		{"builder-t-1", "builder-t-1", true},
+		{"reviewer-t-1", "reviewer-t-1", true},
+		{"qa-t-1", "qa-t-1", true},
+		{"chief", "chief", true},
+		{"t-1", "", false},
+		{"actor:builder-t-1", "", false},
+		{"builder-", "", false},
+		{"", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := LoopRole(tc.ref)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("LoopRole(%q) = (%q, %v), want (%q, %v)", tc.ref, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestMessageSendResolvesRoleAddress(t *testing.T) {
+	f := newMessageFixture(t)
+	ctx := context.Background()
+
+	for _, role := range []string{"builder-t-1", "reviewer-t-1", "qa-t-1", "chief"} {
+		message, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", Target: role, Body: "hi"})
+		if err != nil {
+			t.Fatalf("Send(%s) error = %v", role, err)
+		}
+		if want := core.ActorAddress(core.ActorID(role)); message.To != want {
+			t.Fatalf("Send(%s).To = %q, want %q", role, message.To, want)
+		}
+		if message.TaskID != nil {
+			t.Fatalf("Send(%s).TaskID = %v, want nil (a role is not a task)", role, message.TaskID)
+		}
+	}
+
+	// A bare non-role target keeps the ticket sugar: a missing ticket is not
+	// silently treated as an actor.
+	if _, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", Target: "t-missing", Body: "hi"}); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("Send(non-role bare target) error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMessageRoleDeliveryRoundTrip(t *testing.T) {
+	f := newMessageFixture(t)
+	ctx := context.Background()
+	role := core.ActorID("reviewer-t-1")
+
+	if _, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", Target: string(role), Body: "please review"}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	run, err := f.messages.RegisterRun(ctx, RegisterRunInput{ProjectID: "prj-1", ActorID: role, Harness: "opencode", Host: "h", PID: 1})
+	if err != nil {
+		t.Fatalf("RegisterRun() error = %v", err)
+	}
+	claimed, err := f.messages.Claim(ctx, ClaimInput{ProjectID: "prj-1", RunID: run.ID, ActorID: &role})
+	if err != nil {
+		t.Fatalf("Claim() error = %v", err)
+	}
+	if claimed.Body != "please review" {
+		t.Fatalf("Claim().Body = %q, want the role message", claimed.Body)
+	}
+	if err := f.messages.Ack(ctx, AckInput{ID: claimed.ID, RunID: run.ID, State: core.MessageRead}); err != nil {
+		t.Fatalf("Ack() error = %v", err)
+	}
+	got, err := f.messages.Get(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.State != core.MessageRead {
+		t.Fatalf("message state = %q, want read after ack", got.State)
+	}
+}
+
 func TestMessageSendToActor(t *testing.T) {
 	f := newMessageFixture(t)
 	from := core.ActorID("act-sender")

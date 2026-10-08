@@ -10,13 +10,15 @@ export function PageShell({
   state,
   back,
   action,
+  footer,
   children,
 }: {
   eyebrow?: string
   title: string
-  state: LiveState
+  state?: LiveState
   back?: { href: string; label: string }
   action?: React.ReactNode
+  footer?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
@@ -40,12 +42,12 @@ export function PageShell({
         </div>
         <div className="flex shrink-0 items-center gap-4">
           {action}
-          <LiveBadge state={state} />
+          {state ? <LiveBadge state={state} /> : null}
         </div>
       </header>
       {children}
       <footer className="mt-auto text-xs text-muted-foreground">
-        Read-only · live via SSE
+        {footer ?? "Read-only · live via SSE"}
       </footer>
     </div>
   )

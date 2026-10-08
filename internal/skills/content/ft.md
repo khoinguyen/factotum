@@ -192,7 +192,7 @@ Without a configured agent, `ft prompt` reports a clear error.
 ```sh
 ft task list -p <project> --status todo
 ft task search "<query>"        # titles, descriptions, and notes (terms ANDed, prefix match)
-ft task get <task>              # description, deps, dependents, notes, memory
+ft task get <task>              # description, origin, deps, dependents, notes, memory
 ft task context <task>          # task + deps + notes + memory + recent events
 ft doc search "<query>"         # specs and docs (terms ANDed, prefix match)
 ft doc get <artifact>           # read one spec/doc back

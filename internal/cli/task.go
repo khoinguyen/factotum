@@ -255,6 +255,16 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 			// Carry the revision the document is derived from so a later
 			// `task apply` can three-way merge concurrent changes.
 			doc.Base = taskBaseFrom(task)
+			origin, err := deps.Tasks.Origin(cmd.Context(), task)
+			if err != nil {
+				return err
+			}
+			if origin != nil {
+				originID := string(origin.ID)
+				originTitle := origin.Title
+				doc.Origin = &originID
+				doc.OriginTitle = &originTitle
+			}
 			var checks []check.Result
 			if deps.TaskChecks != nil {
 				results, err := deps.TaskChecks.Cached(cmd.Context(), task.ID, nil)
@@ -321,6 +331,9 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 				}
 				for _, actor := range task.WaitingOn {
 					deps.printf("waiting_on: %s\n", actorLabel(actors, actor))
+				}
+				if origin != nil {
+					deps.printf("origin: %s %s\n", origin.ID, origin.Title)
 				}
 				if len(task.Deps) > 0 {
 					ids := make([]string, 0, len(task.Deps))

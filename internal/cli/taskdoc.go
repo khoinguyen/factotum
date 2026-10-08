@@ -86,14 +86,19 @@ type taskDoc struct {
 	Groomed     *bool     `json:"groomed,omitempty" yaml:"groomed,omitempty"`
 	// AcceptanceCriteria are the observable conditions that define done; a
 	// groomed task carries at least one.
-	AcceptanceCriteria *[]string  `json:"acceptance_criteria,omitempty" yaml:"acceptance_criteria,omitempty"`
-	Assignee           *string    `json:"assignee,omitempty" yaml:"assignee,omitempty"`
-	Deps               *[]string  `json:"deps,omitempty" yaml:"deps,omitempty"`
-	Dependents         *[]string  `json:"dependents,omitempty" yaml:"dependents,omitempty"`
-	WaitingOn          *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
-	Notes              []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
-	NotBefore          *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
-	Snooze             *snoozeDoc `json:"snooze,omitempty" yaml:"snooze,omitempty"`
+	AcceptanceCriteria *[]string `json:"acceptance_criteria,omitempty" yaml:"acceptance_criteria,omitempty"`
+	Assignee           *string   `json:"assignee,omitempty" yaml:"assignee,omitempty"`
+	Deps               *[]string `json:"deps,omitempty" yaml:"deps,omitempty"`
+	Dependents         *[]string `json:"dependents,omitempty" yaml:"dependents,omitempty"`
+	// Origin and OriginTitle are read-only provenance: the capture (idea or bug)
+	// this task was promoted from, resolved from its dependencies. They are
+	// ignored on apply.
+	Origin      *string    `json:"origin,omitempty" yaml:"origin,omitempty"`
+	OriginTitle *string    `json:"origin_title,omitempty" yaml:"origin_title,omitempty"`
+	WaitingOn   *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
+	Notes       []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
+	NotBefore   *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
+	Snooze      *snoozeDoc `json:"snooze,omitempty" yaml:"snooze,omitempty"`
 	// NotReady is read-only: it is derived from the graph and ignored on apply.
 	NotReady *notReadyDoc `json:"not_ready,omitempty" yaml:"not_ready,omitempty"`
 	// Checks is read-only: cached check results, populated only by `task get`
@@ -278,8 +283,8 @@ func snoozeDocFrom(snooze core.Snooze) *snoozeDoc {
 var taskDocFieldNames = []string{
 	"id", "project_id", "repo", "kind", "title", "description", "status",
 	"priority", "labels", "groomed", "acceptance_criteria", "assignee", "deps",
-	"dependents", "waiting_on", "notes", "checks", "not_ready", "not_before",
-	"created_at", "updated_at",
+	"dependents", "origin", "origin_title", "waiting_on", "notes", "checks",
+	"not_ready", "not_before", "created_at", "updated_at",
 }
 
 // taskDocValues renders a task document as selectable key/value pairs. Keys
@@ -327,6 +332,12 @@ func taskDocValues(doc taskDoc) map[string]any {
 	}
 	if doc.Dependents != nil {
 		out["dependents"] = *doc.Dependents
+	}
+	if doc.Origin != nil {
+		out["origin"] = *doc.Origin
+	}
+	if doc.OriginTitle != nil {
+		out["origin_title"] = *doc.OriginTitle
 	}
 	if doc.WaitingOn != nil {
 		out["waiting_on"] = *doc.WaitingOn

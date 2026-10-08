@@ -11,7 +11,8 @@ func TestTaskGetShowsOriginForIdeaPromotion(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "Spark"))
-	taskID := firstField(t, r.run("idea", "promote", ideaID))
+	r.run("actor", "create", "claude", "-k", "agent")
+	taskID := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
 
 	got := r.run("task", "get", taskID)
 	if !strings.Contains(got, "origin: "+ideaID+" Spark") {
@@ -33,7 +34,8 @@ func TestTaskGetShowsOriginForBugTriage(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	bugID := firstField(t, r.run("bug", "create", "-p", projectID, "-t", "Crash"))
-	taskID := firstField(t, r.run("bug", "triage", bugID))
+	r.run("actor", "create", "claude", "-k", "agent")
+	taskID := firstField(t, r.run("bug", "triage", bugID, "--actor", "claude", "--acceptance", "it stops crashing"))
 
 	got := r.run("task", "get", taskID)
 	if !strings.Contains(got, "origin: "+bugID+" Crash") {

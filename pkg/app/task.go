@@ -112,12 +112,23 @@ func (s *TicketService) Search(ctx context.Context, filter store.TicketFilter, q
 	return tasks, nil
 }
 
-// Promote turns a captured ticket (an idea or a bug) into executable work: it
-// creates a new task carrying the capture's content, records the capture as the
-// task's origin edge (a dependency, which never blocks because captures are
+// PromoteInput is the grooming data a promotion needs: the acceptance criteria
+// that define done and the agent the produced task is assigned to. A capture is
+// groomed as it is promoted, so both are required - promotion never creates an
+// unassigned, ungroomed task.
+type PromoteInput struct {
+	AssigneeID         *core.ActorID
+	AcceptanceCriteria []string
+}
+
+// Promote turns a captured ticket (an idea or a bug) into agent-ready work: it
+// creates a new task carrying the capture's content, groomed with the supplied
+// acceptance criteria and assigned to the supplied agent, records the capture as
+// the task's origin edge (a dependency, which never blocks because captures are
 // resolved), and leaves the capture untouched as history with a note naming the
-// promoted task.
-func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID) (*core.Ticket, error) {
+// promoted task. Grooming precedes promotion, so a capture without the required
+// grooming data is rejected rather than promoted into an unassigned todo.
+func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in PromoteInput) (*core.Ticket, error) {
 	capture, err := s.backend.Tickets().Get(ctx, captureID)
 	if err != nil {
 		return nil, err
@@ -125,14 +136,33 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID) (*
 	if !capture.Kind.CapturedByHuman() {
 		return nil, fmt.Errorf("%w: %s is not a capture", core.ErrInvalid, captureID)
 	}
+	if len(in.AcceptanceCriteria) == 0 {
+		return nil, fmt.Errorf("%w: promote %s: at least one acceptance criterion is required; groom the %s first (--acceptance)",
+			core.ErrInvalid, captureID, capture.Kind)
+	}
+	if in.AssigneeID == nil {
+		return nil, fmt.Errorf("%w: promote %s: an agent assignee is required; groom the %s first (--actor)",
+			core.ErrInvalid, captureID, capture.Kind)
+	}
+	assignee, err := s.backend.Actors().Get(ctx, *in.AssigneeID)
+	if err != nil {
+		return nil, fmt.Errorf("promote assignee: %w", err)
+	}
+	if assignee.Kind != core.ActorAgent {
+		return nil, fmt.Errorf("%w: promote %s: assignee %s is a %s, not an agent; groom the %s first",
+			core.ErrInvalid, captureID, assignee.ID, assignee.Kind, capture.Kind)
+	}
 	task, err := s.Add(ctx, TicketInput{
-		ProjectID:   capture.ProjectID,
-		Repo:        capture.Repo,
-		Kind:        core.KindTask,
-		Title:       capture.Title,
-		Description: capture.Description,
-		Priority:    capture.Priority,
-		Labels:      append([]string(nil), capture.Labels...),
+		ProjectID:          capture.ProjectID,
+		Repo:               capture.Repo,
+		Kind:               core.KindTask,
+		Title:              capture.Title,
+		Description:        capture.Description,
+		Priority:           capture.Priority,
+		Labels:             append([]string(nil), capture.Labels...),
+		AssigneeID:         in.AssigneeID,
+		Groomed:            true,
+		AcceptanceCriteria: in.AcceptanceCriteria,
 	})
 	if err != nil {
 		return nil, err

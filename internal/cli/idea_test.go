@@ -34,11 +34,19 @@ func TestTaskPromoteCreatesLinkedTask(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	ideaID := firstField(t, r.run("task", "create", "-p", projectID, "-k", "idea", "-t", "a spark", "-b", "context"))
+	r.run("actor", "create", "claude", "-k", "agent")
 
-	out := r.run("task", "promote", ideaID)
+	out := r.run("task", "promote", ideaID, "--actor", "claude", "--acceptance", "it works")
 	taskID := firstField(t, out)
 	if taskID == ideaID || !strings.Contains(out, "kind: task") {
 		t.Fatalf("promote should create a task:\n%s", out)
+	}
+	got := r.run("task", "get", taskID)
+	if !strings.Contains(got, "groomed: true") || !strings.Contains(got, "acceptance: it works") {
+		t.Fatalf("promote should create a groomed task with the acceptance criterion:\n%s", got)
+	}
+	if !strings.Contains(got, "assignee: (agent) claude") {
+		t.Fatalf("promote should assign the task to the agent:\n%s", got)
 	}
 
 	// The idea is retained as history. It gates nothing, so it must not print a

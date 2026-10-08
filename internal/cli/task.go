@@ -848,16 +848,33 @@ func newTaskPromoteCommand(deps *Deps) *cobra.Command {
 }
 
 // newPromoteCommand builds a refinement command that promotes a capture into a
-// linked executable task. The verb and the past-tense action label vary by
-// surface (`ft idea promote` / `ft bug triage`), while the behavior is shared.
+// linked, agent-ready task: it requires the grooming data (at least one
+// acceptance criterion and an agent assignee) so promotion never lands an
+// unassigned, ungroomed task in the human bucket. The verb and the past-tense
+// action label vary by surface (`ft idea promote` / `ft bug triage`), while the
+// behavior is shared.
 func newPromoteCommand(deps *Deps, use, short, action string) *cobra.Command {
-	return &cobra.Command{
+	var actorRef string
+	var acceptance []string
+
+	cmd := &cobra.Command{
 		Use:   use,
 		Short: short,
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			captureID := core.TicketID(args[0])
-			task, err := deps.Tasks.Promote(cmd.Context(), captureID)
+			var assigneeID *core.ActorID
+			if actorRef != "" {
+				actor, err := deps.Actors.Resolve(cmd.Context(), actorRef)
+				if err != nil {
+					return err
+				}
+				assigneeID = &actor.ID
+			}
+			task, err := deps.Tasks.Promote(cmd.Context(), captureID, app.PromoteInput{
+				AssigneeID:         assigneeID,
+				AcceptanceCriteria: acceptance,
+			})
 			if err != nil {
 				return err
 			}
@@ -868,6 +885,9 @@ func newPromoteCommand(deps *Deps, use, short, action string) *cobra.Command {
 				hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"})
 		},
 	}
+	cmd.Flags().StringVarP(&actorRef, "actor", "a", "", "agent to assign the promoted task to (required; the task must land agent-ready)")
+	cmd.Flags().StringArrayVar(&acceptance, "acceptance", nil, "acceptance criterion an engineer can verify (repeatable; required)")
+	return cmd
 }
 
 func newTaskDeleteCommand(deps *Deps) *cobra.Command {

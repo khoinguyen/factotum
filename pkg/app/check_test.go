@@ -95,6 +95,18 @@ func (f *checkFixture) human(t *testing.T) *core.Actor {
 	return actor
 }
 
+func (f *checkFixture) agent(t *testing.T) *core.Actor {
+	t.Helper()
+	if actor, err := f.actors.Resolve(context.Background(), "claude"); err == nil {
+		return actor
+	}
+	actor, err := f.actors.Add(context.Background(), core.ActorAgent, "claude")
+	if err != nil {
+		t.Fatalf("actor add: %v", err)
+	}
+	return actor
+}
+
 func TestCheckRunCachesAndCachedNeverRuns(t *testing.T) {
 	stub := &stubCheck{name: "stub", version: "1", result: check.Result{Verdict: check.NeedsGrooming}}
 	f := newCheckFixture(t, stub)
@@ -453,7 +465,7 @@ func TestCheckResolvesOriginFromIdeaDependency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add(idea) error = %v", err)
 	}
-	promoted, err := f.tasks.Promote(ctx, idea.ID)
+	promoted, err := f.tasks.Promote(ctx, idea.ID, PromoteInput{AssigneeID: &f.agent(t).ID, AcceptanceCriteria: []string{"it works"}})
 	if err != nil {
 		t.Fatalf("Promote() error = %v", err)
 	}
@@ -508,7 +520,7 @@ func TestCheckOriginChangeInvalidatesCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add(idea) error = %v", err)
 	}
-	promoted, err := f.tasks.Promote(ctx, idea.ID)
+	promoted, err := f.tasks.Promote(ctx, idea.ID, PromoteInput{AssigneeID: &f.agent(t).ID, AcceptanceCriteria: []string{"it works"}})
 	if err != nil {
 		t.Fatalf("Promote() error = %v", err)
 	}

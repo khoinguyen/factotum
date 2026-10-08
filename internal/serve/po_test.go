@@ -67,7 +67,17 @@ func (f *fixture) addBug(t *testing.T, projectID core.ProjectID, title, body str
 
 func (f *fixture) promote(t *testing.T, ideaID core.TicketID) *core.Ticket {
 	t.Helper()
-	task, err := f.tasks.Promote(context.Background(), ideaID)
+	agent, err := f.actors.Resolve(context.Background(), "claude")
+	if err != nil {
+		agent, err = f.actors.Add(context.Background(), core.ActorAgent, "claude")
+		if err != nil {
+			t.Fatalf("Add(agent) error = %v", err)
+		}
+	}
+	task, err := f.tasks.Promote(context.Background(), ideaID, app.PromoteInput{
+		AssigneeID:         &agent.ID,
+		AcceptanceCriteria: []string{"it works"},
+	})
 	if err != nil {
 		t.Fatalf("Promote(%s) error = %v", ideaID, err)
 	}

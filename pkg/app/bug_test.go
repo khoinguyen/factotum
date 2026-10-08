@@ -82,8 +82,9 @@ func TestPromoteBugCreatesLinkedTaskAndKeepsBug(t *testing.T) {
 	if _, err := h.tasks.Set(ctx, bug.ID, TicketSet{Description: &bug.Description, Labels: []string{"triaged"}}); err != nil {
 		t.Fatalf("Set(bug) error = %v", err)
 	}
+	agent := newAgent(t, h, "claude")
 
-	task, err := h.tasks.Promote(ctx, bug.ID)
+	task, err := h.tasks.Promote(ctx, bug.ID, groomedPromote(agent))
 	if err != nil {
 		t.Fatalf("Promote() error = %v", err)
 	}

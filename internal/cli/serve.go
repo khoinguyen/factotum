@@ -26,11 +26,11 @@ func newServeCommand(deps *Deps) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Serve the live PO dashboard and token-gated idea capture",
+		Short: "Serve the live PO dashboard and token-gated capture",
 		Long: "Serve a local dashboard of project and task graph state, with a capture write side.\n" +
 			"The read side reloads itself over Server-Sent Events as tasks change; the read pages\n" +
-			"have no mutating endpoints. The /capture page turns a natural-language idea into a\n" +
-			"stored idea, gated by a shared token (machine config serve.token, or\n" +
+			"have no mutating endpoints. The app's /capture page turns a natural-language sentence\n" +
+			"into a stored idea or bug, gated by a shared token (machine config serve.token, or\n" +
 			"FACTOTUM_SERVE_TOKEN). With no token configured, capture is disabled and the read side\n" +
 			"stays open. It binds to localhost by default; pass --bind 0.0.0.0:PORT to reach it from\n" +
 			"another device on the network.",

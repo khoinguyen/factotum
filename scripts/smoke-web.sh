@@ -6,7 +6,9 @@
 #   2. fetches the SPA shell and the hashed asset it references from /app,
 #   3. opens /events, mutates the graph through a second ft process, and
 #      asserts a live `update` arrives,
-#   4. asserts /api/snapshot now shows the new task.
+#   4. asserts /api/snapshot now shows the new task,
+#   5. posts a capture through the token-gated /api/capture and asserts it
+#      stores an idea and rejects an unauthorised write.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,7 +40,8 @@ ft() { "$bin" --store sqlite --store-opt "path=$db" --no-hints "$@"; }
 ft project create "Acme" >/dev/null
 ft task create -p acme -t "First smoke task" >/dev/null
 
-"$bin" --store sqlite --store-opt "path=$db" --no-hints serve --all \
+FACTOTUM_SERVE_TOKEN="smoketoken" \
+  "$bin" --store sqlite --store-opt "path=$db" --no-hints serve -p acme \
   --bind "127.0.0.1:${port}" >"$tmp/serve.log" 2>&1 &
 server_pid=$!
 
@@ -96,4 +99,35 @@ case "$snapshot" in
     ;;
 esac
 
-echo "smoke-web: ok - ft serve served the embedded app and a mutation pushed a live SSE update"
+capture="$(curl -fsS -X POST \
+  -H 'Authorization: Bearer smoketoken' \
+  -H 'Content-Type: application/json' \
+  --data '{"text":"Captured from smoke"}' \
+  "$base/api/capture")"
+case "$capture" in
+  *'/idea/'*) ;;
+  *)
+    echo "smoke-web: /api/capture did not store an idea: $capture" >&2
+    exit 1
+    ;;
+esac
+
+capture_snapshot="$(curl -fsS "$base/api/snapshot")"
+case "$capture_snapshot" in
+  *'Captured from smoke'*) ;;
+  *)
+    echo "smoke-web: the captured idea did not reach /api/snapshot" >&2
+    exit 1
+    ;;
+esac
+
+status="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+  -H 'Content-Type: application/json' \
+  --data '{"text":"unauthenticated"}' \
+  "$base/api/capture")"
+if [ "$status" != "401" ]; then
+  echo "smoke-web: unauthenticated capture returned $status, want 401" >&2
+  exit 1
+fi
+
+echo "smoke-web: ok - ft serve served the embedded app, a mutation pushed a live SSE update, and capture stored an idea while rejecting an unauthorised write"

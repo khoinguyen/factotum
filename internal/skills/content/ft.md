@@ -49,8 +49,8 @@ lists each excluded task with its reason, applying the same
 ft serve                        # live dashboard + token-gated capture; also -p <project>, --all, --bind <host:port>
 ```
 `ft serve` is an idea-centric live dashboard: ideas roll up promoted tasks, a kanban groups by
-origin idea, idea/task/memory/doc drill down; reads open and SSE-live. The read side is the
-shadcn/ui app (`mise run build-web` → `web/dist`, embedded) at `/`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` stays server-rendered.
+origin idea, idea/task/memory/doc drill down; reads open and SSE-live. The whole app is the
+shadcn/ui app (`mise run build-web` → `web/dist`, embedded) at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` posts a sentence to the token-gated `/api/capture` as an idea or a bug.
 
 ## Move work through its lifecycle
 

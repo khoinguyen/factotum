@@ -469,6 +469,89 @@ func TestDetailPagesRejectUnknownIDs(t *testing.T) {
 	}
 }
 
+// TestDetailRoutesRespectProjectScope proves a scoped server cannot reach
+// another project's task, idea, or artifact through the detail routes: each
+// 404s when the id falls outside the server's project, while in-scope ids still
+// resolve.
+func TestDetailRoutesRespectProjectScope(t *testing.T) {
+	f := newFixture(t)
+	mine := f.addProject(t, "acme", "Acme")
+	other := f.addProject(t, "other", "Other")
+
+	mineIdea := f.addIdea(t, mine.ID, "Mine idea", "")
+	mineTask := f.promote(t, mineIdea.ID)
+	mineDoc := f.addArtifact(t, mine.ID, nil, core.ArtifactDoc, "Mine doc", "")
+
+	otherIdea := f.addIdea(t, other.ID, "Other idea", "")
+	otherTask := f.promote(t, otherIdea.ID)
+	otherDoc := f.addArtifact(t, other.ID, nil, core.ArtifactDoc, "Other doc", "")
+
+	ts := newTestServer(t, f, Options{Project: mine.ID})
+
+	for _, path := range []string{
+		"/api/task/" + string(mineTask.ID),
+		"/api/idea/" + string(mineIdea.ID),
+		"/api/doc/" + string(mineDoc.ID),
+	} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", path, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Get(%s) status = %d, want 200 (in scope)", path, resp.StatusCode)
+		}
+	}
+
+	for _, path := range []string{
+		"/api/task/" + string(otherTask.ID),
+		"/api/idea/" + string(otherIdea.ID),
+		"/api/doc/" + string(otherDoc.ID),
+	} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", path, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("Get(%s) status = %d, want 404 (out of scope)", path, resp.StatusCode)
+		}
+	}
+}
+
+// TestDanglingDepRendersMissingID proves a dependency that is not present in the
+// scoped snapshot still renders its id on the task detail, rather than a blank
+// row. A cross-project dependency is the concrete dangling case the scoped view
+// sees.
+func TestDanglingDepRendersMissingID(t *testing.T) {
+	f := newFixture(t)
+	mine := f.addProject(t, "acme", "Acme")
+	other := f.addProject(t, "other", "Other")
+
+	task := f.addTask(t, mine.ID, "Depends on out-of-scope work")
+	foreign := f.addTask(t, other.ID, "Foreign blocker")
+	if _, err := f.tasks.AddDep(context.Background(), task.ID, foreign.ID); err != nil {
+		t.Fatalf("AddDep() error = %v", err)
+	}
+
+	ts := newTestServer(t, f, Options{Project: mine.ID})
+	var doc taskPageJSON
+	getDoc(t, ts.URL+"/api/task/"+string(task.ID), &doc)
+
+	var dep taskLink
+	for _, candidate := range doc.Deps {
+		if candidate.ID == foreign.ID {
+			dep = candidate
+		}
+	}
+	if dep.ID != foreign.ID {
+		t.Fatalf("task deps = %+v, want the dangling id %s", doc.Deps, foreign.ID)
+	}
+	if dep.URL != "/task/"+string(foreign.ID) {
+		t.Fatalf("dangling dep url = %q, want /task/%s", dep.URL, foreign.ID)
+	}
+}
+
 // TestDetailPagesAreReadOnly proves the drill-down stays inside the read-only
 // boundary: no detail page accepts a mutation.
 func TestDetailPagesAreReadOnly(t *testing.T) {

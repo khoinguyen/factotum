@@ -61,6 +61,13 @@ func idFromPath(path, prefix string) string {
 	return id
 }
 
+// inScope reports whether a resource belonging to projectID is visible to this
+// server. An all-projects server sees everything; a scoped server sees only its
+// own project, so a detail route cannot leak another project's resource.
+func (s *Server) inScope(projectID core.ProjectID) bool {
+	return s.options.All || projectID == s.options.Project
+}
+
 // handleIdea serves the drill-down from an idea to its promoted tasks and
 // artifacts as JSON. Only an idea id resolves here.
 func (s *Server) handleIdea(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +85,7 @@ func (s *Server) handleIdea(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !task.Kind.CapturedByHuman() {
+	if !s.inScope(task.ProjectID) || !task.Kind.CapturedByHuman() {
 		http.NotFound(w, r)
 		return
 	}
@@ -108,7 +115,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if task.Kind.CapturedByHuman() {
+	if !s.inScope(task.ProjectID) || task.Kind.CapturedByHuman() {
 		http.NotFound(w, r)
 		return
 	}
@@ -149,6 +156,10 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request, prefix s
 	}
 	if err != nil {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !s.inScope(artifact.ProjectID) {
+		http.NotFound(w, r)
 		return
 	}
 	allowed := false
@@ -211,7 +222,13 @@ func taskDetailOf(task core.Ticket, vs viewSet) *taskDetail {
 		UpdatedAt:   task.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	for _, dep := range task.Deps {
-		detail.Deps = append(detail.Deps, taskLinkOf(vs.views[dep]))
+		if view, ok := vs.views[dep]; ok {
+			detail.Deps = append(detail.Deps, taskLinkOf(view))
+			continue
+		}
+		// A dependency outside the scoped snapshot still renders its id, so the
+		// row names the missing blocker instead of going blank.
+		detail.Deps = append(detail.Deps, taskLink{ID: dep, URL: taskURL(dep)})
 	}
 	for _, dependent := range vs.snapshot.Graph.Dependents(task.ID) {
 		detail.Dependents = append(detail.Dependents, taskLinkOf(vs.views[dependent]))

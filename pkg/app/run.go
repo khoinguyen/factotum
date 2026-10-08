@@ -60,6 +60,13 @@ type RunInput struct {
 	// artifact body) instead of the task's title and description.
 	Prompt string
 	Actor  *core.ActorID
+	// MsgURL is the base URL of a remote messaging hub (an `ft serve`) the
+	// launched receiver should reach over HTTP instead of the local ft store.
+	// Empty means no hub is configured, so no hub env is injected.
+	MsgURL string
+	// ServeToken is the bearer token authenticating the receiver to that hub.
+	// It is injected only alongside a MsgURL.
+	ServeToken string
 	// OutputLimit caps the agent output stored in the run note; 0 uses the
 	// service default.
 	OutputLimit int
@@ -123,7 +130,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		model:       in.Model,
 		args:        in.Args,
 		interactive: in.Interactive,
-		env:         receiverEnv(project, task, in.Actor),
+		env:         receiverEnv(project, task, in.Actor, in.MsgURL, in.ServeToken),
 		labels:      map[string]string{"project": string(project.ID), "task": string(task.ID)},
 		// The run is about to start: record it before Exec so a harness or wait
 		// failure is observable, and abort if the event cannot be written.
@@ -386,8 +393,10 @@ func captureFiles(ctx context.Context, backend isolation.IsolationBackend, h iso
 // receiverEnv builds the environment a harness with a message receiver plugin
 // uses to register the session. The actor is the run's explicit actor; a run
 // with no actor has no receiver, so the plugin is not installed and the session
-// is unmanaged.
-func receiverEnv(project *core.Project, task *core.Ticket, actor *core.ActorID) map[string]string {
+// is unmanaged. A configured hub URL adds the URL and token that make a launched
+// remote receiver speak the token-gated HTTP transport; with no URL the receiver
+// falls back to the local ft store, so no hub env is set.
+func receiverEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgURL, serveToken string) map[string]string {
 	if project.ID == "" || actor == nil || *actor == "" {
 		return nil
 	}
@@ -397,6 +406,12 @@ func receiverEnv(project *core.Project, task *core.Ticket, actor *core.ActorID) 
 	}
 	if task.ID != "" {
 		env[harnesspkg.EnvTask] = string(task.ID)
+	}
+	if msgURL != "" {
+		env[harnesspkg.EnvMsgURL] = msgURL
+		if serveToken != "" {
+			env[harnesspkg.EnvServeToken] = serveToken
+		}
 	}
 	return env
 }

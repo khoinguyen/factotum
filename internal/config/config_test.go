@@ -694,6 +694,54 @@ token = "committed-should-be-ignored"
 	}
 }
 
+// TestServeURLIsMachineScoped proves the messaging hub URL is read from the
+// machine-scoped [serve] table, like the token, so a host names the hub its
+// launched receivers reach. The environment supplies it for a one-off run.
+func TestServeURLIsMachineScoped(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[serve]
+url = "http://hub:8484"
+`)
+	project := writeConfig(t, dir, "project.toml", `
+project = "factotum"
+
+[serve]
+url = "http://committed-should-be-ignored"
+`)
+	cfg, err := Load(Input{UserPath: user, ProjectPath: project, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Serve.URL != "http://hub:8484" {
+		t.Fatalf("Serve.URL = %q, want the user file's hub URL", cfg.Serve.URL)
+	}
+}
+
+func TestServeURLEnvOverridesFile(t *testing.T) {
+	dir := t.TempDir()
+	user := writeConfig(t, dir, "user.toml", `
+[serve]
+url = "http://from-file"
+`)
+	cfg, err := Load(Input{
+		UserPath:    user,
+		ProjectPath: filepath.Join(dir, "none.toml"),
+		Getenv: func(key string) string {
+			if key == "FACTOTUM_MSG_URL" {
+				return "http://from-env"
+			}
+			return ""
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Serve.URL != "http://from-env" {
+		t.Fatalf("Serve.URL = %q, want from-env", cfg.Serve.URL)
+	}
+}
+
 func TestServeTokenEnvOverridesFile(t *testing.T) {
 	dir := t.TempDir()
 	user := writeConfig(t, dir, "user.toml", `

@@ -64,10 +64,14 @@ type Config struct {
 	Serve Serve
 }
 
-// Serve configures `ft serve`. An empty Token disables capture: writes fail
-// closed rather than allowing an anonymous write.
+// Serve configures `ft serve` and the messaging hub. An empty Token disables
+// capture: writes fail closed rather than allowing an anonymous write. URL is
+// the hub's base URL (for example http://hub:8484) that `ft run` hands a
+// launched receiver so it speaks the token-gated message transport instead of
+// the local ft store; empty means no hub, and a receiver falls back to local.
 type Serve struct {
 	Token string
+	URL   string
 }
 
 // Run configures the `ft run` launcher. An empty Sandbox or Harness means the
@@ -165,6 +169,7 @@ type userFile struct {
 // carry it.
 type serveFile struct {
 	Token string `toml:"token"`
+	URL   string `toml:"url"`
 }
 
 // runFile is the machine-scoped [run] table: the full set of launcher settings.
@@ -277,7 +282,7 @@ func Load(in Input) (Config, error) {
 		CredentialEnvVar: user.Run.CredentialEnvVar,
 	}
 	applyRunEnv(&cfg.Run, getenv)
-	cfg.Serve = Serve{Token: user.Serve.Token}
+	cfg.Serve = Serve{Token: user.Serve.Token, URL: user.Serve.URL}
 	applyServeEnv(&cfg.Serve, getenv)
 	cfg.DefaultActor = firstNonEmpty(project.DefaultActor, entry.DefaultActor, user.DefaultActor)
 	cfg.NoHints = boolAt(user.NoHints, false)
@@ -502,11 +507,16 @@ func applyRunEnv(run *Run, getenv func(string) string) {
 	}
 }
 
-// applyServeEnv overlays FACTOTUM_SERVE_TOKEN on the [serve] table, so the
-// capture token can be supplied from the environment instead of a file.
+// applyServeEnv overlays the environment on the [serve] table, so the hub URL
+// and capture token can be supplied per-run instead of from a file. The URL
+// variable is FACTOTUM_MSG_URL, the same one a launched receiver reads, so a
+// host that exports it also has `ft run` forward it.
 func applyServeEnv(serve *Serve, getenv func(string) string) {
 	if token := getenv("FACTOTUM_SERVE_TOKEN"); token != "" {
 		serve.Token = token
+	}
+	if url := getenv("FACTOTUM_MSG_URL"); url != "" {
+		serve.URL = url
 	}
 }
 

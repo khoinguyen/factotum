@@ -72,6 +72,56 @@ func TestRunCommandDrivesTaskToReview(t *testing.T) {
 	}
 }
 
+// TestRunInjectsHubEnvFromConfig proves `ft run` reads the configured messaging
+// hub (FACTOTUM_MSG_URL/FACTOTUM_SERVE_TOKEN, or the [serve] table) and hands it
+// to the launched harness, so a receiver started by a remote run speaks the
+// HTTP transport. No hub configured means no hub env, the local-ft fallback.
+func TestRunInjectsHubEnvFromConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       map[string]string
+		wantURL   string
+		wantToken string
+	}{
+		{
+			name:      "hub from environment",
+			env:       map[string]string{"FACTOTUM_MSG_URL": "http://hub:8484", "FACTOTUM_SERVE_TOKEN": "tok"},
+			wantURL:   "http://hub:8484",
+			wantToken: "tok",
+		},
+		{
+			name: "no hub configured",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			r.getenv = func(key string) string { return tc.env[key] }
+			_, taskID := runContext(t, r)
+			r.run("actor", "create", "--kind", "agent", "claude")
+
+			backend := isofake.New("sandbox")
+			backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+			r.runBackend = backend
+			r.runHarness = harnessfake.New("opencode")
+
+			r.run("run", taskID, "--actor", "claude", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+
+			prepared := backend.Prepared()
+			if len(prepared) != 1 {
+				t.Fatalf("Prepare called %d times, want 1", len(prepared))
+			}
+			env := prepared[0].Env
+			if env["FACTOTUM_MSG_URL"] != tc.wantURL {
+				t.Errorf("harness env FACTOTUM_MSG_URL = %q, want %q", env["FACTOTUM_MSG_URL"], tc.wantURL)
+			}
+			if env["FACTOTUM_SERVE_TOKEN"] != tc.wantToken {
+				t.Errorf("harness env FACTOTUM_SERVE_TOKEN = %q, want %q", env["FACTOTUM_SERVE_TOKEN"], tc.wantToken)
+			}
+		})
+	}
+}
+
 // TestRunCommandInteractiveOnTerminal pins `ft run`'s mode selection: on a
 // terminal a task run attaches the agent (the harness command requests a TTY);
 // --unattended or a non-terminal stays headless.

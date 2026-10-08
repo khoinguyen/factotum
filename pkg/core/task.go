@@ -15,10 +15,15 @@ const (
 	// later grooming. Ideas never appear in readiness or ranking, are not
 	// assignable, and are promoted into a task rather than executed in place.
 	KindIdea TicketKind = "idea"
+	// KindBug is a non-executable capture: a defect recorded by a human for
+	// later triage. Like an idea it never appears in readiness or ranking, is
+	// not assignable, and is promoted into a linked task rather than executed
+	// in place; the refinement verb is "triage" rather than "groom".
+	KindBug TicketKind = "bug"
 )
 
 func (k TicketKind) Valid() bool {
-	return k == KindTask || k == KindMilestone || k == KindIdea
+	return k == KindTask || k == KindMilestone || k == KindIdea || k == KindBug
 }
 
 // KindFamily groups kinds by their role in the workflow: human captures that
@@ -27,8 +32,8 @@ func (k TicketKind) Valid() bool {
 type KindFamily string
 
 const (
-	// FamilyCapture is a human capture (idea, and later bug): recorded for
-	// refinement, never executed in place.
+	// FamilyCapture is a human capture (idea, bug): recorded for refinement,
+	// never executed in place.
 	FamilyCapture KindFamily = "capture"
 	// FamilyExecutable is the agent-facing executable kind (task).
 	FamilyExecutable KindFamily = "executable"
@@ -43,7 +48,7 @@ func (k TicketKind) Family() KindFamily {
 		return FamilyExecutable
 	case KindMilestone:
 		return FamilyGate
-	case KindIdea:
+	case KindIdea, KindBug:
 		return FamilyCapture
 	default:
 		return ""
@@ -51,7 +56,7 @@ func (k TicketKind) Family() KindFamily {
 }
 
 // Executable reports whether a kind participates in execution: readiness,
-// ranking, and dependency resolution. Ideas are captures, not work.
+// ranking, and dependency resolution. Captures (ideas, bugs) are not work.
 func (k TicketKind) Executable() bool {
 	return k == KindTask || k == KindMilestone
 }
@@ -68,15 +73,18 @@ func (k TicketKind) RefineVerb() string {
 	switch k {
 	case KindIdea:
 		return "groom"
+	case KindBug:
+		return "triage"
 	default:
 		return ""
 	}
 }
 
-// AllowsStatus reports whether a kind may hold a status. Ideas are captures,
-// so only todo, done, and cancelled apply; other kinds accept any valid status.
+// AllowsStatus reports whether a kind may hold a status. Captures are refined
+// into work, so only todo, done, and cancelled apply; other kinds accept any
+// valid status.
 func (k TicketKind) AllowsStatus(s TicketStatus) bool {
-	if k == KindIdea {
+	if k.CapturedByHuman() {
 		return s == StatusTodo || s == StatusDone || s == StatusCancelled
 	}
 	return s.Valid()
@@ -263,11 +271,11 @@ func (t Ticket) Validate() error {
 	if !t.Kind.AllowsStatus(t.Status) {
 		return fmt.Errorf("%w: kind %q does not allow status %q", ErrInvalid, t.Kind, t.Status)
 	}
-	if t.Kind == KindIdea && t.AssigneeID != nil {
-		return fmt.Errorf("%w: idea %s is not assignable", ErrInvalid, t.ID)
+	if t.Kind.CapturedByHuman() && t.AssigneeID != nil {
+		return fmt.Errorf("%w: %s %s is not assignable", ErrInvalid, t.Kind, t.ID)
 	}
-	if t.Kind == KindIdea && t.Groomed {
-		return fmt.Errorf("%w: idea %s is not groomable", ErrInvalid, t.ID)
+	if t.Kind.CapturedByHuman() && t.Groomed {
+		return fmt.Errorf("%w: %s %s is not groomable", ErrInvalid, t.Kind, t.ID)
 	}
 	for _, criterion := range t.AcceptanceCriteria {
 		if strings.TrimSpace(criterion) == "" {
@@ -313,6 +321,10 @@ func (t Ticket) IsMilestone() bool {
 
 func (t Ticket) IsIdea() bool {
 	return t.Kind == KindIdea
+}
+
+func (t Ticket) IsBug() bool {
+	return t.Kind == KindBug
 }
 
 func (t Ticket) Resolves(policy ResolutionPolicy) bool {

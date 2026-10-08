@@ -88,7 +88,7 @@ func TestTaskKindMutationInvolvingIdeaRejected(t *testing.T) {
 	}
 	// Backticks would make pflag take the quoted word as the value placeholder,
 	// clobbering "string"; the help must stay plain text.
-	if !strings.Contains(help, "-k, --kind string") || !strings.Contains(help, "task kind: task or milestone; an idea is turned into a task with ft task promote") {
+	if !strings.Contains(help, "-k, --kind string") || !strings.Contains(help, "task kind: task or milestone; an idea or bug is turned into a task with ft task promote") {
 		t.Fatalf("update help missing the kind flag description:\n%s", help)
 	}
 }

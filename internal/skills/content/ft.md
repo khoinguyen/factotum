@@ -78,20 +78,20 @@ ft task unsnooze <task>
 A snoozed task leaves ranking until its condition passes (a date or task
 condition clears itself; indefinite waits for `unsnooze`).
 
-## Capture and manage ideas
+## Capture and manage ideas and bugs
 
 ```sh
 ft idea create -p <project> -t "A half-formed thought" -b "context"  # capture, not execution
-ft idea list -p <project>               # review; `ft idea search <query>` searches them
-ft idea get <idea>                      # full detail; its Next: block points at promote
-ft idea promote <idea>                  # create an executable task linked to the idea
+ft idea promote <idea>                  # groom: create an executable task linked to the idea
+ft bug create -p <project> -t "It crashes on save" -b "steps"  # capture a defect
+ft bug triage <bug>                     # triage: create an executable task linked to the bug
 ```
 
-`ft idea` is a distinct surface over the same storage as `ft task list -k idea`. An
-`idea` is a non-executable capture: it never appears in `ft task next` or the
-ready set, is not assignable or groomable, and only has `todo`, `done`, and
-`cancelled`. Promotion creates a linked `task` carrying the idea's content and
-keeps the idea as history; `ft task promote` remains as an alias.
+`ft idea` and `ft bug` are non-executable capture surfaces over the same storage as
+`ft task list -k idea`/`-k bug`: never in `ft task next` or the ready set, not
+assignable or groomable, with only `todo`, `done`, and `cancelled`. Refinement
+creates a linked `task`, keeps the capture as history (`ft task promote` is the peer),
+and each surface also has `list`, `search`, and `get`.
 
 ## Gauge whether a task is ready
 

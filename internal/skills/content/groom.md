@@ -173,10 +173,11 @@ The deferred-questions file has two sections, in this order:
 
 ## DAG hygiene
 
-Ideas are immutable capture: never mutate an idea's kind, and never mark it done to
-mean promoted. Promotion creates a linked task. Keep the DAG honest: express real
-blocking with dependencies, drop edges that no longer block, and never leave a
-discovered follow-up undocumented.
+Capture kinds are immutable: never mutate an idea's or a bug's kind, and never
+mark one done to mean refined. Grooming promotes an idea, triage promotes a bug,
+and both create a linked task. Keep the DAG honest: express real blocking with
+dependencies, drop edges that no longer block, and never leave a discovered
+follow-up undocumented.
 
 ## Commands
 

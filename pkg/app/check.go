@@ -322,7 +322,8 @@ func specFrom(task *core.Ticket) check.Spec {
 
 // specFor builds the check spec for a task, resolving its origin when the task
 // was refined from an immutable capture. The origin is the task's first
-// dependency that is an idea: promotion writes exactly that edge.
+// dependency that is a capture (idea or bug): promotion writes exactly that
+// edge.
 func (s *CheckService) specFor(ctx context.Context, task *core.Ticket) (check.Spec, error) {
 	spec := specFrom(task)
 	origin, err := s.origin(ctx, task)
@@ -334,7 +335,7 @@ func (s *CheckService) specFor(ctx context.Context, task *core.Ticket) (check.Sp
 }
 
 // origin returns the immutable capture a task was refined from, or nil when it
-// has none. The first idea dependency wins; promotion creates one. A dangling
+// has none. The first capture dependency wins; promotion creates one. A dangling
 // dependency is history, not an origin, so it is skipped rather than failing the
 // read: a read command must not break because a dependency was deleted.
 func (s *CheckService) origin(ctx context.Context, task *core.Ticket) (*check.Origin, error) {
@@ -346,7 +347,7 @@ func (s *CheckService) origin(ctx context.Context, task *core.Ticket) (*check.Or
 		if err != nil {
 			return nil, err
 		}
-		if depTask.Kind == core.KindIdea {
+		if depTask.Kind.CapturedByHuman() {
 			return &check.Origin{ID: string(depTask.ID), Title: depTask.Title, Body: depTask.Description}, nil
 		}
 	}

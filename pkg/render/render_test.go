@@ -115,15 +115,16 @@ func ideaView(t *testing.T) View {
 	policy := core.DefaultResolutionPolicy()
 	project := &core.Project{ID: "prj-1", Name: "Acme", Policy: policy}
 	idea := &core.Ticket{ID: "i-1", ProjectID: "prj-1", Kind: core.KindIdea, Title: "a spark", Status: core.StatusTodo}
+	bug := &core.Ticket{ID: "b-1", ProjectID: "prj-1", Kind: core.KindBug, Title: "it crashes", Status: core.StatusTodo}
 	a := task("a", core.StatusTodo)
-	values := []core.Ticket{*idea, *a}
+	values := []core.Ticket{*idea, *bug, *a}
 	built, err := graph.New(values, policy)
 	if err != nil {
 		t.Fatalf("graph.New() error = %v", err)
 	}
 	return View{
 		Project: project,
-		Tasks:   []*core.Ticket{idea, a},
+		Tasks:   []*core.Ticket{idea, bug, a},
 		Graph:   built,
 		Ready:   built.ReadyByActor(nil),
 	}
@@ -135,14 +136,16 @@ func TestAgentRenderCaptureSection(t *testing.T) {
 	if !strings.Contains(out, "capture:") {
 		t.Fatalf("agent output should have a capture section:\n%s", out)
 	}
-	for _, want := range []string{"capture:", "i-1", "a spark"} {
+	for _, want := range []string{"capture:", "i-1", "a spark", "b-1", "it crashes"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("capture section missing %q:\n%s", want, out)
 		}
 	}
-	// The idea appears only in its capture section: it is not ranked or blocked.
-	if n := strings.Count(out, "i-1"); n != 1 {
-		t.Fatalf("idea should appear once (capture section), got %d:\n%s", n, out)
+	// A capture appears only in its capture section: it is not ranked or blocked.
+	for _, id := range []string{"i-1", "b-1"} {
+		if n := strings.Count(out, id); n != 1 {
+			t.Fatalf("capture %s should appear once (capture section), got %d:\n%s", id, n, out)
+		}
 	}
 }
 
@@ -151,6 +154,14 @@ func TestClassifyIdea(t *testing.T) {
 	idea, _ := view.Graph.Ticket("i-1")
 	if got := view.Classify(idea); got != ClassCapture {
 		t.Fatalf("Classify(idea) = %q, want %q", got, ClassCapture)
+	}
+}
+
+func TestClassifyBug(t *testing.T) {
+	view := ideaView(t)
+	bug, _ := view.Graph.Ticket("b-1")
+	if got := view.Classify(bug); got != ClassCapture {
+		t.Fatalf("Classify(bug) = %q, want %q", got, ClassCapture)
 	}
 }
 

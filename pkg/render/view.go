@@ -142,7 +142,7 @@ func (v View) Classify(task core.Ticket) Class {
 	switch {
 	case derived.cycles[task.ID]:
 		return ClassCycle
-	case task.IsIdea():
+	case task.Kind.CapturedByHuman():
 		return ClassCapture
 	case task.Status == core.StatusCancelled:
 		return ClassCancelled

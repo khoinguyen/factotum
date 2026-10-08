@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -125,7 +126,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	page := taskPageJSON{taskDetail: *taskDetailOf(*task, vs)}
+	page := taskPageJSON{taskDetail: *s.taskDetailOf(r.Context(), *task, vs)}
 	if o, ok := vs.origin[task.ID]; ok {
 		link := taskLinkOf(vs.views[o])
 		page.Origin = &link
@@ -188,14 +189,33 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request, prefix s
 	s.writeJSON(w, page)
 }
 
-// loadViews loads the project's tasks and artifacts and projects them. Both the
-// idea and task drill-downs read through it so they agree with the dashboard.
+// loadViews loads the tasks and artifacts the detail pages project. It spans
+// every project on an all-projects server, so a cross-project dependency renders
+// with its title and class instead of a blank link; a scoped server loads only
+// its own project. Both the idea and task drill-downs read through it so they
+// agree with the dashboard.
 func (s *Server) loadViews(r *http.Request, projectID core.ProjectID) (viewSet, error) {
-	snapshot, err := app.LoadSnapshot(r.Context(), s.options.Backend, projectID, s.options.Clock.Now())
-	if err != nil {
-		return viewSet{}, err
+	ctx := r.Context()
+	now := s.options.Clock.Now()
+	var (
+		snapshot       *app.Snapshot
+		artifactFilter store.ArtifactFilter
+	)
+	if s.options.All {
+		var err error
+		snapshot, err = app.LoadAllSnapshot(ctx, s.options.Backend, now)
+		if err != nil {
+			return viewSet{}, err
+		}
+	} else {
+		artifactFilter.ProjectID = projectID
+		var err error
+		snapshot, err = app.LoadSnapshot(ctx, s.options.Backend, projectID, now)
+		if err != nil {
+			return viewSet{}, err
+		}
 	}
-	artifacts, err := s.options.Backend.Artifacts().List(r.Context(), store.ArtifactFilter{ProjectID: projectID})
+	artifacts, err := s.options.Backend.Artifacts().List(ctx, artifactFilter)
 	if err != nil {
 		return viewSet{}, err
 	}
@@ -204,7 +224,7 @@ func (s *Server) loadViews(r *http.Request, projectID core.ProjectID) (viewSet, 
 
 // taskDetailOf projects one task into its full detail, resolving links through
 // the already-loaded view set.
-func taskDetailOf(task core.Ticket, vs viewSet) *taskDetail {
+func (s *Server) taskDetailOf(ctx context.Context, task core.Ticket, vs viewSet) *taskDetail {
 	view := vs.views[task.ID]
 	detail := &taskDetail{
 		taskLink:    taskLinkOf(view),
@@ -228,7 +248,7 @@ func taskDetailOf(task core.Ticket, vs viewSet) *taskDetail {
 		}
 		// A dependency outside the scoped snapshot still renders its id, so the
 		// row names the missing blocker instead of going blank.
-		detail.Deps = append(detail.Deps, taskLink{ID: dep, URL: taskURL(dep)})
+		detail.Deps = append(detail.Deps, s.danglingDepLink(ctx, dep))
 	}
 	for _, dependent := range vs.snapshot.Graph.Dependents(task.ID) {
 		detail.Dependents = append(detail.Dependents, taskLinkOf(vs.views[dependent]))
@@ -237,6 +257,17 @@ func taskDetailOf(task core.Ticket, vs viewSet) *taskDetail {
 		detail.Notes = append(detail.Notes, noteViewOf(note, vs))
 	}
 	return detail
+}
+
+// danglingDepLink resolves a dependency the loaded snapshot omitted, so the
+// detail page can still name it. The dependency's kind decides whether it links
+// to an idea or a task page; a genuinely missing id falls back to the task URL.
+func (s *Server) danglingDepLink(ctx context.Context, id core.TicketID) taskLink {
+	task, err := s.options.Backend.Tickets().Get(ctx, id)
+	if err != nil {
+		return taskLink{ID: id, URL: taskURL(id)}
+	}
+	return taskLink{ID: id, URL: taskOrIdeaURL(*task)}
 }
 
 func taskRefLink(task *core.Ticket) taskLink {

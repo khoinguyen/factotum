@@ -120,3 +120,22 @@ func TestGroomSkillDocumentsFeatureDocs(t *testing.T) {
 		}
 	}
 }
+
+// TestGroomSkillDocumentsArchitectureReview pins the review step wired into the
+// grooming protocol: the skill names the independent review, the recording
+// command and its verdicts, and the build gate.
+func TestGroomSkillDocumentsArchitectureReview(t *testing.T) {
+	skill, err := Get("groom")
+	if err != nil {
+		t.Fatalf("Get(groom) error = %v", err)
+	}
+	body := strings.ToLower(skill.Body)
+	for _, want := range []string{
+		"architecture review", "ft groom review",
+		"approve-with-changes", "needs-rework", "blocks the feature",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("groom skill body does not mention %q", want)
+		}
+	}
+}

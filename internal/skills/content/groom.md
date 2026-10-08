@@ -214,6 +214,24 @@ The feature tech-design sections, in this order:
 6. `Cross-cutting impact`
 7. `Risks`
 
+## Architecture review
+
+After the docs are captured, the feature gets an independent architecture review before it is
+built. The loop dispatches the architecture reviewer (`architecture-reviewer-<session>`) on the
+report, spec, plan, and tech design; the reviewer reads only those documents with a project-wide
+view, records its findings as notes/tasks on the origin item, and records one tech-design verdict:
+
+```sh
+ft groom review <session> --verdict approve -f review.md
+ft groom review <session> --verdict approve-with-changes -f review.md
+ft groom review <session> --verdict needs-rework -f review.md
+```
+
+`ft groom review` records the review as a session artifact and a note on each origin item, and
+stores the verdict on the session. A **needs-rework** verdict blocks the feature from build: the
+produced tasks are blocked until a later review approves, and an approving review unblocks them.
+`ft groom show <session>` prints the verdict and the review body.
+
 ## DAG hygiene
 
 Capture kinds are immutable: never mutate an idea's or a bug's kind, and never

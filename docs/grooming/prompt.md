@@ -58,6 +58,11 @@ ft run --prompt-file docs/grooming/prompt.md --sandbox local --harness opencode 
    kickoff: the spec says what and why, the plan says how it lands, and the tech design says how it
    is built. They cover the feature the session defines and are the input to the independent
    architecture review.
+10. The loop runs the independent architecture review after this session: it dispatches the
+    architecture reviewer on the report, spec, plan, and tech design; the reviewer records its
+    findings on the origin item(s) and records one verdict with `ft groom review <session>
+    --verdict ...`. A `needs-rework` verdict blocks the feature from build until a later review
+    approves. You do not run the review yourself - leave the docs and the origin links it needs.
 
 ## Completion
 
@@ -236,6 +241,20 @@ Session: <prompt file or source>
 
 - <risk> - <mitigation>
 ```
+
+## Post-session: architecture review
+
+The feature docs are reviewed by an independent architecture reviewer before any of the feature is
+built. The reviewer reads only the report, spec, plan, and tech design with a zoomed-out,
+project-wide view; records its findings as notes/tasks on the origin item; and records exactly one
+verdict with `ft groom review <session> --verdict <verdict> -f <review-file>`:
+
+- `approve` / `approve-with-changes` - the feature may be built;
+- `needs-rework` - the feature is blocked: `ft groom review` blocks the tasks the session produced
+  until a later review approves.
+
+The session does not run the review. It ends with the docs linked to their origin item and named in
+the report, so the review has the docs and the item to record on.
 
 ## Constraints
 

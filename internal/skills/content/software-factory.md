@@ -6,9 +6,15 @@ chief's builder/reviewer loop, verify with QA, and roll out.
 
 This is the manual, invokable recipe — point a fresh agent at it and it drives the loop. It ties the
 individual role skills together rather than restating them; each role's detailed charter lives in
-its own skill (see **Roles**). It is **project-agnostic**: every command takes a project id
-(the `-p <project>` placeholder) or falls back to the configured default project, so the same
-recipe works for any project. Run `ft skill get <name>` to load a role skill.
+its own **role skill**, a `SKILL.md` committed in the repository (here under `.agents/skills/<name>/`)
+that the harness loads by name (see **Roles**). It is **project-agnostic**: every project-scoped
+command takes a project id (the `-p <project>` placeholder) or falls back to the configured default
+project, so the same recipe works for any project.
+
+Two things are called "skill", and they load differently. `ft` ships **embedded usage skills**
+(`ft`, `groom`, `software-factory`): read one with `ft skill get <name>`, list them with
+`ft skill list`. The **role skills** are not served by `ft`; load one through your harness instead
+(`load the <name> skill`).
 
 ## Roles
 

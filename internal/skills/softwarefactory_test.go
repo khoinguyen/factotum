@@ -89,9 +89,27 @@ func TestSoftwareFactorySkillUsesExactFTCommands(t *testing.T) {
 	}
 }
 
+// TestSoftwareFactorySkillSeparatesEmbeddedAndRoleSkills guards a real confusion:
+// `ft skill get` serves only ft's embedded usage skills (ft, groom,
+// software-factory). The role skills (chief, single-task-*, architecture-reviewer)
+// are repo-local .agents/skills loaded by the harness, so the recipe must state
+// both mechanisms rather than tell an agent to `ft skill get` a role skill.
+func TestSoftwareFactorySkillSeparatesEmbeddedAndRoleSkills(t *testing.T) {
+	skill, err := Get("software-factory")
+	if err != nil {
+		t.Fatalf("Get(software-factory) error = %v", err)
+	}
+	body := strings.ToLower(skill.Body)
+	for _, want := range []string{"embedded usage skills", "role skill", ".agents/skills/", "harness"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("software-factory body does not separate embedded from role skills (missing %q)", want)
+		}
+	}
+}
+
 // TestSoftwareFactorySkillIsProjectAgnostic pins that the recipe names no
-// concrete project: every command takes a project placeholder (or a default),
-// never a hardcoded id, so it works for any project.
+// concrete project: every project-scoped command takes a project placeholder (or
+// a default), never a hardcoded id, so it works for any project.
 func TestSoftwareFactorySkillIsProjectAgnostic(t *testing.T) {
 	skill, err := Get("software-factory")
 	if err != nil {

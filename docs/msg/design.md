@@ -73,8 +73,13 @@ const (
 type Message struct {
     ID        MessageID
     ProjectID ProjectID
-    From      *ActorID   // sender; nil means a system/automated message
-    To        Address    // canonical target (section 4)
+    From      *ActorID     // sender; nil means a system/automated message
+    To        Address      // canonical target (section 4)
+    // TaskID is the originating task this message concerns, when any. It is
+    // set when the target was task:<t> (section 4) even though To may be
+    // rewritten to run:/actor:, so the task link is never lost. A task-less
+    // message leaves it nil.
+    TaskID    *TicketID
     Body      string
     Links     []Link     // reuse core.Link: large content lives in an artifact
     ReplyTo   *MessageID // threading, optional
@@ -94,8 +99,9 @@ type Message struct {
 ```
 
 `Validate` rejects: empty id; empty/invalid `To`; empty `ProjectID`; empty body (after trim);
-unknown state; body over the configured limit (section 11); and any `To` whose kind is unknown.
-The body limit is passed in at send time, not stored on the entity, so `core` stays pure.
+unknown state; body over the configured limit (section 11); any `To` whose kind is unknown; and a
+`To = task:<t>` whose `TaskID` disagrees with `t`. The body limit is passed in at send time, not
+stored on the entity, so `core` stays pure.
 
 ### State machine
 
@@ -142,12 +148,17 @@ type Address string // "actor:act-x", "run:run-y", "task:t-z"
   for `run:` targets only the run's own messages. If the run is gone, the message stays `queued`
   (never silently dropped) and falls back to the actor mailbox at the operator's discretion via
   `ft msg retry --to actor:`.
-- `task:<ticket-id>` — sugar, resolved **at enqueue time** by `ft msg send`:
-  1. if a live run is registered with `TaskID == t`, address `run:<that run>`;
+- `task:<ticket-id>` — sugar, resolved **at enqueue time** by `ft msg send`. In every case the
+  message records `Message.TaskID = t`, so the task link survives the rewrite:
+  1. if a live run is registered with `Run.TaskID == t`, address `run:<that run>`;
   2. else if the task's `AssigneeID` is an agent actor, address `actor:<assignee>`;
-  3. else keep `task:<t>`; whoever later starts the task (registers a run with that `TaskID`)
-     becomes the recipient. A `task:` message is claimable by exactly the run whose `TaskID`
-     matches.
+  3. else keep `To = task:<t>`; whoever later starts the task (registers a run with that `TaskID`)
+     becomes the recipient. A stored `task:` message is claimable by exactly the run whose
+     `Run.TaskID` matches.
+
+  Because `TaskID` is carried on the message, a message resolved to `run:`/`actor:` still filters
+  by task and still sets `Event.TicketID` (sections 6 and 12); the `task:` stored form is only the
+  unresolved fallback, not the only way the task link is expressed.
 
 ### Why run + actor, with task as sugar
 
@@ -206,12 +217,29 @@ tasks. The exact interface:
 type MessageFilter struct {
     ProjectID core.ProjectID
     To        *core.Address   // exact stored To match
-    Actor     *core.ActorID   // messages addressable by this actor (To == actor:<id>)
-    Run       *core.RunID     // messages addressable by this run (To == run:<id>)
-    Task      *core.TicketID  // messages addressable by this task (To == task:<id>)
+    Actor     *core.ActorID   // claimable by this actor: To == actor:<id>
+    Run       *core.RunID     // claimable by this run: To == run:<id>, or To == task:<Run.TaskID>
+    Task      *core.TicketID  // Message.TaskID == <id> (the originating task, whatever To became)
     States    []core.MessageState
     Since     *time.Time
     Limit     int
+}
+
+// ClaimRequest selects one message for a run. Recipient is the union of the
+// run's own address, its actor's address, and its task address (section 4).
+type ClaimRequest struct {
+    RunID       core.RunID
+    Recipient   ClaimRecipient // {ActorID, TaskID} resolved from the run
+    Lease       time.Duration  // delivered lease; 0 uses the hub default (30s)
+    Wait        time.Duration  // long-poll window; 0 returns immediately
+}
+
+// AckRequest finalizes one delivered message owned by a run.
+type AckRequest struct {
+    ID      core.MessageID
+    RunID   core.RunID
+    State   core.MessageState // read | failed
+    Error   string            // reason when State == failed
 }
 
 type MessageRepo interface {
@@ -274,15 +302,19 @@ contract. The suite must cover, named for what it asserts:
 1. `Create`/`Get`/`List` round-trip; duplicate `Create` → `ErrAlreadyExists`; `Get` missing →
    `ErrNotFound`.
 2. `Validate`: empty id, empty `To`, unknown state, oversize body, empty project are rejected.
-3. `List` filters: by project, exact `To`, state set, `Since`, and `Limit`; ordering is oldest
-   first; no cross-project leakage.
+3. `List` filters: by project, exact `To`, state set, `Since`, and `Limit` (and the `Actor`/`Run`/
+   `Task` claimability filters — the `Task` filter matches `Message.TaskID`, so a message
+   resolved to `run:`/`actor:` is still returned); ordering is oldest first; no cross-project
+   leakage.
 4. `Claim`: returns the oldest claimable queued message; skips non-claimable addresses; returns
    `ErrNotFound` on empty; sets `State=delivered`, `RunID`, `LeaseUntil`, and increments
    `Attempts`.
 5. `Claim` concurrency: N goroutines claiming one queued message — exactly one wins, the rest get
    `ErrNotFound`, and no message is delivered twice.
 6. `Claim` addressing: `actor:` messages are claimable by any run of that actor; `run:` only by
-   that run; `task:` only by a run registered with that `TaskID`.
+   that run; a stored `task:` message only by a run whose `Run.TaskID` matches; and a message
+   resolved to `run:`/`actor:` whose `Message.TaskID` is set is claimable by that run and still
+   matches the `Task` list filter.
 7. `Ack(read)`: `delivered → read`; repeat is idempotent; ack on a non-delivered message errors.
 8. `Ack(failed)` / `Nack`: records `Error`, ends terminal `failed`; `Nack` requeues when under
    `MaxAttempts`.
@@ -322,8 +354,15 @@ Lease and retry defaults (configurable, machine-scoped like `serve.token`):
 - `claim wait = 25s`: long-poll window under the lease, so the receiver re-registers/refreshes
   cleanly between windows.
 
-Idempotency: the receiver dedupes on `message id` before injecting, because at-least-once
-redelivery is possible. The plugin keeps a tiny in-memory set of recently acked ids.
+Idempotency: delivery is **at-least-once**, and duplicate injection is an accepted cost, not a
+solved problem. The durable ack (`read`) is what stops *further* redelivery; the residual window is
+a receiver that injects a turn and then crashes before acking, whose message is redelivered after
+the lease and injected a second time. The receiver dedupes within its own process on
+`message id` (a small in-memory set of recently acked ids), which covers a redelivery while it is
+still running, but **not** a duplicate across a restart. A cross-restart ledger would need a
+durable processed-id set and is deliberately out of scope here; because an injected turn is visible
+in the transcript, the duplicate is low-harm and recoverable. If it proves noisy, add a per-run
+processed-id set to the `RunRepo` and check it before injecting.
 
 ## 8. Wake: poll is the contract, push is an optimization
 
@@ -331,14 +370,19 @@ redelivery is possible. The plugin keeps a tiny in-memory set of recently acked 
   on a message inject it as a new user turn in the agent session, then `ack(read)`. This works for
   any adapter regardless of who launched the session, wakes an idle agent (the loop is independent
   of the agent's turn), and crosses hosts. It is the only mechanism the contract requires.
-- **Push / direct inject (when `ft run` owns the session).** When `ft run` launched an interactive
-  session, it holds the session's terminal/control channel (`isolation.Command.TTY`). The hub may
-  write a claimed message straight into that channel instead of waiting for a poll. A headless
-  one-shot `opencode run` exits after its turn, so push only applies to a persistent/interactive
-  session; a one-shot run's *next* invocation is a fresh session that claims on start.
-- A run advertises `can_inject` at register. The hub tries push only when the run is live with a
-  control channel; otherwise the poll loop delivers. **Correctness never depends on push** — push
-  is just lower latency.
+- **Push / direct inject (optional, deferred).** The isolation port today exposes no writable
+  channel: `isolation.Command.TTY` is only a boolean request for a terminal, `Stdin` is set once
+  at `Exec`, and an execution exposes only `Events`/`Wait` (`pkg/isolation`). So the hub cannot
+  write a message into a running child through the existing port. Push therefore means handing the
+  message to the *receiver adapter itself* through a side channel the adapter owns (e.g. the
+  opencode plugin's own injection API), not through `isolation.Command`. Enabling `ft run` to
+  inject into a child it launched would need a new isolation port method and is deliberately out of
+  scope for this milestone. A headless one-shot `opencode run` exits after its turn, so a one-shot
+  run's *next* invocation is a fresh session that claims on start.
+- A run advertises `can_inject` at register, meaning "a receiver adapter is running that can
+  accept an out-of-band injection". The hub uses push only when it has such a channel; otherwise
+  the poll loop delivers. **Correctness never depends on push** — push is just lower latency, and
+  the entire milestone works with poll alone.
 
 This settles open question (3) from the task: timer-poll is the baseline, direct injection is an
 optional accelerator for `ft run`-owned sessions.
@@ -349,18 +393,27 @@ Local `ft msg` writes to the project backend directly (same DB on the same host)
 host (or the cloud), `ft serve` exposes the same protocol over HTTP. The receiver is an adapter;
 the transport is a detail.
 
-Endpoints (JSON, mirroring the CLI verbs):
+Endpoints (JSON, mirroring the CLI verbs; the CLI column names the command that shares the verb):
 
 ```
-POST /api/msg/send       {from?, to, body, reply_to?, links?}      -> {id, state}
-GET  /api/msg/inbox      ?address=&state=&limit=                   -> {messages:[...]}
-GET  /api/msg/read/<id>                                            -> {message}
+POST /api/msg/send       {from?, to, body, reply_to?, links?}      -> {id, state}   ft msg send
+GET  /api/msg/inbox      ?address=&state=&limit=                   -> {messages:[..]} ft msg inbox
+GET  /api/msg/get/<id>                                             -> {message}      ft msg get
+POST /api/msg/ack        {id, run_id, state, error?}               -> {ok}           ft msg ack / read
+POST /api/msg/nack       {id, run_id, reason}                      -> {ok}           ft msg nack
+POST /api/msg/retry      {id, to?}                                 -> {ok}           ft msg retry
+POST /api/msg/prune      {before, states?}                         -> {removed}      ft msg prune
 POST /api/msg/register   {actor, task?, harness, host, pid, ...}   -> {run_id, lease_until}
 POST /api/msg/claim      {run_id, wait?}                           -> {message?}
-POST /api/msg/ack        {id, run_id, state, error?}               -> {ok}
 POST /api/msg/heartbeat  {run_id}                                  -> {ok}
 POST /api/msg/deregister {run_id}                                  -> {ok}
 ```
+
+The transport is a thin wrapper over the store port: each endpoint maps to one `MessageRepo`/`RunRepo`
+call (`send`→`Create`, `get`/`inbox`→`Get`/`List`, `ack`/`nack`/`retry`→`Ack`/`Nack`/`Update`+event,
+`claim`→`Claim`, `register`/`heartbeat`/`deregister`→`RunRepo`). The CLI verbs are the same calls, so
+there is one behavior with two transports; `ft msg get` is the non-mutating fetch and `ft msg read`/
+`ft msg ack` is the mutating mark-read.
 
 Auth and trust:
 
@@ -416,7 +469,9 @@ ft msg inbox [--state queued|delivered|read|failed] [--address X] [--for <actor>
 ft msg get <id>            # show without changing state
 ft msg read <id>           # show and ack read (marks terminal)
 ft msg ack <id> [--failed -e <reason>]     # explicit state ack for adapters/humans
+ft msg nack <id> [-e <reason>]             # requeue (or park failed past max attempts)
 ft msg retry <id> [--to <address>]         # requeue a failed message, optionally re-address
+ft msg prune [--before <time>] [--state read|failed]   # drop old terminal messages
 ft msg runs [--live]       # list registered runs (adapter liveness)
 ft msg agent <register|claim|ack|nack|heartbeat|deregister>   # hidden, stable adapter verbs
 ```
@@ -434,7 +489,8 @@ ft msg agent <register|claim|ack|nack|heartbeat|deregister>   # hidden, stable a
 
 - New event kinds: `message.sent`, `message.claimed`, `message.read`, `message.failed`. Each
   transition appends one, so the existing broker/SSE path lights up with no new mechanism.
-- `Event.TicketID` is set when the message is task-addressed, so it surfaces on the task detail.
+- `Event.TicketID` is set from `Message.TaskID` when the message concerns a task (section 4), so it
+  surfaces on the task detail even when `To` was resolved to `run:`/`actor:`.
 - The dashboard snapshot gains a `messages` list (project-scoped, like `updates`), so the
   right-pane shows a live message stream; because the app refetches on every `/events` update, a
   send appears immediately. This answers open question (5): messages compose with events by being

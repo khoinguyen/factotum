@@ -239,12 +239,12 @@ afterEach(() => {
 })
 
 // AppLink must only client-route the paths the SPA router owns. Anything else
-// (/capture, /app/*) has to keep the browser's default navigation, or the router
-// renders its not-found page over a server-rendered page.
+// (/app/*, external URLs) has to keep the browser's default navigation, or the
+// router renders its not-found page over a server-rendered page.
 test("AppLink leaves a route the client router does not own to the browser", () => {
   const push = vi.spyOn(window.history, "pushState")
-  render(<AppLink href="/capture">Capture an idea →</AppLink>)
-  fireEvent.click(screen.getByText("Capture an idea →"))
+  render(<AppLink href="/app/">App asset</AppLink>)
+  fireEvent.click(screen.getByText("App asset"))
   expect(push).not.toHaveBeenCalled()
 })
 
@@ -255,16 +255,18 @@ test("AppLink client-routes a route the client router owns", () => {
   expect(push).toHaveBeenCalledWith(null, "", "/idea/t-1")
 })
 
-// Regression: the dashboard's only in-UI capture entry is an AppLink to
-// /capture, which the SPA router does not own. Intercepting it landed on the
-// not-found page and made capture unreachable by click.
-test("the dashboard capture link does not trigger the SPA not-found page", async () => {
-  stubFetch({ "/api/snapshot": emptySnapshot })
+// Regression: the dashboard's capture entry must open the capture page in the
+// SPA, not the retired server-rendered page or the not-found route.
+test("the dashboard capture link opens the capture page", async () => {
+  stubFetch({
+    "/api/snapshot": emptySnapshot,
+    "/api/capture": { enabled: true, project: "acme" },
+  })
   renderAt("/")
   const link = await screen.findByText("Capture an idea →")
   fireEvent.click(link)
-  expect(screen.queryByText(/Not found/)).toBeNull()
-  expect(window.location.pathname).toBe("/")
+  expect(await screen.findByLabelText(/what is it/i)).toBeTruthy()
+  expect(window.location.pathname).toBe("/capture")
 })
 
 test("renders an empty project without crashing", async () => {

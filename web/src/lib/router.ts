@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 
 export type Route =
   | { kind: "dashboard" }
+  | { kind: "capture" }
   | { kind: "idea"; id: string }
   | { kind: "task"; id: string }
   | { kind: "memory"; id: string }
@@ -11,9 +12,10 @@ export type Route =
 const clientPrefixes = ["/idea/", "/task/", "/memory/", "/doc/"]
 
 // isClientRoute reports whether the client router owns path. Links to anything
-// else (/capture, /app/*) must be left to the browser, or the router renders its
-// not-found page over a server-rendered page.
+// else (/app/*, external URLs) must be left to the browser, or the router renders
+// its not-found page over a server-rendered page.
 export function isClientRoute(path: string): boolean {
+  if (path === "/capture") return true
   return clientPrefixes.some((prefix) => path.startsWith(prefix))
 }
 
@@ -23,6 +25,9 @@ export function resolveRoute(path: string): Route {
   const trimmed = path.replace(/\/+$/, "")
   if (trimmed === "" || trimmed === "/") {
     return { kind: "dashboard" }
+  }
+  if (trimmed === "/capture") {
+    return { kind: "capture" }
   }
   const parts = trimmed.split("/").filter(Boolean)
   if (parts.length === 2 && isClientRoute(trimmed)) {

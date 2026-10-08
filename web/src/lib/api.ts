@@ -131,6 +131,35 @@ export type ArtifactDetail = ArtifactView & {
   attached_to?: TaskLink
 }
 
+// CaptureKind is a human capture the write side accepts: an idea or a bug.
+export type CaptureKind = "idea" | "bug"
+
+// CaptureConfig is the /api/capture read: whether the form should be shown and
+// the project a capture would be attributed to.
+export type CaptureConfig = {
+  enabled: boolean
+  project?: string
+}
+
+// CaptureResult is a stored capture and the detail URL to navigate to.
+export type CaptureResult = {
+  id: string
+  kind: string
+  url: string
+}
+
+// CaptureError carries the HTTP status of a rejected capture so the page can
+// tell a bad token (401) from a disabled server (403) from a bad request (400).
+export class CaptureError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = "CaptureError"
+    this.status = status
+  }
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path, { cache: "no-store" })
   if (!res.ok) {
@@ -172,6 +201,44 @@ export async function fetchArtifact(
     `/api/${kind}/${encodeURIComponent(id)}`,
   )
   return { ...artifact, links: artifact.links ?? [] }
+}
+
+export async function fetchCaptureConfig(): Promise<CaptureConfig> {
+  return getJSON<CaptureConfig>("/api/capture")
+}
+
+// submitCapture posts a natural-language sentence to the token-gated write
+// side. The shared token travels in the Authorization header, the only
+// credential the server accepts.
+export async function submitCapture(
+  text: string,
+  kind: CaptureKind,
+  token: string,
+): Promise<CaptureResult> {
+  const res = await fetch("/api/capture", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ kind, text }),
+  })
+  if (!res.ok) {
+    throw new CaptureError(res.status, await captureErrorMessage(res))
+  }
+  return (await res.json()) as CaptureResult
+}
+
+// captureErrorMessage extracts the server's error text, falling back to the
+// status when the body is not the expected JSON.
+async function captureErrorMessage(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string }
+    if (body.error) return body.error
+  } catch {
+    // fall through to the generic message
+  }
+  return `capture failed: ${res.status}`
 }
 
 // normalizeSnapshot coerces every list to an array. The server sends [] for

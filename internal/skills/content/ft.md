@@ -301,8 +301,8 @@ network, and mutate files, so never use it for untrusted work. Isolating backend
 (for example OpenShell and docker) are separate registrations of the same port
 and are the only ones fit for untrusted input.
 
-A harness describes one agent CLI end to end: image, entrypoint, invocation,
-model flag, prompt delivery, completion, and output parsing. Two ship: OpenCode
+A harness describes one agent CLI end to end: image, invocation, model flag,
+prompt delivery, completion, and output parsing. Two ship: OpenCode
 (`opencode`, image `ghcr.io/anomalyco/opencode`) and pi (`pi`, an npm package
 with no published image). Each builds a headless invocation that passes the
 prompt as the final message and reads the answer from stdout; an interactive run

@@ -25,8 +25,11 @@
 //
 // Limits, stated honestly. Docker's CLI cannot confine a filesystem or network
 // after the fact, so Prepare and ApplyPolicy reject a non-empty Policy with
-// isolation.ErrUnsupported rather than pretending, and an interactive TTY is
-// refused. A credential value never enters container metadata, argv, or the
+// isolation.ErrUnsupported rather than pretending, a custom Spec.Image.Entrypoint
+// is rejected (the container must run the backend's own keep-alive init, not the
+// image's entrypoint), and an interactive TTY is refused. Spec.Resources is
+// honored: a CPU or memory cap becomes `--cpus`/`--memory` on the container. A
+// credential value never enters container metadata, argv, or the
 // docker CLI's own environment: an attached credential is staged in a 0600 file
 // and passed to the exec with `--env-file`, so it is not visible to `ps eww`
 // and does not appear in `docker inspect`. Stop stops the container, which
@@ -234,6 +237,9 @@ func (b *Backend) Prepare(ctx context.Context, spec isolation.Spec) (isolation.H
 	if !emptyPolicy(spec.Policy) {
 		return nil, fmt.Errorf("%w: cannot enforce a filesystem or network policy with docker", isolation.ErrUnsupported)
 	}
+	if len(spec.Image.Entrypoint) > 0 {
+		return nil, fmt.Errorf("%w: cannot override the image entrypoint with docker; the container runs its own keep-alive init and the workload is started with docker exec", isolation.ErrUnsupported)
+	}
 	workdir, owned, err := b.workspace(spec.Workdir)
 	if err != nil {
 		return nil, err
@@ -290,8 +296,9 @@ func (b *Backend) Prepare(ctx context.Context, spec isolation.Spec) (isolation.H
 
 // runArgs is the `docker run` invocation: a detached container with a shell
 // keep-alive init, the workspace as the only bind mount at its own absolute
-// path, the spec's non-root user and labels, all before the image and command.
-// It is a pure function of its inputs so a task reproduces the same definition.
+// path, the spec's non-root user, CPU/memory caps, and labels, all before the
+// image and command. It is a pure function of its inputs so a task reproduces
+// the same definition.
 func runArgs(name string, spec isolation.Spec, workdir, image string) []string {
 	args := []string{
 		"run",
@@ -302,6 +309,12 @@ func runArgs(name string, spec isolation.Spec, workdir, image string) []string {
 	}
 	if spec.Image.User != "" {
 		args = append(args, "--user", spec.Image.User)
+	}
+	if spec.Resources.CPUs != "" {
+		args = append(args, "--cpus", spec.Resources.CPUs)
+	}
+	if spec.Resources.Memory != "" {
+		args = append(args, "--memory", spec.Resources.Memory)
 	}
 	for _, k := range sortedKeys(spec.Labels) {
 		args = append(args, "--label", k+"="+spec.Labels[k])

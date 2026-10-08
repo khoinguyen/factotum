@@ -108,6 +108,33 @@ func TestCredentialReachesContainerLive(t *testing.T) {
 	}
 }
 
+// TestResourcesReachContainerLive verifies on a real daemon that a spec's CPU
+// and memory caps become the container's limits, not merely a `docker run`
+// flag the daemon ignores. It is opt-in like TestConformance:
+//
+//	FACTOTUM_DOCKER_TEST=1 go test -run TestResourcesReachContainerLive ./pkg/isolation/docker/
+func TestResourcesReachContainerLive(t *testing.T) {
+	if os.Getenv("FACTOTUM_DOCKER_TEST") == "" {
+		t.Skip("set FACTOTUM_DOCKER_TEST=1 with a running docker daemon to run the live resource test")
+	}
+	ctx := context.Background()
+	be := docker.New(docker.Options{Image: "alpine:3.20"})
+	h, err := be.Prepare(ctx, isolation.Spec{Resources: isolation.Resources{CPUs: "0.5", Memory: "128m"}})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	t.Cleanup(func() { _ = be.Delete(context.Background(), h) })
+
+	out, err := exec.Command("docker", "inspect", "--format",
+		"{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}", h.ID()).Output()
+	if err != nil {
+		t.Fatalf("docker inspect %q error = %v", h.ID(), err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "500000000 134217728" {
+		t.Fatalf("container limits = %q, want the 0.5 CPU / 128MiB caps", got)
+	}
+}
+
 func containerRunning(t *testing.T, name string) string {
 	t.Helper()
 	out, err := exec.Command("docker", "inspect", "--format", "{{.State.Running}}", name).Output()

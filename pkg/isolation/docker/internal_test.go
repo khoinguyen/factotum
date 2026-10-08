@@ -29,6 +29,23 @@ func TestRunArgsAreDeterministic(t *testing.T) {
 	}
 }
 
+// TestRunArgsHonorResources pins that a spec's CPU and memory caps reach the
+// container definition, and that an uncapped spec adds no cap flag: the limits
+// are honored, not silently dropped.
+func TestRunArgsHonorResources(t *testing.T) {
+	capped := runArgs("fttest", isolation.Spec{Resources: isolation.Resources{CPUs: "2", Memory: "2Gi"}}, "/ws", "img:1")
+	if !contains(capped, "--cpus", "2") {
+		t.Errorf("run args %v missing --cpus 2", capped)
+	}
+	if !contains(capped, "--memory", "2Gi") {
+		t.Errorf("run args %v missing --memory 2Gi", capped)
+	}
+	uncapped := runArgs("fttest", isolation.Spec{}, "/ws", "img:1")
+	if contains(uncapped, "--cpus") || contains(uncapped, "--memory") {
+		t.Errorf("run args %v cap resources with none requested", uncapped)
+	}
+}
+
 // TestRunArgsMountOnlyWorkspace pins that the definition bind-mounts exactly
 // the workspace, at the same path, and nothing else.
 func TestRunArgsMountOnlyWorkspace(t *testing.T) {

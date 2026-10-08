@@ -17,6 +17,19 @@ import (
 // ErrUnavailable means no embedder is configured. Callers keep their lexical path.
 var ErrUnavailable = errors.New("embedder unavailable")
 
+// The failures below are the detectable causes of a vector retrieval that a caller
+// can name and act on, rather than the generic transport error. A transport or a
+// guard wraps one of these so a search can tell the user what to fix.
+var (
+	// ErrEndpointUnreachable means the embedding server did not answer at all.
+	ErrEndpointUnreachable = errors.New("embedding endpoint unreachable")
+	// ErrModelNotServed means the endpoint answered but does not serve the
+	// configured embedding model.
+	ErrModelNotServed = errors.New("embedding model not served")
+	// ErrEmptyResponse means the endpoint answered without a usable vector.
+	ErrEmptyResponse = errors.New("embedding endpoint returned no vector")
+)
+
 // Input distinguishes a query from a stored document. Some models (nomic) embed
 // the two with different instruction prefixes; others ignore it.
 type Input string

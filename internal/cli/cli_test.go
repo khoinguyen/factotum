@@ -25,19 +25,21 @@ import (
 )
 
 type runner struct {
-	t           *testing.T
-	path        string
-	projectPath string
-	userPath    string
-	lastOut     string
-	lastErr     string
-	judge       judge.Judge
-	embedder    embed.Embedder
-	vectors     vector.Index
-	embedModel  string
-	agent       agent.Agent
-	getenv      func(string) string
-	isTerminal  func(io.Writer) bool
+	t             *testing.T
+	path          string
+	projectPath   string
+	userPath      string
+	lastOut       string
+	lastErr       string
+	judge         judge.Judge
+	embedder      embed.Embedder
+	vectors       vector.Index
+	embedModel    string
+	embedProvider string
+	embedEndpoint string
+	agent         agent.Agent
+	getenv        func(string) string
+	isTerminal    func(io.Writer) bool
 	// stdinTerminal, when set, reports the simulated stdin terminal state so a
 	// test can drive interactive-mode selection.
 	stdinTerminal func(io.Reader) bool
@@ -84,8 +86,17 @@ func (r *runner) setup(deps *Deps) []string {
 	if r.stdinTerminal != nil {
 		deps.IsTerminalReader = r.stdinTerminal
 	}
-	if r.embedModel != "" {
-		body := "[embed]\nmodel = \"" + r.embedModel + "\"\n"
+	if r.embedModel != "" || r.embedProvider != "" || r.embedEndpoint != "" {
+		body := "[embed]\n"
+		if r.embedProvider != "" {
+			body += "provider = \"" + r.embedProvider + "\"\n"
+		}
+		if r.embedEndpoint != "" {
+			body += "endpoint = \"" + r.embedEndpoint + "\"\n"
+		}
+		if r.embedModel != "" {
+			body += "model = \"" + r.embedModel + "\"\n"
+		}
 		if err := os.WriteFile(r.userPath, []byte(body), 0o600); err != nil {
 			r.t.Fatalf("write user config: %v", err)
 		}

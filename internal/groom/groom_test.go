@@ -116,6 +116,21 @@ func TestSessionPromptIsDurableRepoData(t *testing.T) {
 	}
 }
 
+// TestSessionPromptIsProjectAgnostic pins that the durable session prompt names
+// no concrete project. `ft groom` appends a kickoff that names the project, so
+// the prompt itself is generic and a second project can commit it unchanged.
+func TestSessionPromptIsProjectAgnostic(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", PromptPath))
+	if err != nil {
+		t.Fatalf("read durable session prompt %q: %v", PromptPath, err)
+	}
+	for _, forbidden := range []string{"Factotum project", "-p factotum", "--project factotum"} {
+		if strings.Contains(string(data), forbidden) {
+			t.Errorf("session prompt hardcodes a project (%q); keep it project-agnostic", forbidden)
+		}
+	}
+}
+
 // TestSessionPromptReportTemplateMatchesVersioned pins the report template that
 // prompt.md embeds to the versioned templates/report.md, so a session launched
 // from the prompt cannot drift from the contract the report is checked against.

@@ -60,6 +60,19 @@ func TestBreakdownRunsCommandAndParsesPlan(t *testing.T) {
 	}
 }
 
+// TestInstructionIsProjectAgnostic pins that the grounding instruction names no
+// concrete project: it works for any project, naming the request's project and
+// never a hardcoded id or maintainer.
+func TestInstructionIsProjectAgnostic(t *testing.T) {
+	got := instruction(agent.Request{Prompt: "build login", Project: "acme"})
+	if strings.Contains(got, "Factotum") {
+		t.Errorf("instruction names Factotum:\n%s", got)
+	}
+	if !strings.Contains(got, "acme") {
+		t.Errorf("instruction does not name the request's project:\n%s", got)
+	}
+}
+
 func TestBreakdownStripsCodeFence(t *testing.T) {
 	run := func(context.Context, string, []byte) ([]byte, error) {
 		return []byte("Here is the plan:\n```json\n{\"tasks\":[{\"title\":\"One\"}]}\n```\n"), nil

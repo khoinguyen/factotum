@@ -30,6 +30,7 @@ var catalog = []struct {
 }{
 	{DefaultName, "How to use ft: lifecycle, core commands, and conventions"},
 	{"groom", "Run a grooming session: grill+defer, task split, deterministic report + feature docs"},
+	{"software-factory", "Run a project end-to-end as a software factory: capture, groom, design review, breakdown, build, review, QA, rollout"},
 }
 
 // All returns every skill, sorted by name.

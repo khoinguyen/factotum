@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	"github.com/khoinguyen/factotum/pkg/isolation/docker"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
+	"github.com/khoinguyen/factotum/pkg/isolation/local"
 	"github.com/khoinguyen/factotum/pkg/isolation/openshell"
 )
 
@@ -46,6 +48,34 @@ func TestRunBackendsIncludeOpenShell(t *testing.T) {
 	}
 	if backend.Name() != "openshell" {
 		t.Fatalf("backend.Name() = %q, want openshell", backend.Name())
+	}
+}
+
+// TestRunBackendsLocalForwardsAllowHost pins that the host-scoped opt-in reaches
+// the local backend factory, so a persisted run.allow_host actually lets the
+// unsandboxed backend run without --allow-host.
+func TestRunBackendsLocalForwardsAllowHost(t *testing.T) {
+	reg := runBackends(func(string) string { return "" })
+	factory, err := reg.MustLookup(local.Name)
+	if err != nil {
+		t.Fatalf("lookup %q: %v", local.Name, err)
+	}
+	spec := isolation.Spec{Workdir: t.TempDir()}
+
+	optedIn, err := factory(config.Run{AllowHost: true}, io.Discard)
+	if err != nil {
+		t.Fatalf("build local backend: %v", err)
+	}
+	if _, err := optedIn.Prepare(context.Background(), spec); err != nil {
+		t.Fatalf("opted-in Prepare() error = %v, want nil", err)
+	}
+
+	notOptedIn, err := factory(config.Run{AllowHost: false}, io.Discard)
+	if err != nil {
+		t.Fatalf("build local backend: %v", err)
+	}
+	if _, err := notOptedIn.Prepare(context.Background(), spec); !errors.Is(err, local.ErrNotOptedIn) {
+		t.Fatalf("Prepare() error = %v, want ErrNotOptedIn", err)
 	}
 }
 

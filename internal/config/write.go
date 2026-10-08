@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -131,20 +132,27 @@ func WriteProjectConfig(path, id string) (bool, error) {
 }
 
 // RunDefaults are the harness and sandbox a run resolves when neither a flag nor
-// config supplies them. An empty field is left unwritten.
+// config supplies them, plus the host-scoped allow_host opt-in. An empty field
+// (and a false AllowHost) is left unwritten.
 type RunDefaults struct {
-	Sandbox string
-	Harness string
+	Sandbox   string
+	Harness   string
+	AllowHost bool
 }
 
 // WriteRunDefaults persists the resolved harness and sandbox into the [run]
 // table of the config at path, creating the file when missing. project selects
 // the scope: a project config pins projectID (the committable subset only),
-// while a machine config is created from its template. The rest of the file -
-// comments, tables, and existing keys - is preserved.
+// while a machine config is created from its template. allow_host is
+// host-scoped, so a project-scoped write rejects it rather than committing an
+// opt-in. The rest of the file - comments, tables, and existing keys - is
+// preserved.
 func WriteRunDefaults(path string, project bool, projectID string, defaults RunDefaults) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("config path is empty")
+	}
+	if project && defaults.AllowHost {
+		return errors.New("allow_host is host-scoped and cannot be written to a project config")
 	}
 	mode := os.FileMode(0o600)
 	if project {
@@ -169,10 +177,13 @@ func WriteRunDefaults(path string, project bool, projectID string, defaults RunD
 
 	keys := map[string]string{}
 	if defaults.Sandbox != "" {
-		keys["sandbox"] = defaults.Sandbox
+		keys["sandbox"] = strconv.Quote(defaults.Sandbox)
 	}
 	if defaults.Harness != "" {
-		keys["harness"] = defaults.Harness
+		keys["harness"] = strconv.Quote(defaults.Harness)
+	}
+	if defaults.AllowHost {
+		keys["allow_host"] = "true"
 	}
 	text := upsertRunKeys(string(data), keys)
 	if err := os.WriteFile(path, []byte(text), mode); err != nil {
@@ -181,10 +192,11 @@ func WriteRunDefaults(path string, project bool, projectID string, defaults RunD
 	return nil
 }
 
-// upsertRunKeys sets key = "value" entries inside the [run] table of a TOML
-// document, creating the table at the end when absent. It preserves every other
-// line, so hand-written comments and tables survive. Missing keys are inserted
-// in sorted order so the write is deterministic.
+// upsertRunKeys sets `key = value` entries inside the [run] table of a TOML
+// document, creating the table at the end when absent. Each value is a literal
+// TOML token (a quoted string or a bare bool), so the caller controls the type.
+// It preserves every other line, so hand-written comments and tables survive.
+// Missing keys are inserted in sorted order so the write is deterministic.
 func upsertRunKeys(text string, keys map[string]string) string {
 	if len(keys) == 0 {
 		return text
@@ -209,7 +221,7 @@ func upsertRunKeys(text string, keys map[string]string) string {
 		b.WriteString(text)
 		b.WriteString("\n[run]\n")
 		for _, key := range sortedKeys(keys) {
-			fmt.Fprintf(&b, "%s = %q\n", key, keys[key])
+			fmt.Fprintf(&b, "%s = %s\n", key, keys[key])
 		}
 		return b.String()
 	}
@@ -221,7 +233,7 @@ func upsertRunKeys(text string, keys map[string]string) string {
 			continue
 		}
 		if value, ok := keys[key]; ok {
-			lines[i] = fmt.Sprintf("%s = %q", key, value)
+			lines[i] = fmt.Sprintf("%s = %s", key, value)
 			present[key] = true
 		}
 	}
@@ -237,7 +249,7 @@ func upsertRunKeys(text string, keys map[string]string) string {
 	}
 	add := make([]string, 0, len(missing))
 	for _, key := range missing {
-		add = append(add, fmt.Sprintf("%s = %q", key, keys[key]))
+		add = append(add, fmt.Sprintf("%s = %s", key, keys[key]))
 	}
 	lines = append(lines[:end], append(add, lines[end:]...)...)
 	return strings.Join(lines, "\n")

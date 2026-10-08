@@ -21,7 +21,9 @@ ft groom --unattended --sandbox local --harness opencode --allow-host
 
 `--sandbox` and `--harness` are optional: `ft groom` resolves them like `ft run`
 (flag, env, project `[run]`, machine `[run]`), prompting once on a terminal when
-unset; a machine `[run]` table lets a bare `ft groom` run with no flags.
+unset; choosing `local` in that prompt asks to opt in (default no) and records
+`run.allow_host` in the user config. A machine `[run]` table lets a bare
+`ft groom` run with no flags.
 
 The prompt is durable repo data at `docs/grooming/prompt.md` - never an
 ephemeral temp file; override it with `--prompt-file`. `ft groom` appends the

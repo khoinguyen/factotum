@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -103,6 +104,46 @@ func TestWriteRunDefaultsRecognizesHeaderVariants(t *testing.T) {
 				t.Fatalf("Run = %+v, want local/opencode", cfg.Run)
 			}
 		})
+	}
+}
+
+// TestWriteRunDefaultsWritesAllowHost pins that the host-scoped opt-in is
+// written as a bare TOML bool the loader reads back, not a quoted string.
+func TestWriteRunDefaultsWritesAllowHost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "user.toml")
+
+	if err := WriteRunDefaults(path, false, "", RunDefaults{Sandbox: "local", Harness: "opencode", AllowHost: true}); err != nil {
+		t.Fatalf("WriteRunDefaults() error = %v", err)
+	}
+	got := readFile(t, path)
+	if !strings.Contains(got, "allow_host = true") {
+		t.Fatalf("user config missing a bare allow_host bool:\n%s", got)
+	}
+	if strings.Contains(got, `allow_host = "true"`) {
+		t.Fatalf("allow_host written as a string, not a bool:\n%s", got)
+	}
+	cfg, err := Load(Input{UserPath: path, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Run.AllowHost {
+		t.Fatalf("Run.AllowHost = false, want the written opt-in")
+	}
+}
+
+// TestWriteRunDefaultsRejectsAllowHostInProject pins that the host-scoped opt-in
+// can never land in a committed project config.
+func TestWriteRunDefaultsRejectsAllowHostInProject(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".factotum", "config.toml")
+
+	err := WriteRunDefaults(path, true, "acme", RunDefaults{Sandbox: "local", AllowHost: true})
+	if err == nil {
+		t.Fatalf("project-scoped allow_host error = nil, want a refusal")
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("project config was written despite the refusal: %v", statErr)
 	}
 }
 

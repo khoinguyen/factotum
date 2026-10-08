@@ -51,8 +51,9 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			"nothing to the task graph. The sandbox and harness resolve from --sandbox and\n" +
 			"--harness, then FACTOTUM_RUN_*, then the [run] config table (project over user);\n" +
 			"on a terminal an unset one prompts once and is saved, while a non-interactive\n" +
-			"unset one is an error. The local backend is unsandboxed and requires\n" +
-			"--allow-host (or run.allow_host).",
+			"unset one is an error. Choosing the local backend in that prompt asks to opt in\n" +
+			"(default no) and records run.allow_host in the user config; the local backend is\n" +
+			"unsandboxed and otherwise requires --allow-host (or run.allow_host).",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.goal != "" && len(args) > 0 {
@@ -248,6 +249,17 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 		}
 		chosen.Sandbox = name
 	}
+	if chosen.Sandbox == local.Name && !cfg.AllowHost {
+		optIn, err := promptLocalOptIn(p)
+		if err != nil {
+			return err
+		}
+		if !optIn {
+			return usageError(cmd, "local backend selected but host opt-in declined; nothing saved. Rerun to choose another sandbox, or pass --allow-host for this run")
+		}
+		chosen.AllowHost = true
+		cfg.AllowHost = true
+	}
 	if cfg.Harness == "" {
 		name, err := promptRunChoice(p, "harness", d.RunHarnesses.Names())
 		if err != nil {
@@ -259,11 +271,14 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 	if err != nil {
 		return err
 	}
-	path, err := d.persistRunDefaults(scope, chosen)
+	path, optInPath, err := d.persistRunDefaults(scope, chosen)
 	if err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(d.Err, "ft: saved run defaults to %s\n", path)
+	if optInPath != "" {
+		_, _ = fmt.Fprintf(d.Err, "ft: recorded run.allow_host opt-in in %s\n", optInPath)
+	}
 	if chosen.Sandbox != "" {
 		cfg.Sandbox = chosen.Sandbox
 	}
@@ -271,6 +286,16 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 		cfg.Harness = chosen.Harness
 	}
 	return nil
+}
+
+// promptLocalOptIn asks the explicit, default-no opt-in for the unsandboxed
+// local backend. Selecting local in the prompt is the opt-in moment, but the
+// host trust it grants is loud enough to confirm rather than assume.
+func promptLocalOptIn(p Prompter) (bool, error) {
+	return p.Confirm(
+		"the local backend runs UNSANDBOXED on the host (host credentials, network, files); allow it?",
+		false,
+	)
 }
 
 // promptRunChoice asks for one run dimension from its available options,
@@ -307,16 +332,46 @@ func promptRunScope(p Prompter) (string, error) {
 	}
 }
 
-// persistRunDefaults writes chosen into the selected scope's config and returns
-// the path written.
-func (d *Deps) persistRunDefaults(scope string, chosen config.RunDefaults) (string, error) {
+// persistRunDefaults writes chosen into the selected scope's config and, for
+// the host-scoped allow_host opt-in, into the user config, returning the path
+// written and (when the opt-in was split out) the user config path. A committed
+// project file must never carry allow_host, so a project-scoped pick writes the
+// opt-in to the user config separately.
+func (d *Deps) persistRunDefaults(scope string, chosen config.RunDefaults) (path, optInPath string, err error) {
 	if scope == "project" {
 		path := d.ProjectConfigPath
 		if path == "" {
 			path = config.DefaultPath
 		}
-		return path, config.WriteRunDefaults(path, true, d.Config.Project, chosen)
+		committable := config.RunDefaults{Sandbox: chosen.Sandbox, Harness: chosen.Harness}
+		if err := config.WriteRunDefaults(path, true, d.Config.Project, committable); err != nil {
+			return "", "", err
+		}
+		if !chosen.AllowHost {
+			return path, "", nil
+		}
+		userPath, err := d.userConfigPath()
+		if err != nil {
+			return "", "", err
+		}
+		if err := config.WriteRunDefaults(userPath, false, "", config.RunDefaults{AllowHost: true}); err != nil {
+			return "", "", err
+		}
+		return path, userPath, nil
 	}
+	path, err = d.userConfigPath()
+	if err != nil {
+		return "", "", err
+	}
+	if err := config.WriteRunDefaults(path, false, "", chosen); err != nil {
+		return "", "", err
+	}
+	return path, "", nil
+}
+
+// userConfigPath resolves the machine-scoped config path to write: the loaded
+// path, else $HOME/.factotum/config.toml.
+func (d *Deps) userConfigPath() (string, error) {
 	path := d.UserConfigPath
 	if path == "" {
 		path = config.UserPath(d.Getenv)
@@ -324,7 +379,7 @@ func (d *Deps) persistRunDefaults(scope string, chosen config.RunDefaults) (stri
 	if path == "" {
 		return "", errors.New("cannot locate the machine config; set $HOME or pass --user-config")
 	}
-	return path, config.WriteRunDefaults(path, false, "", chosen)
+	return path, nil
 }
 
 func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {

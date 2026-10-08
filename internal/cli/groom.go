@@ -43,7 +43,8 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 			"finishes agent-ready, and the run fails if any scoped item is left neither agent-ready\n" +
 			"nor deferred. The sandbox and harness resolve like `ft run`: --sandbox/--harness, then\n" +
 			"FACTOTUM_RUN_*, then the [run] config table (project over user), prompting once on a\n" +
-			"terminal when unset.",
+			"terminal when unset; choosing the local backend in that prompt asks to opt in\n" +
+			"(default no) and records run.allow_host in the user config.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return deps.runGroom(cmd, args, opts)
 		},

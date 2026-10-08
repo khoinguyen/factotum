@@ -119,7 +119,7 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 	add.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
 	add.Flags().StringVar(&id, "id", "", "explicit task id (for imports)")
 	add.Flags().StringVarP(&repo, "repo", "r", "", "repository name within the project")
-	add.Flags().StringVarP(&kind, "kind", "k", string(core.KindTask), "task kind: task, milestone, or idea")
+	add.Flags().StringVarP(&kind, "kind", "k", string(core.KindTask), "task kind: task, milestone, idea, or bug")
 	add.Flags().StringVarP(&title, "title", "t", "", "task title (required)")
 	add.Flags().StringVarP(&body, "body", "b", "", "task body (description)")
 	add.Flags().StringVarP(&bodyFile, "body-file", "f", "", "read the task body from a file")
@@ -828,18 +828,28 @@ func claimable(snapshot *app.Snapshot, candidates []core.TicketID) []core.Ticket
 }
 
 func newTaskPromoteCommand(deps *Deps) *cobra.Command {
+	return newPromoteCommand(deps,
+		"promote <capture>",
+		"Turn a captured idea or bug into an executable task, keeping the capture as history",
+		"promoted")
+}
+
+// newPromoteCommand builds a refinement command that promotes a capture into a
+// linked executable task. The verb and the past-tense action label vary by
+// surface (`ft idea promote` / `ft bug triage`), while the behavior is shared.
+func newPromoteCommand(deps *Deps, use, short, action string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "promote <idea>",
-		Short: "Promote an idea to an executable task, keeping the idea as history",
+		Use:   use,
+		Short: short,
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ideaID := core.TicketID(args[0])
-			task, err := deps.Tasks.Promote(cmd.Context(), ideaID)
+			captureID := core.TicketID(args[0])
+			task, err := deps.Tasks.Promote(cmd.Context(), captureID)
 			if err != nil {
 				return err
 			}
 			return deps.emit(taskDocFrom(task), func() {
-				deps.printFields(deps.taskFields(task, f("promoted", true), f("from", ideaID))...)
+				deps.printFields(deps.taskFields(task, f(action, true), f("from", captureID))...)
 			},
 				hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the promoted task"},
 				hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"})
@@ -925,7 +935,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&title, "title", "t", "", "task title")
-	cmd.Flags().StringVarP(&kind, "kind", "k", "", "task kind: task or milestone; an idea is turned into a task with ft task promote")
+	cmd.Flags().StringVarP(&kind, "kind", "k", "", "task kind: task or milestone; an idea or bug is turned into a task with ft task promote")
 	cmd.Flags().StringVarP(&body, "body", "b", "", "task body (description)")
 	cmd.Flags().StringVarP(&bodyFile, "body-file", "f", "", "read the task body from a file")
 	cmd.Flags().IntVar(&priority, "priority", 0, "task priority")

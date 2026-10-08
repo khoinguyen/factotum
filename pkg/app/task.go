@@ -112,35 +112,36 @@ func (s *TicketService) Search(ctx context.Context, filter store.TicketFilter, q
 	return tasks, nil
 }
 
-// Promote turns a captured idea into executable work: it creates a new task
-// carrying the idea's content, records the idea as the task's origin edge (a
-// dependency, which never blocks because ideas are resolved), and leaves the
-// idea untouched as history with a note naming the promoted task.
-func (s *TicketService) Promote(ctx context.Context, ideaID core.TicketID) (*core.Ticket, error) {
-	idea, err := s.backend.Tickets().Get(ctx, ideaID)
+// Promote turns a captured ticket (an idea or a bug) into executable work: it
+// creates a new task carrying the capture's content, records the capture as the
+// task's origin edge (a dependency, which never blocks because captures are
+// resolved), and leaves the capture untouched as history with a note naming the
+// promoted task.
+func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID) (*core.Ticket, error) {
+	capture, err := s.backend.Tickets().Get(ctx, captureID)
 	if err != nil {
 		return nil, err
 	}
-	if idea.Kind != core.KindIdea {
-		return nil, fmt.Errorf("%w: %s is not an idea", core.ErrInvalid, ideaID)
+	if !capture.Kind.CapturedByHuman() {
+		return nil, fmt.Errorf("%w: %s is not a capture", core.ErrInvalid, captureID)
 	}
 	task, err := s.Add(ctx, TicketInput{
-		ProjectID:   idea.ProjectID,
-		Repo:        idea.Repo,
+		ProjectID:   capture.ProjectID,
+		Repo:        capture.Repo,
 		Kind:        core.KindTask,
-		Title:       idea.Title,
-		Description: idea.Description,
-		Priority:    idea.Priority,
-		Labels:      append([]string(nil), idea.Labels...),
+		Title:       capture.Title,
+		Description: capture.Description,
+		Priority:    capture.Priority,
+		Labels:      append([]string(nil), capture.Labels...),
 	})
 	if err != nil {
 		return nil, err
 	}
-	task, err = s.AddDep(ctx, task.ID, ideaID)
+	task, err = s.AddDep(ctx, task.ID, captureID)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.AddNote(ctx, ideaID, NoteInput{
+	if _, err := s.AddNote(ctx, captureID, NoteInput{
 		Body:   fmt.Sprintf("Promoted to %s.", task.ID),
 		System: true,
 	}); err != nil {
@@ -221,11 +222,12 @@ func (s *TicketService) Set(ctx context.Context, id core.TicketID, set TicketSet
 		if !set.Kind.Valid() {
 			return nil, fmt.Errorf("%w: unknown task kind %q", core.ErrInvalid, *set.Kind)
 		}
-		// Crossing between an idea and an executable kind is never an in-place
-		// edit: promoting is an explicit, linked, history-preserving operation,
-		// and demoting executable work would silently drop it from the graph.
-		if *set.Kind != task.Kind && (task.Kind == core.KindIdea || *set.Kind == core.KindIdea) {
-			return nil, fmt.Errorf("%w: cannot change kind to or from idea in place; use `ft task promote` to turn an idea into a task", core.ErrInvalid)
+		// Crossing between a capture and an executable kind is never an
+		// in-place edit: promoting is an explicit, linked, history-preserving
+		// operation, and demoting executable work would silently drop it from
+		// the graph.
+		if *set.Kind != task.Kind && (task.Kind.CapturedByHuman() || set.Kind.CapturedByHuman()) {
+			return nil, fmt.Errorf("%w: cannot change kind to or from a capture in place; use `ft task promote` to turn a capture into a task", core.ErrInvalid)
 		}
 		task.Kind = *set.Kind
 	}
@@ -313,8 +315,8 @@ func (s *TicketService) Assign(ctx context.Context, id core.TicketID, actorID *c
 	if err != nil {
 		return nil, err
 	}
-	if actorID != nil && task.Kind == core.KindIdea {
-		return nil, fmt.Errorf("%w: idea %s is not assignable", core.ErrInvalid, id)
+	if actorID != nil && task.Kind.CapturedByHuman() {
+		return nil, fmt.Errorf("%w: %s %s is not assignable", core.ErrInvalid, task.Kind, id)
 	}
 	if actorID != nil {
 		if _, err := s.backend.Actors().Get(ctx, *actorID); err != nil {
@@ -351,8 +353,8 @@ func (s *TicketService) Claim(ctx context.Context, id core.TicketID, actorID cor
 	if err != nil {
 		return nil, err
 	}
-	if task.Kind == core.KindIdea {
-		return nil, fmt.Errorf("%w: idea %s is not assignable", core.ErrInvalid, id)
+	if task.Kind.CapturedByHuman() {
+		return nil, fmt.Errorf("%w: %s %s is not assignable", core.ErrInvalid, task.Kind, id)
 	}
 	if _, err := s.backend.Actors().Get(ctx, actorID); err != nil {
 		return nil, fmt.Errorf("assignee: %w", err)

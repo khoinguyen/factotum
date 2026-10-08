@@ -75,13 +75,14 @@ func writeReadyGroup(b *strings.Builder, header string, ranked []rank.Scored, me
 	}
 }
 
-// writeCaptureGroup lists the non-executable captures (ideas) separately from
-// the execution graph, so a reader can tell unrefined input from ready work.
+// writeCaptureGroup lists the non-executable captures (ideas and bugs)
+// separately from the execution graph, so a reader can tell unrefined input from
+// ready work.
 func writeCaptureGroup(b *strings.Builder, derived *info) {
 	var found bool
 	for _, id := range derived.ids {
 		task := derived.tasks[id]
-		if !task.IsIdea() {
+		if !task.Kind.CapturedByHuman() {
 			continue
 		}
 		if !found {

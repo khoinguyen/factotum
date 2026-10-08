@@ -19,7 +19,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("Project", func(t *testing.T) { testProject(t, factory(t)) })
 	t.Run("Actor", func(t *testing.T) { testActor(t, factory(t)) })
 	t.Run("Task", func(t *testing.T) { testTask(t, factory(t)) })
-	t.Run("TaskIdeaKind", func(t *testing.T) { testTaskIdeaKind(t, factory(t)) })
+	t.Run("TaskCaptureKinds", func(t *testing.T) { testTaskCaptureKinds(t, factory(t)) })
 	t.Run("TaskDependents", func(t *testing.T) { testTaskDependents(t, factory(t)) })
 	t.Run("TaskSearch", func(t *testing.T) { testTaskSearch(t, factory(t)) })
 	t.Run("Artifact", func(t *testing.T) { testArtifact(t, factory(t)) })
@@ -325,15 +325,17 @@ func testTask(t *testing.T, be store.Backend) {
 	}
 }
 
-// testTaskIdeaKind pins that every backend round-trips the non-executable idea
-// kind and can filter by it, so capture is a first-class stored kind.
-func testTaskIdeaKind(t *testing.T, be store.Backend) {
+// testTaskCaptureKinds pins that every backend round-trips the non-executable
+// capture kinds (idea, bug) and can filter by each, so capture is a first-class
+// stored kind.
+func testTaskCaptureKinds(t *testing.T, be store.Backend) {
 	t.Helper()
 	ctx := context.Background()
 	repo := be.Tickets()
 
 	tasks := []*core.Ticket{
 		{ID: "i-1", ProjectID: "prj-1", Kind: core.KindIdea, Title: "spark", Status: core.StatusTodo},
+		{ID: "b-1", ProjectID: "prj-1", Kind: core.KindBug, Title: "crash", Status: core.StatusTodo},
 		{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "work", Status: core.StatusTodo},
 	}
 	for _, task := range tasks {
@@ -342,21 +344,29 @@ func testTaskIdeaKind(t *testing.T, be store.Backend) {
 		}
 	}
 
-	got, err := repo.Get(ctx, "i-1")
-	if err != nil {
-		t.Fatalf("Get(i-1) error = %v", err)
-	}
-	if got.Kind != core.KindIdea {
-		t.Fatalf("Get(i-1).Kind = %q, want idea", got.Kind)
-	}
+	for _, want := range []struct {
+		id   core.TicketID
+		kind core.TicketKind
+	}{
+		{"i-1", core.KindIdea},
+		{"b-1", core.KindBug},
+	} {
+		got, err := repo.Get(ctx, want.id)
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", want.id, err)
+		}
+		if got.Kind != want.kind {
+			t.Fatalf("Get(%s).Kind = %q, want %q", want.id, got.Kind, want.kind)
+		}
 
-	kind := core.KindIdea
-	byKind, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1", Kind: &kind})
-	if err != nil {
-		t.Fatalf("List(idea) error = %v", err)
-	}
-	if len(byKind) != 1 || byKind[0].ID != "i-1" {
-		t.Fatalf("List(idea) = %v, want [i-1]", byKind)
+		kind := want.kind
+		byKind, err := repo.List(ctx, store.TicketFilter{ProjectID: "prj-1", Kind: &kind})
+		if err != nil {
+			t.Fatalf("List(%s) error = %v", want.kind, err)
+		}
+		if len(byKind) != 1 || byKind[0].ID != want.id {
+			t.Fatalf("List(%s) = %v, want [%s]", want.kind, byKind, want.id)
+		}
 	}
 }
 

@@ -44,8 +44,8 @@ func (d *Deps) taskGetHints(ctx context.Context, task *core.Ticket) []hint {
 	id := string(task.ID)
 	project := string(task.ProjectID)
 
-	if task.Kind == core.KindIdea {
-		return ideaGetHints(task)
+	if surface, ok := captureFor(task.Kind); ok {
+		return captureGetHints(surface, task)
 	}
 
 	if waiting := d.unresolvedDeps(ctx, task); len(waiting) > 0 {
@@ -249,45 +249,45 @@ func taskSearchHints(tasks []*core.Ticket, projectID string) []hint {
 	return hints
 }
 
-// ideaGetHints guides the viewer from an idea back to the idea surface: an idea
-// has no lifecycle, so task verbs like start or assign do not apply.
-func ideaGetHints(idea *core.Ticket) []hint {
-	switch idea.Status {
+// captureGetHints guides the viewer from a capture back to its surface: a
+// capture has no lifecycle, so task verbs like start or assign do not apply.
+func captureGetHints(s captureSurface, capture *core.Ticket) []hint {
+	switch capture.Status {
 	case core.StatusDone, core.StatusCancelled:
-		return []hint{{Command: fmt.Sprintf("ft idea list --project %s", idea.ProjectID), About: "review the remaining ideas"}}
+		return []hint{{Command: fmt.Sprintf("ft %s list --project %s", s.noun, capture.ProjectID), About: "review the remaining " + s.noun + "s"}}
 	default:
 		return []hint{
-			{Command: fmt.Sprintf("ft idea promote %s", idea.ID), About: "turn it into an executable task"},
-			{Command: fmt.Sprintf("ft idea list --project %s", idea.ProjectID), About: "review the remaining ideas"},
+			{Command: fmt.Sprintf("ft %s %s %s", s.noun, s.refine, capture.ID), About: "turn it into an executable task"},
+			{Command: fmt.Sprintf("ft %s list --project %s", s.noun, capture.ProjectID), About: "review the remaining " + s.noun + "s"},
 		}
 	}
 }
 
-func ideaCreateHints(idea *core.Ticket) []hint {
+func captureCreateHints(s captureSurface, capture *core.Ticket) []hint {
 	return []hint{
-		{Command: fmt.Sprintf("ft idea get %s", idea.ID), About: "revisit the idea"},
-		{Command: fmt.Sprintf("ft idea promote %s", idea.ID), About: "turn it into an executable task"},
+		{Command: fmt.Sprintf("ft %s get %s", s.noun, capture.ID), About: "revisit the " + s.noun},
+		{Command: fmt.Sprintf("ft %s %s %s", s.noun, s.refine, capture.ID), About: "turn it into an executable task"},
 	}
 }
 
-func ideaListHints(projectID string, ideas []*core.Ticket) []hint {
+func captureListHints(s captureSurface, projectID string, captures []*core.Ticket) []hint {
 	var hints []hint
 	if projectID != "" {
-		hints = append(hints, hint{Command: fmt.Sprintf("ft idea create --project %s --title \"...\"", projectID), About: "capture an idea"})
+		hints = append(hints, hint{Command: fmt.Sprintf("ft %s create --project %s --title \"...\"", s.noun, projectID), About: "capture a " + s.noun})
 	}
-	if len(ideas) > 0 {
-		hints = append(hints, hint{Command: fmt.Sprintf("ft idea get %s", ideas[0].ID), About: "inspect the first idea"})
+	if len(captures) > 0 {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft %s get %s", s.noun, captures[0].ID), About: "inspect the first " + s.noun})
 	}
 	return hints
 }
 
-func ideaSearchHints(ideas []*core.Ticket, projectID string) []hint {
+func captureSearchHints(s captureSurface, captures []*core.Ticket, projectID string) []hint {
 	var hints []hint
-	if len(ideas) > 0 {
-		hints = append(hints, hint{Command: fmt.Sprintf("ft idea get %s", ideas[0].ID), About: "inspect the top match"})
+	if len(captures) > 0 {
+		hints = append(hints, hint{Command: fmt.Sprintf("ft %s get %s", s.noun, captures[0].ID), About: "inspect the top match"})
 	}
 	if projectID != "" {
-		hints = append(hints, hint{Command: fmt.Sprintf("ft idea list --project %s", projectID), About: "browse all ideas"})
+		hints = append(hints, hint{Command: fmt.Sprintf("ft %s list --project %s", s.noun, projectID), About: "browse all " + s.noun + "s"})
 	}
 	return hints
 }

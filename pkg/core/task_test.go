@@ -56,6 +56,7 @@ func TestTaskKindValid(t *testing.T) {
 		{KindTask, true},
 		{KindMilestone, true},
 		{KindIdea, true},
+		{KindBug, true},
 		{"epic", false},
 		{"", false},
 	}
@@ -74,6 +75,7 @@ func TestTaskKindExecutable(t *testing.T) {
 		{KindTask, true},
 		{KindMilestone, true},
 		{KindIdea, false},
+		{KindBug, false},
 		{"epic", false},
 	}
 	for _, tt := range tests {
@@ -91,6 +93,7 @@ func TestTaskKindFamily(t *testing.T) {
 		{KindTask, FamilyExecutable},
 		{KindMilestone, FamilyGate},
 		{KindIdea, FamilyCapture},
+		{KindBug, FamilyCapture},
 		{"epic", ""},
 		{"", ""},
 	}
@@ -107,6 +110,7 @@ func TestTaskKindCapturedByHuman(t *testing.T) {
 		want bool
 	}{
 		{KindIdea, true},
+		{KindBug, true},
 		{KindTask, false},
 		{KindMilestone, false},
 		{"epic", false},
@@ -124,6 +128,7 @@ func TestTaskKindRefineVerb(t *testing.T) {
 		want string
 	}{
 		{KindIdea, "groom"},
+		{KindBug, "triage"},
 		{KindTask, ""},
 		{KindMilestone, ""},
 		{"epic", ""},
@@ -150,6 +155,12 @@ func TestTaskKindAllowsStatus(t *testing.T) {
 		{KindIdea, StatusBlocked, false},
 		{KindIdea, StatusReadyForReview, false},
 		{KindIdea, "archived", false},
+		{KindBug, StatusTodo, true},
+		{KindBug, StatusDone, true},
+		{KindBug, StatusCancelled, true},
+		{KindBug, StatusInProgress, false},
+		{KindBug, StatusBlocked, false},
+		{KindBug, StatusReadyForReview, false},
 	}
 	for _, tt := range tests {
 		if got := tt.kind.AllowsStatus(tt.status); got != tt.want {
@@ -164,6 +175,15 @@ func TestTaskIsIdea(t *testing.T) {
 	}
 	if (Ticket{Kind: KindTask}).IsIdea() {
 		t.Fatal("plain task should not report IsIdea")
+	}
+}
+
+func TestTaskIsBug(t *testing.T) {
+	if !(Ticket{Kind: KindBug}).IsBug() {
+		t.Fatal("bug task should report IsBug")
+	}
+	if (Ticket{Kind: KindTask}).IsBug() {
+		t.Fatal("plain task should not report IsBug")
 	}
 }
 
@@ -214,6 +234,10 @@ func TestTaskValidate(t *testing.T) {
 		{"criteria without groomed", func(t *Ticket) { t.AcceptanceCriteria = []string{"it works"} }, false},
 		{"blank criterion", func(t *Ticket) { t.AcceptanceCriteria = []string{"  "} }, true},
 		{"groomed idea", func(t *Ticket) { t.Kind = KindIdea; t.Groomed = true; t.AcceptanceCriteria = []string{"it works"} }, true},
+		{"bug todo", func(t *Ticket) { t.Kind = KindBug }, false},
+		{"bug in progress", func(t *Ticket) { t.Kind = KindBug; t.Status = StatusInProgress }, true},
+		{"bug assigned", func(t *Ticket) { t.Kind = KindBug; id := ActorID("act-1"); t.AssigneeID = &id }, true},
+		{"groomed bug", func(t *Ticket) { t.Kind = KindBug; t.Groomed = true; t.AcceptanceCriteria = []string{"it works"} }, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -242,6 +266,8 @@ func TestTaskResolves(t *testing.T) {
 		{"idea todo", Ticket{Kind: KindIdea, Status: StatusTodo}, true},
 		{"idea done", Ticket{Kind: KindIdea, Status: StatusDone}, true},
 		{"idea cancelled", Ticket{Kind: KindIdea, Status: StatusCancelled}, true},
+		{"bug todo", Ticket{Kind: KindBug, Status: StatusTodo}, true},
+		{"bug cancelled", Ticket{Kind: KindBug, Status: StatusCancelled}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

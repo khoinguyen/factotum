@@ -48,6 +48,9 @@ task=$(ft task create -t "Try Factotum" -b "My first task." | sed -n 's/^task_id
 ft task list
 ft task get "$task"
 ft task next
+
+# ft also ships the agent skill that teaches a harness the ft loop.
+ft skill list
 ```
 <!-- quickstart:end -->
 
@@ -175,6 +178,34 @@ Only `sandbox` and `harness` are read from a committed project `[run]` (project 
 settings (`workspace`, `allow_host`, credentials) are read from the machine file only, so a committed
 file never carries a host path or opts into the unsandboxed backend.
 
+## Teach your agent to use ft
+
+`ft` ships the usage skill it expects an agent to follow, embedded in the binary (source:
+[`internal/skills/content`](internal/skills/content)). Load it into a harness and the harness knows
+the ft loop — rank, start, review, done — and the conventions around it.
+
+```sh
+ft skill list          # NAME/DESCRIPTION for the embedded skills
+ft skill get           # ft: the core loop, commands, and conventions (the default skill)
+ft skill get ft        # the same skill, named explicitly
+ft skill get groom     # the grooming session protocol
+```
+
+The two skills are **ft** (how to use `ft`) and **groom** (how to run a grooming session).
+`ft skill get` prints the skill's markdown to stdout; put it where your harness reads its
+instructions. OpenCode reads an `AGENTS.md` in the project, so append the skill there, or write it
+to a file and list that file under `instructions` in `opencode.json`:
+
+```sh
+ft skill get ft >> AGENTS.md          # straight into the agent's rules
+ft skill get ft > docs/ft-skill.md    # or a separate file, referenced by the harness:
+# opencode.json: { "instructions": ["docs/ft-skill.md"] }
+```
+
+Regenerate the copy after upgrading `ft`. `ft skill lint` checks the embedded skills against the
+live CLI, so a skill never names a command or flag that no longer exists (`ft skill lint
+--semantic` also judges the prose, and needs a TypeSafe key).
+
 ## Groom a project
 
 `ft groom` runs a task-less session over the project's open ideas and ungroomed tasks, using the
@@ -296,5 +327,6 @@ ft task next                # the highest-ranked ready task
 ft graph render --project factotum --format agent
 ```
 
-`ft skill get ft` prints the embedded agent skill, and `ft skill lint` checks the embedded skills
-against the live CLI. Vector recall has an opt-in real-embedding test: `mise run test-embed`.
+`ft skill get ft` prints the embedded agent skill (see
+[Teach your agent to use ft](#teach-your-agent-to-use-ft)), and `ft skill lint` checks the embedded
+skills against the live CLI. Vector recall has an opt-in real-embedding test: `mise run test-embed`.

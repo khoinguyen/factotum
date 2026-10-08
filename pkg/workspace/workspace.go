@@ -21,7 +21,10 @@
 //   - Local paths: an absolute repo Path is used as-is. A relative Path (for
 //     example ".", a project registered from a local checkout) resolves against
 //     Options.Base, the project root. Without a base a relative Path is an error
-//     that names the path and the fix (t-7wd6op3rxf).
+//     that names the path and the fix (t-7wd6op3rxf). A local Path is not
+//     copied: the checkout itself becomes the run's workspace, so a backend that
+//     operates on the workdir runs in and may modify the source (t-rczy267zew);
+//     a repo registered by URL is cloned into the workspace instead.
 //   - Re-run policy: a reused clone is not updated by default, but the resolver
 //     first compares the checkout's origin URL against the repo's configured URL
 //     and fails with ErrRemoteChanged when they differ, so a changed URL is never

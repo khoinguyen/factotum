@@ -620,7 +620,7 @@ func TestAttachCredential(t *testing.T) {
 func TestProviderProfileProvisioning(t *testing.T) {
 	const (
 		providerType = "openrouter"
-		wantURL      = "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/providers/openrouter.yaml"
+		wantURL      = "https://raw.githubusercontent.com/NVIDIA/OpenShell/6648bd0c290efbc41ba131ee9831ee45cd431f94/providers/openrouter.yaml"
 	)
 	missing := errors.New("openshell provider create: exit status 1: provider profile 'openrouter' not found; import a matching profile before using this provider type")
 

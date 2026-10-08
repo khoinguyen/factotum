@@ -59,10 +59,17 @@ const (
 	// DefaultReadyTimeout bounds how long Prepare waits for a sandbox to become
 	// ready.
 	DefaultReadyTimeout = 90 * time.Second
+	// DefaultProfileCatalogRef pins the provider-profile source to an immutable
+	// commit: the NVIDIA/OpenShell v0.1.2 release tree the adapter was verified
+	// against. A branch (such as main) is mutable, so fetching a profile from it
+	// would let upstream silently change the profile's binaries scope and thus a
+	// sandbox's egress policy. A commit cannot move; bumping the pin is an
+	// explicit, reviewable change.
+	DefaultProfileCatalogRef = "6648bd0c290efbc41ba131ee9831ee45cd431f94"
 	// DefaultProfileCatalog is the OpenShell provider-profile catalog. A profile
 	// the gateway does not carry is imported from <catalog>/<type>.yaml, the
 	// documented `openshell profile import --url ...` recipe.
-	DefaultProfileCatalog = "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/providers"
+	DefaultProfileCatalog = "https://raw.githubusercontent.com/NVIDIA/OpenShell/" + DefaultProfileCatalogRef + "/providers"
 
 	// readyPollInterval is how often Prepare re-checks readiness.
 	readyPollInterval = 500 * time.Millisecond

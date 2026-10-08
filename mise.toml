@@ -149,6 +149,11 @@ description = "End-to-end smoke: ft serve serves the embedded app and a mutation
 depends = ["build"]
 run = "bash scripts/smoke-web.sh"
 
+[tasks.smoke-quickstart]
+description = "From-zero smoke: run the README quickstart against a throwaway store"
+depends = ["build"]
+run = "bash scripts/smoke-quickstart.sh"
+
 [tasks.hooks]
 description = "Install the git pre-commit hook"
 run = """
@@ -160,4 +165,4 @@ echo "installed .git/hooks/pre-commit"
 
 [tasks.ci]
 description = "Full check: format, lint, test, coverage, build"
-depends = ["fmt-check", "lint", "test", "cover", "web-test", "build", "smoke-web"]
+depends = ["fmt-check", "lint", "test", "cover", "web-test", "build", "smoke-web", "smoke-quickstart"]

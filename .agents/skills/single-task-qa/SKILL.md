@@ -41,10 +41,16 @@ run a testing task by exercising it for real. You do **not** build or edit produ
 ## Report to the chief
 
 End with a one-screen summary (PASS/FAIL/not-available per item, plus the findings and any bug task
-ids) and send it with the shared wrapper:
+ids). Message the chief over ft msg:
 
 ```sh
-CMUX_MSG_FROM=qa-<task-id> bash .agents/skills/chief/scripts/cmux-msg.sh surface:<chief-surface> "<summary>"
+ft msg send chief -b "From qa-<task-id>: <summary>"
+```
+
+Fall back to the cmux wrapper only if ft msg is not delivering for you:
+
+```sh
+CMUX_MSG_FROM=qa-<task-id> bash .agents/skills/chief/scripts/cmux-msg.sh <chief-tab-or-surface> "<summary>"
 ```
 
 Then stop. The chief files follow-ups and decides what merges.

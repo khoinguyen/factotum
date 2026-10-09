@@ -234,7 +234,21 @@ When a just-merged feature would help your own work, don't keep running a stale 
   with a builder/reviewer pair mid-flight (they would keep messaging the dead `chief` surface); wait,
   or tell both agents the new chief ref. Open a new cmux surface, spawn the successor
   `opencode --prompt "load the chief skill; you are chief; read ft memory get art-y7p3u3t3mf and
-  continue the loop"`, verify it can receive over ft msg, then have it kill your session.
+  continue the loop"`, verify it can receive over ft msg, then have it kill your session and tear
+  down your leftovers (next bullet).
+- **Tear down the retired chief after reincarnating.** Killing the outgoing chief's session PID is
+  not enough: two leftovers survive it. (1) The retired session's `ft msg agent claim --actor chief`
+  receiver is a child of the dead session, so it reparents to PID 1 and keeps long-polling
+  `actor:chief` — two receivers on one actor, and the orphan steals the successor's messages.
+  (2) The retired chief's surface (its login shell) lingers. Run this right after killing the
+  outgoing session, with the retired chief's `surface:N` ref (from `cmux identify`/`cmux tree --all`):
+
+  ```sh
+  .agents/skills/chief/scripts/reincarnate-teardown.sh <retired-chief-surface-ref>
+  ```
+
+  The helper kills only the orphaned receiver (`-P 1`; the successor's own receiver has a live
+  parent) and closes the retired chief's surface with `close-surface --workspace <ws> --surface <ref>`.
 - **Reincarnate immediately** when a just-merged change is a new *skill* or agent *plugin/extension*
   your running opencode/pi session cannot load at runtime (same quiesce-and-hand-off procedure).
 

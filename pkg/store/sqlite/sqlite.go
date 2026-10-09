@@ -323,14 +323,17 @@ func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
 		}
 	}
 	// An in-memory database must live on one connection, or each pool
-	// connection would see an empty schema. A file database gets a busy
-	// timeout and immediate transactions, so a claim waits for a concurrent
-	// writer instead of failing with SQLITE_BUSY.
+	// connection would see an empty schema. A file database runs in WAL mode
+	// with a busy timeout and immediate transactions: WAL lets a reader (the
+	// dashboard) read the last committed snapshot while a writer (a CLI command
+	// or an agent) holds the write lock, instead of failing SQLITE_BUSY; the
+	// busy timeout makes a writer wait for a concurrent writer, and immediate
+	// transactions take the write lock up front rather than mid-transaction.
 	var dsn string
 	if path == ":memory:" {
 		dsn = "file::memory:"
 	} else {
-		dsn = "file:" + path + "?_pragma=busy_timeout(5000)&_txlock=immediate"
+		dsn = "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -374,7 +377,7 @@ func (b *Backend) Migrate(ctx context.Context) error {
 		return fmt.Errorf("%w: database schema v%d is older than this binary's v%d; refusing to migrate it automatically. A stray or branch build must not forward-migrate a database it does not own. Re-run with `--store-opt migrate=yes` to consent (the file is backed up first)", core.ErrInvalid, version, currentSchemaVersion)
 	}
 	if existing {
-		backupPath, err := b.backup(version)
+		backupPath, err := b.backup(ctx, version)
 		if err != nil {
 			return fmt.Errorf("backup before migration: %w", err)
 		}
@@ -428,9 +431,15 @@ func (b *Backend) applyMigration(ctx context.Context, step migration) error {
 // backup copies the database file next to itself before a migration and keeps
 // the most recent backupRetention copies. It returns the backup path ("" when
 // there is nothing to back up).
-func (b *Backend) backup(fromVersion int) (string, error) {
+func (b *Backend) backup(ctx context.Context, fromVersion int) (string, error) {
 	if b.path == "" || b.path == ":memory:" {
 		return "", nil
+	}
+	// Fold any WAL frames into the main file first, so the raw copy is a
+	// complete snapshot; a WAL-mode database keeps recent commits in the -wal
+	// sidecar, which a plain file copy would miss.
+	if _, err := b.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return "", fmt.Errorf("checkpoint before backup: %w", err)
 	}
 	data, err := os.ReadFile(b.path)
 	if err != nil {

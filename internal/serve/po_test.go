@@ -214,6 +214,11 @@ func TestTasksGroupedByOriginEdge(t *testing.T) {
 	if group.IdeaTitle != idea.Title {
 		t.Fatalf("group title = %q, want %q", group.IdeaTitle, idea.Title)
 	}
+	// The parent idea/bug row carries its own status chip, so the group must
+	// expose the idea rollup state (its promoted task is in progress).
+	if group.IdeaState != "active" {
+		t.Fatalf("group idea state = %q, want %q", group.IdeaState, "active")
+	}
 	if !hasTask(group.Tasks, promoted.ID) {
 		t.Fatalf("group tasks = %v, want promoted %s", taskIDs(group.Tasks), promoted.ID)
 	}
@@ -260,6 +265,11 @@ func TestWaitingTasksGroupedByOriginEdge(t *testing.T) {
 	group, ok := findGroup(page.WaitingGroups, idea.ID)
 	if !ok {
 		t.Fatalf("WaitingGroups = %v, want a group for %s", groupIDs(page.WaitingGroups), idea.ID)
+	}
+	// A blocked/waiting child makes the parent idea read "blocked" too, so the
+	// parent row in the Waiting/blocked column is not ambiguous.
+	if group.IdeaState != "blocked" {
+		t.Fatalf("group idea state = %q, want %q", group.IdeaState, "blocked")
 	}
 	waiting, ok := findTask(group.Tasks, target.ID)
 	if !ok {

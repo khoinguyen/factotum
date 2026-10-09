@@ -453,11 +453,13 @@ type ideaView struct {
 	Artifacts   []artifactView  `json:"artifacts,omitempty"`
 }
 
-// taskGroup is a set of tasks sharing an origin idea. Ungrouped marks the bucket
-// for tasks with no origin idea.
+// taskGroup is a set of tasks sharing an origin idea. IdeaState is the origin
+// idea's rollup state, shown as the parent row's status chip. Ungrouped marks
+// the bucket for tasks with no origin idea.
 type taskGroup struct {
 	IdeaID    core.TicketID `json:"idea_id,omitempty"`
 	IdeaTitle string        `json:"idea_title,omitempty"`
+	IdeaState string        `json:"idea_state,omitempty"`
 	Ungrouped bool          `json:"ungrouped,omitempty"`
 	Tasks     []taskView    `json:"tasks"`
 }
@@ -678,15 +680,16 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		}
 	}
 
-	page.InFlightGroups = groupByOrigin(page.InFlight)
-	page.WaitingGroups = groupByOrigin(page.Waiting)
-
+	// Roll each idea up once, then reuse its state for both the ideas board and
+	// the status chip on the idea/bug parent row of each work-board group.
+	ideaStates := make(map[core.TicketID]string)
 	for _, id := range vs.ids {
 		task := vs.byID[id]
 		if !task.Kind.CapturedByHuman() {
 			continue
 		}
 		idea := s.rollupIdea(task, vs)
+		ideaStates[id] = idea.State
 		switch idea.State {
 		case "blocked":
 			page.BlockedIdeas = append(page.BlockedIdeas, idea)
@@ -698,6 +701,9 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 			page.CapturedIdeas = append(page.CapturedIdeas, idea)
 		}
 	}
+
+	page.InFlightGroups = groupByOrigin(page.InFlight, ideaStates)
+	page.WaitingGroups = groupByOrigin(page.Waiting, ideaStates)
 
 	for _, cycle := range vs.cycles {
 		parts := make([]string, 0, len(cycle))
@@ -899,14 +905,20 @@ func firstIdeaDep(task core.Ticket, byID map[core.TicketID]core.Ticket) (core.Ti
 }
 
 // groupByOrigin groups tasks under the idea they were promoted from, with the
-// ungrouped bucket last. Groups are ordered deterministically by idea id.
-func groupByOrigin(tasks []taskView) []taskGroup {
+// ungrouped bucket last. ideaStates carries each origin idea's rollup state for
+// the parent row's status chip. Groups are ordered deterministically by idea id.
+func groupByOrigin(tasks []taskView, ideaStates map[core.TicketID]string) []taskGroup {
 	order := make([]core.TicketID, 0)
 	byIdea := make(map[core.TicketID]*taskGroup)
 	for _, task := range tasks {
 		group, ok := byIdea[task.Origin]
 		if !ok {
-			group = &taskGroup{IdeaID: task.Origin, IdeaTitle: task.OriginTitle, Ungrouped: task.Origin == ""}
+			group = &taskGroup{
+				IdeaID:    task.Origin,
+				IdeaTitle: task.OriginTitle,
+				IdeaState: ideaStates[task.Origin],
+				Ungrouped: task.Origin == "",
+			}
 			byIdea[task.Origin] = group
 			order = append(order, task.Origin)
 		}

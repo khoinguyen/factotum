@@ -49,6 +49,9 @@ function TaskGroupBlock({ group }: { group: TaskGroup }) {
           <Chip label="ungrouped" toneKey="capture" />
         ) : (
           <>
+            {group.idea_state ? (
+              <Chip label={group.idea_state} toneKey={group.idea_state} />
+            ) : null}
             <AppLink
               href={`/idea/${group.idea_id}`}
               className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground hover:underline"

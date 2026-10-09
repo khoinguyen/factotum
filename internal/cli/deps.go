@@ -216,8 +216,10 @@ func runBackends(getenv func(string) string) *registry.Registry[IsolationBackend
 // no project policy override at the resolved path, so a deny-all run is not
 // silent. The model provider endpoint is the one allowed exception: ft attaches
 // it from run.provider + run.credential_env, so a configured run still reaches
-// the model while every other host is denied. Without that config the message
-// names what makes the model reachable.
+// the model while every other host is denied. The message names the host that
+// provider's profile authorizes (falling back to the provider id when ft has no
+// checked-in mapping); without that config it names what makes the model
+// reachable.
 func warnOpenShellEgress(errOut io.Writer, cfg config.Run) {
 	if errOut == nil || cfg.PolicyPath == "" {
 		return
@@ -226,6 +228,10 @@ func warnOpenShellEgress(errOut io.Writer, cfg config.Run) {
 		return
 	}
 	if cfg.Provider != "" && cfg.CredentialEnvVar != "" {
+		if host := openshell.ProviderHost(cfg.Provider); host != "" {
+			_, _ = fmt.Fprintf(errOut, "ft: warning: openshell: no project policy at %s; egress is deny-all except the model provider endpoint %s (provider %s)\n", cfg.PolicyPath, host, cfg.Provider)
+			return
+		}
 		_, _ = fmt.Fprintf(errOut, "ft: warning: openshell: no project policy at %s; egress is deny-all except the %s model provider endpoint\n", cfg.PolicyPath, cfg.Provider)
 		return
 	}

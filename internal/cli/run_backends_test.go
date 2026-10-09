@@ -308,9 +308,9 @@ func TestPrepareRunResolvesPolicyFromCustomConfigLocation(t *testing.T) {
 // TestOpenShellFactoryWarnsWhenProjectPolicyMissing pins that selecting the
 // OpenShell backend without a project policy surfaces a clear message instead
 // of silently denying all egress. The model provider endpoint is the one
-// exception: ft attaches it from run.provider, so the warning names it when a
-// provider is configured and otherwise points at the config that makes the
-// model reachable.
+// exception: ft attaches it from run.provider, so the warning names the host
+// that provider's profile authorizes when a provider is configured and
+// otherwise points at the config that makes the model reachable.
 func TestOpenShellFactoryWarnsWhenProjectPolicyMissing(t *testing.T) {
 	factory, err := runBackends(func(string) string { return "" }).MustLookup("openshell")
 	if err != nil {
@@ -330,6 +330,9 @@ func TestOpenShellFactoryWarnsWhenProjectPolicyMissing(t *testing.T) {
 		if !strings.Contains(strings.ToLower(got), "deny-all") {
 			t.Fatalf("warning = %q, want it to say egress is deny-all", got)
 		}
+		if !strings.Contains(got, "openrouter.ai") {
+			t.Fatalf("warning = %q, want it to name the provider host openrouter.ai", got)
+		}
 		if !strings.Contains(got, "openrouter") {
 			t.Fatalf("warning = %q, want it to name the configured provider", got)
 		}
@@ -341,6 +344,9 @@ func TestOpenShellFactoryWarnsWhenProjectPolicyMissing(t *testing.T) {
 			t.Fatalf("build openshell backend: %v", err)
 		}
 		got := errBuf.String()
+		if !strings.Contains(got, policyPath) {
+			t.Fatalf("warning = %q, want it to name %q", got, policyPath)
+		}
 		if !strings.Contains(got, "run.provider") || !strings.Contains(got, "credential_env") {
 			t.Fatalf("warning = %q, want it to point at run.provider/credential_env", got)
 		}

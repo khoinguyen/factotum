@@ -186,7 +186,7 @@ run = "bash scripts/smoke-quickstart.sh"
 description = "Install the git pre-commit hook"
 run = """
 mkdir -p .git/hooks
-printf '#!/bin/sh\nset -e\nmise run fmt-check\nmise run lint\nmise run test\n' > .git/hooks/pre-commit
+printf '#!/bin/sh\nset -e\nmise run fmt-check\nmise run lint\nmise run test\nmise run test:scripts\n' > .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 echo "installed .git/hooks/pre-commit"
 """

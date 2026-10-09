@@ -49,3 +49,33 @@ func TestCIRunsChiefSkillScriptTests(t *testing.T) {
 		t.Errorf("%q must run .agents/skills/chief/scripts/*_test.sh, got:\n%s", task, runner.Run)
 	}
 }
+
+// TestPreCommitRunsChiefSkillScriptTests guards the git pre-commit hook that
+// `mise run hooks` installs: it must run `mise run test:scripts`, so a chief
+// script regression blocks a commit instead of slipping through to `mise run
+// ci`. The hook file itself is uncommitted, so the task that writes it is the
+// thing to guard.
+func TestPreCommitRunsChiefSkillScriptTests(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) failed")
+	}
+	root := filepath.Join(filepath.Dir(file), "..", "..")
+
+	var cfg struct {
+		Tasks map[string]struct {
+			Run string `toml:"run"`
+		} `toml:"tasks"`
+	}
+	if _, err := toml.DecodeFile(filepath.Join(root, "mise.toml"), &cfg); err != nil {
+		t.Fatalf("parse mise.toml: %v", err)
+	}
+
+	hooks, ok := cfg.Tasks["hooks"]
+	if !ok {
+		t.Fatal("mise.toml has no hooks task")
+	}
+	if !strings.Contains(hooks.Run, "mise run test:scripts") {
+		t.Errorf("the installed pre-commit hook must run `mise run test:scripts`, got:\n%s", hooks.Run)
+	}
+}

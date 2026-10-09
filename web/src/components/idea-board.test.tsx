@@ -78,6 +78,12 @@ test("the counts carry a hover tooltip spelling them out", () => {
   expect(tooltip.textContent).toContain("0 blocked")
   expect(tooltip.className).toContain("opacity-0")
   expect(tooltip.className).toContain("group-hover:opacity-100")
+
+  // Keyboard focus must reveal the tooltip too. The counts span holds no
+  // focusable element, so the focus scope has to be the card link itself.
+  expect(tooltip.className).toContain("group-focus-within/card:opacity-100")
+  const card = screen.getByText("Spark of a plan").closest("a")!
+  expect(card.className).toContain("group/card")
 })
 
 // Khoi 2026-10-08: tighten the board - card padding, the card-to-column-edge

@@ -58,6 +58,28 @@ func TestTaskGetDistinguishesCaptureEdgesFromDependencies(t *testing.T) {
 	}
 }
 
+// TestTaskGetCrossProjectCaptureIsOrigin pins that ft task get resolves a
+// capture dep in another project as the task's origin, not as a grouping edge,
+// so it agrees with the serve /api/task detail on the same task. Provenance does
+// not depend on the reader's project scope.
+func TestTaskGetCrossProjectCaptureIsOrigin(t *testing.T) {
+	r := newRunner(t)
+	mineID := firstField(t, r.run("project", "create", "Acme"))
+	otherID := firstField(t, r.run("project", "create", "Other"))
+
+	foreign := firstField(t, r.run("task", "create", "-p", otherID, "-k", "idea", "-t", "foreign idea"))
+	taskID := firstField(t, r.run("task", "create", "-p", mineID, "-t", "task in mine"))
+	r.run("task", "dep", "create", taskID, foreign)
+
+	got := r.run("task", "get", taskID)
+	if !strings.Contains(got, "origin: "+foreign+" ") {
+		t.Fatalf("task get should show the cross-project origin idea:\n%s", got)
+	}
+	if strings.Contains(fieldLine(got, "grouped_under"), foreign) {
+		t.Fatalf("grouped_under must not repeat the origin:\n%s", got)
+	}
+}
+
 // fieldLine returns the value of the first "key: value" line, or "" when the
 // line is absent.
 func fieldLine(out, key string) string {

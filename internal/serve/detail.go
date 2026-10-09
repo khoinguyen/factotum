@@ -131,7 +131,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 	}
 	page := taskPageJSON{taskDetail: *s.taskDetailOf(r.Context(), *task, vs)}
 	if o, ok := vs.origin[task.ID]; ok {
-		link := taskLinkOf(vs.views[o])
+		link := taskRefLink(&o)
 		page.Origin = &link
 	}
 	s.writeJSON(w, page)
@@ -222,7 +222,7 @@ func (s *Server) loadViews(r *http.Request, projectID core.ProjectID) (viewSet, 
 	if err != nil {
 		return viewSet{}, err
 	}
-	return s.buildViews(snapshot, artifacts), nil
+	return s.buildViews(r.Context(), snapshot, artifacts), nil
 }
 
 // taskDetailOf projects one task into its full detail, resolving links through
@@ -245,13 +245,13 @@ func (s *Server) taskDetailOf(ctx context.Context, task core.Ticket, vs viewSet)
 		CreatedAt:    task.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:    task.UpdatedAt.UTC().Format(time.RFC3339),
 	}
-	originID, hasOrigin := vs.origin[task.ID]
+	origin, hasOrigin := vs.origin[task.ID]
 	for _, dep := range task.Deps {
 		link, capture := s.depEdge(ctx, dep, vs)
 		if capture {
 			// The origin is rendered on its own row; the rest of the capture
 			// edges are grouping provenance.
-			if hasOrigin && dep == originID {
+			if hasOrigin && dep == origin.ID {
 				continue
 			}
 			detail.GroupedUnder = append(detail.GroupedUnder, link)

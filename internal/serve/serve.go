@@ -602,7 +602,7 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		return nil, err
 	}
 
-	vs := s.buildViews(snapshot, artifacts)
+	vs := s.buildViews(ctx, snapshot, artifacts)
 	page := &pageData{
 		Title:    s.title(snapshot),
 		Project:  s.projectLabel(snapshot),
@@ -714,7 +714,7 @@ type viewSet struct {
 	ids             []core.TicketID
 	byID            map[core.TicketID]core.Ticket
 	views           map[core.TicketID]taskView
-	origin          map[core.TicketID]core.TicketID
+	origin          map[core.TicketID]core.Ticket
 	artifactsByTask map[core.TicketID][]artifactView
 	waves           map[core.TicketID]int
 	actors          map[core.ActorID]string
@@ -725,7 +725,7 @@ type viewSet struct {
 
 // buildViews projects a snapshot into the ids, readiness-annotated task views,
 // origin edges, and task-attached artifacts the pages render.
-func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) viewSet {
+func (s *Server) buildViews(ctx context.Context, snapshot *app.Snapshot, artifacts []*core.Artifact) viewSet {
 	ids := snapshot.Graph.IDs()
 	byID := make(map[core.TicketID]core.Ticket, len(snapshot.Tasks))
 	for _, task := range snapshot.Tasks {
@@ -744,7 +744,7 @@ func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) 
 		ids:      ids,
 		byID:     byID,
 		views:    make(map[core.TicketID]taskView, len(ids)),
-		origin:   make(map[core.TicketID]core.TicketID, len(ids)),
+		origin:   make(map[core.TicketID]core.Ticket, len(ids)),
 		waves:    waves,
 		actors:   make(map[core.ActorID]string, len(snapshot.Actors)),
 		agentSet: idSet(snapshot.Ready.Agent),
@@ -754,13 +754,16 @@ func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) 
 	for id, actor := range snapshot.Actors {
 		vs.actors[id] = actor.Name
 	}
-	// The origin edge is each task's first dependency that is an idea; promotion
-	// writes exactly that edge, so it is what groups tasks under ideas.
+	// The origin edge is each task's first dependency that is a capture
+	// (idea or bug); promotion writes exactly that edge, so it is what groups
+	// tasks under their capture. The rule matches pkg/app's Origin: a capture
+	// the loaded snapshot omitted - a cross-project dep on a scoped server -
+	// is fetched so scope does not change the edge.
 	for _, id := range ids {
 		if byID[id].Kind.CapturedByHuman() {
 			continue
 		}
-		if o, ok := firstIdeaDep(byID[id], byID); ok {
+		if o, ok := s.originTicket(ctx, byID[id], byID); ok {
 			vs.origin[id] = o
 		}
 	}
@@ -786,10 +789,8 @@ func (s *Server) buildViews(snapshot *app.Snapshot, artifacts []*core.Artifact) 
 			}
 		}
 		if o, ok := vs.origin[id]; ok {
-			view.Origin = o
-			if oTask, ok := byID[o]; ok {
-				view.OriginTitle = oTask.Title
-			}
+			view.Origin = o.ID
+			view.OriginTitle = o.Title
 		}
 		vs.views[id] = view
 	}
@@ -816,7 +817,7 @@ func (s *Server) rollupIdea(idea core.Ticket, vs viewSet) ideaView {
 	}
 	var promoted []core.TicketID
 	for _, id := range vs.ids {
-		if vs.origin[id] == idea.ID {
+		if vs.origin[id].ID == idea.ID {
 			promoted = append(promoted, id)
 		}
 	}
@@ -871,15 +872,28 @@ func ideaRollup(idea ideaView) (state, chip string) {
 	}
 }
 
-// firstIdeaDep returns the first dependency of task that is an idea, matching
-// pkg/app's origin rule. It is skipped when the dependency dangles.
-func firstIdeaDep(task core.Ticket, byID map[core.TicketID]core.Ticket) (core.TicketID, bool) {
+// originTicket resolves a task's origin: the first dependency that is a human
+// capture (idea or bug). It matches pkg/app's Origin rule so every surface agrees
+// - a capture resolves whether or not the loaded snapshot carries it, and only a
+// dangling dependency is skipped. The scoped snapshot omits other projects'
+// captures, so fetching on a miss keeps the edge scope-independent.
+func (s *Server) originTicket(ctx context.Context, task core.Ticket, byID map[core.TicketID]core.Ticket) (core.Ticket, bool) {
 	for _, dep := range task.Deps {
-		if depTask, ok := byID[dep]; ok && depTask.Kind.CapturedByHuman() {
-			return dep, true
+		if depTask, ok := byID[dep]; ok {
+			if depTask.Kind.CapturedByHuman() {
+				return depTask, true
+			}
+			continue
+		}
+		depTask, err := s.options.Backend.Tickets().Get(ctx, dep)
+		if err != nil {
+			continue
+		}
+		if depTask.Kind.CapturedByHuman() {
+			return *depTask, true
 		}
 	}
-	return "", false
+	return core.Ticket{}, false
 }
 
 // groupByOrigin groups tasks under the idea they were promoted from, with the

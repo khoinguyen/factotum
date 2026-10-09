@@ -379,34 +379,62 @@ func TestTopoSortIsLexicographicallyMinimal(t *testing.T) {
 	}
 }
 
-// TestTopoSortWideGraphBudget guards against the quadratic queue rescan that
-// made graph render --format agent superlinear (t-lvlqecjqgm): the old
-// implementation sorted the whole remaining queue on every pop, which is
-// O(V^2 log V) when most tasks are ready at once. A wide graph is the worst
-// case. The ceiling sits far above the O((V+E) log V) cost and far below the
-// old quadratic cost at this scale; see BenchmarkTopoSort.
-func TestTopoSortWideGraphBudget(t *testing.T) {
-	const (
-		n       = 20000
-		ceiling = 250 * time.Millisecond
-	)
+// wideGraph builds n tasks with no dependencies, so every task is ready at
+// once: the worst case for a frontier rescan.
+func wideGraph(t *testing.T, n int) *Graph {
+	t.Helper()
 	tasks := make([]core.Ticket, n)
 	for i := range tasks {
 		tasks[i] = task(fmt.Sprintf("t-%06d", i), core.KindTask, core.StatusTodo)
 	}
-	g := mustGraph(t, tasks...)
+	return mustGraph(t, tasks...)
+}
 
-	start := time.Now()
-	order, err := g.TopoSort()
+// topoSortCeiling is the CPU-time budget for TopoSort on the wide graph. At
+// 20000 tasks a correct run is ~20ms of CPU under -race, while the pre-73e93ab
+// quadratic rescan is several seconds, so the ceiling sits far above the
+// O((V+E) log V) cost and far below the regression it guards against; see
+// BenchmarkTopoSort.
+const topoSortCeiling = 250 * time.Millisecond
+
+// TestTopoSortWideGraphBudget guards against the quadratic queue rescan that
+// made graph render --format agent superlinear (t-lvlqecjqgm): the old
+// implementation sorted the whole remaining queue on every pop, which is
+// O(V^2 log V) when most tasks are ready at once. A wide graph is the worst
+// case.
+//
+// The budget measures process CPU time, not wall time. `mise run ci` runs
+// `cover` concurrently with `test`, and on a contended hosted runner that load
+// inflated wall-clock TopoSort past 500ms against this ceiling while the work
+// itself was unchanged (t-xfrpkkt4mx). CPU time is the invariant under load,
+// and it still catches the quadratic rescan, which burns seconds of CPU.
+func TestTopoSortWideGraphBudget(t *testing.T) {
+	const n = 20000
+	g := wideGraph(t, n)
+
+	var (
+		order []core.TicketID
+		err   error
+	)
+	elapsed := measureCPU(func() { order, err = g.TopoSort() })
 	if err != nil {
 		t.Fatalf("TopoSort() error = %v", err)
 	}
 	if len(order) != n {
 		t.Fatalf("TopoSort() = %d nodes, want %d", len(order), n)
 	}
-	if elapsed := time.Since(start); elapsed > ceiling {
-		t.Fatalf("TopoSort() on %d tasks took %v, over the %v ceiling", n, elapsed, ceiling)
+	if elapsed > topoSortCeiling {
+		t.Fatalf("TopoSort() on %d tasks used %v of CPU, over the %v ceiling", n, elapsed, topoSortCeiling)
 	}
+}
+
+// measureCPU returns the process CPU time fn consumed. CPU time, not wall
+// time, is the budget's invariant: it does not inflate when other processes
+// (a concurrent `cover` run) compete for the CPU.
+func measureCPU(fn func()) time.Duration {
+	start := processCPUTime()
+	fn()
+	return processCPUTime() - start
 }
 
 func BenchmarkTopoSort(b *testing.B) {

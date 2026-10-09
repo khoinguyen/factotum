@@ -13,12 +13,26 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
       <span className="truncate text-sm font-medium">{idea.title}</span>
       <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
         <Chip label={idea.state} toneKey={idea.state} />
-        <span className="min-w-0 truncate">
-          {idea.total} task{idea.total === 1 ? "" : "s"} · {idea.done} done ·{" "}
-          {idea.active} active · {idea.blocked} blocked
-          {artifacts > 0
-            ? ` · ${artifacts} artifact${artifacts === 1 ? "" : "s"}`
-            : ""}
+        <span className="group relative flex items-center gap-1 tabular-nums">
+          <span data-count="done" className="font-medium text-emerald-700 dark:text-emerald-300">
+            {idea.done}
+          </span>
+          <span data-count="active" className="font-medium text-sky-700 dark:text-sky-300">
+            {idea.active}
+          </span>
+          <span data-count="blocked" className="font-medium text-red-700 dark:text-red-300">
+            {idea.blocked}
+          </span>
+          <span className="text-muted-foreground">of {idea.total}</span>
+          <span
+            role="tooltip"
+            className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-popover-foreground opacity-0 shadow-md transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+          >
+            {idea.done} done · {idea.active} active · {idea.blocked} blocked
+            {artifacts > 0
+              ? ` · ${artifacts} artifact${artifacts === 1 ? "" : "s"}`
+              : ""}
+          </span>
         </span>
       </span>
     </AppLink>

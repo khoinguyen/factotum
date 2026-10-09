@@ -77,3 +77,27 @@ test("the work board nests grouped tasks under their origin", () => {
   expect(header.className).toContain("whitespace-nowrap")
   expect(header.className).toContain("shrink-0")
 })
+
+// Every work-board row carries a status chip, including the parent idea/bug
+// row: without one, a parent in the Waiting/blocked column reads ambiguously.
+test("the group header renders the origin idea's status chip", () => {
+  render(
+    <Kanban
+      columns={[
+        {
+          name: "Waiting / blocked",
+          count: 1,
+          groups: [
+            {
+              idea_id: "t-d2tmr544nk",
+              idea_title: "Grouped idea",
+              idea_state: "blocked",
+              tasks: [childTask],
+            },
+          ],
+        },
+      ]}
+    />,
+  )
+  expect(screen.getByText("blocked")).toBeTruthy()
+})

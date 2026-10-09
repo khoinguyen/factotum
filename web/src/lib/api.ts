@@ -55,6 +55,7 @@ export type IdeaView = {
 export type TaskGroup = {
   idea_id?: string
   idea_title?: string
+  idea_state?: string
   ungrouped?: boolean
   tasks: TaskView[]
 }

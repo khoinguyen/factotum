@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: mise run ci
+    runs-on: ubuntu-latest
+    # mise run ci downloads Go modules, pnpm packages, and the Playwright
+    # browser. The hosted Ubuntu runner provides network access and passwordless
+    # sudo, which `playwright install --with-deps` needs to apt-install Chromium's
+    # OS libraries.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install mise and pinned tools
+        uses: jdx/mise-action@v2
+
+      - name: Resolve Playwright version
+        id: playwright
+        run: |
+          version="$(scripts/playwright-version.sh)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Playwright ${version}"
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          # Keyed on the resolved Playwright version: a bump misses the cache and
+          # re-downloads Chromium once; every other run restores it and skips the
+          # ~170MB download.
+          key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+          restore-keys: |
+            ms-playwright-${{ runner.os }}-
+
+      - name: Run the full check
+        run: mise run ci

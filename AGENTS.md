@@ -135,6 +135,27 @@ longer changes the installed CLI. To update the installed CLI, run `mise run ins
 Both stamp the git SHA into `ft version` (`git describe --tags --always --dirty`), so an installed
 binary is identifiable.
 
+## CI (GitHub Actions)
+
+`.github/workflows/ci.yml` runs on every pull request and on pushes to `main`, on a
+GitHub-hosted `ubuntu-latest` runner. It installs the mise-pinned tools with `jdx/mise-action`, then
+runs `mise run ci`.
+
+`mise run ci` runs the real-layout browser test (`web-test-browser`), which runs
+`playwright install --with-deps chromium` — a ~170MB download plus OS libraries. The workflow
+restores `~/.cache/ms-playwright` with `actions/cache`, keyed on the resolved Playwright version
+(`scripts/playwright-version.sh` reads it from `web/pnpm-lock.yaml`) as
+`ms-playwright-<os>-<version>`, so a fresh runner re-downloads Chromium only when Playwright is
+bumped; every other run restores the cache.
+
+The runner must provide **network access** (Go modules, pnpm packages, the Playwright download) and
+**passwordless sudo** (`--with-deps` apt-installs Chromium's system libraries). GitHub-hosted
+`ubuntu-latest` provides both; a self-hosted runner would need them granted explicitly.
+
+The shell tests that guard this (`scripts/ci-workflow_test.sh` for the cache/key contract,
+`scripts/playwright-version_test.sh` for the version extraction) run under
+`mise run test:scripts`, which `mise run ci` depends on.
+
 ## Architecture
 
 The codebase is hexagonal (ports and adapters) with everything pluggable from day one.

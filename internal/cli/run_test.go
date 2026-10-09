@@ -122,6 +122,39 @@ func TestRunInjectsHubEnvFromConfig(t *testing.T) {
 	}
 }
 
+// TestRunWarnsWhenHubTokenMissing proves `ft run` surfaces a half-configured hub
+// (a URL with no token) instead of silently launching a receiver that fails
+// every message. The transport is token-gated, so the pair is required; the
+// incomplete hub is dropped from the harness env, and the warning says so.
+func TestRunWarnsWhenHubTokenMissing(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(key string) string {
+		if key == "FACTOTUM_MSG_URL" {
+			return "http://hub:8484"
+		}
+		return ""
+	}
+	_, taskID := runContext(t, r)
+	r.run("actor", "create", "--kind", "agent", "claude")
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	_, stderr := r.runSplit("run", taskID, "--actor", "claude", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !strings.Contains(stderr, "serve.token") || !strings.Contains(stderr, "serve.url") {
+		t.Fatalf("run stderr missing the hub-token warning:\n%s", stderr)
+	}
+	prepared := backend.Prepared()
+	if len(prepared) != 1 {
+		t.Fatalf("Prepare called %d times, want 1", len(prepared))
+	}
+	if _, ok := prepared[0].Env["FACTOTUM_MSG_URL"]; ok {
+		t.Errorf("harness env carried a hub URL with no token: %v", prepared[0].Env)
+	}
+}
+
 // TestRunCommandInteractiveOnTerminal pins `ft run`'s mode selection: on a
 // terminal a task run attaches the agent (the harness command requests a TTY);
 // --unattended or a non-terminal stays headless.
@@ -325,6 +358,43 @@ func TestRunCommandLoopDrivesToGoal(t *testing.T) {
 	}
 	if got := backend.Commands(); len(got) != 2 {
 		t.Fatalf("ran %d tasks, want 2", len(got))
+	}
+}
+
+// TestRunCommandLoopInjectsHubEnvFromConfig proves the `--goal` loop reads the
+// configured messaging hub (FACTOTUM_MSG_URL/FACTOTUM_SERVE_TOKEN) and hands it
+// to each launched task harness, exactly as the single-task path does, so a
+// remote receiver started by a goal run speaks the HTTP transport.
+func TestRunCommandLoopInjectsHubEnvFromConfig(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(key string) string {
+		switch key {
+		case "FACTOTUM_MSG_URL":
+			return "http://hub:8484"
+		case "FACTOTUM_SERVE_TOKEN":
+			return "tok"
+		}
+		return ""
+	}
+	_, _, goal := loopContext(t, r)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	r.run("run", "--goal", goal, "--actor", "claude", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+
+	prepared := backend.Prepared()
+	if len(prepared) == 0 {
+		t.Fatal("no harness prepared")
+	}
+	env := prepared[0].Env
+	if env["FACTOTUM_MSG_URL"] != "http://hub:8484" {
+		t.Errorf("harness env FACTOTUM_MSG_URL = %q, want the hub URL", env["FACTOTUM_MSG_URL"])
+	}
+	if env["FACTOTUM_SERVE_TOKEN"] != "tok" {
+		t.Errorf("harness env FACTOTUM_SERVE_TOKEN = %q, want the serve token", env["FACTOTUM_SERVE_TOKEN"])
 	}
 }
 

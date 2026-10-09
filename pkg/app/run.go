@@ -428,9 +428,11 @@ func captureFiles(ctx context.Context, backend isolation.IsolationBackend, h iso
 // rather than whatever project the checkout pins. When the run names an actor it
 // also installs the receiver identity (actor, task) a message plugin registers
 // with; a run with no actor has no receiver, so the plugin is not installed and
-// the session is unmanaged. A configured hub URL adds the URL and token that make
-// a launched remote receiver speak the token-gated HTTP transport; with no URL
-// the receiver falls back to the local ft store, so no hub env is set.
+// the session is unmanaged. A complete hub (URL and token) makes a launched
+// remote receiver speak the token-gated HTTP transport. A half-configured hub is
+// treated as no hub: the transport always requires the token, so injecting the
+// URL alone would only fail-close every message. With no complete hub the
+// receiver falls back to the local ft store, so no hub env is set.
 func runEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgURL, serveToken string) map[string]string {
 	if project.ID == "" {
 		return nil
@@ -443,11 +445,9 @@ func runEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgUR
 	if task.ID != "" {
 		env[harnesspkg.EnvTask] = string(task.ID)
 	}
-	if msgURL != "" {
+	if msgURL != "" && serveToken != "" {
 		env[harnesspkg.EnvMsgURL] = msgURL
-		if serveToken != "" {
-			env[harnesspkg.EnvServeToken] = serveToken
-		}
+		env[harnesspkg.EnvServeToken] = serveToken
 	}
 	return env
 }

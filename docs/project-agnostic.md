@@ -18,7 +18,7 @@ and defaults (`internal/config`, `pkg/store`), and prompts
 | 3 | `pkg/agent/command/command.go` (`ft prompt`) | "the Factotum task graph" names the maintainer's graph | **Fixed** — now "the project's task graph"; the instruction already names `req.Project` |
 | 4 | `internal/skills/content/ft.md` (`ft feedback`) | the feedback sink defaults to the `factotum` project | **Parameterized** — `--feedback-store` (default `factotum`, the tool's own maintainer project); a deployment points it at its own project through the machine `[projects.<id>]` registry |
 | 5 | `internal/config/write.go` templates | "Factotum config" | **Not an assumption** — names the tool, not a project |
-| 6 | `pkg/store/sqlite`, `pkg/store/jsonfile` defaults | `.factotum/factotum.db` / `.factotum/factotum.json` | **Not an assumption** — a tool-named fallback; the live path is each project's `[projects.<id>].db_path` |
+| 6 | `pkg/store/sqlite`, `pkg/store/jsonfile`, `pkg/store/jsondir` defaults | `.factotum/factotum.db` / `.factotum/factotum.json` / `.factotum/jsondir` | **Not an assumption** — a tool-named fallback; the live path is each project's `[projects.<id>].db_path` |
 | 7 | `.agents/skills/*` role skills | `mise run ci`, `/tmp/ft-<t>` worktrees, "Factotum" dashboard naming | **Out of scope** — harness role skills, not served by `ft`; each project commits its own copies with its own CI command. Recommended follow-up: make the build/CI command a project setting instead of a hardcoded `mise run ci` |
 
 ## Guard

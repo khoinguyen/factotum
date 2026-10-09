@@ -44,6 +44,7 @@ func TestWarnIncompleteHub(t *testing.T) {
 		want  bool
 	}{
 		{"url without token", "http://hub:8484", "", true},
+		{"url with blank token", "http://hub:8484", "   ", true},
 		{"url and token", "http://hub:8484", "tok", false},
 		{"token without url", "", "tok", false},
 		{"neither", "", "", false},

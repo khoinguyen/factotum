@@ -84,6 +84,7 @@ tech design. It records its findings on the origin item and exactly one tech-des
 ft groom review <session> --verdict approve -f review.md
 ft groom review <session> --verdict approve-with-changes -f review.md
 ft groom review <session> --verdict needs-rework -f review.md
+ft groom review -p <project> <session> --verdict needs-rework -f review.md   # another project's session
 ```
 
 A `needs-rework` verdict blocks the feature from build: `ft groom review` blocks the tasks the
@@ -181,7 +182,7 @@ ft idea create -p <project> -t "..." -b "..."                     # capture an i
 ft bug create -p <project> -t "..." -b "..."                      # capture a defect
 ft groom -p <project> --unattended --sandbox local --harness opencode --allow-host
 ft groom show <session> -p <project>                              # report, docs, produced tasks
-ft groom review <session> --verdict approve -f review.md          # needs-rework blocks the build
+ft groom review -p <project> <session> --verdict approve -f review.md   # needs-rework blocks the build
 ft graph render -p <project> -f agent                             # the DAG as text
 ft task next -p <project> --groomed --for <agent>                 # the buildable queue
 ft task create -p <project> -t "..." --groomed --acceptance "..." --dep <blocking-task>

@@ -17,6 +17,7 @@ import (
 
 // groomReviewOptions is the per-invocation configuration of `ft groom review`.
 type groomReviewOptions struct {
+	project  string
 	verdict  string
 	body     string
 	bodyFile string
@@ -34,12 +35,14 @@ func newGroomReviewCommand(deps *Deps) *cobra.Command {
 			"reviewer's findings are captured as a session artifact and a note on each origin item,\n" +
 			"and one tech-design verdict is stored on the session. A needs-rework verdict blocks the\n" +
 			"feature from build by blocking the tasks the session produced; a later approving review\n" +
-			"unblocks them.",
+			"unblocks them. Use --project to review another project's session, recorded in that\n" +
+			"project's store; without one the configured project is used.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return deps.runGroomReview(cmd, args[0], opts)
 		},
 	}
+	cmd.Flags().StringVarP(&opts.project, "project", "p", "", "another project's sessions (defaults to the configured project)")
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "tech-design verdict: "+verdictChoices())
 	cmd.Flags().StringVarP(&opts.body, "body", "b", "", "the reviewer's findings")
 	cmd.Flags().StringVarP(&opts.bodyFile, "body-file", "f", "", "read the reviewer's findings from a file")
@@ -57,28 +60,37 @@ func (d *Deps) runGroomReview(cmd *cobra.Command, sessionID string, opts groomRe
 		return usageError(cmd, "%v", err)
 	}
 
-	dataDir, err := projectDataDir(d.Config.Store)
+	resolved := d.resolveProject(opts.project)
+	target, err := d.openGroomTarget(ctx, resolved)
 	if err != nil {
 		return err
 	}
+	defer target.close()
+	dataDir := target.dataDir
 	session, err := groom.ReadSession(dataDir, sessionID)
 	if err != nil {
 		return err
 	}
+	if opts.project != "" && session.Project != "" && session.Project != string(resolved) {
+		return fmt.Errorf("grooming session %s belongs to project %s, not %s", session.ID, session.Project, resolved)
+	}
 	projectID := core.ProjectID(session.Project)
+	if projectID == "" {
+		projectID = resolved
+	}
 
 	if err := writeGroomOutput(groom.ReviewPath(dataDir, sessionID), body); err != nil {
 		return err
 	}
-	artifact, err := addGroomReviewArtifact(ctx, d.Artifacts, projectID, session, dataDir, body)
+	artifact, err := addGroomReviewArtifact(ctx, target.artifacts, projectID, session, dataDir, body)
 	if err != nil {
 		return err
 	}
-	if err := recordReviewFindings(ctx, d.Tasks, session, artifact.ID, verdict, body); err != nil {
+	if err := recordReviewFindings(ctx, target.tasks, session, artifact.ID, verdict, body); err != nil {
 		return err
 	}
 
-	blocked, err := d.applyReviewGate(ctx, session, verdict)
+	blocked, err := applyReviewGate(ctx, target.tasks, session, verdict)
 	if err != nil {
 		return err
 	}
@@ -171,7 +183,7 @@ func recordReviewFindings(ctx context.Context, tasks *app.TicketService, session
 // moved out of blocked (started or reopened) is blocked again rather than
 // reported blocked while the gate is silently open. A task someone else blocked
 // is never claimed, and a task since deleted is dropped.
-func (d *Deps) applyReviewGate(ctx context.Context, session groom.SessionRecord, verdict groom.ReviewVerdict) ([]string, error) {
+func applyReviewGate(ctx context.Context, tasks *app.TicketService, session groom.SessionRecord, verdict groom.ReviewVerdict) ([]string, error) {
 	previouslyBlocked := make(map[string]bool, len(session.Blocked))
 	for _, id := range session.Blocked {
 		previouslyBlocked[id] = true
@@ -180,7 +192,7 @@ func (d *Deps) applyReviewGate(ctx context.Context, session groom.SessionRecord,
 	if verdict.BlocksBuild() {
 		var blocked []string
 		for _, id := range session.Produced {
-			task, err := d.Tasks.Get(ctx, core.TicketID(id))
+			task, err := tasks.Get(ctx, core.TicketID(id))
 			if errors.Is(err, core.ErrNotFound) {
 				continue
 			}
@@ -189,7 +201,7 @@ func (d *Deps) applyReviewGate(ctx context.Context, session groom.SessionRecord,
 			}
 			switch task.Status {
 			case core.StatusTodo, core.StatusInProgress:
-				if _, err := d.Tasks.SetStatus(ctx, task.ID, core.StatusBlocked); err != nil {
+				if _, err := tasks.SetStatus(ctx, task.ID, core.StatusBlocked); err != nil {
 					return nil, err
 				}
 				blocked = append(blocked, id)
@@ -207,7 +219,7 @@ func (d *Deps) applyReviewGate(ctx context.Context, session groom.SessionRecord,
 	}
 
 	for _, id := range session.Blocked {
-		task, err := d.Tasks.Get(ctx, core.TicketID(id))
+		task, err := tasks.Get(ctx, core.TicketID(id))
 		if errors.Is(err, core.ErrNotFound) {
 			continue
 		}
@@ -217,7 +229,7 @@ func (d *Deps) applyReviewGate(ctx context.Context, session groom.SessionRecord,
 		if task.Status != core.StatusBlocked {
 			continue
 		}
-		if _, err := d.Tasks.SetStatus(ctx, task.ID, core.StatusTodo); err != nil {
+		if _, err := tasks.SetStatus(ctx, task.ID, core.StatusTodo); err != nil {
 			return nil, err
 		}
 	}

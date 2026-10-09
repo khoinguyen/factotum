@@ -15,7 +15,7 @@ export type KanbanColumn = {
 // separate ungrouped bucket last.
 export function Kanban({ columns }: { columns: KanbanColumn[] }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {columns.map((column) => (
         <Card key={column.name}>
           <CardHeader>
@@ -51,11 +51,11 @@ function TaskGroupBlock({ group }: { group: TaskGroup }) {
           <>
             <AppLink
               href={`/idea/${group.idea_id}`}
-              className="font-mono text-xs text-muted-foreground hover:underline"
+              className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground hover:underline"
             >
               {group.idea_id}
             </AppLink>
-            <span className="truncate text-sm font-medium">
+            <span className="min-w-0 truncate text-sm font-medium">
               {group.idea_title}
             </span>
           </>
@@ -63,7 +63,7 @@ function TaskGroupBlock({ group }: { group: TaskGroup }) {
       </div>
       <div className="flex flex-col gap-1">
         {group.tasks.map((task) => (
-          <TaskRow key={task.id} task={task} />
+          <TaskRow key={task.id} task={task} nested={!group.ungrouped} />
         ))}
       </div>
     </div>

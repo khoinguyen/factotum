@@ -12,6 +12,7 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
     >
       <span className="truncate text-sm font-medium">{idea.title}</span>
       <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+        <Chip label={idea.state} toneKey={idea.state} />
         <span className="min-w-0 truncate">
           {idea.total} task{idea.total === 1 ? "" : "s"} · {idea.done} done ·{" "}
           {idea.active} active · {idea.blocked} blocked
@@ -19,7 +20,6 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
             ? ` · ${artifacts} artifact${artifacts === 1 ? "" : "s"}`
             : ""}
         </span>
-        <Chip label={idea.state} toneKey={idea.state} className="ml-auto" />
       </span>
     </AppLink>
   )

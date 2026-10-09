@@ -218,6 +218,10 @@ sg scan -r sgconfig.yml                           # run project rules (if config
 - Any command with `-p/--project` falls back to the configured project (`project` in the project
   file, `default_project` in the machine file) when the flag is omitted. Mutating commands error
   when no default is configured; list/filter commands fall back to all.
+- A command that accepts `-p/--project` propagates that project to **every** downstream operation
+  it triggers, not only to reads: if it captures, reviews, mutates, or fans out, each of those runs
+  against the same project. Omitting `-p` just means the default resolver picks the project; it is
+  never a reason for a command to behave inconsistently with the operations it invokes.
 - Text output has one shape:
   - single-result commands print yaml-like `key: value` lines in
     `id/action/kind/title/status/project/repo` order, ending with `project` then `repo` (e.g.

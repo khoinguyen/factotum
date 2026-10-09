@@ -70,7 +70,7 @@ func (p *Probe) HasModel(ctx context.Context, ep doctor.Endpoint) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("embed: model %q not served", ep.Model)
+	return fmt.Errorf("%w: model %q not served", doctor.ErrModelNotServed, ep.Model)
 }
 
 // Resolvable reports whether the command's executable is on PATH. It inspects the

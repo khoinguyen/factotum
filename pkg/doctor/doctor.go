@@ -20,6 +20,13 @@ import (
 // check can then recommend fixing the key instead of the model.
 var ErrAuth = errors.New("endpoint rejected the credentials")
 
+// ErrModelNotServed marks a probe failure where the endpoint answered and listed
+// its models, but not the configured one. It is deliberately narrower than "the
+// model check failed": a rejected credential, a model-list route that is not
+// implemented (HTTP 404), or an unparseable list all leave the model unverified
+// and must not be reported or cached as a missing model.
+var ErrModelNotServed = errors.New("endpoint does not serve the model")
+
 // Status is a check's outcome. The report's exit is derived from these: any Fail
 // fails the report, and a caller may treat Warn as a failure with --strict.
 type Status string
@@ -250,28 +257,37 @@ func missingModelCheck(e Embed) Check {
 func embedModelCheck(ctx context.Context, probe Prober, e Embed) Check {
 	endpoint := Endpoint{Protocol: e.Provider, URL: e.Endpoint, APIKey: e.APIKey, Model: e.Model}
 	if err := probe.HasModel(ctx, endpoint); err != nil {
-		if errors.Is(err, ErrAuth) {
+		switch {
+		case errors.Is(err, ErrAuth):
 			return Check{
 				Name:           "embed.model",
 				Status:         StatusFail,
 				Summary:        fmt.Sprintf("endpoint %s rejected the credentials: %v", e.Endpoint, err),
 				Recommendation: "fix [embed] api_key (or the provider's key) so the endpoint accepts the request",
 			}
-		}
-		check := Check{
-			Name:           "embed.model",
-			Status:         StatusFail,
-			Summary:        fmt.Sprintf("model %q is not served by %s: %v", e.Model, e.Endpoint, err),
-			Recommendation: fmt.Sprintf("install or pull model %q on the configured endpoint", e.Model),
-		}
-		if e.Provider == "ollama" {
-			check.Action = &Action{
-				Kind:        ActionCommand,
-				Argv:        []string{"ollama", "pull", e.Model},
-				Description: "pull " + e.Model + " from the Ollama registry",
+		case errors.Is(err, ErrModelNotServed):
+			check := Check{
+				Name:           "embed.model",
+				Status:         StatusFail,
+				Summary:        fmt.Sprintf("model %q is not served by %s: %v", e.Model, e.Endpoint, err),
+				Recommendation: fmt.Sprintf("install or pull model %q on the configured endpoint", e.Model),
+			}
+			if e.Provider == "ollama" {
+				check.Action = &Action{
+					Kind:        ActionCommand,
+					Argv:        []string{"ollama", "pull", e.Model},
+					Description: "pull " + e.Model + " from the Ollama registry",
+				}
+			}
+			return check
+		default:
+			return Check{
+				Name:           "embed.model",
+				Status:         StatusFail,
+				Summary:        fmt.Sprintf("could not list models on %s: %v", e.Endpoint, err),
+				Recommendation: fmt.Sprintf("check that [embed] endpoint %s serves the model-list route (ollama /api/tags, openai /v1/models)", e.Endpoint),
 			}
 		}
-		return check
 	}
 	return Check{Name: "embed.model", Status: StatusOK, Summary: fmt.Sprintf("model %q is served by the endpoint", e.Model)}
 }

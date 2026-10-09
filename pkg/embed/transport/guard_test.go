@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/doctor"
@@ -51,7 +52,7 @@ func testEndpoint() doctor.Endpoint {
 
 func TestGuardNamesModelNotServedAndCaches(t *testing.T) {
 	inner := &countingEmbedder{err: embed.ErrEmptyResponse}
-	prober := &fakeProber{modelErr: errors.New("model not served")}
+	prober := &fakeProber{modelErr: fmt.Errorf("%w: model %q not served", doctor.ErrModelNotServed, "nomic-embed")}
 	guard := NewGuard(inner, prober, testEndpoint())
 
 	for i := 1; i <= 2; i++ {
@@ -84,6 +85,47 @@ func TestGuardNamesEndpointUnreachableAndCaches(t *testing.T) {
 	}
 	if prober.reachCalls != 1 || prober.modelCalls != 0 {
 		t.Fatalf("probe calls = (reach %d, model %d), want (1, 0)", prober.reachCalls, prober.modelCalls)
+	}
+}
+
+// A model probe that cannot attribute the failure to "model not served" - a
+// rejected credential (401/403), an endpoint that does not implement the
+// model-list route (404), a decode failure - must not be named as a missing
+// model and must not skip an embed that would still work.
+func TestGuardDoesNotMislabelUnattributableModelProbe(t *testing.T) {
+	tests := []struct {
+		name     string
+		modelErr error
+	}{
+		{"auth failure", fmt.Errorf("%w: 401 Unauthorized", doctor.ErrAuth)},
+		{"models route unimplemented", errors.New("embed: 404 Not Found: not found")},
+		{"decode failure", errors.New("embed: decode model list: unexpected EOF")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inner := &countingEmbedder{}
+			prober := &fakeProber{modelErr: tt.modelErr}
+			guard := NewGuard(inner, prober, testEndpoint())
+
+			for i := 1; i <= 2; i++ {
+				vectors, err := guard.Embed(context.Background(), embed.InputQuery, []string{"q"})
+				if err != nil {
+					t.Fatalf("call %d: a probe that cannot name the model failure must not skip the embed: %v", i, err)
+				}
+				if errors.Is(err, embed.ErrModelNotServed) {
+					t.Fatalf("call %d: probe failure %v was mislabeled as ErrModelNotServed", i, tt.modelErr)
+				}
+				if len(vectors) != 1 {
+					t.Fatalf("call %d: vectors = %v, want one", i, vectors)
+				}
+			}
+			if inner.calls != 2 {
+				t.Fatalf("inner embed calls = %d, want 2 (the unattributable probe must not be cached as fatal)", inner.calls)
+			}
+			if prober.modelCalls != 1 {
+				t.Fatalf("model probe calls = %d, want 1 (probed once per process)", prober.modelCalls)
+			}
+		})
 	}
 }
 

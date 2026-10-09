@@ -83,6 +83,29 @@ func TestProbeHasModelReportsAuthFailure(t *testing.T) {
 	}
 }
 
+// Only an endpoint that lists its models and omits the configured one is a
+// genuine model-not-served; that is what lets the guard skip the embed.
+func TestProbeHasModelMissingModelIsNotServed(t *testing.T) {
+	probe := NewProbe(&fakeDoer{body: `{"data":[{"id":"other"}]}`})
+	err := probe.HasModel(context.Background(), doctor.Endpoint{Protocol: "openai", URL: "http://x", Model: "m"})
+	if !errors.Is(err, doctor.ErrModelNotServed) {
+		t.Fatalf("a listed model list missing the model should be ErrModelNotServed, got %v", err)
+	}
+}
+
+// A non-2xx model list (for example a 404 when /v1/models is unimplemented) is
+// not the model being absent: it must not be classified as model-not-served.
+func TestProbeHasModelErrorStatusIsNotModelNotServed(t *testing.T) {
+	probe := NewProbe(&fakeDoer{status: http.StatusNotFound, body: "not found"})
+	err := probe.HasModel(context.Background(), doctor.Endpoint{Protocol: "openai", URL: "http://x", Model: "m"})
+	if err == nil {
+		t.Fatal("a non-2xx response should error")
+	}
+	if errors.Is(err, doctor.ErrModelNotServed) {
+		t.Fatalf("a 404 model list must not be ErrModelNotServed, got %v", err)
+	}
+}
+
 func TestProbeResolvable(t *testing.T) {
 	probe := newProbe(&fakeDoer{}, func(name string) (string, error) {
 		if name == "on-path" {

@@ -160,7 +160,7 @@ func TestDiagnoseMissingOllamaModelOffersPull(t *testing.T) {
 	report := Diagnose(context.Background(), Input{
 		Embed: healthyEmbed(),
 		Judge: Judge{Provider: "typesafe", Known: true, KeySet: true},
-		Probe: &fakeProbe{modelErr: errors.New("not found")},
+		Probe: &fakeProbe{modelErr: fmt.Errorf("%w: not found", ErrModelNotServed)},
 	})
 	c := findCheck(t, report, "embed.model")
 	if c.Status != StatusFail {
@@ -218,10 +218,31 @@ func TestDiagnoseMissingOpenAIModelHasNoPullAction(t *testing.T) {
 	report := Diagnose(context.Background(), Input{
 		Embed: embed,
 		Judge: Judge{Provider: "typesafe", Known: true, KeySet: true},
-		Probe: &fakeProbe{modelErr: errors.New("not found")},
+		Probe: &fakeProbe{modelErr: fmt.Errorf("%w: not found", ErrModelNotServed)},
 	})
 	if c := findCheck(t, report, "embed.model"); c.Status != StatusFail || c.Action != nil {
 		t.Fatalf("openai model check = %+v, want fail without an auto-fix", c)
+	}
+}
+
+// A model list that cannot be read (for example /v1/models returning 404) leaves
+// the model unverified. It must not be reported as the model being absent, and
+// must not offer a pull that cannot help.
+func TestDiagnoseUnreadableModelListIsNotModelNotServed(t *testing.T) {
+	report := Diagnose(context.Background(), Input{
+		Embed: healthyEmbed(),
+		Judge: Judge{Provider: "typesafe", Known: true, KeySet: true},
+		Probe: &fakeProbe{modelErr: errors.New("embed: 404 Not Found: not found")},
+	})
+	c := findCheck(t, report, "embed.model")
+	if c.Status != StatusFail {
+		t.Fatalf("embed.model = %+v, want fail", c)
+	}
+	if c.Action != nil {
+		t.Fatalf("an unreadable model list must not offer a pull action: %+v", c.Action)
+	}
+	if strings.Contains(c.Summary, "not served") {
+		t.Fatalf("a 404 model list must not be reported as model-not-served: %+v", c)
 	}
 }
 

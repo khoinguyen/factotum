@@ -4,3 +4,7 @@
 # Machine-local paths (database, checkouts) do NOT belong here.
 
 project = "factotum"
+
+# The command that verifies a change: build, lint, and test. The role skills
+# read it with `ft config get verify` instead of hardcoding a project's command.
+verify = "mise run ci"

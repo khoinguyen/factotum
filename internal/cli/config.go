@@ -11,6 +11,7 @@ type configView struct {
 	DefaultActor string `json:"default_actor,omitempty" yaml:"default_actor,omitempty"`
 	NoHints      bool   `json:"no_hints" yaml:"no_hints"`
 	TechStack    string `json:"tech_stack,omitempty" yaml:"tech_stack,omitempty"`
+	Verify       string `json:"verify,omitempty" yaml:"verify,omitempty"`
 	StoreBackend string `json:"store.backend" yaml:"store.backend"`
 	RunSandbox   string `json:"run.sandbox,omitempty" yaml:"run.sandbox,omitempty"`
 	RunHarness   string `json:"run.harness,omitempty" yaml:"run.harness,omitempty"`
@@ -24,6 +25,7 @@ func (v configView) fields() []field {
 		f("default_actor", v.DefaultActor),
 		f("no_hints", v.NoHints),
 		f("tech_stack", v.TechStack),
+		f("verify", v.Verify),
 		f("store.backend", v.StoreBackend),
 		f("run.sandbox", v.RunSandbox),
 		f("run.harness", v.RunHarness),
@@ -69,6 +71,7 @@ func (d *Deps) configView() configView {
 		DefaultActor: cfg.DefaultActor,
 		NoHints:      cfg.NoHints,
 		TechStack:    cfg.TechStack,
+		Verify:       cfg.Verify,
 		StoreBackend: cfg.Store.Backend,
 		RunSandbox:   cfg.Run.Sandbox,
 		RunHarness:   cfg.Run.Harness,

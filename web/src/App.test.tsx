@@ -297,6 +297,31 @@ test("the dashboard capture link opens the capture page", async () => {
   expect(window.location.pathname).toBe("/capture")
 })
 
+// Khoi 2026-10-09: after capturing an idea the app lands on a drill-down, which
+// used to hide the capture entry, so a user could not capture again without
+// navigating back. Every drill-down must offer it too.
+const drillDownCapture = [
+  { path: "/idea/t-idea", route: "/api/idea/t-idea", doc: ideaDoc },
+  { path: "/task/t-promoted", route: "/api/task/t-promoted", doc: taskDoc },
+  { path: "/memory/art-1", route: "/api/memory/art-1", doc: memoryDoc },
+  {
+    path: "/doc/art-1",
+    route: "/api/doc/art-1",
+    doc: { ...memoryDoc, id: "art-1", kind: "doc", url: "/doc/art-1" },
+  },
+]
+
+for (const { path, route, doc } of drillDownCapture) {
+  test(`offers capture from the drill-down at ${path}`, async () => {
+    stubFetch({ [route]: doc, "/api/capture": { enabled: true, project: "acme" } })
+    renderAt(path)
+    const link = await screen.findByText("Capture an idea →")
+    fireEvent.click(link)
+    expect(await screen.findByLabelText(/what is it/i)).toBeTruthy()
+    expect(window.location.pathname).toBe("/capture")
+  })
+}
+
 test("renders an empty project without crashing", async () => {
   stubFetch({ "/api/snapshot": emptySnapshot })
   renderAt("/")

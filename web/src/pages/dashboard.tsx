@@ -1,4 +1,3 @@
-import { AppLink } from "@/components/app-link"
 import { IdeaBoard } from "@/components/idea-board"
 import { Kanban } from "@/components/kanban"
 import { PageShell } from "@/components/page-shell"
@@ -28,14 +27,6 @@ export function Dashboard() {
       eyebrow={snapshot.project || "factotum"}
       title={snapshot.title || "Dashboard"}
       state={state}
-      action={
-        <AppLink
-          href="/capture"
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          Capture an idea →
-        </AppLink>
-      }
     >
       {error ? <RefreshBanner error={error} stale subject="snapshot" /> : null}
 

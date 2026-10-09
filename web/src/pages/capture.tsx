@@ -80,6 +80,7 @@ export function Capture() {
       eyebrow="capture"
       title="Capture"
       back={{ href: "/", label: "dashboard" }}
+      capture={false}
       footer="Stored immediately · refined later"
     >
       {enabled === null ? (

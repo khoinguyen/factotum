@@ -155,6 +155,30 @@ func TestRunWarnsWhenHubTokenMissing(t *testing.T) {
 	}
 }
 
+// TestRunWithoutActorOmitsHubWarning proves the half-configured-hub warning is
+// about a launched receiver: a run with no actor installs none, so warning about
+// a hub no receiver can speak would be noise and is suppressed.
+func TestRunWithoutActorOmitsHubWarning(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(key string) string {
+		if key == "FACTOTUM_MSG_URL" {
+			return "http://hub:8484"
+		}
+		return ""
+	}
+	_, taskID := runContext(t, r)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	_, stderr := r.runSplit("run", taskID, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if strings.Contains(stderr, "serve.token") {
+		t.Fatalf("run with no actor warned about the incomplete hub:\n%s", stderr)
+	}
+}
+
 // TestRunCommandInteractiveOnTerminal pins `ft run`'s mode selection: on a
 // terminal a task run attaches the agent (the harness command requests a TTY);
 // --unattended or a non-terminal stays headless.

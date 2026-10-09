@@ -73,6 +73,24 @@ func TestReportTemplateReferencesFeatureDocs(t *testing.T) {
 	}
 }
 
+// TestTemplatesShareSessionPromptSourceWording pins the one wording every groom
+// template uses for its Session line, so a session's documents describe the same
+// prompt source the same way instead of drifting.
+func TestTemplatesShareSessionPromptSourceWording(t *testing.T) {
+	const want = "Session: <prompt file or source>"
+	for name, body := range map[string]string{
+		"report":             ReportTemplate(),
+		"deferred questions": DeferredQuestionsTemplate(),
+		"spec":               SpecTemplate(),
+		"plan":               PlanTemplate(),
+		"tech design":        TechDesignTemplate(),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s template Session line should read %q:\n%s", name, want, body)
+		}
+	}
+}
+
 func TestTemplatesAreMarkdown(t *testing.T) {
 	for name, body := range map[string]string{
 		"report":             ReportTemplate(),

@@ -44,7 +44,7 @@ export function Dashboard() {
       </p>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-        <Stat label="Ideas" value={snapshot.stats.ideas} />
+        <Stat label="Captures" value={snapshot.stats.ideas} />
         <Stat label="In scope" value={snapshot.stats.scope} />
         <Stat label="Done" value={snapshot.stats.done} />
         <Stat label="Agent next" value={snapshot.stats.ready_agent} />

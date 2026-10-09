@@ -241,7 +241,9 @@ When a just-merged feature would help your own work, don't keep running a stale 
   receiver is a child of the dead session, so it reparents to PID 1 and keeps long-polling
   `actor:chief` — two receivers on one actor, and the orphan steals the successor's messages.
   (2) The retired chief's surface (its login shell) lingers. Run this right after killing the
-  outgoing session, with the retired chief's `surface:N` ref (from `cmux identify`/`cmux tree --all`):
+  outgoing session, with the retired chief's `surface:N` ref (from `cmux tree --all`; the outgoing
+  chief must hand its ref to the successor during the spawn — `cmux identify` reports the *caller's*
+  own surface, not the retired one):
 
   ```sh
   .agents/skills/chief/scripts/reincarnate-teardown.sh <retired-chief-surface-ref>

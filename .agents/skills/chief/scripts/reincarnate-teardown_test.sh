@@ -35,14 +35,17 @@ chmod +x "$tmp/bin/pkill" "$tmp/bin/cmux"
 export PATH="$tmp/bin:$PATH"
 
 # The successor shares the chief workspace; surface:39 is the successor's live
-# surface, surface:37 is the retired chief's.
+# surface, surface:37 is the retired chief's. surface:38's title contains
+# "workspace " to prove resolution ignores non-node lines.
 cat >"$CMUX_STUB_TREE" <<'TREE'
 window window:1 [current]
 └── workspace workspace:10 "chief"
     ├── pane pane:21
-    │   └── surface surface:37 [terminal] "chief" [selected]
+    │   └── surface surface:38 [terminal] "workspace cleanup" [selected]
+    ├── pane pane:22
+    │   └── surface surface:39 [terminal] "chief-successor" [selected]
     └── pane pane:23
-        └── surface surface:39 [terminal] "chief-successor" [selected]
+        └── surface surface:37 [terminal] "chief" [selected]
 TREE
 
 fail=0

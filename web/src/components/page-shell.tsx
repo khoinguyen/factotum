@@ -10,7 +10,7 @@ export function PageShell({
   title,
   state,
   back,
-  action,
+  capture = true,
   footer,
   children,
 }: {
@@ -18,7 +18,7 @@ export function PageShell({
   title: string
   state?: LiveState
   back?: { href: string; label: string }
-  action?: React.ReactNode
+  capture?: boolean
   footer?: React.ReactNode
   children: React.ReactNode
 }) {
@@ -42,7 +42,14 @@ export function PageShell({
           <h1 className="break-words text-xl font-semibold">{title}</h1>
         </div>
         <div className="flex shrink-0 items-center gap-4">
-          {action}
+          {capture ? (
+            <AppLink
+              href="/capture"
+              className="text-sm text-muted-foreground hover:underline"
+            >
+              Capture an idea →
+            </AppLink>
+          ) : null}
           {state ? <LiveBadge state={state} /> : null}
           <ThemeToggle />
         </div>

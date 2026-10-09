@@ -28,13 +28,16 @@ const ideas: Snapshot["ideas"] = {
 }
 
 // Khoi 2026-10-08: the status pill used to take its own slot beside the title
-// and wasted a row. It belongs on the task-count stats line instead.
-test("the status pill rides the stats row, not the title row", () => {
+// and wasted a row. It belongs at the START of the task-count stats line:
+// "[active] 7 tasks · 0 done · 7 active · 0 blocked".
+test("the status pill leads the stats row, not the title row", () => {
   render(<IdeaBoard ideas={ideas} />)
 
   const pill = screen.getByText("active")
   const stats = screen.getByText(/7 tasks/)
-  expect(stats.parentElement).toContain(pill)
+  const statsRow = stats.parentElement!
+  expect(statsRow).toContain(pill)
+  expect(statsRow.firstElementChild).toBe(pill)
 
   const title = screen.getByText("Spark of a plan")
   expect(title.parentElement).not.toBe(pill.parentElement)

@@ -8,18 +8,18 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
   return (
     <AppLink
       href={idea.url}
-      className="flex flex-col gap-1 rounded-lg border bg-card px-3 py-2 hover:bg-accent"
+      className="flex flex-col gap-1 rounded-lg border bg-card px-2 py-1.5 hover:bg-accent"
     >
-      <span className="flex min-w-0 items-center gap-2">
-        <Chip label={idea.state} toneKey={idea.state} />
-        <span className="truncate text-sm font-medium">{idea.title}</span>
-      </span>
-      <span className="text-xs text-muted-foreground">
-        {idea.total} task{idea.total === 1 ? "" : "s"} · {idea.done} done ·{" "}
-        {idea.active} active · {idea.blocked} blocked
-        {artifacts > 0
-          ? ` · ${artifacts} artifact${artifacts === 1 ? "" : "s"}`
-          : ""}
+      <span className="truncate text-sm font-medium">{idea.title}</span>
+      <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0 truncate">
+          {idea.total} task{idea.total === 1 ? "" : "s"} · {idea.done} done ·{" "}
+          {idea.active} active · {idea.blocked} blocked
+          {artifacts > 0
+            ? ` · ${artifacts} artifact${artifacts === 1 ? "" : "s"}`
+            : ""}
+        </span>
+        <Chip label={idea.state} toneKey={idea.state} className="ml-auto" />
       </span>
     </AppLink>
   )
@@ -33,7 +33,7 @@ function IdeaLane({ title, ideas }: { title: string; ideas: IdeaView[] }) {
           {title} · {ideas.length}
         </CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-2">
+      <CardContent className="flex flex-col gap-1.5 px-2">
         {ideas.length === 0 ? (
           <p className="text-sm text-muted-foreground">nothing here</p>
         ) : (
@@ -48,7 +48,7 @@ function IdeaLane({ title, ideas }: { title: string; ideas: IdeaView[] }) {
 // their promoted tasks (blocked needs unblock outranks work still moving).
 export function IdeaBoard({ ideas }: { ideas: Snapshot["ideas"] }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
       <IdeaLane title="Blocked — needs unblock" ideas={ideas.blocked} />
       <IdeaLane title="In progress" ideas={ideas.active} />
       <IdeaLane title="Finished" ideas={ideas.finished} />

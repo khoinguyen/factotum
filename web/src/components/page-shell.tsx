@@ -2,6 +2,7 @@ import type * as React from "react"
 
 import { AppLink } from "@/components/app-link"
 import { LiveBadge } from "@/components/live-badge"
+import { ThemeToggle } from "@/components/theme-toggle"
 import type { LiveState } from "@/hooks/use-live-resource"
 
 export function PageShell({
@@ -43,6 +44,7 @@ export function PageShell({
         <div className="flex shrink-0 items-center gap-4">
           {action}
           {state ? <LiveBadge state={state} /> : null}
+          <ThemeToggle />
         </div>
       </header>
       {children}

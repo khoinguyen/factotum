@@ -160,6 +160,49 @@ func TestInitProjectConsentsToMigration(t *testing.T) {
 	}
 }
 
+// TestInitProjectRefusedMigrationLeavesNoConfig pins the acceptance behavior: a
+// derived store that refuses to migrate (no consent) aborts init before any
+// config is written, so the project is never half-registered. The store open is
+// the gate, and a refusal there must leave the machine and project configs
+// untouched rather than carrying a pin or a [projects.<id>] entry for a project
+// that was never created.
+func TestInitProjectRefusedMigrationLeavesNoConfig(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	home := t.TempDir()
+	dotFactotum := filepath.Join(home, ".factotum")
+	if err := os.MkdirAll(dotFactotum, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	db := filepath.Join(dotFactotum, "widget.db")
+	raw, err := sql.Open("sqlite", db)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := raw.Exec("CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL)"); err != nil {
+		t.Fatalf("create old schema: %v", err)
+	}
+	_ = raw.Close()
+
+	detect := func(string) (gitRepo, bool) {
+		return gitRepo{Root: "/work/widget", Remote: "git@github.com:acme/widget.git"}, true
+	}
+	if _, err := runRootErr(t, home, detect, "--store", "sqlite", "init", "-p"); err == nil {
+		t.Fatal("init -p without migrate consent should refuse")
+	}
+
+	projectPath := filepath.Join(cwd, ".factotum", "config.toml")
+	if _, err := os.Stat(projectPath); !os.IsNotExist(err) {
+		t.Fatalf("refused init wrote the project config (err=%v):\n%s", err, readFile(t, projectPath))
+	}
+	machine := readFile(t, filepath.Join(dotFactotum, "config.toml"))
+	for _, want := range []string{"[projects.widget]", "default_project"} {
+		if strings.Contains(machine, want) {
+			t.Fatalf("refused init left %q in the machine config:\n%s", want, machine)
+		}
+	}
+}
+
 func TestInitProjectNamed(t *testing.T) {
 	r := newRunner(t)
 	r.gitDetect = noRepo
@@ -493,6 +536,26 @@ func runRoot(t *testing.T, home string, gitDetect func(string) (gitRepo, bool), 
 		t.Fatalf("execute %v: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
 	}
 	return stdout.String()
+}
+
+// runRootErr is runRoot but returns the command's error instead of failing the
+// test, so a test can assert the refused-migration path.
+func runRootErr(t *testing.T, home string, gitDetect func(string) (gitRepo, bool), args ...string) (string, error) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &stdout, &stderr, func(key string) string {
+		if key == "HOME" {
+			return home
+		}
+		return ""
+	})
+	deps.GitDetect = gitDetect
+	builtins.RegisterAll(deps.StoreFactories)
+	root := NewRoot(deps)
+	root.SetArgs(append([]string{"--user-config", filepath.Join(home, ".factotum", "config.toml")}, args...))
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	return stdout.String(), root.Execute()
 }
 
 func TestTerminalPrompterInput(t *testing.T) {

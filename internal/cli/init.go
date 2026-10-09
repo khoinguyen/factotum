@@ -318,6 +318,30 @@ func (d *Deps) registerProject(cmd *cobra.Command, p Prompter, interactive bool,
 		techStack = strings.TrimSpace(value)
 	}
 
+	// Registration is all-or-nothing: the store open is the gate (it refuses a
+	// database it may not migrate), so snapshot both configs and roll them back
+	// if any later step fails. A refused open then leaves no pin, no tech_stack,
+	// and no [projects.<id>] entry for a project that was never created.
+	snapshots := make([]fileSnapshot, 0, 2)
+	for _, path := range []string{projectPath, userPath} {
+		snap, err := snapshotFile(path)
+		if err != nil {
+			return nil, "", false, err
+		}
+		snapshots = append(snapshots, snap)
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		for _, snap := range snapshots {
+			if err := snap.restore(); err != nil {
+				_, _ = fmt.Fprintf(d.Err, "ft: restoring %s after a failed init: %v\n", snap.path, err)
+			}
+		}
+	}()
+
 	if _, err := config.WriteProjectConfig(projectPath, id); err != nil {
 		return nil, "", false, err
 	}
@@ -334,7 +358,46 @@ func (d *Deps) registerProject(cmd *cobra.Command, p Prompter, interactive bool,
 	if err != nil {
 		return nil, "", false, err
 	}
+	committed = true
 	return project, techStack, createdEntry || createdProject, nil
+}
+
+// fileSnapshot captures a config file's on-disk state so a failed init can
+// restore it. A file that did not exist is captured as absent and restores to
+// absent, so a refused init leaves no new config behind.
+type fileSnapshot struct {
+	path    string
+	existed bool
+	data    []byte
+	mode    os.FileMode
+}
+
+// snapshotFile reads path's current state. A missing file is captured as absent
+// rather than an error.
+func snapshotFile(path string) (fileSnapshot, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fileSnapshot{path: path}, nil
+	}
+	if err != nil {
+		return fileSnapshot{}, fmt.Errorf("stat config %s: %w", path, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fileSnapshot{}, fmt.Errorf("read config %s: %w", path, err)
+	}
+	return fileSnapshot{path: path, existed: true, data: data, mode: info.Mode().Perm()}, nil
+}
+
+// restore returns path to its captured state.
+func (s fileSnapshot) restore() error {
+	if !s.existed {
+		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return os.WriteFile(s.path, s.data, s.mode)
 }
 
 // projectDir is the directory `ft init` registers and inspects for greenfield:

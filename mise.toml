@@ -29,6 +29,25 @@ description = "Run tests with the race detector"
 depends = ["build-web"]
 run = "go test -race ./..."
 
+[tasks."test:scripts"]
+description = "Run the chief skill scripts' hermetic tests (every .agents/skills/chief/scripts/*_test.sh)"
+run = """
+set -eu
+status=0
+found=0
+for t in .agents/skills/chief/scripts/*_test.sh; do
+  [ -f "$t" ] || continue
+  found=$((found + 1))
+  echo "== $t"
+  bash "$t" || status=1
+done
+if [ "$found" -eq 0 ]; then
+  echo "no *_test.sh found under .agents/skills/chief/scripts" >&2
+  exit 1
+fi
+exit "$status"
+"""
+
 [tasks.test-embed]
 description = "Opt-in real-embedding test (starts a llama.cpp container unless FACTOTUM_EMBED_TEST_ENDPOINT is set)"
 run = """
@@ -166,4 +185,4 @@ echo "installed .git/hooks/pre-commit"
 
 [tasks.ci]
 description = "Full check: format, lint, test, coverage, build"
-depends = ["fmt-check", "lint", "test", "cover", "web-test", "build", "smoke-web", "smoke-quickstart"]
+depends = ["fmt-check", "lint", "test", "test:scripts", "cover", "web-test", "build", "smoke-web", "smoke-quickstart"]

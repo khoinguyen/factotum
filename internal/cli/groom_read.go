@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/internal/groom"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -77,44 +76,45 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 			"one the configured project is used.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dataDir, err := deps.groomDataDir(projectID)
+			resolved := deps.resolveProject(projectID)
+			target, err := deps.openGroomTarget(cmd.Context(), resolved)
 			if err != nil {
 				return err
 			}
+			defer target.close()
+			dataDir := target.dataDir
 			session, err := groom.ReadSession(dataDir, args[0])
 			if err != nil {
 				return err
 			}
-			if projectID != "" {
-				if resolved := string(deps.resolveProject(projectID)); session.Project != "" && session.Project != resolved {
-					return fmt.Errorf("grooming session %s belongs to project %s, not %s", session.ID, session.Project, resolved)
-				}
+			if projectID != "" && session.Project != "" && session.Project != string(resolved) {
+				return fmt.Errorf("grooming session %s belongs to project %s, not %s", session.ID, session.Project, resolved)
 			}
-			reportBody, err := deps.sessionOutputBody(cmd.Context(), session.Report, groom.ReportPath(dataDir, session.ID))
+			reportBody, err := sessionOutputBody(cmd.Context(), target.artifacts, session.Report, groom.ReportPath(dataDir, session.ID))
 			if err != nil {
 				return err
 			}
-			deferredBody, err := deps.sessionOutputBody(cmd.Context(), session.Deferred, groom.DeferredQuestionsPath(dataDir, session.ID))
+			deferredBody, err := sessionOutputBody(cmd.Context(), target.artifacts, session.Deferred, groom.DeferredQuestionsPath(dataDir, session.ID))
 			if err != nil {
 				return err
 			}
-			specBody, err := deps.optionalSessionOutputBody(cmd.Context(), session.Spec, groom.SpecPath(dataDir, session.ID))
+			specBody, err := optionalSessionOutputBody(cmd.Context(), target.artifacts, session.Spec, groom.SpecPath(dataDir, session.ID))
 			if err != nil {
 				return err
 			}
-			planBody, err := deps.optionalSessionOutputBody(cmd.Context(), session.Plan, groom.PlanPath(dataDir, session.ID))
+			planBody, err := optionalSessionOutputBody(cmd.Context(), target.artifacts, session.Plan, groom.PlanPath(dataDir, session.ID))
 			if err != nil {
 				return err
 			}
-			techDesignBody, err := deps.optionalSessionOutputBody(cmd.Context(), session.TechDesign, groom.TechDesignPath(dataDir, session.ID))
+			techDesignBody, err := optionalSessionOutputBody(cmd.Context(), target.artifacts, session.TechDesign, groom.TechDesignPath(dataDir, session.ID))
 			if err != nil {
 				return err
 			}
-			reviewBody, err := deps.optionalSessionOutputBody(cmd.Context(), session.Review, groom.ReviewPath(dataDir, session.ID))
+			reviewBody, err := optionalSessionOutputBody(cmd.Context(), target.artifacts, session.Review, groom.ReviewPath(dataDir, session.ID))
 			if err != nil {
 				return err
 			}
-			produced, err := deps.producedTaskDocs(cmd.Context(), session.Produced)
+			produced, err := producedTaskDocs(cmd.Context(), target.tasks, session.Produced)
 			if err != nil {
 				return err
 			}
@@ -179,22 +179,15 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 	return cmd
 }
 
-// groomDataDir resolves the data dir holding a project's grooming sessions. The
-// configured project (or an unset --project) reads the caller's store; another
-// project is resolved through the machine-scoped project registry, so a session
-// recorded under a different store is reachable without changing directory or
-// editing the project file. A project with no registry entry falls back to the
-// configured store, where its sessions were written.
+// groomDataDir resolves the data dir holding a project's grooming sessions,
+// through groomProjectStore's resolution, so list agrees with capture, show, and
+// review on which store a project's data lives in.
 func (d *Deps) groomDataDir(projectFlag string) (string, error) {
-	resolved := d.resolveProject(projectFlag)
-	if resolved != "" && string(resolved) != d.Config.Project {
-		if st, ok, err := config.StoreFor(d.UserConfigPath, string(resolved)); err != nil {
-			return "", err
-		} else if ok {
-			return projectDataDir(st)
-		}
+	st, _, err := d.groomProjectStore(d.resolveProject(projectFlag))
+	if err != nil {
+		return "", err
 	}
-	return projectDataDir(d.Config.Store)
+	return projectDataDir(st)
 }
 
 // groomSessionListDoc is the lossless structured shape of `ft groom list`.
@@ -268,9 +261,9 @@ func scopeItemIDs(items []groom.ScopeItem) []string {
 
 // sessionOutputBody reads one captured output: the doc artifact body, falling
 // back to the session file when the artifact is gone.
-func (d *Deps) sessionOutputBody(ctx context.Context, artifactID, path string) (string, error) {
+func sessionOutputBody(ctx context.Context, artifacts *app.ArtifactService, artifactID, path string) (string, error) {
 	if artifactID != "" {
-		artifact, err := d.Artifacts.Get(ctx, core.ArtifactID(artifactID))
+		artifact, err := artifacts.Get(ctx, core.ArtifactID(artifactID))
 		if err == nil {
 			return artifact.Body, nil
 		}
@@ -292,8 +285,8 @@ func (d *Deps) sessionOutputBody(ctx context.Context, artifactID, path string) (
 // empty body when neither the artifact nor the session file exists. A session
 // recorded before the feature documents existed has no artifact id and no file,
 // and must still be readable.
-func (d *Deps) optionalSessionOutputBody(ctx context.Context, artifactID, path string) (string, error) {
-	body, err := d.sessionOutputBody(ctx, artifactID, path)
+func optionalSessionOutputBody(ctx context.Context, artifacts *app.ArtifactService, artifactID, path string) (string, error) {
+	body, err := sessionOutputBody(ctx, artifacts, artifactID, path)
 	if artifactID == "" && errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
@@ -303,10 +296,10 @@ func (d *Deps) optionalSessionOutputBody(ctx context.Context, artifactID, path s
 // producedTaskDocs reads the produced task ids live from the graph, so a task
 // renamed or completed after the session shows its current state. A task since
 // deleted is reported by id alone.
-func (d *Deps) producedTaskDocs(ctx context.Context, ids []string) ([]groomTaskDoc, error) {
+func producedTaskDocs(ctx context.Context, tasks *app.TicketService, ids []string) ([]groomTaskDoc, error) {
 	docs := make([]groomTaskDoc, 0, len(ids))
 	for _, id := range ids {
-		task, err := d.Tasks.Get(ctx, core.TicketID(id))
+		task, err := tasks.Get(ctx, core.TicketID(id))
 		if errors.Is(err, core.ErrNotFound) {
 			docs = append(docs, groomTaskDoc{TicketID: id})
 			continue
@@ -326,8 +319,8 @@ func (d *Deps) producedTaskDocs(ctx context.Context, ids []string) ([]groomTaskD
 
 // projectTaskIDs snapshots the ids in a project before a session runs, so the
 // capture can tell which tasks the session produced.
-func (d *Deps) projectTaskIDs(ctx context.Context, projectID core.ProjectID) (map[core.TicketID]bool, error) {
-	tasks, err := d.Tasks.List(ctx, store.TicketFilter{ProjectID: projectID})
+func projectTaskIDs(ctx context.Context, svc *app.TicketService, projectID core.ProjectID) (map[core.TicketID]bool, error) {
+	tasks, err := svc.List(ctx, store.TicketFilter{ProjectID: projectID})
 	if err != nil {
 		return nil, err
 	}

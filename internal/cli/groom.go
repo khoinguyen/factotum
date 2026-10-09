@@ -76,11 +76,16 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	if err := requireProject(cmd, projectID); err != nil {
 		return err
 	}
-	project, err := d.Projects.Get(ctx, projectID)
+	target, err := d.openGroomTarget(ctx, projectID)
 	if err != nil {
 		return err
 	}
-	items, err := d.groomScope(ctx, projectID, args)
+	defer target.close()
+	project, err := target.projects.Get(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	items, err := d.groomScope(ctx, target.tasks, projectID, args)
 	if err != nil {
 		return err
 	}
@@ -100,10 +105,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		return fmt.Errorf("session prompt %s is empty", promptPath)
 	}
 
-	dataDir, err := projectDataDir(d.Config.Store)
-	if err != nil {
-		return err
-	}
+	dataDir := target.dataDir
 	sessionID := d.IDs.NewID("groom")
 	// Every session emits five deterministic documents. The session writes them
 	// inside its workspace (a sandboxed backend denies any other path); ft
@@ -112,7 +114,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 
 	// Snapshot the graph and start time before the session runs, so the
 	// manifest can name the tasks the session produced.
-	before, err := d.projectTaskIDs(ctx, projectID)
+	before, err := projectTaskIDs(ctx, target.tasks, projectID)
 	if err != nil {
 		return err
 	}
@@ -135,7 +137,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	interactive := d.runInteractive(cmd, opts.unattended)
 
 	progress := d.startRunProgress(runProgressLabel("groom session "+sessionID, sel.backendName, sel.harness.Name()), interactive)
-	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).RunProject(ctx, app.ProjectRunInput{
+	outcome, runErr := app.NewRunService(target.backend, target.tasks, d.Clock, d.IDs).RunProject(ctx, app.ProjectRunInput{
 		ProjectID:        project.ID,
 		Backend:          sel.backend,
 		Harness:          sel.harness,
@@ -146,7 +148,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		Args:             sel.args,
 		Prompt:           prompt,
 		Capture:          capture,
-		StoreEnv:         d.storeEnv(),
+		StoreEnv:         d.storeEnvFor(target.store),
 		Interactive:      interactive,
 		OnResolve:        d.warnLocalPlan,
 	})
@@ -161,10 +163,10 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		return runErr
 	}
 
-	// The session mutates the graph in its own process, so re-read the caller's
+	// The session mutates the graph in its own process, so re-read the target's
 	// store before capturing or judging: a backend that caches at open (jsondir,
 	// jsonfile) would otherwise serve the pre-session snapshot.
-	post, err := d.reopenStore(ctx)
+	post, err := d.postRun(ctx, target)
 	if err != nil {
 		return err
 	}
@@ -280,11 +282,11 @@ func groomMode(unattended, interactive bool) string {
 // groomScope resolves the session's items: the named ones, or by default every
 // open idea plus every open ungroomed executable task, sorted by id so the
 // kickoff is deterministic.
-func (d *Deps) groomScope(ctx context.Context, projectID core.ProjectID, args []string) ([]*core.Ticket, error) {
+func (d *Deps) groomScope(ctx context.Context, tasks *app.TicketService, projectID core.ProjectID, args []string) ([]*core.Ticket, error) {
 	if len(args) > 0 {
 		out := make([]*core.Ticket, 0, len(args))
 		for _, arg := range args {
-			task, err := d.Tasks.Get(ctx, core.TicketID(arg))
+			task, err := tasks.Get(ctx, core.TicketID(arg))
 			if err != nil {
 				return nil, err
 			}
@@ -298,7 +300,7 @@ func (d *Deps) groomScope(ctx context.Context, projectID core.ProjectID, args []
 	}
 
 	ideaKind := core.KindIdea
-	ideas, err := d.Tasks.List(ctx, store.TicketFilter{
+	ideas, err := tasks.List(ctx, store.TicketFilter{
 		ProjectID: projectID,
 		Kind:      &ideaKind,
 		Statuses:  []core.TicketStatus{core.StatusTodo},
@@ -307,7 +309,7 @@ func (d *Deps) groomScope(ctx context.Context, projectID core.ProjectID, args []
 		return nil, err
 	}
 	ungroomed := false
-	tasks, err := d.Tasks.List(ctx, store.TicketFilter{
+	tasksOpen, err := tasks.List(ctx, store.TicketFilter{
 		ProjectID: projectID,
 		Groomed:   &ungroomed,
 		Statuses:  groomableTaskStatuses,
@@ -315,9 +317,9 @@ func (d *Deps) groomScope(ctx context.Context, projectID core.ProjectID, args []
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*core.Ticket, 0, len(ideas)+len(tasks))
+	out := make([]*core.Ticket, 0, len(ideas)+len(tasksOpen))
 	out = append(out, ideas...)
-	for _, task := range tasks {
+	for _, task := range tasksOpen {
 		if task.Kind.Executable() {
 			out = append(out, task)
 		}
@@ -445,39 +447,115 @@ func addGroomArtifact(ctx context.Context, artifacts *app.ArtifactService, proje
 	return artifacts.Add(ctx, input)
 }
 
-// groomStore is the post-run view of the caller's store: the services bound to a
-// backend re-read from disk after the session finished.
-type groomStore struct {
+// groomTarget is the project a grooming command acts on and the store its data
+// lives in. Its services are bound to that store, so a cross-project -p reads and
+// writes the named project's graph and data dir rather than the caller's
+// configured store. close releases a backend this target opened; it is a no-op
+// for the configured project, whose backend the caller owns.
+type groomTarget struct {
+	store     config.Store
+	dataDir   string
+	backend   store.Backend
+	projects  *app.ProjectService
 	tasks     *app.TicketService
 	actors    *app.ActorService
 	artifacts *app.ArtifactService
 	close     func()
 }
 
-// reopenStore returns the caller's store re-read from disk, so the capture and
-// the unattended guard see the graph the session mutated in its own process. A
-// backend that caches at open (jsondir, jsonfile) would otherwise serve the
-// pre-session snapshot. A memory store is returned as-is: reopening would lose
-// it, and no other process can share it.
-func (d *Deps) reopenStore(ctx context.Context) (groomStore, error) {
-	path := d.Config.Store.Options["path"]
+// openGroomTarget resolves the project a grooming command acts on and binds its
+// services to that project's store. The configured project (or an unset -p)
+// reuses the caller's store; another project's store is opened from the machine
+// registry. A project with no registry entry falls back to the configured store,
+// where its data is written. The caller closes the returned target.
+func (d *Deps) openGroomTarget(ctx context.Context, projectID core.ProjectID) (groomTarget, error) {
+	st, own, err := d.groomProjectStore(projectID)
+	if err != nil {
+		return groomTarget{}, err
+	}
+	dataDir, err := projectDataDir(st)
+	if err != nil {
+		return groomTarget{}, err
+	}
+	target := groomTarget{store: st, dataDir: dataDir, close: func() {}}
+	if own {
+		target.backend = d.Backend
+		target.projects = d.Projects
+		target.tasks = d.Tasks
+		target.actors = d.Actors
+		target.artifacts = d.Artifacts
+		return target, nil
+	}
+	backend, err := d.openBackend(ctx, st)
+	if err != nil {
+		return groomTarget{}, err
+	}
+	target.backend = backend
+	target.projects = app.NewProjectService(backend, d.Clock, d.IDs)
+	target.tasks = app.NewTicketService(backend, d.Clock, d.IDs)
+	target.actors = app.NewActorService(backend, d.Clock, d.IDs)
+	target.artifacts = app.NewArtifactService(backend, d.Clock, d.IDs)
+	target.close = func() { _ = backend.Close() }
+	return target, nil
+}
+
+// groomProjectStore resolves the store a project's data lives in: the caller's
+// configured store for the configured project (or an unset id), else the
+// project's machine-registry entry. own reports that the caller's configured
+// store is the one to use, which a project with no registry entry falls back to,
+// where its data is written.
+func (d *Deps) groomProjectStore(projectID core.ProjectID) (config.Store, bool, error) {
+	if projectID == "" || string(projectID) == d.Config.Project {
+		return d.Config.Store, true, nil
+	}
+	st, ok, err := config.StoreFor(d.UserConfigPath, string(projectID))
+	if err != nil {
+		return config.Store{}, false, err
+	}
+	if ok {
+		return st, false, nil
+	}
+	return d.Config.Store, true, nil
+}
+
+// openBackend opens a store backend from a resolved store config.
+func (d *Deps) openBackend(ctx context.Context, st config.Store) (store.Backend, error) {
+	factory, err := d.StoreFactories.MustLookup(st.Backend)
+	if err != nil {
+		return nil, err
+	}
+	return factory(ctx, store.Config{
+		Backend: st.Backend,
+		Options: st.Options,
+		Noticef: func(format string, args ...any) {
+			_, _ = fmt.Fprintf(d.Err, "ft: "+format+"\n", args...)
+		},
+	})
+}
+
+// postRun re-reads the target's store from disk after the session ran in its own
+// process, so capture and the unattended guard see the graph the session
+// mutated. A store with no file path (memory) cannot be reopened and is returned
+// as-is. The caller closes the returned target; a reopened one owns its backend.
+func (d *Deps) postRun(ctx context.Context, target groomTarget) (groomTarget, error) {
+	path := target.store.Options["path"]
 	if path == "" || path == ":memory:" {
-		return groomStore{tasks: d.Tasks, actors: d.Actors, artifacts: d.Artifacts, close: func() {}}, nil
+		post := target
+		post.close = func() {}
+		return post, nil
 	}
-	factory, err := d.StoreFactories.MustLookup(d.Config.Store.Backend)
+	backend, err := d.openBackend(ctx, target.store)
 	if err != nil {
-		return groomStore{}, err
+		return groomTarget{}, err
 	}
-	backend, err := factory(ctx, store.Config{Backend: d.Config.Store.Backend, Options: d.Config.Store.Options})
-	if err != nil {
-		return groomStore{}, err
-	}
-	return groomStore{
-		tasks:     app.NewTicketService(backend, d.Clock, d.IDs),
-		actors:    app.NewActorService(backend, d.Clock, d.IDs),
-		artifacts: app.NewArtifactService(backend, d.Clock, d.IDs),
-		close:     func() { _ = backend.Close() },
-	}, nil
+	post := target
+	post.backend = backend
+	post.projects = app.NewProjectService(backend, d.Clock, d.IDs)
+	post.tasks = app.NewTicketService(backend, d.Clock, d.IDs)
+	post.actors = app.NewActorService(backend, d.Clock, d.IDs)
+	post.artifacts = app.NewArtifactService(backend, d.Clock, d.IDs)
+	post.close = func() { _ = backend.Close() }
+	return post, nil
 }
 
 // projectDataDir resolves where a project's session outputs live: the directory

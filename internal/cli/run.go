@@ -124,7 +124,12 @@ func (d *Deps) resolveSandboxFlag(cmd *cobra.Command, opts runOptions) (string, 
 // working directory than ft, so a relative value would name a different file
 // (or none) inside the checkout.
 func (d *Deps) storeEnv() map[string]string {
-	store := d.Config.Store
+	return d.storeEnvFor(d.Config.Store)
+}
+
+// storeEnvFor is storeEnv for an explicit store, so a cross-project `ft groom`
+// hands its session the target project's store rather than the configured one.
+func (d *Deps) storeEnvFor(store config.Store) map[string]string {
 	if store.Backend == "" {
 		return nil
 	}

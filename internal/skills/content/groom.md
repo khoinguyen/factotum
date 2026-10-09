@@ -17,7 +17,14 @@ project, and captures the five outputs.
 ft groom --sandbox local --harness opencode --allow-host
 ft groom <item> <item> --sandbox local --harness opencode --allow-host
 ft groom --unattended --sandbox local --harness opencode --allow-host
+ft groom -p <project> --sandbox local --harness opencode --allow-host
 ```
+
+`--project` scopes the whole session to the named project's store: the scope is
+read from it, the captured outputs and the session manifest are recorded into it,
+and the launched session's child `ft` reads it. A cross-project `ft groom -p b`
+from an `a`-configured checkout therefore records into `b`, and `ft groom
+list/show -p b` find it. Without `--project` the configured project is used.
 
 On a terminal the session runs **interactive**: `ft groom` launches the agent
 attached to the terminal (the OpenCode TUI) with the kickoff, so the PO can
@@ -235,6 +242,7 @@ view, records its findings as notes/tasks on the origin item, and records one te
 ft groom review <session> --verdict approve -f review.md
 ft groom review <session> --verdict approve-with-changes -f review.md
 ft groom review <session> --verdict needs-rework -f review.md
+ft groom review -p <project> <session> --verdict needs-rework -f review.md
 ```
 
 `ft groom review` records the review as a session artifact and a note on each origin item, and

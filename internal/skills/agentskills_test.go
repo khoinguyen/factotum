@@ -100,6 +100,32 @@ func TestChiefSkillLaunchesAgentsWithReceiver(t *testing.T) {
 	}
 }
 
+// TestChiefSkillReincarnationTearsDownRetiredChief guards the reincarnation
+// teardown: killing only the outgoing chief's PID leaves two orphans — the
+// retired session's ft msg receiver (reparented to PID 1, still long-polling
+// actor:chief, so it steals the successor's messages) and its cmux surface (its
+// login shell lingers). The self-update section must instruct the successor to
+// clean up both, through the tested reincarnate-teardown.sh helper.
+func TestChiefSkillReincarnationTearsDownRetiredChief(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/chief/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"name the retired receiver", "ft msg agent claim"},
+		{"scope the kill to the chief actor", "--actor chief"},
+		{"call out the reparent to pid 1", "pid 1"},
+		{"name the retired chief's surface", "retired chief's surface"},
+		{"close it with close-surface", "close-surface"},
+		{"invoke the tested teardown helper", "reincarnate-teardown.sh"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("chief skill reincarnation teardown must %s (missing %q)", req.why, req.text)
+		}
+	}
+}
+
 // TestArchitectureReviewerSkillReviewsDocsNotCode guards the architecture
 // reviewer's charter: it reviews a feature's documents (spec, plan, tech design)
 // with a project-wide, zoomed-out view and never drops to line-level code. It

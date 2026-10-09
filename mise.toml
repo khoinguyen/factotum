@@ -138,6 +138,7 @@ go build -ldflags "-X github.com/khoinguyen/factotum/pkg/version.Version=$versio
 
 [tasks.install]
 description = "Install the ft CLI to ~/.local/bin/ft (explicit; build does not do this)"
+depends = ["build-web"]
 run = """
 mkdir -p "$HOME/.local/bin"
 version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)

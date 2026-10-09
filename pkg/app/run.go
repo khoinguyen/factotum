@@ -82,8 +82,9 @@ type RunInput struct {
 	// isolation.ErrNoTerminal.
 	Interactive bool
 	// OnResolve, when non-nil, is called with the resolved workspace plan after
-	// resolution and before the harness runs, so a caller can advise on how the
-	// repos were materialized while there is still time to abort.
+	// resolution and before the harness runs, so a caller can observe how the
+	// repos were materialized. The callback returns nothing, so it cannot abort
+	// the run; the service always proceeds to the harness.
 	OnResolve func(*workspace.Plan)
 }
 
@@ -229,8 +230,9 @@ type ProjectRunInput struct {
 	// FACTOTUM_STORE_OPTS). Empty injects nothing.
 	StoreEnv map[string]string
 	// OnResolve, when non-nil, is called with the resolved workspace plan after
-	// resolution and before the harness runs, so a caller can advise on how the
-	// repos were materialized while there is still time to abort.
+	// resolution and before the harness runs, so a caller can observe how the
+	// repos were materialized. The callback returns nothing, so it cannot abort
+	// the run; the service always proceeds to the harness.
 	OnResolve func(*workspace.Plan)
 }
 

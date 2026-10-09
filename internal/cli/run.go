@@ -452,6 +452,17 @@ func (d *Deps) interactiveUnsupported(cmd *cobra.Command, interactive bool, back
 	return usageError(cmd, "backend %q cannot attach an interactive terminal; rerun with --unattended for a headless run, or use --sandbox local --allow-host", backendName)
 }
 
+// warnIncompleteHub warns when the [serve] table names a hub URL but no token.
+// The hub's message transport is always token-gated, so a launched receiver
+// would speak it unauthenticated and fail-close every message. The incomplete
+// hub is dropped from the run env, so the warning explains the fallback to the
+// local ft store.
+func (d *Deps) warnIncompleteHub() {
+	if d.Config.Serve.URL != "" && strings.TrimSpace(d.Config.Serve.Token) == "" {
+		d.warnf("serve.url is set but serve.token is empty; ignoring the hub because a receiver cannot authenticate to it (set serve.token or FACTOTUM_SERVE_TOKEN, or unset serve.url)")
+	}
+}
+
 // warnLocalPlan warns when a resolved workspace uses a repository's local
 // checkout in place. It reads the resolved plan rather than the configured
 // repos, so it fires exactly when workspace.Resolve produced an OriginLocal
@@ -469,6 +480,7 @@ func (d *Deps) warnLocalPlan(plan *workspace.Plan) {
 }
 
 func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {
+	d.warnIncompleteHub()
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
@@ -566,6 +578,7 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 // runGoal drives the DAG loop toward goal, running each selected task through
 // the same single-task service.
 func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error {
+	d.warnIncompleteHub()
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err

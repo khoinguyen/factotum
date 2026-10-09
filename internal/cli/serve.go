@@ -36,6 +36,7 @@ func newServeCommand(deps *Deps) *cobra.Command {
 			"on another host can message through the project backend. It binds to localhost by\n" +
 			"default; pass --bind 0.0.0.0:PORT to reach it from another device on the network.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			deps.warnIncompleteHub()
 			project := deps.resolveProject(projectID)
 			serveAll := all || project == ""
 			if !serveAll {

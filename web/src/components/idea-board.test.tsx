@@ -28,19 +28,56 @@ const ideas: Snapshot["ideas"] = {
 }
 
 // Khoi 2026-10-08: the status pill used to take its own slot beside the title
-// and wasted a row. It belongs at the START of the task-count stats line:
-// "[active] 7 tasks · 0 done · 7 active · 0 blocked".
+// and wasted a row. It belongs at the START of the stats row:
+// "[active] 0 7 0 of 7".
 test("the status pill leads the stats row, not the title row", () => {
   render(<IdeaBoard ideas={ideas} />)
 
   const pill = screen.getByText("active")
-  const stats = screen.getByText(/7 tasks/)
-  const statsRow = stats.parentElement!
+  const statsRow = screen.getByRole("tooltip").parentElement!.parentElement!
   expect(statsRow).toContain(pill)
   expect(statsRow.firstElementChild).toBe(pill)
 
   const title = screen.getByText("Spark of a plan")
-  expect(title.parentElement).not.toBe(pill.parentElement)
+  expect(title.parentElement).not.toBe(statsRow)
+})
+
+// Khoi 2026-10-08: the long "·"-separated line ("7 tasks · 0 done · 7 active ·
+// 0 blocked") wrapped/truncated on narrow cards. It becomes a compact set of
+// bare counts - done, active, blocked, then the total - each colored (done
+// green, active blue, blocked red, total neutral), e.g. "0 7 0 of 7".
+test("the idea card shows compact color-coded counts, not the long stats line", () => {
+  render(<IdeaBoard ideas={ideas} />)
+
+  expect(screen.queryByText(/tasks/)).toBeNull()
+
+  const counts = screen.getByRole("tooltip").parentElement!
+  const done = counts.querySelector('[data-count="done"]')!
+  const active = counts.querySelector('[data-count="active"]')!
+  const blocked = counts.querySelector('[data-count="blocked"]')!
+
+  expect(done.textContent).toBe("0")
+  expect(active.textContent).toBe("7")
+  expect(blocked.textContent).toBe("0")
+  expect(done.className).toContain("text-emerald-")
+  expect(active.className).toContain("text-sky-")
+  expect(blocked.className).toContain("text-red-")
+
+  const total = screen.getByText(/of 7/)
+  expect(total.className).toContain("text-muted-foreground")
+})
+
+// Khoi 2026-10-08: hovering the counts spells them out in a floating tooltip,
+// e.g. "0 done", "7 active", "0 blocked".
+test("the counts carry a hover tooltip spelling them out", () => {
+  render(<IdeaBoard ideas={ideas} />)
+
+  const tooltip = screen.getByRole("tooltip")
+  expect(tooltip.textContent).toContain("0 done")
+  expect(tooltip.textContent).toContain("7 active")
+  expect(tooltip.textContent).toContain("0 blocked")
+  expect(tooltip.className).toContain("opacity-0")
+  expect(tooltip.className).toContain("group-hover:opacity-100")
 })
 
 // Khoi 2026-10-08: tighten the board - card padding, the card-to-column-edge

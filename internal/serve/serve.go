@@ -464,13 +464,6 @@ type taskGroup struct {
 	Tasks     []taskView    `json:"tasks"`
 }
 
-// laneView is one ideas-board lane (blocked, active, finished, captured).
-type laneView struct {
-	Name  string
-	Key   string
-	Ideas []ideaView
-}
-
 // columnView is one work-board column (in-progress or waiting).
 type columnView struct {
 	Name   string
@@ -558,21 +551,6 @@ func nonNil[T any](s []T) []T {
 		return []T{}
 	}
 	return s
-}
-
-// Lane returns the ideas-board lane for key. It keeps the template free of
-// conditionals over the four fixed lanes.
-func (p *pageData) Lane(key string) laneView {
-	switch key {
-	case "blocked":
-		return laneView{Name: "Blocked — needs unblock", Key: key, Ideas: p.BlockedIdeas}
-	case "active":
-		return laneView{Name: "In progress", Key: key, Ideas: p.ActiveIdeas}
-	case "finished":
-		return laneView{Name: "Finished", Key: key, Ideas: p.FinishedIdeas}
-	default:
-		return laneView{Name: "Captured", Key: key, Ideas: p.CapturedIdeas}
-	}
 }
 
 // Column returns the work-board column for key.

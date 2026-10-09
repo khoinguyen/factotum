@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react"
 import { afterEach, expect, test, vi } from "vitest"
 
@@ -318,6 +319,21 @@ test("the captures board section is titled Captures", async () => {
   renderAt("/")
   expect(await screen.findByRole("heading", { name: "Captures" })).toBeTruthy()
   expect(screen.queryByRole("heading", { name: "Ideas" })).toBeNull()
+})
+
+// Khoi 2026-10-09: the top stats row counts ideas and bugs together, so its
+// label is "Captures", not "Ideas".
+test("the top stats row labels the ideas+bugs count Captures", async () => {
+  stubFetch({
+    "/api/snapshot": {
+      ...emptySnapshot,
+      stats: { ...emptySnapshot.stats, ideas: 7 },
+    },
+  })
+  renderAt("/")
+  expect(await screen.findByText("Acme dashboard")).toBeTruthy()
+  const value = screen.getByText("7")
+  expect(within(value.parentElement!).getByText("Captures")).toBeTruthy()
 })
 
 test("renders tasks and updates from a populated snapshot", async () => {

@@ -7,13 +7,17 @@ import type { TaskLink, TaskView } from "@/lib/api"
 // columns so a long title truncates instead of squeezing the id onto a second
 // line; the reason (a blocked/waiting note) wraps anywhere so a long dependency
 // list cannot overflow a phone-width row. When nested, the row is indented and
-// ruled to read as a child of the group header above it.
+// ruled to read as a child of the group header above it. A status column whose
+// header already encodes the status passes showChip={false} to drop the redundant
+// chip; mixed-status columns leave it on.
 export function TaskRow({
   task,
   nested = false,
+  showChip = true,
 }: {
   task: TaskView | TaskLink
   nested?: boolean
+  showChip?: boolean
 }) {
   const view = task as TaskView
   return (
@@ -24,7 +28,7 @@ export function TaskRow({
       )}
     >
       <AppLink href={task.url} className="flex min-w-0 items-center gap-2">
-        <Chip label={task.chip} toneKey={task.class} />
+        {showChip ? <Chip label={task.chip} toneKey={task.class} /> : null}
         <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">
           {task.id}
         </span>

@@ -297,6 +297,30 @@ func TestLoadTechStackEmptyWhenUnset(t *testing.T) {
 	}
 }
 
+func TestLoadReadsVerifyCommand(t *testing.T) {
+	dir := t.TempDir()
+	project := writeConfig(t, dir, "project.toml", "project = \"acme\"\nverify = \"mise run ci\"\n")
+	cfg, err := Load(Input{ProjectPath: project, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Verify != "mise run ci" {
+		t.Fatalf("Verify = %q, want the recorded command", cfg.Verify)
+	}
+}
+
+func TestLoadVerifyEmptyWhenUnset(t *testing.T) {
+	dir := t.TempDir()
+	project := writeConfig(t, dir, "project.toml", "project = \"acme\"\n")
+	cfg, err := Load(Input{ProjectPath: project, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Verify != "" {
+		t.Fatalf("Verify = %q, want empty", cfg.Verify)
+	}
+}
+
 func TestLoadInvalidTOML(t *testing.T) {
 	dir := t.TempDir()
 	user := writeConfig(t, dir, "user.toml", "not = = toml")

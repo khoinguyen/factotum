@@ -102,8 +102,9 @@ Configuration has two scopes, merged `env > project file > user file > defaults`
 
 - `~/.factotum/config.toml` — machine-scoped, not committed: `default_project`, a
   `[projects.<id>]` registry mapping each project to its `db_path`, and machine-only settings.
-- `./.factotum/config.toml` — project-scoped, committed: `project = "<id>"` plus optional overrides.
-  Machine-local paths must never appear here.
+- `./.factotum/config.toml` — project-scoped, committed: `project = "<id>"` plus optional overrides
+  (for example `verify = "<command>"`, the command that builds, lints, and tests a change; read it
+  with `ft config get verify`). Machine-local paths must never appear here.
 
 `ft init` wires both up and registers the project. Add the repositories it spans with
 `ft project repo` (a project created outside a git checkout uses `ft project create <name> --repo

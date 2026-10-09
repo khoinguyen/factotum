@@ -115,7 +115,8 @@ ft task next -p <project> --groomed --for <agent>
 ft task get <task>
 ```
 
-The builder runs one task through its lifecycle test-first (RED, implement, GREEN, `mise run ci`):
+The builder runs one task through its lifecycle test-first (RED, implement, GREEN, then the
+project's verification command — `ft config get verify`):
 
 ```sh
 ft task start <task>

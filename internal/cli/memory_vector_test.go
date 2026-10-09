@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -99,7 +100,7 @@ func TestMemorySearchNamesModelNotServed(t *testing.T) {
 	r.embedProvider = "openai"
 	r.embedEndpoint = "http://127.0.0.1:8080"
 	r.embedder = &keywordEmbedder{err: embed.ErrEmptyResponse}
-	r.doctorProbe = &stubProber{modelErr: errors.New("model not served")}
+	r.doctorProbe = &stubProber{modelErr: fmt.Errorf("%w: model %q not served", doctor.ErrModelNotServed, "test-model")}
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	r.run("memory", "create", "-p", projectID, "-t", "Terraform notes", "--brief", "infra versioning")
 

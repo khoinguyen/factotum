@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -137,7 +138,7 @@ func TestDoctorFailsWhenHTTPProviderHasNoModel(t *testing.T) {
 
 func TestDoctorModelMissingOffersFixAndFixApplies(t *testing.T) {
 	r := newRunner(t)
-	probe := &fakeDoctorProbe{modelErr: errors.New("not found")}
+	probe := &fakeDoctorProbe{modelErr: fmt.Errorf("%w: not found", doctor.ErrModelNotServed)}
 	r.doctorProbe = probe
 	writeUserConfig(t, r, "[embed]\nprovider = \"ollama\"\nendpoint = \"http://127.0.0.1:11434\"\nmodel = \"m\"\n[typesafe]\nsecret_api_key = \"k\"\n")
 
@@ -167,7 +168,7 @@ func TestDoctorModelMissingOffersFixAndFixApplies(t *testing.T) {
 
 func TestDoctorInteractiveConsent(t *testing.T) {
 	r := newRunner(t)
-	probe := &fakeDoctorProbe{modelErr: errors.New("not found")}
+	probe := &fakeDoctorProbe{modelErr: fmt.Errorf("%w: not found", doctor.ErrModelNotServed)}
 	r.doctorProbe = probe
 	r.isTerminal = func(io.Writer) bool { return true }
 	writeUserConfig(t, r, "[embed]\nprovider = \"ollama\"\nendpoint = \"http://127.0.0.1:11434\"\nmodel = \"m\"\n[typesafe]\nsecret_api_key = \"k\"\n")

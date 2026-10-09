@@ -55,8 +55,11 @@ func (g *Guard) Embed(ctx context.Context, input embed.Input, texts []string) ([
 }
 
 // detect probes the endpoint once and returns a named cause when the endpoint is
-// down or the model is not served, before any embed is paid. Once the probe is
-// clean it is not repeated, so a healthy backend is probed only once per process.
+// down or the model is genuinely not served, before any embed is paid. A probe
+// that cannot attribute the failure (auth, an unimplemented model-list route, a
+// decode error) is not a fatal cause: it falls through so the embed can still be
+// tried. Once the probe is clean it is not repeated, so a healthy backend is
+// probed only once per process.
 func (g *Guard) detect(ctx context.Context) error {
 	g.mu.Lock()
 	if g.probed || g.probe == nil {
@@ -70,7 +73,15 @@ func (g *Guard) detect(ctx context.Context) error {
 		return fmt.Errorf("%w: %s: %w", embed.ErrEndpointUnreachable, g.endpoint.URL, err)
 	}
 	if err := g.probe.HasModel(ctx, g.endpoint); err != nil {
-		return fmt.Errorf("%w: %w", embed.ErrModelNotServed, err)
+		// Only a genuine "model not served" probe is a fatal cause. A rejected
+		// credential, a model-list route the endpoint does not implement (404),
+		// an unparseable list, or a transport blip leaves the model unverified:
+		// fall through and let the embed itself decide, rather than mislabel the
+		// failure and skip an embed that would still work.
+		if errors.Is(err, doctor.ErrModelNotServed) {
+			return fmt.Errorf("%w: %w", embed.ErrModelNotServed, err)
+		}
+		return nil
 	}
 	return nil
 }

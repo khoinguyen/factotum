@@ -59,6 +59,13 @@ var ErrNotOptedIn = errors.New("isolation/local: host execution is not opted in"
 // tailing while keeping a detached run bounded.
 const eventBuffer = 256
 
+// orphanDrainGrace bounds how long Wait keeps draining a command's output after
+// its process has exited. Normally every writer of the child's pipes closes at
+// exit and the drain is immediate; the grace only matters when a descendant
+// inherited the pipe and outlived the child, where waiting for it would hang
+// the run forever.
+const orphanDrainGrace = time.Second
+
 // deletedMax bounds the deleted-handle tombstones the backend keeps so Delete
 // stays idempotent. Handle ids are unique and never reused, so only recently
 // deleted handles need remembering; the cap keeps a long-lived backend (a serve
@@ -272,18 +279,18 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 		c.Stdin = bytes.NewReader(cmd.Stdin)
 	}
 
-	stdout, err := c.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("isolation/local: stdout pipe: %w", err)
-	}
-	stderr, err := c.StderrPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("isolation/local: stderr pipe: %w", err)
-	}
-
 	ex := newExecution()
+	// Stream the child's output through exec-managed copy goroutines rather than
+	// reading StdoutPipe/StderrPipe ourselves. Wait closes a StdoutPipe out from
+	// under a reader as soon as the child exits, which drops buffered output and
+	// makes capture depend on goroutine scheduling; with writers, Wait drains
+	// every copy goroutine before returning, so buffered output is never lost.
+	// WaitDelay bounds the one remaining case: a descendant that inherits the
+	// pipe and outlives the child, which would otherwise block Wait forever.
+	c.Stdout = ex.streamWriter(isolation.StreamStdout)
+	c.Stderr = ex.streamWriter(isolation.StreamStderr)
+	c.WaitDelay = orphanDrainGrace
+
 	if err := c.Start(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("isolation/local: start %q: %w", cmd.Argv[0], err)
@@ -291,15 +298,9 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 
 	proc := &process{cancel: cancel}
 	env.track(proc)
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); ex.consume(stdout, isolation.StreamStdout) }()
-	go func() { defer wg.Done(); ex.consume(stderr, isolation.StreamStderr) }()
 	go func() {
 		waitErr := c.Wait()
 		exited.Store(true)
-		wg.Wait()
 		env.untrack(proc)
 		cancel()
 		ex.finish(c.ProcessState, waitErr)
@@ -578,19 +579,22 @@ func newExecution() *execution {
 
 func (e *execution) Events() <-chan isolation.Event { return e.events }
 
-func (e *execution) consume(r io.Reader, stream isolation.Stream) {
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			chunk := buf[:n]
-			e.record(stream, chunk)
-			e.emit(isolation.Event{Time: time.Now(), Kind: isolation.EventOutput, Stream: stream, Message: string(chunk)})
-		}
-		if err != nil {
-			return
-		}
-	}
+// streamWriter returns an io.Writer that records and emits everything written to
+// it for one stream. exec copies the child's output into it, so it runs on an
+// exec-managed goroutine that Wait joins before returning.
+func (e *execution) streamWriter(stream isolation.Stream) io.Writer {
+	return streamWriter{e: e, stream: stream}
+}
+
+type streamWriter struct {
+	e      *execution
+	stream isolation.Stream
+}
+
+func (w streamWriter) Write(p []byte) (int, error) {
+	w.e.record(w.stream, p)
+	w.e.emit(isolation.Event{Time: time.Now(), Kind: isolation.EventOutput, Stream: w.stream, Message: string(p)})
+	return len(p), nil
 }
 
 func (e *execution) record(stream isolation.Stream, b []byte) {
@@ -617,7 +621,10 @@ func (e *execution) finish(state *os.ProcessState, waitErr error) {
 		Stderr:   append([]byte(nil), e.stderr.Bytes()...),
 		ExitCode: exitCode(state, waitErr),
 	}
-	if waitErr != nil && !isExitError(waitErr) {
+	// ErrWaitDelay means the command exited but a descendant held the output
+	// pipe past the orphan grace. That is our drain bound, not a command
+	// failure, so it must not turn a successful command into a failed Wait.
+	if waitErr != nil && !isExitError(waitErr) && !errors.Is(waitErr, exec.ErrWaitDelay) {
 		e.err = waitErr
 	}
 	e.mu.Unlock()

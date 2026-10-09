@@ -173,7 +173,7 @@ func TestExecContract(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Wait() error = %v", err)
 			}
-			if res.Stdout != nil && string(res.Stdout) != tc.wantOut {
+			if string(res.Stdout) != tc.wantOut {
 				t.Errorf("Stdout = %q, want %q", res.Stdout, tc.wantOut)
 			}
 			if string(res.Stderr) != tc.wantErr {
@@ -189,6 +189,51 @@ func TestExecContract(t *testing.T) {
 				t.Errorf("streamed stderr = %q, want %q", stderr.String(), tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestExecCapturesOutputFromAnImmediateExit reproduces the CI flake: a child
+// that writes to both streams and exits at once could have that buffered output
+// discarded when Wait closed the StdoutPipe/StderrPipe read ends before the
+// consumer goroutines drained them. Both the buffered result and the streamed
+// events must be complete regardless of how the goroutines are scheduled.
+func TestExecCapturesOutputFromAnImmediateExit(t *testing.T) {
+	b, _ := newBackend(t, local.Options{})
+	h := prepare(t, b, isolation.Spec{})
+	ex, err := b.Exec(context.Background(), h, isolation.Command{
+		Argv: []string{"sh", "-c", `printf out; printf err >&2`},
+	})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	for ev := range ex.Events() {
+		if ev.Kind != isolation.EventOutput {
+			continue
+		}
+		switch ev.Stream {
+		case isolation.StreamStdout:
+			stdout.WriteString(ev.Message)
+		case isolation.StreamStderr:
+			stderr.WriteString(ev.Message)
+		}
+	}
+	res, err := ex.Wait(context.Background())
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if string(res.Stdout) != "out" {
+		t.Errorf("buffered Stdout = %q, want out", res.Stdout)
+	}
+	if string(res.Stderr) != "err" {
+		t.Errorf("buffered Stderr = %q, want err", res.Stderr)
+	}
+	if stdout.String() != "out" {
+		t.Errorf("streamed stdout = %q, want out", stdout.String())
+	}
+	if stderr.String() != "err" {
+		t.Errorf("streamed stderr = %q, want err", stderr.String())
 	}
 }
 

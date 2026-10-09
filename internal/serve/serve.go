@@ -251,13 +251,25 @@ func (s *Server) writeJSON(w http.ResponseWriter, v any) {
 	}
 }
 
+// writeError encodes a read-side failure as a JSON error document. The SPA
+// renders its own shell and a banner from this, so a store error (for example a
+// transient SQLITE_BUSY) can never reach the browser as a raw text/plain page.
+func (s *Server) writeError(w http.ResponseWriter, status int, err error) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(map[string]string{"error": err.Error()})
+}
+
 // handleSnapshot serves the dashboard state as JSON for the shadcn/ui app. It is
 // the single projection the app renders; the app refetches it whenever /events
 // reports a change.
 func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	page, err := s.page(r.Context())
 	if err != nil {
-		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+		s.writeError(w, http.StatusServiceUnavailable, fmt.Errorf("refresh failed: %w", err))
 		return
 	}
 	s.writeJSON(w, page.snapshot())

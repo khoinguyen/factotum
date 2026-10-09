@@ -180,13 +180,6 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in
 	return task, nil
 }
 
-// Origin returns the immutable capture (idea or bug) this ticket was refined
-// from, or nil when it has none. Promotion writes the capture as the ticket's
-// first dependency; the first capture dependency wins.
-func (s *TicketService) Origin(ctx context.Context, task *core.Ticket) (*core.Ticket, error) {
-	return originTicket(ctx, s.backend, task)
-}
-
 // Dependencies splits a ticket's dependency edges into blocking dependencies
 // and non-blocking capture edges, preserving the stored order within each. An
 // executable target (a task or milestone) gates the ticket, so it is a

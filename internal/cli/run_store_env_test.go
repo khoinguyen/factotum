@@ -33,6 +33,31 @@ func TestStoreEnvMakesRelativePathAbsolute(t *testing.T) {
 	}
 }
 
+// TestStoreEnvMakesRelativeMigrateFromAbsolute pins that jsondir's one-time
+// migrate_from source, a file path, is resolved against the invocation
+// directory just like the store path: the session's working directory differs,
+// so a relative source would name a different file (or none) inside the
+// checkout.
+func TestStoreEnvMakesRelativeMigrateFromAbsolute(t *testing.T) {
+	deps := &Deps{Config: config.Config{Store: config.Store{
+		Backend: "jsondir",
+		Options: map[string]string{"path": "rel/dir", "migrate_from": "rel/legacy.json"},
+	}}}
+	wantPath, err := filepath.Abs("rel/dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSource, err := filepath.Abs("rel/legacy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := deps.storeEnv()
+	want := "migrate_from=" + wantSource + ",path=" + wantPath
+	if got := env[harnesspkg.EnvStoreOpts]; got != want {
+		t.Fatalf("env %s = %q, want %q", harnesspkg.EnvStoreOpts, got, want)
+	}
+}
+
 // TestStoreEnvKeepsMemoryPath pins that an in-memory store is not corrupted by
 // path resolution: ":memory:" is a sentinel, not a file to absolutize.
 func TestStoreEnvKeepsMemoryPath(t *testing.T) {

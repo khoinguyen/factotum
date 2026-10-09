@@ -120,9 +120,9 @@ func (d *Deps) resolveSandboxFlag(cmd *cobra.Command, opts runOptions) (string, 
 // session's child ft reads the same store instead of resolving one - possibly
 // the real user database - from the checkout's project or user config. It names
 // the resolved backend and formats the options as config.Load parses them. A
-// file-backed store's path is made absolute because the session runs with a
-// different working directory than ft, so a relative path would name a
-// different file (or none) inside the checkout.
+// file-naming option is made absolute because the session runs with a different
+// working directory than ft, so a relative value would name a different file
+// (or none) inside the checkout.
 func (d *Deps) storeEnv() map[string]string {
 	store := d.Config.Store
 	if store.Backend == "" {
@@ -133,9 +133,13 @@ func (d *Deps) storeEnv() map[string]string {
 	for key, value := range store.Options {
 		options[key] = value
 	}
-	if path := options["path"]; path != "" && path != ":memory:" && !filepath.IsAbs(path) {
-		if abs, err := filepath.Abs(path); err == nil {
-			options["path"] = abs
+	for _, key := range []string{"path", "migrate_from"} {
+		value := options[key]
+		if value == "" || value == ":memory:" || filepath.IsAbs(value) {
+			continue
+		}
+		if abs, err := filepath.Abs(value); err == nil {
+			options[key] = abs
 		}
 	}
 	if formatted := config.FormatStoreOptions(options); formatted != "" {

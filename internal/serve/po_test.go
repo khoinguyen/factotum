@@ -644,11 +644,13 @@ func TestAllProjectsCrossProjectDepRendersTitleClass(t *testing.T) {
 	}
 }
 
-// TestDanglingIdeaDepRoutesToIdea proves a capture edge outside the scoped
-// snapshot that is an idea is grouped_under, not a blocking dependency, and
-// links to its /idea/ page rather than /task/, even though the idea itself is
-// out of scope.
-func TestDanglingIdeaDepRoutesToIdea(t *testing.T) {
+// TestCrossProjectCaptureIsOrigin proves a task whose first capture dep belongs
+// to another project still resolves that capture as its origin, on a scoped
+// server and an all-projects server alike, matching ft task get. Capture
+// provenance is an edge on the task, not a function of server scope, so the two
+// surfaces must not disagree. The origin routes to its /idea/ page and is not a
+// blocking dependency or a grouping edge.
+func TestCrossProjectCaptureIsOrigin(t *testing.T) {
 	f := newFixture(t)
 	mine := f.addProject(t, "acme", "Acme")
 	other := f.addProject(t, "other", "Other")
@@ -659,24 +661,32 @@ func TestDanglingIdeaDepRoutesToIdea(t *testing.T) {
 		t.Fatalf("AddDep() error = %v", err)
 	}
 
-	ts := newTestServer(t, f, Options{Project: mine.ID})
-	var doc taskPageJSON
-	getDoc(t, ts.URL+"/api/task/"+string(task.ID), &doc)
+	cases := []struct {
+		name string
+		opts Options
+	}{
+		{"scoped server", Options{Project: mine.ID}},
+		{"all projects server", Options{All: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newTestServer(t, f, tc.opts)
+			var doc taskPageJSON
+			getDoc(t, ts.URL+"/api/task/"+string(task.ID), &doc)
 
-	if len(doc.Deps) != 0 {
-		t.Fatalf("task deps = %+v, want a capture edge excluded", doc.Deps)
-	}
-	var dep taskLink
-	for _, candidate := range doc.GroupedUnder {
-		if candidate.ID == foreign.ID {
-			dep = candidate
-		}
-	}
-	if dep.ID != foreign.ID {
-		t.Fatalf("task grouped_under = %+v, want the dangling idea id %s", doc.GroupedUnder, foreign.ID)
-	}
-	if dep.URL != "/idea/"+string(foreign.ID) {
-		t.Fatalf("dangling idea dep url = %q, want /idea/%s", dep.URL, foreign.ID)
+			if len(doc.Deps) != 0 {
+				t.Fatalf("task deps = %+v, want a capture edge excluded", doc.Deps)
+			}
+			if len(doc.GroupedUnder) != 0 {
+				t.Fatalf("task grouped_under = %+v, want the cross-project capture as origin", doc.GroupedUnder)
+			}
+			if doc.Origin == nil || doc.Origin.ID != foreign.ID {
+				t.Fatalf("task origin = %+v, want the cross-project idea %s", doc.Origin, foreign.ID)
+			}
+			if doc.Origin.URL != "/idea/"+string(foreign.ID) {
+				t.Fatalf("cross-project origin url = %q, want /idea/%s", doc.Origin.URL, foreign.ID)
+			}
+		})
 	}
 }
 

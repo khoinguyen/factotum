@@ -251,6 +251,8 @@ When a just-merged feature would help your own work, don't keep running a stale 
 
   The helper kills only the orphaned receiver (`-P 1`; the successor's own receiver has a live
   parent) and closes the retired chief's surface with `close-surface --workspace <ws> --surface <ref>`.
+  When that surface is its workspace's **last** surface, `close-surface` refuses ("Cannot close the
+  last surface"), so the helper closes the whole workspace with `workspace close <ws>` instead.
 - **Reincarnate immediately** when a just-merged change is a new *skill* or agent *plugin/extension*
   your running opencode/pi session cannot load at runtime (same quiesce-and-hand-off procedure).
 

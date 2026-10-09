@@ -112,6 +112,10 @@ export function TaskDetail({ id }: { id: string }) {
         </section>
       ) : null}
 
+      {data.grouped_under.length > 0 ? (
+        <TaskRefs title="Grouped under" tasks={data.grouped_under} empty="" />
+      ) : null}
+
       <TaskRefs title="Depends on" tasks={data.deps} empty="No dependencies." />
       <TaskRefs title="Blocks" tasks={data.dependents} empty="Nothing depends on this." />
 

@@ -187,6 +187,30 @@ func (s *TicketService) Origin(ctx context.Context, task *core.Ticket) (*core.Ti
 	return originTicket(ctx, s.backend, task)
 }
 
+// Dependencies splits a ticket's dependency edges into blocking dependencies
+// and non-blocking capture edges, preserving the stored order within each. An
+// executable target (a task or milestone) gates the ticket, so it is a
+// dependency; a capture target (an idea or bug) is provenance, the edge that
+// records the capture a task came from or is grouped under. A dangling target
+// is unknown, and the graph treats a missing edge as unresolved, so it is a
+// dependency.
+func (s *TicketService) Dependencies(ctx context.Context, task *core.Ticket) (deps, captures []core.Ticket, err error) {
+	for _, dep := range task.Deps {
+		depTask, err := s.backend.Tickets().Get(ctx, dep)
+		switch {
+		case errors.Is(err, core.ErrNotFound):
+			deps = append(deps, core.Ticket{ID: dep})
+		case err != nil:
+			return nil, nil, err
+		case depTask.Kind.CapturedByHuman():
+			captures = append(captures, *depTask)
+		default:
+			deps = append(deps, *depTask)
+		}
+	}
+	return deps, captures, nil
+}
+
 // originTicket resolves the capture a ticket was refined from: the first
 // dependency that is a human capture. A dangling dependency is history, not an
 // origin, so it is skipped rather than failing the read.

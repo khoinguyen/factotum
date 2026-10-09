@@ -255,15 +255,36 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 			// Carry the revision the document is derived from so a later
 			// `task apply` can three-way merge concurrent changes.
 			doc.Base = taskBaseFrom(task)
-			origin, err := deps.Tasks.Origin(cmd.Context(), task)
+			blockers, captures, err := deps.Tasks.Dependencies(cmd.Context(), task)
 			if err != nil {
 				return err
 			}
-			if origin != nil {
+			// Capture edges are provenance, not work: a task is grouped under
+			// an idea or bug but never gated by one. The first capture is the
+			// origin; the rest are grouping. Only executable targets print as
+			// blocking dependencies.
+			var origin *core.Ticket
+			if len(captures) > 0 {
+				origin = &captures[0]
 				originID := string(origin.ID)
 				originTitle := origin.Title
 				doc.Origin = &originID
 				doc.OriginTitle = &originTitle
+			}
+			blockingIDs := make([]string, 0, len(blockers))
+			for _, blocker := range blockers {
+				blockingIDs = append(blockingIDs, string(blocker.ID))
+			}
+			doc.Deps = &blockingIDs
+			doc.Base.Deps = &blockingIDs
+			var groupedUnder []string
+			if len(captures) > 1 {
+				for _, capture := range captures[1:] {
+					groupedUnder = append(groupedUnder, string(capture.ID))
+				}
+			}
+			if len(groupedUnder) > 0 {
+				doc.GroupedUnder = &groupedUnder
 			}
 			var checks []check.Result
 			if deps.TaskChecks != nil {
@@ -335,12 +356,11 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 				if origin != nil {
 					deps.printf("origin: %s %s\n", origin.ID, origin.Title)
 				}
-				if len(task.Deps) > 0 {
-					ids := make([]string, 0, len(task.Deps))
-					for _, dep := range task.Deps {
-						ids = append(ids, string(dep))
-					}
-					deps.printf("deps: %s\n", strings.Join(ids, ", "))
+				if len(groupedUnder) > 0 {
+					deps.printf("grouped_under: %s\n", strings.Join(groupedUnder, ", "))
+				}
+				if len(blockingIDs) > 0 {
+					deps.printf("deps: %s\n", strings.Join(blockingIDs, ", "))
 				}
 				// Ideas never gate work, so a dependent of a capture is origin
 				// lineage, not something the capture unblocks.

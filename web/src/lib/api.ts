@@ -118,6 +118,7 @@ export type TaskDetail = TaskLink & {
   acceptance: string[]
   deps: TaskLink[]
   dependents: TaskLink[]
+  grouped_under: TaskLink[]
   notes: NoteView[]
   artifacts: ArtifactView[]
   created_at: string

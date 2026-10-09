@@ -138,6 +138,15 @@ const taskDoc: TaskDetail = {
     },
   ],
   dependents: [],
+  grouped_under: [
+    {
+      id: "t-umbrella",
+      title: "Umbrella idea",
+      class: "capture",
+      chip: "capture",
+      url: "/idea/t-umbrella",
+    },
+  ],
   notes: [],
   artifacts: [],
   created_at: "2026-01-01T00:00:00Z",
@@ -392,6 +401,8 @@ test("renders a task detail with dependencies and origin", async () => {
   expect(await screen.findByText("Promoted task")).toBeTruthy()
   expect(screen.getByText("Blocker task")).toBeTruthy()
   expect(screen.getByText("Spark of a plan")).toBeTruthy()
+  expect(screen.getByText("Umbrella idea")).toBeTruthy()
+  expect(screen.getByText("Grouped under · 1")).toBeTruthy()
 })
 
 test("renders a memory detail with its body and attached task", async () => {

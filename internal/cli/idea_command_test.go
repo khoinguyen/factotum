@@ -88,7 +88,7 @@ func TestIdeaCommandPromoteLinksOrigin(t *testing.T) {
 		t.Fatalf("idea promote should create a task from the idea:\n%s", out)
 	}
 
-	if got := r.run("task", "get", taskID); !strings.Contains(got, "deps: "+ideaID) {
+	if got := r.run("task", "get", taskID); !strings.Contains(got, "origin: "+ideaID) {
 		t.Fatalf("promoted task should record the idea as its origin:\n%s", got)
 	}
 	if got := r.run("idea", "get", ideaID); !strings.Contains(got, "kind: idea") {

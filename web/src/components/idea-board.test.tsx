@@ -20,26 +20,57 @@ const idea: IdeaView = {
   artifacts: [{ id: "art-1", kind: "doc", title: "Design note", url: "/doc/art-1" }],
 }
 
+const bug: IdeaView = {
+  id: "t-bug",
+  kind: "bug",
+  title: "It crashes on save",
+  state: "captured",
+  chip: "capture",
+  url: "/idea/t-bug",
+  total: 0,
+  done: 0,
+  active: 0,
+  blocked: 0,
+}
+
 const ideas: Snapshot["ideas"] = {
   blocked: [],
   active: [idea],
   finished: [],
-  captured: [],
+  captured: [bug],
 }
 
-// Khoi 2026-10-08: the status pill used to take its own slot beside the title
-// and wasted a row. It belongs at the START of the stats row:
-// "[active] 0 7 0 of 7".
-test("the status pill leads the stats row, not the title row", () => {
+// Khoi 2026-10-09: the per-card status chip was redundant - the column already
+// conveys the status ("blocked" column, "active" column). The card now shows the
+// capture KIND instead: "Idea" or "Bug".
+test("the card chip shows the capture kind, not its status", () => {
   render(<IdeaBoard ideas={ideas} />)
 
-  const pill = screen.getByText("active")
-  const statsRow = screen.getByRole("tooltip").parentElement!.parentElement!
-  expect(statsRow).toContain(pill)
-  expect(statsRow.firstElementChild).toBe(pill)
+  const ideaCard = screen.getByText("Spark of a plan").closest("a")!
+  const ideaChips = ideaCard.querySelectorAll('[data-slot="badge"]')
+  expect(ideaChips).toHaveLength(1)
+  expect(ideaChips[0].textContent).toBe("Idea")
 
-  const title = screen.getByText("Spark of a plan")
-  expect(title.parentElement).not.toBe(statsRow)
+  const bugCard = screen.getByText("It crashes on save").closest("a")!
+  const bugChips = bugCard.querySelectorAll('[data-slot="badge"]')
+  expect(bugChips).toHaveLength(1)
+  expect(bugChips[0].textContent).toBe("Bug")
+})
+
+// Khoi 2026-10-09: the captured lane moves to the front as "Backlog"; "Finished"
+// becomes "Done"; the middle two lanes keep their relative order.
+test("the board lanes run Backlog, Blocked, In progress, Done", () => {
+  const { container } = render(<IdeaBoard ideas={ideas} />)
+
+  const titles = Array.from(
+    container.querySelectorAll('[data-slot="card-title"]'),
+  ).map((el) => el.textContent)
+  expect(titles).toEqual([
+    "Backlog · 1",
+    "Blocked — needs unblock · 0",
+    "In progress · 1",
+    "Done · 0",
+  ])
 })
 
 // Khoi 2026-10-08: the long "·"-separated line ("7 tasks · 0 done · 7 active ·
@@ -51,7 +82,8 @@ test("the idea card shows compact color-coded counts, not the long stats line", 
 
   expect(screen.queryByText(/tasks/)).toBeNull()
 
-  const counts = screen.getByRole("tooltip").parentElement!
+  const card = screen.getByText("Spark of a plan").closest("a")!
+  const counts = card.querySelector('[role="tooltip"]')!.parentElement!
   const done = counts.querySelector('[data-count="done"]')!
   const active = counts.querySelector('[data-count="active"]')!
   const blocked = counts.querySelector('[data-count="blocked"]')!
@@ -72,7 +104,8 @@ test("the idea card shows compact color-coded counts, not the long stats line", 
 test("the counts carry a hover tooltip spelling them out", () => {
   render(<IdeaBoard ideas={ideas} />)
 
-  const tooltip = screen.getByRole("tooltip")
+  const card = screen.getByText("Spark of a plan").closest("a")!
+  const tooltip = card.querySelector('[role="tooltip"]')!
   expect(tooltip.textContent).toContain("0 done")
   expect(tooltip.textContent).toContain("7 active")
   expect(tooltip.textContent).toContain("0 blocked")
@@ -82,7 +115,6 @@ test("the counts carry a hover tooltip spelling them out", () => {
   // Keyboard focus must reveal the tooltip too. The counts span holds no
   // focusable element, so the focus scope has to be the card link itself.
   expect(tooltip.className).toContain("group-focus-within/card:opacity-100")
-  const card = screen.getByText("Spark of a plan").closest("a")!
   expect(card.className).toContain("group/card")
 })
 

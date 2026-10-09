@@ -57,9 +57,12 @@ func TestTaskPromoteCreatesLinkedTask(t *testing.T) {
 		t.Fatalf("an idea gates no work and should not print unblocks:\n%s", got)
 	}
 
-	// The new task is linked back to the idea as its origin.
-	if got := r.run("task", "get", taskID); !strings.Contains(got, "deps: "+ideaID) {
-		t.Fatalf("promoted task should depend on its origin idea:\n%s", got)
+	// The new task is linked back to the idea as its origin, not as a blocking
+	// dependency: an idea gates nothing.
+	if got := r.run("task", "get", taskID); !strings.Contains(got, "origin: "+ideaID) {
+		t.Fatalf("promoted task should record the idea as its origin:\n%s", got)
+	} else if deps := fieldLine(got, "deps"); strings.Contains(deps, ideaID) {
+		t.Fatalf("an idea must not read as a blocking dependency:\n%s", got)
 	}
 
 	// The promoted task is now executable work.

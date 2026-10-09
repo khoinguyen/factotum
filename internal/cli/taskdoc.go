@@ -93,12 +93,16 @@ type taskDoc struct {
 	// Origin and OriginTitle are read-only provenance: the capture (idea or bug)
 	// this task was promoted from, resolved from its dependencies. They are
 	// ignored on apply.
-	Origin      *string    `json:"origin,omitempty" yaml:"origin,omitempty"`
-	OriginTitle *string    `json:"origin_title,omitempty" yaml:"origin_title,omitempty"`
-	WaitingOn   *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
-	Notes       []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
-	NotBefore   *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
-	Snooze      *snoozeDoc `json:"snooze,omitempty" yaml:"snooze,omitempty"`
+	Origin      *string `json:"origin,omitempty" yaml:"origin,omitempty"`
+	OriginTitle *string `json:"origin_title,omitempty" yaml:"origin_title,omitempty"`
+	// GroupedUnder is read-only provenance: the capture (idea or bug)
+	// dependencies beyond the origin, the captures this task is grouped under
+	// but not refined from. It is ignored on apply.
+	GroupedUnder *[]string  `json:"grouped_under,omitempty" yaml:"grouped_under,omitempty"`
+	WaitingOn    *[]string  `json:"waiting_on,omitempty" yaml:"waiting_on,omitempty"`
+	Notes        []noteDoc  `json:"notes,omitempty" yaml:"notes,omitempty"`
+	NotBefore    *time.Time `json:"not_before,omitempty" yaml:"not_before,omitempty"`
+	Snooze       *snoozeDoc `json:"snooze,omitempty" yaml:"snooze,omitempty"`
 	// NotReady is read-only: it is derived from the graph and ignored on apply.
 	NotReady *notReadyDoc `json:"not_ready,omitempty" yaml:"not_ready,omitempty"`
 	// Checks is read-only: cached check results, populated only by `task get`
@@ -283,7 +287,7 @@ func snoozeDocFrom(snooze core.Snooze) *snoozeDoc {
 var taskDocFieldNames = []string{
 	"id", "project_id", "repo", "kind", "title", "description", "status",
 	"priority", "labels", "groomed", "acceptance_criteria", "assignee", "deps",
-	"dependents", "origin", "origin_title", "waiting_on", "notes", "checks",
+	"dependents", "origin", "origin_title", "grouped_under", "waiting_on", "notes", "checks",
 	"not_ready", "not_before", "created_at", "updated_at",
 }
 
@@ -338,6 +342,9 @@ func taskDocValues(doc taskDoc) map[string]any {
 	}
 	if doc.OriginTitle != nil {
 		out["origin_title"] = *doc.OriginTitle
+	}
+	if doc.GroupedUnder != nil {
+		out["grouped_under"] = *doc.GroupedUnder
 	}
 	if doc.WaitingOn != nil {
 		out["waiting_on"] = *doc.WaitingOn

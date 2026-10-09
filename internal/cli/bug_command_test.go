@@ -88,7 +88,7 @@ func TestBugCommandTriageLinksOrigin(t *testing.T) {
 		t.Fatalf("bug triage should create a task from the bug:\n%s", out)
 	}
 
-	if got := r.run("task", "get", taskID); !strings.Contains(got, "deps: "+bugID) {
+	if got := r.run("task", "get", taskID); !strings.Contains(got, "origin: "+bugID) {
 		t.Fatalf("triaged task should record the bug as its origin:\n%s", got)
 	}
 	if got := r.run("bug", "get", bugID); !strings.Contains(got, "kind: bug") {
@@ -110,7 +110,7 @@ func TestTaskPromoteAcceptsBug(t *testing.T) {
 	if !strings.Contains(out, "from: "+bugID) {
 		t.Fatalf("task promote should accept a bug capture:\n%s", out)
 	}
-	if got := r.run("task", "get", taskID); !strings.Contains(got, "deps: "+bugID) {
+	if got := r.run("task", "get", taskID); !strings.Contains(got, "origin: "+bugID) {
 		t.Fatalf("promoted task should record the bug as its origin:\n%s", got)
 	}
 }

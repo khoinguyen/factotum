@@ -424,6 +424,39 @@ func TestTaskDetailAPI(t *testing.T) {
 	}
 }
 
+// TestTaskDetailSplitsCapturesFromDependencies proves the task detail does not
+// present a capture (idea or bug) edge as a blocking dependency: only the task
+// dependency lands under "Depends on"; the extra capture is grouped_under.
+func TestTaskDetailSplitsCapturesFromDependencies(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+
+	origin := f.addIdea(t, project.ID, "Origin idea", "")
+	umbrella := f.addIdea(t, project.ID, "Umbrella idea", "")
+	task := f.promote(t, origin.ID)
+	blocker := f.addTask(t, project.ID, "Blocker task")
+	if _, err := f.tasks.AddDep(context.Background(), task.ID, umbrella.ID); err != nil {
+		t.Fatalf("AddDep(umbrella) error = %v", err)
+	}
+	if _, err := f.tasks.AddDep(context.Background(), task.ID, blocker.ID); err != nil {
+		t.Fatalf("AddDep(blocker) error = %v", err)
+	}
+
+	ts := newTestServer(t, f, Options{Project: project.ID})
+	var doc taskPageJSON
+	getDoc(t, ts.URL+"/api/task/"+string(task.ID), &doc)
+
+	if len(doc.Deps) != 1 || doc.Deps[0].ID != blocker.ID {
+		t.Fatalf("task deps = %+v, want only the blocker %s", doc.Deps, blocker.ID)
+	}
+	if doc.Origin == nil || doc.Origin.ID != origin.ID {
+		t.Fatalf("task origin = %+v, want %s", doc.Origin, origin.ID)
+	}
+	if len(doc.GroupedUnder) != 1 || doc.GroupedUnder[0].ID != umbrella.ID {
+		t.Fatalf("task grouped_under = %+v, want %s", doc.GroupedUnder, umbrella.ID)
+	}
+}
+
 func TestArtifactDetailPages(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
@@ -611,9 +644,10 @@ func TestAllProjectsCrossProjectDepRendersTitleClass(t *testing.T) {
 	}
 }
 
-// TestDanglingIdeaDepRoutesToIdea proves a dependency outside the scoped
-// snapshot that is an idea links to its /idea/ page rather than /task/, even
-// though the idea itself is out of scope.
+// TestDanglingIdeaDepRoutesToIdea proves a capture edge outside the scoped
+// snapshot that is an idea is grouped_under, not a blocking dependency, and
+// links to its /idea/ page rather than /task/, even though the idea itself is
+// out of scope.
 func TestDanglingIdeaDepRoutesToIdea(t *testing.T) {
 	f := newFixture(t)
 	mine := f.addProject(t, "acme", "Acme")
@@ -629,14 +663,17 @@ func TestDanglingIdeaDepRoutesToIdea(t *testing.T) {
 	var doc taskPageJSON
 	getDoc(t, ts.URL+"/api/task/"+string(task.ID), &doc)
 
+	if len(doc.Deps) != 0 {
+		t.Fatalf("task deps = %+v, want a capture edge excluded", doc.Deps)
+	}
 	var dep taskLink
-	for _, candidate := range doc.Deps {
+	for _, candidate := range doc.GroupedUnder {
 		if candidate.ID == foreign.ID {
 			dep = candidate
 		}
 	}
 	if dep.ID != foreign.ID {
-		t.Fatalf("task deps = %+v, want the dangling idea id %s", doc.Deps, foreign.ID)
+		t.Fatalf("task grouped_under = %+v, want the dangling idea id %s", doc.GroupedUnder, foreign.ID)
 	}
 	if dep.URL != "/idea/"+string(foreign.ID) {
 		t.Fatalf("dangling idea dep url = %q, want /idea/%s", dep.URL, foreign.ID)

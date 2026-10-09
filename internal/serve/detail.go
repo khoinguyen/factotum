@@ -15,18 +15,21 @@ import (
 // taskDetail is the full task projection for /api/task/<id>.
 type taskDetail struct {
 	taskLink
-	Kind        string         `json:"kind"`
-	Repo        string         `json:"repo,omitempty"`
-	Assignee    string         `json:"assignee,omitempty"`
-	Groomed     bool           `json:"groomed"`
-	Description string         `json:"description,omitempty"`
-	Acceptance  []string       `json:"acceptance"`
-	Deps        []taskLink     `json:"deps"`
-	Dependents  []taskLink     `json:"dependents"`
-	Notes       []noteView     `json:"notes"`
-	Artifacts   []artifactView `json:"artifacts"`
-	CreatedAt   string         `json:"created_at"`
-	UpdatedAt   string         `json:"updated_at"`
+	Kind        string     `json:"kind"`
+	Repo        string     `json:"repo,omitempty"`
+	Assignee    string     `json:"assignee,omitempty"`
+	Groomed     bool       `json:"groomed"`
+	Description string     `json:"description,omitempty"`
+	Acceptance  []string   `json:"acceptance"`
+	Deps        []taskLink `json:"deps"`
+	Dependents  []taskLink `json:"dependents"`
+	// GroupedUnder holds the capture (idea or bug) edges beyond the origin:
+	// provenance, not blocking dependencies.
+	GroupedUnder []taskLink     `json:"grouped_under"`
+	Notes        []noteView     `json:"notes"`
+	Artifacts    []artifactView `json:"artifacts"`
+	CreatedAt    string         `json:"created_at"`
+	UpdatedAt    string         `json:"updated_at"`
 }
 
 // taskPageJSON is the /api/task/<id> document: the task detail plus the idea it
@@ -227,28 +230,34 @@ func (s *Server) loadViews(r *http.Request, projectID core.ProjectID) (viewSet, 
 func (s *Server) taskDetailOf(ctx context.Context, task core.Ticket, vs viewSet) *taskDetail {
 	view := vs.views[task.ID]
 	detail := &taskDetail{
-		taskLink:    taskLinkOf(view),
-		Kind:        string(task.Kind),
-		Repo:        task.Repo,
-		Assignee:    view.Assignee,
-		Groomed:     task.Groomed,
-		Description: task.Description,
-		Acceptance:  nonNil(task.AcceptanceCriteria),
-		Artifacts:   nonNil(vs.artifactsByTask[task.ID]),
-		Deps:        []taskLink{},
-		Dependents:  []taskLink{},
-		Notes:       []noteView{},
-		CreatedAt:   task.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:   task.UpdatedAt.UTC().Format(time.RFC3339),
+		taskLink:     taskLinkOf(view),
+		Kind:         string(task.Kind),
+		Repo:         task.Repo,
+		Assignee:     view.Assignee,
+		Groomed:      task.Groomed,
+		Description:  task.Description,
+		Acceptance:   nonNil(task.AcceptanceCriteria),
+		Artifacts:    nonNil(vs.artifactsByTask[task.ID]),
+		Deps:         []taskLink{},
+		Dependents:   []taskLink{},
+		GroupedUnder: []taskLink{},
+		Notes:        []noteView{},
+		CreatedAt:    task.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:    task.UpdatedAt.UTC().Format(time.RFC3339),
 	}
+	originID, hasOrigin := vs.origin[task.ID]
 	for _, dep := range task.Deps {
-		if view, ok := vs.views[dep]; ok {
-			detail.Deps = append(detail.Deps, taskLinkOf(view))
+		link, capture := s.depEdge(ctx, dep, vs)
+		if capture {
+			// The origin is rendered on its own row; the rest of the capture
+			// edges are grouping provenance.
+			if hasOrigin && dep == originID {
+				continue
+			}
+			detail.GroupedUnder = append(detail.GroupedUnder, link)
 			continue
 		}
-		// A dependency outside the scoped snapshot still renders its id, so the
-		// row names the missing blocker instead of going blank.
-		detail.Deps = append(detail.Deps, s.danglingDepLink(ctx, dep))
+		detail.Deps = append(detail.Deps, link)
 	}
 	for _, dependent := range vs.snapshot.Graph.Dependents(task.ID) {
 		detail.Dependents = append(detail.Dependents, taskLinkOf(vs.views[dependent]))
@@ -259,17 +268,23 @@ func (s *Server) taskDetailOf(ctx context.Context, task core.Ticket, vs viewSet)
 	return detail
 }
 
-// danglingDepLink resolves a dependency the loaded snapshot omitted, so the
-// detail page can still name it. The dependency's kind decides whether it links
-// to an idea or a task page; a genuinely missing id falls back to the task URL.
-func (s *Server) danglingDepLink(ctx context.Context, id core.TicketID) taskLink {
+// depEdge resolves one dependency edge to a link and whether its target is a
+// human capture: a capture edge is non-blocking provenance, anything else (a
+// task, milestone, or unresolvable id) is a blocking dependency, matching the
+// graph. A target the scoped snapshot omitted is fetched so a cross-project
+// capture still classifies; an unresolvable id links to its task URL.
+func (s *Server) depEdge(ctx context.Context, id core.TicketID, vs viewSet) (taskLink, bool) {
+	if task, ok := vs.byID[id]; ok {
+		return taskLinkOf(vs.views[id]), task.Kind.CapturedByHuman()
+	}
 	task, err := s.options.Backend.Tickets().Get(ctx, id)
 	if err != nil {
-		return taskLink{ID: id, URL: taskURL(id)}
+		return taskLink{ID: id, URL: taskURL(id)}, false
 	}
-	return taskLink{ID: id, URL: taskOrIdeaURL(*task)}
+	return taskRefLink(task), task.Kind.CapturedByHuman()
 }
 
+// taskRefLink resolves a task fetched outside the loaded snapshot into a link.
 func taskRefLink(task *core.Ticket) taskLink {
 	class := classify(*task, false, false, false)
 	return taskLink{

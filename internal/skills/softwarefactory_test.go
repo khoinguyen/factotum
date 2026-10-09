@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+// TestSoftwareFactorySkillUsesProjectVerifyCommand pins that the recipe verifies
+// with the project's own command, read from config, not a hardcoded one.
+func TestSoftwareFactorySkillUsesProjectVerifyCommand(t *testing.T) {
+	skill, err := Get("software-factory")
+	if err != nil {
+		t.Fatalf("Get(software-factory) error = %v", err)
+	}
+	if strings.Contains(skill.Body, "mise run ci") {
+		t.Error("software-factory body hardcodes `mise run ci`; run the project's verify command instead")
+	}
+	if !strings.Contains(skill.Body, "ft config get verify") {
+		t.Error("software-factory body must name `ft config get verify` as the project's verification command")
+	}
+}
+
 // TestSoftwareFactorySkillIsEmbedded pins that the factory recipe is an embedded
 // skill served by `ft skill get software-factory`: the manual end-to-end recipe
 // an agent is pointed at with "load the software-factory skill and start working".

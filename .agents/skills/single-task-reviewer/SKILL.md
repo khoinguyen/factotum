@@ -66,7 +66,8 @@ Reproduce it:
    Check out the bit under review there: `git checkout --detach origin/<branch>` (or the PR head SHA
    from `gh pr view <n> --json headRefOid`). The chief removes this worktree after the merge; do not
    remove it yourself.
-2. `mise run ci` (fmt-check, lint, race tests, cover, build).
+2. Run the project's verification command — `ft config get verify` reports it (when unset, discover
+   it from the project's own docs). It builds, lints, and tests the change.
 3. Run the PR's Exercise transcript yourself against a throwaway store
    (`--store jsonfile --store-opt path=$(mktemp -d)/db.json`) or a temp config — **never the real
    project DB**. A non-installed branch binary can forward-migrate the shared database to a newer
@@ -100,7 +101,8 @@ exists to prevent.
 ## Triage loop
 
 - Hand findings back to the builder to fix; do not fix his branch yourself.
-- On re-review, verify each fix at the new commit: read the diff, re-run `mise run ci`, re-exercise.
+- On re-review, verify each fix at the new commit: read the diff, re-run the project's verification
+  command (`ft config get verify`), re-exercise.
 - When he pushes back, evaluate critically and accept only if it is logically right. If he is right,
   say so plainly; if not, say why with evidence.
 - Once aligned, post the verdict to the PR (`gh pr comment <n> --body-file <file>`): the commit

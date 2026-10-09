@@ -468,6 +468,17 @@ func (d *Deps) warnIncompleteHub() {
 	}
 }
 
+// warnIncompleteHubForRun warns about a half-configured hub only when the run
+// will launch a receiver, which requires an actor. A run with no actor installs
+// no receiver, so an incomplete hub cannot affect it and the warning would name
+// a receiver that does not exist.
+func (d *Deps) warnIncompleteHubForRun(actor *core.ActorID) {
+	if actor == nil || *actor == "" {
+		return
+	}
+	d.warnIncompleteHub()
+}
+
 // warnLocalPlan warns when a resolved workspace uses a repository's local
 // checkout in place. It reads the resolved plan rather than the configured
 // repos, so it fires exactly when workspace.Resolve produced an OriginLocal
@@ -485,7 +496,8 @@ func (d *Deps) warnLocalPlan(plan *workspace.Plan) {
 }
 
 func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {
-	d.warnIncompleteHub()
+	actor := d.currentActorID(cmd.Context())
+	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
@@ -508,7 +520,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		Model:            sel.model,
 		Args:             sel.args,
 		Prompt:           prompt,
-		Actor:            d.currentActorID(cmd.Context()),
+		Actor:            actor,
 		MsgURL:           d.Config.Serve.URL,
 		ServeToken:       d.Config.Serve.Token,
 		StoreEnv:         d.storeEnv(),
@@ -535,6 +547,8 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 // with no task: a task-less prompt run (a grooming session, for example). It
 // materializes every project repo and writes nothing to the task graph.
 func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) error {
+	actor := d.currentActorID(cmd.Context())
+	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
@@ -560,6 +574,9 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 		Model:            sel.model,
 		Args:             sel.args,
 		Prompt:           prompt,
+		Actor:            actor,
+		MsgURL:           d.Config.Serve.URL,
+		ServeToken:       d.Config.Serve.Token,
 		StoreEnv:         d.storeEnv(),
 		Interactive:      interactive,
 		OnResolve:        d.warnLocalPlan,
@@ -583,7 +600,8 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 // runGoal drives the DAG loop toward goal, running each selected task through
 // the same single-task service.
 func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error {
-	d.warnIncompleteHub()
+	actor := d.currentActorID(cmd.Context())
+	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
@@ -610,7 +628,7 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 			WorkspaceRefresh: sel.refresh,
 			Model:            sel.model,
 			Args:             sel.args,
-			Actor:            d.currentActorID(ctx),
+			Actor:            actor,
 			MsgURL:           d.Config.Serve.URL,
 			ServeToken:       d.Config.Serve.Token,
 			StoreEnv:         d.storeEnv(),

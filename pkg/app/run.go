@@ -213,6 +213,15 @@ type ProjectRunInput struct {
 	Args  []string
 	// Prompt is the instruction the harness receives, used verbatim.
 	Prompt string
+	// Actor, when set, installs the receiver identity a message plugin
+	// registers with, exactly as a task run does, so a task-less run with an
+	// actor is a managed session. Nil or empty means no receiver.
+	Actor *core.ActorID
+	// MsgURL and ServeToken are the configured messaging hub. When set with an
+	// actor they make a launched receiver speak the token-gated HTTP transport;
+	// a blank URL or token is treated as no hub. Empty means the local ft store.
+	MsgURL     string
+	ServeToken string
 	// Capture names workspace-relative paths whose contents are read out of the
 	// environment after the harness runs, before the environment is torn down.
 	// The files are returned in ProjectRunOutcome.Captured. A path the run
@@ -293,7 +302,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		model:       in.Model,
 		args:        in.Args,
 		interactive: in.Interactive,
-		env:         mergeEnv(map[string]string{harnesspkg.EnvProject: string(project.ID)}, in.StoreEnv),
+		env:         mergeEnv(runEnv(project, nil, in.Actor, in.MsgURL, in.ServeToken), in.StoreEnv),
 		labels:      map[string]string{"project": string(project.ID)},
 		capture:     in.Capture,
 	})
@@ -428,12 +437,12 @@ func captureFiles(ctx context.Context, backend isolation.IsolationBackend, h iso
 // rather than whatever project the checkout pins. When the run names an actor it
 // also installs the receiver identity (actor, task) a message plugin registers
 // with; a run with no actor has no receiver, so the plugin is not installed and
-// the session is unmanaged. A complete hub (URL and a non-blank token) makes a
-// launched remote receiver speak the token-gated HTTP transport. A
-// half-configured hub is treated as no hub: the transport always requires the
-// token, so injecting the URL alone or a blank token would only fail-close every
-// message. With no complete hub the receiver falls back to the local ft store,
-// so no hub env is set.
+// the session is unmanaged. A nil or task-less run installs no task identity. A
+// complete hub (URL and a non-blank token) makes a launched remote receiver
+// speak the token-gated HTTP transport. A half-configured hub is treated as no
+// hub: the transport always requires the token, so injecting the URL alone or a
+// blank token would only fail-close every message. With no complete hub the
+// receiver falls back to the local ft store, so no hub env is set.
 func runEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgURL, serveToken string) map[string]string {
 	if project.ID == "" {
 		return nil
@@ -443,7 +452,7 @@ func runEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgUR
 		return env
 	}
 	env[harnesspkg.EnvActor] = string(*actor)
-	if task.ID != "" {
+	if task != nil && task.ID != "" {
 		env[harnesspkg.EnvTask] = string(task.ID)
 	}
 	if msgURL != "" {

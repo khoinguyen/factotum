@@ -49,3 +49,19 @@ func TestGetUnknownSkill(t *testing.T) {
 		t.Fatalf("Get(nope) error = %v, want ErrNotFound", err)
 	}
 }
+
+// TestFTSkillStatesWorkspaceXOR pins the `ft run` workspace rule: a task's
+// declared repo, else all the project's repos - an exclusive or, never the
+// union. Vague wording ("the task's repositories") once implied the union,
+// misleading an agent into expecting an undeclared repo.
+func TestFTSkillStatesWorkspaceXOR(t *testing.T) {
+	skill, err := Get("ft")
+	if err != nil {
+		t.Fatalf("Get(ft) error = %v", err)
+	}
+	for _, want := range []string{"**declared** repo", "all the project's repos", "never a union"} {
+		if !strings.Contains(skill.Body, want) {
+			t.Errorf("ft skill does not state the XOR workspace rule: missing %q", want)
+		}
+	}
+}

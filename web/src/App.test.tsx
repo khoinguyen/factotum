@@ -449,31 +449,59 @@ test("renders a memory detail with its body and attached task", async () => {
 
 // A drill-down whose read fails with a store error (503 application/json) must
 // show the failure. Before this, the page ignored the error and sat on
-// "Loading …" forever because only 404 was handled.
+// "Loading …" forever because only 404 was handled. subject is the noun the
+// banner names: the artifact detail maps its kind to "memory" vs "document", so
+// the memory and doc drill-downs assert that mapping here.
 const drillDownFailures = [
-  { path: "/task/t-promoted", route: "/api/task/t-promoted", title: "Task" },
-  { path: "/idea/t-idea", route: "/api/idea/t-idea", title: "Idea" },
-  { path: "/memory/art-1", route: "/api/memory/art-1", title: "Memory" },
+  {
+    path: "/task/t-promoted",
+    route: "/api/task/t-promoted",
+    title: "Task",
+    subject: "task",
+  },
+  { path: "/idea/t-idea", route: "/api/idea/t-idea", title: "Idea", subject: "idea" },
+  {
+    path: "/memory/art-1",
+    route: "/api/memory/art-1",
+    title: "Memory",
+    subject: "memory",
+  },
+  { path: "/doc/art-1", route: "/api/doc/art-1", title: "Document", subject: "document" },
 ]
 
-for (const { path, route, title } of drillDownFailures) {
+for (const { path, route, title, subject } of drillDownFailures) {
   test(`surfaces a store error on the ${title} drill-down instead of endless loading`, async () => {
     stubFailure(route, 503, "list actors: database is locked (5) (SQLITE_BUSY)")
     renderAt(path)
     const alert = await screen.findByRole("alert")
     expect(alert.textContent).toMatch(/database is locked/)
+    expect(alert.textContent).toMatch(`Couldn't load the ${subject}.`)
     expect(screen.queryByText(/Loading/)).toBeNull()
   })
 }
 
 // A missing document is still a 404 message, not the store-error banner: the
-// error branch must not swallow the not-found case.
-test("keeps the not-found message for a missing task", async () => {
-  stubFailure("/api/task/t-missing", 404, "not found")
-  renderAt("/task/t-missing")
-  expect(await screen.findByText("No such task.")).toBeTruthy()
-  expect(screen.queryByRole("alert")).toBeNull()
-})
+// error branch must not swallow the not-found case. Every drill-down shares
+// that 404-over-error precedence, so each is asserted individually.
+const drillDownNotFounds = [
+  { path: "/task/t-missing", route: "/api/task/t-missing", message: "No such task." },
+  { path: "/idea/t-missing", route: "/api/idea/t-missing", message: "No such idea." },
+  {
+    path: "/memory/art-missing",
+    route: "/api/memory/art-missing",
+    message: "No such memory.",
+  },
+  { path: "/doc/art-missing", route: "/api/doc/art-missing", message: "No such doc." },
+]
+
+for (const { path, route, message } of drillDownNotFounds) {
+  test(`keeps the not-found message for a missing drill-down at ${path}`, async () => {
+    stubFailure(route, 404, "not found")
+    renderAt(path)
+    expect(await screen.findByText(message)).toBeTruthy()
+    expect(screen.queryByRole("alert")).toBeNull()
+  })
+}
 
 // Same contract as the dashboard: a drill-down that loaded keeps the last good
 // document when a later refresh fails, and shows the failure.

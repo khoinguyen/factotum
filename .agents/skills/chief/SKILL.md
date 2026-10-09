@@ -170,9 +170,15 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    sync `main`, and `ft task done <t>`.
 7. **Triage any escalation.** A subagent may escalate: a follow-up worth doing, a disagreement, or a
    product decision. **You file the follow-up tasks; subagents only report.** Decide:
-   - an agent-fixable follow-up → `ft task create` (link it), carry on;
+   - an agent-fixable follow-up → `ft task create`, then **group it under an idea or bug** so it
+     carries an origin — every task belongs to an idea/bug (t-2s2ghlqayq). `ft task dep create
+     <task> <idea>` sets both the dep and the origin; if nothing fits, create a small parent idea.
+     Link the PR too. (A follow-up filed with a bare `ft task create` is rootless: origin is set only
+     by `ft idea promote`/`ft bug triage` and cannot be repaired afterwards — see t-43lfadytuh.)
    - a product decision or something for Khoi → note it and **escalate to Khoi** the next time he
-     speaks; do not guess.
+     speaks; do not guess. **Lead with the exact decision and its options/recommendation**, not just
+     the task id — Khoi 2026-10-08: a parked task must say what needs deciding so it is clear at a
+     glance.
    When you file one or more follow-ups for a PR, **record them on that PR** in a single concise
    comment: a count line, then **one bullet per follow-up** (`- <task-id> - <one-line brief>`) — so
    the PR shows what was deferred.

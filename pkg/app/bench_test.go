@@ -196,6 +196,12 @@ func BenchmarkCompositeRank(b *testing.B) {
 // the in-memory backend, so sqlite is exercised at a smaller scale to keep its
 // absolute time under a ceiling tight enough to catch a constant-factor
 // regression. Seed time is not asserted.
+//
+// The timed section measures process CPU time, not wall time. `mise run ci` fans
+// out `test` and `cover` (both `go test -race ./...`) in parallel, and on a
+// loaded machine that contention inflated wall-clock `task next` to ~2s against
+// the 500ms ceiling while the work itself was unchanged (t-k4xvzrnrdi). CPU time
+// is the invariant under load and still catches a constant-factor regression.
 func TestHotPathBudgetSmoke(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(0, 0).UTC()
@@ -216,16 +222,27 @@ func TestHotPathBudgetSmoke(t *testing.T) {
 			be := openBenchBackend(t, tc.backend)
 			projectID := seedTasks(t, be, tc.tasks)
 
-			start := time.Now()
-			snapshot, err := LoadSnapshot(ctx, be, projectID, now)
-			if err != nil {
-				t.Fatalf("LoadSnapshot() error = %v", err)
+			var (
+				snapshot *Snapshot
+				loadErr  error
+				rankErr  error
+			)
+			elapsed := measureCPU(func() {
+				snapshot, loadErr = LoadSnapshot(ctx, be, projectID, now)
+				if loadErr != nil {
+					return
+				}
+				_, rankErr = ranker.Rank(ctx, rank.Request{Graph: snapshot.Graph, Tasks: snapshot.Tasks, Candidates: snapshot.Graph.ReadySet()})
+			})
+			if loadErr != nil {
+				t.Fatalf("LoadSnapshot() error = %v", loadErr)
 			}
-			if _, err := ranker.Rank(ctx, rank.Request{Graph: snapshot.Graph, Tasks: snapshot.Tasks, Candidates: snapshot.Graph.ReadySet()}); err != nil {
-				t.Fatalf("Rank() error = %v", err)
+			if rankErr != nil {
+				t.Fatalf("Rank() error = %v", rankErr)
 			}
-			if elapsed := time.Since(start); elapsed > ceiling {
-				t.Fatalf("task next path at %d (%s) took %v, over the %v ceiling (budget %v)", tc.tasks, tc.backend, elapsed, ceiling, hotPathBudget10k)
+			t.Logf("task next path at %d (%s) used %v of CPU (ceiling %v)", tc.tasks, tc.backend, elapsed, ceiling)
+			if elapsed > ceiling {
+				t.Fatalf("task next path at %d (%s) used %v of CPU, over the %v ceiling (budget %v)", tc.tasks, tc.backend, elapsed, ceiling, hotPathBudget10k)
 			}
 		})
 	}

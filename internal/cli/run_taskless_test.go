@@ -70,6 +70,107 @@ func TestRunCommandTasklessPromptArtifactRunsAllRepos(t *testing.T) {
 	}
 }
 
+// TestRunCommandTasklessInjectsHubEnvFromConfig proves a task-less `ft run` with
+// an actor reads the configured messaging hub and hands it to the launched
+// harness, exactly as the single-task path does, so a task-less session can
+// message peers over the HTTP transport instead of the local store.
+func TestRunCommandTasklessInjectsHubEnvFromConfig(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(key string) string {
+		switch key {
+		case "FACTOTUM_MSG_URL":
+			return "http://hub:8484"
+		case "FACTOTUM_SERVE_TOKEN":
+			return "tok"
+		}
+		return ""
+	}
+	_, cfgPath := tasklessContext(t, r)
+	r.run("actor", "create", "--kind", "agent", "claude")
+	promptPath := filepath.Join(t.TempDir(), "p.md")
+	mustWrite(t, promptPath, "groom")
+
+	backend := promptRunBackend()
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	r.run("--config", cfgPath, "run", "--actor", "claude", "--prompt-file", promptPath,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+
+	specs := backend.Prepared()
+	if len(specs) != 1 {
+		t.Fatalf("Prepare called %d times, want 1", len(specs))
+	}
+	env := specs[0].Env
+	if env["FACTOTUM_MSG_URL"] != "http://hub:8484" {
+		t.Errorf("harness env FACTOTUM_MSG_URL = %q, want the hub URL", env["FACTOTUM_MSG_URL"])
+	}
+	if env["FACTOTUM_SERVE_TOKEN"] != "tok" {
+		t.Errorf("harness env FACTOTUM_SERVE_TOKEN = %q, want the serve token", env["FACTOTUM_SERVE_TOKEN"])
+	}
+}
+
+// TestRunCommandTasklessWarnsWhenHubTokenMissing proves a task-less `ft run`
+// with an actor surfaces a half-configured hub instead of silently launching a
+// receiver that fails every message; the warning matches the single-task path
+// and the incomplete hub is dropped from the harness env.
+func TestRunCommandTasklessWarnsWhenHubTokenMissing(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(key string) string {
+		if key == "FACTOTUM_MSG_URL" {
+			return "http://hub:8484"
+		}
+		return ""
+	}
+	_, cfgPath := tasklessContext(t, r)
+	r.run("actor", "create", "--kind", "agent", "claude")
+	promptPath := filepath.Join(t.TempDir(), "p.md")
+	mustWrite(t, promptPath, "groom")
+
+	backend := promptRunBackend()
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	_, stderr := r.runSplit("--config", cfgPath, "run", "--actor", "claude", "--prompt-file", promptPath,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !strings.Contains(stderr, "serve.token") || !strings.Contains(stderr, "serve.url") {
+		t.Fatalf("task-less run stderr missing the hub-token warning:\n%s", stderr)
+	}
+	prepared := backend.Prepared()
+	if len(prepared) != 1 {
+		t.Fatalf("Prepare called %d times, want 1", len(prepared))
+	}
+	if _, ok := prepared[0].Env["FACTOTUM_MSG_URL"]; ok {
+		t.Errorf("harness env carried a hub URL with no token: %v", prepared[0].Env)
+	}
+}
+
+// TestRunCommandTasklessWithoutActorOmitsHubWarning proves a task-less run with
+// no actor installs no receiver, so the half-configured-hub warning is
+// suppressed there exactly as on the single-task path.
+func TestRunCommandTasklessWithoutActorOmitsHubWarning(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(key string) string {
+		if key == "FACTOTUM_MSG_URL" {
+			return "http://hub:8484"
+		}
+		return ""
+	}
+	_, cfgPath := tasklessContext(t, r)
+	promptPath := filepath.Join(t.TempDir(), "p.md")
+	mustWrite(t, promptPath, "groom")
+
+	backend := promptRunBackend()
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	_, stderr := r.runSplit("--config", cfgPath, "run", "--prompt-file", promptPath,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if strings.Contains(stderr, "serve.token") {
+		t.Fatalf("task-less run with no actor warned about the incomplete hub:\n%s", stderr)
+	}
+}
+
 func TestRunCommandTasklessRequiresPromptSource(t *testing.T) {
 	r := newRunner(t)
 	r.runHarness = harnessfake.New("opencode")

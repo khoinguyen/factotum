@@ -255,6 +255,58 @@ func TestRunProjectCarriesStoreEnvAndPinsProject(t *testing.T) {
 	}
 }
 
+// TestRunProjectCarriesHubReceiverEnv proves a task-less run with an actor and a
+// complete hub installs the same receiver identity and hub transport as a task
+// run, so a session launched by a task-less `ft run` can message peers over the
+// configured hub instead of falling back to the local ft store.
+func TestRunProjectCarriesHubReceiverEnv(t *testing.T) {
+	f := newProjectRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+
+	actor := core.ActorID("act-agent")
+	if _, err := f.run(t, ProjectRunInput{
+		Prompt:     "groom",
+		Actor:      &actor,
+		MsgURL:     "http://hub:8484",
+		ServeToken: "tok",
+	}); err != nil {
+		t.Fatalf("RunProject() error = %v", err)
+	}
+	env := f.backend.Prepared()[0].Env
+	if env[harnesspkg.EnvActor] != string(actor) {
+		t.Errorf("env %s = %q, want the run actor %q", harnesspkg.EnvActor, env[harnesspkg.EnvActor], actor)
+	}
+	if env[harnesspkg.EnvMsgURL] != "http://hub:8484" {
+		t.Errorf("env %s = %q, want the configured hub URL", harnesspkg.EnvMsgURL, env[harnesspkg.EnvMsgURL])
+	}
+	if env[harnesspkg.EnvServeToken] != "tok" {
+		t.Errorf("env %s = %q, want the configured serve token", harnesspkg.EnvServeToken, env[harnesspkg.EnvServeToken])
+	}
+}
+
+// TestRunProjectWithoutActorInstallsNoReceiver proves a task-less run that names
+// no actor installs no receiver and no hub env even when a hub is configured: an
+// actor is required to register a receiver, and the run still pins its project.
+func TestRunProjectWithoutActorInstallsNoReceiver(t *testing.T) {
+	f := newProjectRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+
+	if _, err := f.run(t, ProjectRunInput{
+		Prompt:     "groom",
+		MsgURL:     "http://hub:8484",
+		ServeToken: "tok",
+	}); err != nil {
+		t.Fatalf("RunProject() error = %v", err)
+	}
+	env := f.backend.Prepared()[0].Env
+	if harnesspkg.MessagingEnabled(env) {
+		t.Fatalf("env %v enables messaging, want disabled without an actor", env)
+	}
+	if env[harnesspkg.EnvProject] != string(f.project.ID) {
+		t.Errorf("env %s = %q, want the run's project pinned", harnesspkg.EnvProject, env[harnesspkg.EnvProject])
+	}
+}
+
 func TestRunProjectRequiresBackendAndHarness(t *testing.T) {
 	f := newProjectRunFixture(t)
 	if _, err := f.svc.RunProject(context.Background(), ProjectRunInput{ProjectID: f.project.ID, WorkspaceRoot: f.root, Prompt: "p"}); err == nil {

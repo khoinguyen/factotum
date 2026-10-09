@@ -3,6 +3,9 @@ package graph
 import (
 	"errors"
 	"fmt"
+	"math"
+	"runtime"
+	"sort"
 	"testing"
 	"time"
 
@@ -390,41 +393,124 @@ func wideGraph(t *testing.T, n int) *Graph {
 	return mustGraph(t, tasks...)
 }
 
-// topoSortCeiling is the CPU-time budget for TopoSort on the wide graph. At
-// 20000 tasks a correct run is ~20ms of CPU under -race, while the pre-73e93ab
-// quadratic rescan is several seconds, so the ceiling sits far above the
-// O((V+E) log V) cost and far below the regression it guards against; see
-// BenchmarkTopoSort.
-const topoSortCeiling = 250 * time.Millisecond
-
-// TestTopoSortWideGraphBudget guards against the quadratic queue rescan that
-// made graph render --format agent superlinear (t-lvlqecjqgm): the old
-// implementation sorted the whole remaining queue on every pop, which is
-// O(V^2 log V) when most tasks are ready at once. A wide graph is the worst
-// case.
+// The scaling guard against a quadratic TopoSort.
 //
-// The budget measures process CPU time, not wall time. `mise run ci` runs
-// `cover` concurrently with `test`, and on a contended hosted runner that load
-// inflated wall-clock TopoSort past 500ms against this ceiling while the work
-// itself was unchanged (t-xfrpkkt4mx). CPU time is the invariant under load,
-// and it still catches the quadratic rescan, which burns seconds of CPU.
-func TestTopoSortWideGraphBudget(t *testing.T) {
-	const n = 20000
-	g := wideGraph(t, n)
+// The budget cannot be an absolute CPU ceiling: the GitHub-hosted runner is
+// slower than a developer machine and `mise run ci` instruments the tests with
+// `-race -cover`, so the same 20000-task TopoSort that costs ~130ms of CPU
+// locally blows past any ceiling tight enough to be portable (t-cezbrf6tts,
+// t-xfrpkkt4mx). The invariant that *is* portable is how the cost grows with the
+// input: an O((V+E) log V) TopoSort grows by about the size factor, while the
+// pre-73e93ab quadratic rescan grows by roughly its square. Compare CPU at n and
+// n*factor and reject anything above the midpoint.
+const (
+	topoSortScalingBase   = 2000
+	topoSortScalingFactor = 4
+	// topoSortScalingTrials repeats each measurement and keeps the cheapest run,
+	// so one GC pause or descheduled run does not inflate the ratio.
+	topoSortScalingTrials = 3
+	// topoSortMaxRatio sits in log space between the factor (linear, measured
+	// ~5x with the log term) and the factor squared (quadratic, measured ~16x).
+	topoSortMaxRatio = 9.0
+)
 
-	var (
-		order []core.TicketID
-		err   error
-	)
-	elapsed := measureCPU(func() { order, err = g.TopoSort() })
-	if err != nil {
-		t.Fatalf("TopoSort() error = %v", err)
+// topoSortQuadratic is the pre-73e93ab implementation: it sorted the whole
+// remaining frontier on every pop. It is kept only as the regression the scaling
+// guard must catch.
+func topoSortQuadratic(g *Graph) []core.TicketID {
+	indeg := make(map[core.TicketID]int, len(g.ids))
+	for _, id := range g.ids {
+		for _, d := range g.deps[id] {
+			if _, ok := g.tasks[d]; ok {
+				indeg[id]++
+			}
+		}
 	}
-	if len(order) != n {
-		t.Fatalf("TopoSort() = %d nodes, want %d", len(order), n)
+	queue := make([]core.TicketID, 0, len(g.ids))
+	for _, id := range g.ids {
+		if indeg[id] == 0 {
+			queue = append(queue, id)
+		}
 	}
-	if elapsed > topoSortCeiling {
-		t.Fatalf("TopoSort() on %d tasks used %v of CPU, over the %v ceiling", n, elapsed, topoSortCeiling)
+	out := make([]core.TicketID, 0, len(g.ids))
+	for len(queue) > 0 {
+		sort.Slice(queue, func(i, j int) bool { return queue[i] < queue[j] })
+		id := queue[0]
+		queue = queue[1:]
+		out = append(out, id)
+		for _, dep := range g.dependents[id] {
+			indeg[dep]--
+			if indeg[dep] == 0 {
+				queue = append(queue, dep)
+			}
+		}
+	}
+	return out
+}
+
+// topoSortScalingRatio returns cpu(run at base*factor) / cpu(run at base), the
+// min CPU over trials at each size. run emits every task of a wide graph and
+// returns the count; a wrong count fails the test.
+func topoSortScalingRatio(t *testing.T, trials int, run func(*Graph) int) float64 {
+	t.Helper()
+	small := cheapestCPU(t, topoSortScalingBase, trials, run)
+	large := cheapestCPU(t, topoSortScalingBase*topoSortScalingFactor, trials, run)
+	if small <= 0 {
+		t.Fatalf("TopoSort at %d tasks used no measurable CPU", topoSortScalingBase)
+	}
+	return float64(large) / float64(small)
+}
+
+// cheapestCPU runs run on a fresh wide graph of n tasks trials times and returns
+// the lowest process CPU time observed.
+func cheapestCPU(t *testing.T, n, trials int, run func(*Graph) int) time.Duration {
+	t.Helper()
+	best := time.Duration(math.MaxInt64)
+	for i := 0; i < trials; i++ {
+		g := wideGraph(t, n)
+		var emitted int
+		runtime.GC()
+		cpu := measureCPU(func() { emitted = run(g) })
+		if emitted != n {
+			t.Fatalf("TopoSort emitted %d of %d tasks", emitted, n)
+		}
+		if cpu < best {
+			best = cpu
+		}
+	}
+	return best
+}
+
+// TestTopoSortWideGraphScalesSubQuadratically guards against the quadratic queue
+// rescan that made graph render --format agent superlinear (t-lvlqecjqgm). A
+// wide graph, where every task is ready at once, is the worst case. It asserts a
+// scaling ratio rather than an absolute CPU budget so that it holds on the
+// slower, instrumented CI runner (t-cezbrf6tts).
+func TestTopoSortWideGraphScalesSubQuadratically(t *testing.T) {
+	ratio := topoSortScalingRatio(t, topoSortScalingTrials, func(g *Graph) int {
+		order, err := g.TopoSort()
+		if err != nil {
+			t.Fatalf("TopoSort() error = %v", err)
+		}
+		return len(order)
+	})
+	if ratio > topoSortMaxRatio {
+		t.Fatalf("TopoSort CPU grew %.1fx when the graph grew %dx, over the %.1fx limit; that is superlinear (a quadratic rescan grows ~%dx)",
+			ratio, topoSortScalingFactor, topoSortMaxRatio, topoSortScalingFactor*topoSortScalingFactor)
+	}
+}
+
+// TestTopoSortScalingGuardCatchesQuadraticRegression is the mutation test for the
+// guard: it runs the same ratio check over the pre-73e93ab quadratic rescan and
+// requires the check to fail. A guard that cannot see this regression is not
+// doing its job.
+func TestTopoSortScalingGuardCatchesQuadraticRegression(t *testing.T) {
+	ratio := topoSortScalingRatio(t, 1, func(g *Graph) int {
+		return len(topoSortQuadratic(g))
+	})
+	if ratio <= topoSortMaxRatio {
+		t.Fatalf("quadratic TopoSort grew only %.1fx when the graph grew %dx; the %.1fx guard would let it through",
+			ratio, topoSortScalingFactor, topoSortMaxRatio)
 	}
 }
 

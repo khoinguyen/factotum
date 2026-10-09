@@ -226,12 +226,17 @@ When a just-merged feature would help your own work, don't keep running a stale 
 
 - **`mise run install`** — put the latest `ft` on PATH (both `mise run build` and `install` stamp the
   git SHA; build alone never touches `~/.local/bin/ft`). Use the fresh binary for graph ops and loops.
-- **Reincarnate** when the change is a new *skill* or an agent *plugin/extension* your running
-  opencode/pi session cannot load at runtime: open a new cmux surface, spawn a new `chief` there
-  (`opencode --prompt "load the chief skill; you are chief"`) pointed at the resume memory
-  (`ft memory get art-y7p3u3t3mf`), verify it can receive, then have it kill your session.
-  **Quiesce first** — never reincarnate with a builder/reviewer pair mid-flight (they would keep
-  messaging the dead `chief` surface); either wait, or tell both agents the new chief ref.
+- **Reincarnate on a cadence** — one chief session accumulates context (Khoi 2026-10-09: it reached
+  ~479k tokens over ~50+ merged PRs, which slows the loop and risks compaction loss). **Reincarnate
+  after roughly 50 merged PRs in a single session** (sooner if the session feels heavy). Keep a
+  running count of your merges and treat ~50 as the trigger. First write your current state to the
+  resume memory (`ft memory update art-y7p3u3t3mf ...`), then hand off: **quiesce** — never reincarnate
+  with a builder/reviewer pair mid-flight (they would keep messaging the dead `chief` surface); wait,
+  or tell both agents the new chief ref. Open a new cmux surface, spawn the successor
+  `opencode --prompt "load the chief skill; you are chief; read ft memory get art-y7p3u3t3mf and
+  continue the loop"`, verify it can receive over ft msg, then have it kill your session.
+- **Reincarnate immediately** when a just-merged change is a new *skill* or agent *plugin/extension*
+  your running opencode/pi session cannot load at runtime (same quiesce-and-hand-off procedure).
 
 ## Escalate to Khoi
 

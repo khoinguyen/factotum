@@ -146,6 +146,14 @@ description = "Run the frontend render tests (vitest + jsdom)"
 depends = ["web-install"]
 run = "pnpm --dir web test"
 
+[tasks.web-test-browser]
+description = "Run the frontend real-layout tests in headless Chromium (vitest browser mode)"
+depends = ["web-install"]
+run = """
+pnpm --dir web exec playwright install --with-deps chromium
+pnpm --dir web test:browser
+"""
+
 [tasks.build]
 description = "Build the ft CLI to ./bin/ft (never the installed binary)"
 depends = ["build-web"]
@@ -185,4 +193,4 @@ echo "installed .git/hooks/pre-commit"
 
 [tasks.ci]
 description = "Full check: format, lint, test, coverage, build"
-depends = ["fmt-check", "lint", "test", "test:scripts", "cover", "web-test", "build", "smoke-web", "smoke-quickstart"]
+depends = ["fmt-check", "lint", "test", "test:scripts", "cover", "web-test", "web-test-browser", "build", "smoke-web", "smoke-quickstart"]

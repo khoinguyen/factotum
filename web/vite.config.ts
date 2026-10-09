@@ -39,6 +39,9 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    // *.browser.test.tsx runs under vitest.browser.config.ts in real Chromium;
+    // keep it out of the jsdom suite so `pnpm test` stays browser-free.
     include: ["src/**/*.test.{ts,tsx}"],
+    exclude: ["**/node_modules/**", "src/**/*.browser.test.{ts,tsx}"],
   },
 })

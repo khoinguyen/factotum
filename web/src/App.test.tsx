@@ -310,6 +310,57 @@ test("refetches the snapshot when SSE reports an update", async () => {
   await waitFor(() => expect(calls).toBe(2))
 })
 
+// Regression: a refresh that fails (for example SQLITE_BUSY under concurrent
+// writes) must keep the last good snapshot and the shell, and surface a banner —
+// never replace the page with the raw error.
+test("keeps the shell and shows a stale banner when a refresh fails", async () => {
+  let calls = 0
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      calls++
+      if (calls === 1) {
+        return { ok: true, status: 200, json: async () => emptySnapshot }
+      }
+      return {
+        ok: false,
+        status: 503,
+        json: async () => ({
+          error: "list actors: database is locked (5) (SQLITE_BUSY)",
+        }),
+      }
+    }),
+  )
+  vi.stubGlobal("EventSource", FakeEventSource)
+
+  renderAt("/")
+  await screen.findByText("Acme dashboard")
+
+  FakeEventSource.instances[0].emit("update")
+
+  const banner = await screen.findByRole("alert")
+  expect(banner.textContent).toMatch(/database is locked/)
+  expect(screen.getByText("Acme dashboard")).toBeTruthy()
+})
+
+// When the very first fetch fails there is nothing stale to show, but the shell
+// and the error banner must still be the page — not the raw error text.
+test("renders the shell with an error banner when the first load fails", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: "boom: database is locked" }),
+    })),
+  )
+
+  renderAt("/")
+  const banner = await screen.findByRole("alert")
+  expect(banner.textContent).toMatch(/database is locked/)
+  expect(screen.getByText("Dashboard")).toBeTruthy()
+})
+
 test("groups in-flight tasks under their origin idea", async () => {
   stubFetch({ "/api/snapshot": groupedSnapshot })
   renderAt("/")

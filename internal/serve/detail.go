@@ -83,7 +83,7 @@ func (s *Server) handleIdea(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+		s.writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	if !s.inScope(task.ProjectID) || !task.Kind.CapturedByHuman() {
@@ -93,7 +93,7 @@ func (s *Server) handleIdea(w http.ResponseWriter, r *http.Request) {
 
 	vs, err := s.loadViews(r, task.ProjectID)
 	if err != nil {
-		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+		s.writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	s.writeJSON(w, s.rollupIdea(*task, vs))
@@ -113,7 +113,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+		s.writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	if !s.inScope(task.ProjectID) || task.Kind.CapturedByHuman() {
@@ -123,7 +123,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 
 	vs, err := s.loadViews(r, task.ProjectID)
 	if err != nil {
-		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+		s.writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	page := taskPageJSON{taskDetail: *s.taskDetailOf(r.Context(), *task, vs)}
@@ -156,7 +156,7 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request, prefix s
 		return
 	}
 	if err != nil {
-		http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+		s.writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	if !s.inScope(artifact.ProjectID) {
@@ -182,7 +182,7 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request, prefix s
 			link := taskRefLink(task)
 			page.AttachedTo = &link
 		} else if !errors.Is(err, core.ErrNotFound) {
-			http.Error(w, "dashboard: "+err.Error(), http.StatusInternalServerError)
+			s.writeError(w, http.StatusServiceUnavailable, err)
 			return
 		}
 	}

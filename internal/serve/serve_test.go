@@ -3,6 +3,8 @@ package serve
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -195,6 +197,58 @@ func TestReadRoutesServeSPA(t *testing.T) {
 		if body := readBody(t, resp); !strings.Contains(body, `id="root"`) {
 			t.Fatalf("Get(%s) is not the SPA shell:\n%s", path, body)
 		}
+	}
+}
+
+// errActors wraps an ActorRepo so a read fails, exercising the dashboard's
+// degraded read path without a real lock.
+type errActors struct{ store.ActorRepo }
+
+func (errActors) List(context.Context) ([]*core.Actor, error) {
+	return nil, errors.New("list actors: database is locked (5) (SQLITE_BUSY)")
+}
+
+type errBackend struct{ store.Backend }
+
+func (b errBackend) Actors() store.ActorRepo { return errActors{b.Backend.Actors()} }
+
+// TestSnapshotFailureIsJSON proves a read failure reaches the SPA as a JSON
+// error document, not a text/plain body, so the app can keep its shell and show
+// a banner instead of the raw error as the page.
+func TestSnapshotFailureIsJSON(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	server, err := New(Options{
+		Backend: errBackend{f.backend},
+		Clock:   f.clock,
+		Project: project.ID,
+		Assets:  testAssets(),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/api/snapshot")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if !strings.Contains(body.Error, "SQLITE_BUSY") {
+		t.Fatalf("error body = %q, want it to carry the store error", body.Error)
 	}
 }
 

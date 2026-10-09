@@ -2,18 +2,23 @@ import { AppLink } from "@/components/app-link"
 import { IdeaBoard } from "@/components/idea-board"
 import { Kanban } from "@/components/kanban"
 import { PageShell } from "@/components/page-shell"
+import { RefreshBanner } from "@/components/refresh-banner"
 import { Stat } from "@/components/stat"
 import { TaskList } from "@/components/task-list"
 import { Updates } from "@/components/updates"
 import { useLiveSnapshot } from "@/hooks/use-live-snapshot"
 
 export function Dashboard() {
-  const { snapshot, state } = useLiveSnapshot()
+  const { snapshot, state, error } = useLiveSnapshot()
 
   if (!snapshot) {
     return (
       <PageShell eyebrow="factotum" title="Dashboard" state={state}>
-        <p className="text-sm text-muted-foreground">Loading snapshot…</p>
+        {error ? (
+          <RefreshBanner error={error} />
+        ) : (
+          <p className="text-sm text-muted-foreground">Loading snapshot…</p>
+        )}
       </PageShell>
     )
   }
@@ -32,6 +37,8 @@ export function Dashboard() {
         </AppLink>
       }
     >
+      {error ? <RefreshBanner error={error} stale /> : null}
+
       <p className="text-xs text-muted-foreground">
         updated {snapshot.snapshot}
       </p>

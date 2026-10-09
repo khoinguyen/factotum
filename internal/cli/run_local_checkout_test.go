@@ -64,9 +64,17 @@ func TestRunWarnsLocalCheckoutWithResolvedPath(t *testing.T) {
 // TestGroomWarnsWhenLocalCheckoutUsedInPlace proves `ft groom` emits the same
 // in-place local-path warning as `ft run`: a groom resolves every project repo,
 // so a local Path is used in place and a backend on the workdir may modify it.
+// The configured repo Path is relative, so the warning names the resolved
+// absolute checkout — not the raw config value and not merely the repo name.
 func TestGroomWarnsWhenLocalCheckoutUsedInPlace(t *testing.T) {
 	r := newRunner(t)
-	projectID, cfgPath := tasklessContext(t, r)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	rel := "checkout-api"
+	resolved := filepath.Join(filepath.Dir(r.projectPath), rel)
+	if err := os.MkdirAll(resolved, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r.run("project", "repo", "create", projectID, "api", "--path", rel)
 	r.run("idea", "create", "-p", projectID, "-t", "Maybe cache")
 	promptPath := filepath.Join(t.TempDir(), "prompt.md")
 	mustWrite(t, promptPath, "# Grooming session prompt\n\nYou are the team lead.\n")
@@ -75,9 +83,9 @@ func TestGroomWarnsWhenLocalCheckoutUsedInPlace(t *testing.T) {
 	r.runBackend = backend
 	r.runHarness = harnessfake.New("opencode")
 
-	_, stderr := r.runSplit("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
+	_, stderr := r.runSplit("groom", "-p", projectID, "--prompt-file", promptPath,
 		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
-	if !strings.Contains(stderr, "backend") || !strings.Contains(stderr, "in place") {
-		t.Fatalf("groom did not warn about the local checkout on stderr:\n%s", stderr)
+	if !strings.Contains(stderr, resolved) || !strings.Contains(stderr, "in place") {
+		t.Fatalf("groom did not warn naming the resolved checkout %q on stderr:\n%s", resolved, stderr)
 	}
 }

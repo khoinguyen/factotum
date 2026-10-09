@@ -50,6 +50,21 @@ func TestConfigGetKeySelectsOneField(t *testing.T) {
 	}
 }
 
+// TestConfigGetSurfacesVerifyCommand pins the acceptance behavior: the recorded
+// project verify command is readable through the CLI, so a role skill can ask
+// `ft config get verify` instead of hardcoding one project's command.
+func TestConfigGetSurfacesVerifyCommand(t *testing.T) {
+	r := newRunner(t)
+	seedProjectConfig(t, r, "project = \"widget\"\nverify = \"npm test\"\n")
+
+	if out := r.run("config", "get"); !strings.Contains(out, "verify: npm test") {
+		t.Fatalf("config get missing verify:\n%s", out)
+	}
+	if got := r.run("config", "get", "verify"); got != "verify: npm test\n" {
+		t.Fatalf("config get verify = %q, want one field line", got)
+	}
+}
+
 func TestConfigGetRejectsUnknownKey(t *testing.T) {
 	r := newRunner(t)
 	seedProjectConfig(t, r, "project = \"widget\"\n")

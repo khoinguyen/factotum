@@ -41,8 +41,12 @@ type Config struct {
 	// TechStack is the project's recorded language/framework choice from the
 	// project-scoped config; empty when none was recorded.
 	TechStack string
-	NoHints   bool
-	Store     Store
+	// Verify is the project's recorded verification command (build, lint, and
+	// test a change) from the project-scoped config; empty when none was
+	// recorded, so a harness can fall back to discovering it from the repo.
+	Verify  string
+	NoHints bool
+	Store   Store
 	// Judge selects the judge provider; TypeSafe is the default. Provider settings,
 	// including the API key, live in the provider's own config table.
 	Judge Judge
@@ -213,10 +217,13 @@ type projectFile struct {
 	NoHints      *bool  `toml:"no_hints"`
 	// TechStack records the language/framework choice made when initializing a
 	// greenfield project. Empty means no choice was recorded.
-	TechStack string         `toml:"tech_stack"`
-	Store     fileStore      `toml:"store"`
-	Judge     judgeFile      `toml:"judge"`
-	Run       projectRunFile `toml:"run"`
+	TechStack string `toml:"tech_stack"`
+	// Verify records the command that verifies a change (build, lint, test).
+	// Empty means no command was recorded.
+	Verify string         `toml:"verify"`
+	Store  fileStore      `toml:"store"`
+	Judge  judgeFile      `toml:"judge"`
+	Run    projectRunFile `toml:"run"`
 }
 
 // Default returns the built-in configuration. TypeSafe is the default judge provider.
@@ -252,6 +259,7 @@ func Load(in Input) (Config, error) {
 	cfg := Default()
 	cfg.Project = resolveProject(getenv, project.Project, user.DefaultProject)
 	cfg.TechStack = project.TechStack
+	cfg.Verify = project.Verify
 	entry := user.Projects[cfg.Project]
 	cfg.Store = resolveStore(cfg.Project, project.Store, entry, user.Store)
 	cfg.Judge.Provider = firstNonEmpty(project.Judge.Provider, user.Judge.Provider, Default().Judge.Provider)

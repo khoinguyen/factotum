@@ -18,6 +18,9 @@
 #
 # The tool shell does NOT inherit CMUX_*, and cmux needs an explicit workspace
 # to close an anchor surface, so the workspace is resolved here from the tree.
+# If the retired surface is the workspace's LAST surface, `close-surface` would
+# refuse ("Cannot close the last surface"), so the whole workspace is closed
+# instead.
 set -euo pipefail
 
 usage() { echo "usage: reincarnate-teardown.sh <retired-chief-surface-ref>" >&2; exit 2; }
@@ -31,10 +34,23 @@ surface="${1:-}"
 #    receiver (parent alive) is left running.
 pkill -9 -P 1 -f 'ft msg agent claim.*--actor chief' || true
 
-# 2. Close the retired chief's surface under its workspace.
-ws="$(cmux tree --all | awk -v s="$surface" '
+# 2. Close the retired chief's surface under its workspace. When it is the
+#    workspace's last surface, close the workspace itself.
+tree="$(cmux tree --all)"
+ws="$(printf '%s\n' "$tree" | awk -v s="$surface" '
   /workspace workspace:[0-9]+/ { match($0, /workspace:[0-9]+/); ws = substr($0, RSTART, RLENGTH) }
   /surface surface:/ && index($0, "surface " s " ") { print ws; exit }')"
 [ -n "$ws" ] || { echo "reincarnate-teardown: no cmux surface $surface in the tree" >&2; exit 1; }
 
-cmux close-surface --workspace "$ws" --surface "$surface"
+n="$(printf '%s\n' "$tree" | awk -v w="$ws" '
+  /workspace workspace:[0-9]+/ {
+    match($0, /workspace:[0-9]+/); inws = (substr($0, RSTART, RLENGTH) == w)
+    next
+  }
+  inws && /surface surface:/ { c++ }
+  END { print c + 0 }')"
+if [ "$n" -le 1 ]; then
+  cmux workspace close "$ws"
+else
+  cmux close-surface --workspace "$ws" --surface "$surface"
+fi

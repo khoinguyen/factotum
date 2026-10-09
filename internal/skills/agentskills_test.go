@@ -117,6 +117,7 @@ func TestChiefSkillReincarnationTearsDownRetiredChief(t *testing.T) {
 		{"call out the reparent to pid 1", "pid 1"},
 		{"name the retired chief's surface", "retired chief's surface"},
 		{"close it with close-surface", "close-surface"},
+		{"document the last-surface fallback", "last surface"},
 		{"invoke the tested teardown helper", "reincarnate-teardown.sh"},
 	}
 	for _, req := range required {

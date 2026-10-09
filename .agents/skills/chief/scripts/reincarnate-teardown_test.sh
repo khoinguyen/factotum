@@ -89,6 +89,21 @@ cmux close-surface --workspace workspace:10 --surface surface:37" \
   -- surface:37
 export TEARDOWN_PKILL_RC=0
 
+# When the retired surface is its workspace's LAST surface, close-surface would
+# refuse ("Cannot close the last surface"), so the whole workspace is closed
+# instead. The title "last surface" contains "surface " to prove counting still
+# ignores non-node lines.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1 [current]
+└── workspace workspace:20 "chief-retired"
+    └── pane pane:31
+        └── surface surface:37 [terminal] "last surface" [selected]
+TREE
+assert_run "last surface in its workspace closes the workspace" \
+  "pkill -9 -P 1 -f ft msg agent claim.*--actor chief
+cmux workspace close workspace:20" \
+  -- surface:37
+
 # A missing arg is a usage error and touches nothing.
 : >"$TEARDOWN_STUB_LOG"
 rc=0

@@ -41,6 +41,39 @@ func TestStopKillsProcessGroup(t *testing.T) {
 	}
 }
 
+// TestExecBoundedWhenDescendantHoldsPipe pins the drain bound: the direct child
+// can exit while a background descendant it spawned still holds the inherited
+// stdout open. Wait must return with the output produced so far after the orphan
+// grace, not block until the descendant eventually exits.
+func TestExecBoundedWhenDescendantHoldsPipe(t *testing.T) {
+	b, _ := newBackend(t, local.Options{})
+	dir := t.TempDir()
+	h := prepare(t, b, isolation.Spec{Workdir: dir})
+	ex, err := b.Exec(context.Background(), h, isolation.Command{
+		Argv:    []string{"sh", "-c", "printf hello; sleep 30 & echo $! > bg.pid"},
+		Workdir: dir,
+	})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	pid := waitForPID(t, filepath.Join(dir, "bg.pid"))
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	done := make(chan isolation.ExecResult, 1)
+	go func() {
+		res, _ := ex.Wait(context.Background())
+		done <- res
+	}()
+	select {
+	case res := <-done:
+		if string(res.Stdout) != "hello" {
+			t.Errorf("Stdout = %q, want hello", res.Stdout)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait() blocked on a descendant that held the pipe")
+	}
+}
+
 func waitForPID(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

@@ -1,11 +1,14 @@
 import { AppLink } from "@/components/app-link"
 import { Chip } from "@/components/chip"
 import { PageShell } from "@/components/page-shell"
+import { RefreshBanner } from "@/components/refresh-banner"
 import { useLiveResource } from "@/hooks/use-live-resource"
 import type { IdeaView } from "@/lib/api"
 
 export function IdeaDetail({ id }: { id: string }) {
-  const { data, state, status } = useLiveResource<IdeaView>(`/api/idea/${id}`)
+  const { data, state, status, error } = useLiveResource<IdeaView>(
+    `/api/idea/${id}`,
+  )
   const idea = data
     ? { ...data, tasks: data.tasks ?? [], artifacts: data.artifacts ?? [] }
     : null
@@ -17,9 +20,13 @@ export function IdeaDetail({ id }: { id: string }) {
         state={state}
         back={{ href: "/", label: "dashboard" }}
       >
-        <p className="text-sm text-muted-foreground">
-          {status === 404 ? "No such idea." : "Loading idea…"}
-        </p>
+        {status === 404 ? (
+          <p className="text-sm text-muted-foreground">No such idea.</p>
+        ) : error ? (
+          <RefreshBanner error={error} subject="idea" />
+        ) : (
+          <p className="text-sm text-muted-foreground">Loading idea…</p>
+        )}
       </PageShell>
     )
   }
@@ -31,6 +38,8 @@ export function IdeaDetail({ id }: { id: string }) {
       state={state}
       back={{ href: "/", label: "dashboard" }}
     >
+      {error ? <RefreshBanner error={error} stale subject="idea" /> : null}
+
       <dl className="grid max-w-2xl grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm">
         <dt className="text-muted-foreground">Status</dt>
         <dd>

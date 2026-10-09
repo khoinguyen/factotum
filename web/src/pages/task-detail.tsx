@@ -1,6 +1,7 @@
 import { AppLink } from "@/components/app-link"
 import { Chip } from "@/components/chip"
 import { PageShell } from "@/components/page-shell"
+import { RefreshBanner } from "@/components/refresh-banner"
 import { useLiveResource } from "@/hooks/use-live-resource"
 import type { TaskDetail as TaskDetailDoc, TaskLink } from "@/lib/api"
 
@@ -32,7 +33,9 @@ function TaskRefs({ title, tasks, empty }: { title: string; tasks: TaskLink[]; e
 }
 
 export function TaskDetail({ id }: { id: string }) {
-  const { data, state, status } = useLiveResource<TaskDetailDoc>(`/api/task/${id}`)
+  const { data, state, status, error } = useLiveResource<TaskDetailDoc>(
+    `/api/task/${id}`,
+  )
 
   if (!data) {
     return (
@@ -41,9 +44,13 @@ export function TaskDetail({ id }: { id: string }) {
         state={state}
         back={{ href: "/", label: "dashboard" }}
       >
-        <p className="text-sm text-muted-foreground">
-          {status === 404 ? "No such task." : "Loading task…"}
-        </p>
+        {status === 404 ? (
+          <p className="text-sm text-muted-foreground">No such task.</p>
+        ) : error ? (
+          <RefreshBanner error={error} subject="task" />
+        ) : (
+          <p className="text-sm text-muted-foreground">Loading task…</p>
+        )}
       </PageShell>
     )
   }
@@ -55,6 +62,8 @@ export function TaskDetail({ id }: { id: string }) {
       state={state}
       back={{ href: "/", label: "dashboard" }}
     >
+      {error ? <RefreshBanner error={error} stale subject="task" /> : null}
+
       <dl className="grid max-w-2xl grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm">
         <dt className="text-muted-foreground">Status</dt>
         <dd>

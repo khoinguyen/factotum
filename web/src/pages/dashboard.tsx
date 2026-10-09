@@ -37,7 +37,7 @@ export function Dashboard() {
         </AppLink>
       }
     >
-      {error ? <RefreshBanner error={error} stale /> : null}
+      {error ? <RefreshBanner error={error} stale subject="snapshot" /> : null}
 
       <p className="text-xs text-muted-foreground">
         updated {snapshot.snapshot}

@@ -35,11 +35,25 @@ usage() {
 }
 
 # surfaces_in_workspace <workspace-ref> prints each surface ref in that workspace.
+# A workspace created by `new-workspace` may not have its surface registered in
+# `cmux tree --all` for a beat, so poll until one appears instead of returning an
+# empty list and aborting the layout. `CMUX_LAYOUT_SURFACE_TRIES` (default 50) and
+# `CMUX_LAYOUT_SURFACE_INTERVAL` (default 0.1s) bound the wait; the test sets the
+# interval to 0.
 surfaces_in_workspace() {
-  cmux tree --all | awk -v w="$1" '
-    $0 ~ "workspace " w "([ ]|$)" { inws = 1; next }
-    inws && /workspace / { inws = 0 }
-    inws && /surface:/ { match($0, /surface:[0-9]+/); print substr($0, RSTART, RLENGTH) }'
+  local ws="$1" tries="${CMUX_LAYOUT_SURFACE_TRIES:-50}" interval="${CMUX_LAYOUT_SURFACE_INTERVAL:-0.1}"
+  local i=0 surfaces=""
+  while :; do
+    surfaces="$(cmux tree --all | awk -v w="$ws" '
+      $0 ~ "workspace " w "([ ]|$)" { inws = 1; next }
+      inws && /workspace / { inws = 0 }
+      inws && /surface:/ { match($0, /surface:[0-9]+/); print substr($0, RSTART, RLENGTH) }')"
+    [ -n "$surfaces" ] && break
+    i=$((i + 1))
+    [ "$i" -ge "$tries" ] && break
+    sleep "$interval"
+  done
+  printf '%s\n' "$surfaces"
 }
 
 dashboard() { # <chief-ws> <url>

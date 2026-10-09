@@ -20,7 +20,15 @@ mkdir -p "$tmp/bin"
 cat >"$tmp/bin/cmux" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = tree ]; then
-  cat "$CMUX_STUB_TREE"
+  calls=0
+  [ -f "$CMUX_STUB_TREE.calls" ] && calls="$(cat "$CMUX_STUB_TREE.calls")"
+  calls=$((calls + 1))
+  printf '%s' "$calls" >"$CMUX_STUB_TREE.calls"
+  if [ -n "${CMUX_STUB_RACE:-}" ] && [ "$calls" -eq 1 ]; then
+    cat "$CMUX_STUB_TREE.race"
+  else
+    cat "$CMUX_STUB_TREE"
+  fi
   exit 0
 fi
 printf '%s\n' "$*" >>"$CMUX_STUB_LOG"
@@ -42,6 +50,7 @@ pass=0
 assert_run() {
   local name="$1" want="$2"; shift 3
   : >"$CMUX_STUB_LOG"
+  rm -f "$CMUX_STUB_TREE.calls"
   local out rc=0
   out="$("$script" "$@" 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -125,6 +134,54 @@ new-split right --workspace workspace:52 --surface surface:463 --command REVIEWE
 rename-tab --workspace workspace:52 --surface surface:463 builder-t-demo
 rename-tab --workspace workspace:52 --surface surface:464 reviewer-t-demo" \
   -- pair t-demo workspace_group:7 window:1 BUILDER REVIEWER
+
+# The race (t-dmwkajnbby): a freshly created workspace's surface is not present
+# in `cmux tree --all` on the first look after `new-workspace`. pair() must retry
+# until the builder surface appears instead of aborting with "no surface". The
+# stub serves a surface-less t-demo workspace on the first tree call, then the
+# full tree.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1 [current]
+├── workspace workspace:10 "chief"
+│   └── pane pane:21
+│       └── surface surface:37 [terminal] "chief" [selected]
+├── workspace workspace:52 "t-demo"
+│   └── pane pane:262
+│       └── surface surface:463 [terminal] "builder-t-demo" [selected]
+└── workspace workspace:7 "other"
+    └── pane pane:8
+        └── surface surface:8 [terminal] "x" [selected]
+TREE
+cat >"$CMUX_STUB_TREE.race" <<'TREE'
+window window:1 [current]
+├── workspace workspace:10 "chief"
+│   └── pane pane:21
+│       └── surface surface:37 [terminal] "chief" [selected]
+├── workspace workspace:52 "t-demo"
+│   └── pane pane:262
+└── workspace workspace:7 "other"
+    └── pane pane:8
+        └── surface surface:8 [terminal] "x" [selected]
+TREE
+rm -f "$CMUX_STUB_TREE.calls"
+: >"$CMUX_STUB_LOG"
+export CMUX_STUB_RACE=1 CMUX_LAYOUT_SURFACE_INTERVAL=0
+race_rc=0
+race_out="$("$script" pair t-demo workspace_group:7 window:1 BUILDER REVIEWER 2>&1)" || race_rc=$?
+unset CMUX_STUB_RACE CMUX_LAYOUT_SURFACE_INTERVAL
+if [ "$race_rc" -ne 0 ]; then
+  echo "FAIL pair retries until the builder surface appears: exited $race_rc: $race_out"
+  fail=$((fail + 1))
+elif [ "$(cat "$CMUX_STUB_LOG")" != "new-workspace --name t-demo --command BUILDER --window window:1 --group workspace_group:7 --group-placement end
+new-split right --workspace workspace:52 --surface surface:463 --command REVIEWER
+rename-tab --workspace workspace:52 --surface surface:463 builder-t-demo
+rename-tab --workspace workspace:52 --surface surface:464 reviewer-t-demo" ]; then
+  echo "FAIL pair retries until the builder surface appears"
+  echo "  got: $(cat "$CMUX_STUB_LOG")"
+  fail=$((fail + 1))
+else
+  pass=$((pass + 1))
+fi
 
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

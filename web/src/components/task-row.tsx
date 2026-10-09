@@ -1,19 +1,34 @@
 import { AppLink } from "@/components/app-link"
 import { Chip } from "@/components/chip"
+import { cn } from "@/lib/utils"
 import type { TaskLink, TaskView } from "@/lib/api"
 
-// TaskRow shows one task or task reference. The reason (a blocked/waiting note)
-// wraps anywhere so a long dependency list cannot overflow a phone-width row.
-export function TaskRow({ task }: { task: TaskView | TaskLink }) {
+// TaskRow shows one task or task reference. The chip and id are non-shrinking
+// columns so a long title truncates instead of squeezing the id onto a second
+// line; the reason (a blocked/waiting note) wraps anywhere so a long dependency
+// list cannot overflow a phone-width row. When nested, the row is indented and
+// ruled to read as a child of the group header above it.
+export function TaskRow({
+  task,
+  nested = false,
+}: {
+  task: TaskView | TaskLink
+  nested?: boolean
+}) {
   const view = task as TaskView
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-2 py-1.5 hover:bg-accent">
+    <div
+      className={cn(
+        "flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-2 py-1.5 hover:bg-accent",
+        nested && "ml-3 border-l-2 border-border pl-3",
+      )}
+    >
       <AppLink href={task.url} className="flex min-w-0 items-center gap-2">
         <Chip label={task.chip} toneKey={task.class} />
-        <span className="font-mono text-xs text-muted-foreground">
+        <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">
           {task.id}
         </span>
-        <span className="truncate text-sm">{task.title}</span>
+        <span className="min-w-0 truncate text-sm">{task.title}</span>
       </AppLink>
       {view.milestone ? <Chip label="milestone" toneKey="done" /> : null}
       {view.unblocks ? (

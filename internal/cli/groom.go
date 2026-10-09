@@ -466,8 +466,7 @@ type groomTarget struct {
 // openGroomTarget resolves the project a grooming command acts on and binds its
 // services to that project's store. The configured project (or an unset -p)
 // reuses the caller's store; another project's store is opened from the machine
-// registry. A project with no registry entry falls back to the configured store,
-// where its data is written. The caller closes the returned target.
+// config (see groomProjectStore). The caller closes the returned target.
 func (d *Deps) openGroomTarget(ctx context.Context, projectID core.ProjectID) (groomTarget, error) {
 	st, own, err := d.groomProjectStore(projectID)
 	if err != nil {
@@ -501,9 +500,11 @@ func (d *Deps) openGroomTarget(ctx context.Context, projectID core.ProjectID) (g
 
 // groomProjectStore resolves the store a project's data lives in: the caller's
 // configured store for the configured project (or an unset id), else the
-// project's machine-registry entry. own reports that the caller's configured
-// store is the one to use, which a project with no registry entry falls back to,
-// where its data is written.
+// project's store from the machine config via config.StoreFor - its
+// [projects.<id>] entry, or the file's top-level [store] when the project has no
+// entry. own reports that the caller's configured store is the one to use, which
+// is the fallback only when the machine config names no store for the project at
+// all.
 func (d *Deps) groomProjectStore(projectID core.ProjectID) (config.Store, bool, error) {
 	if projectID == "" || string(projectID) == d.Config.Project {
 		return d.Config.Store, true, nil

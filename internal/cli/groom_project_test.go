@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,6 +79,64 @@ func listProjectArtifacts(t *testing.T, userPath, projectID string) []*core.Arti
 		t.Fatalf("list artifacts for %s: %v", projectID, err)
 	}
 	return arts
+}
+
+// TestGroomDataDirResolution pins which store a project's grooming data is read
+// from: the configured store for the configured project (even with a
+// [projects.<id>] entry), the machine config's entry for another project, the
+// file's top-level [store] when the project has no entry, and the configured
+// store only when the machine config names no store at all. This is the single
+// resolution list, show, capture, and review share.
+func TestGroomDataDirResolution(t *testing.T) {
+	dir := t.TempDir()
+	configured := filepath.Join(dir, "configured", "db.json")
+	entry := filepath.Join(dir, "entry", "db.json")
+	machine := filepath.Join(dir, "machine", "db.json")
+	userPath := filepath.Join(dir, "user.toml")
+	mustWrite(t, userPath, "[store]\nbackend = \"jsonfile\"\n[store.options]\npath = \""+machine+"\"\n"+
+		"[projects.alpha.store]\nbackend = \"jsonfile\"\n[projects.alpha.store.options]\npath = \""+entry+"\"\n"+
+		"[projects.beta.store]\nbackend = \"jsonfile\"\n[projects.beta.store.options]\npath = \""+entry+"\"\n")
+
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, io.Discard, io.Discard, nil)
+	deps.Config = config.Config{
+		Project: "alpha",
+		Store:   config.Store{Backend: "jsonfile", Options: map[string]string{"path": configured}},
+	}
+	deps.UserConfigPath = userPath
+
+	cases := []struct {
+		name    string
+		flag    string
+		wantDir string
+	}{
+		{"configured project ignores its registry entry", "alpha", filepath.Dir(configured)},
+		{"registry entry", "beta", filepath.Dir(entry)},
+		{"top-level store fallback", "gamma", filepath.Dir(machine)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := deps.groomDataDir(tc.flag)
+			if err != nil {
+				t.Fatalf("groomDataDir(%s) error = %v", tc.flag, err)
+			}
+			if got != tc.wantDir {
+				t.Fatalf("groomDataDir(%s) = %q, want %q", tc.flag, got, tc.wantDir)
+			}
+		})
+	}
+
+	emptyUser := filepath.Join(dir, "empty.toml")
+	mustWrite(t, emptyUser, "default_project = \"alpha\"\n")
+	bare := NewDeps(app.SystemClock{}, app.RandomIDGen{}, io.Discard, io.Discard, nil)
+	bare.Config = deps.Config
+	bare.UserConfigPath = emptyUser
+	got, err := bare.groomDataDir("delta")
+	if err != nil {
+		t.Fatalf("groomDataDir(delta) error = %v", err)
+	}
+	if want := filepath.Dir(configured); got != want {
+		t.Fatalf("groomDataDir(delta) = %q, want the configured store dir %q", got, want)
+	}
 }
 
 // TestGroomProjectFlagCapturesIntoAnotherProjectsStore pins that a cross-project

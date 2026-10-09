@@ -1,5 +1,6 @@
 import { AppLink } from "@/components/app-link"
 import { PageShell } from "@/components/page-shell"
+import { RefreshBanner } from "@/components/refresh-banner"
 import { useLiveResource } from "@/hooks/use-live-resource"
 import type { ArtifactDetail as ArtifactDetailDoc } from "@/lib/api"
 
@@ -10,9 +11,10 @@ export function ArtifactDetail({
   id: string
   kind: "memory" | "doc"
 }) {
-  const { data, state, status } = useLiveResource<ArtifactDetailDoc>(
+  const { data, state, status, error } = useLiveResource<ArtifactDetailDoc>(
     `/api/${kind}/${id}`,
   )
+  const subject = kind === "memory" ? "memory" : "document"
 
   if (!data) {
     return (
@@ -21,11 +23,13 @@ export function ArtifactDetail({
         state={state}
         back={{ href: "/", label: "dashboard" }}
       >
-        <p className="text-sm text-muted-foreground">
-          {status === 404
-            ? `No such ${kind}.`
-            : `Loading ${kind}…`}
-        </p>
+        {status === 404 ? (
+          <p className="text-sm text-muted-foreground">No such {kind}.</p>
+        ) : error ? (
+          <RefreshBanner error={error} subject={subject} />
+        ) : (
+          <p className="text-sm text-muted-foreground">Loading {kind}…</p>
+        )}
       </PageShell>
     )
   }
@@ -37,6 +41,8 @@ export function ArtifactDetail({
       state={state}
       back={{ href: "/", label: "dashboard" }}
     >
+      {error ? <RefreshBanner error={error} stale subject={subject} /> : null}
+
       <dl className="grid max-w-2xl grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm">
         <dt className="text-muted-foreground">Kind</dt>
         <dd>{data.kind}</dd>

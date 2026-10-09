@@ -33,8 +33,8 @@ pkill -9 -P 1 -f 'ft msg agent claim.*--actor chief' || true
 
 # 2. Close the retired chief's surface under its workspace.
 ws="$(cmux tree --all | awk -v s="$surface" '
-  /workspace / { match($0, /workspace:[0-9]+/); ws = substr($0, RSTART, RLENGTH) }
-  /surface / && index($0, "surface " s " ") { print ws; exit }')"
+  /workspace workspace:[0-9]+/ { match($0, /workspace:[0-9]+/); ws = substr($0, RSTART, RLENGTH) }
+  /surface surface:/ && index($0, "surface " s " ") { print ws; exit }')"
 [ -n "$ws" ] || { echo "reincarnate-teardown: no cmux surface $surface in the tree" >&2; exit 1; }
 
 cmux close-surface --workspace "$ws" --surface "$surface"

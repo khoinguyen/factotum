@@ -55,7 +55,7 @@ export function Dashboard() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold">Ideas</h2>
+        <h2 className="text-lg font-semibold">Captures</h2>
         <IdeaBoard ideas={snapshot.ideas} />
       </section>
 

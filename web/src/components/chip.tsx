@@ -1,9 +1,10 @@
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
-// tone maps a read-side state/class key to a badge color. Keys come from both
-// the idea rollup (finished/active/blocked/captured) and the task classifier
-// (ready-agent, ready-human, done, review, blocked, cycle, capture, ...).
+// tone maps a read-side state/class/kind key to a badge color. Keys come from
+// the idea rollup (finished/active/blocked/captured), capture kinds
+// (idea/bug), and the task classifier (ready-agent, ready-human, done, review,
+// blocked, cycle, capture, ...).
 const tone: Record<string, string> = {
   done: "border-emerald-600/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
   finished: "border-emerald-600/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
@@ -15,6 +16,8 @@ const tone: Record<string, string> = {
   cycle: "border-red-600/40 bg-red-500/15 text-red-700 dark:text-red-300",
   capture: "border-amber-600/40 bg-amber-500/15 text-amber-700 dark:text-amber-300",
   captured: "border-amber-600/40 bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  idea: "border-amber-600/40 bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  bug: "border-red-600/40 bg-red-500/15 text-red-700 dark:text-red-300",
   cancelled: "border-muted-foreground/30 bg-muted text-muted-foreground",
   waiting: "border-muted-foreground/30 bg-muted text-muted-foreground",
 }

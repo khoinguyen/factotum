@@ -284,6 +284,15 @@ test("renders a snapshot whose empty lists are null", async () => {
   expect(screen.getByText(/No events yet/)).toBeTruthy()
 })
 
+// Khoi 2026-10-09: the board section holds ideas and bugs, so its label is
+// "Captures", not "Ideas".
+test("the captures board section is titled Captures", async () => {
+  stubFetch({ "/api/snapshot": emptySnapshot })
+  renderAt("/")
+  expect(await screen.findByRole("heading", { name: "Captures" })).toBeTruthy()
+  expect(screen.queryByRole("heading", { name: "Ideas" })).toBeNull()
+})
+
 test("renders tasks and updates from a populated snapshot", async () => {
   stubFetch({ "/api/snapshot": populatedSnapshot })
   renderAt("/")

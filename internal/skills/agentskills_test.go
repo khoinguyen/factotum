@@ -127,6 +127,33 @@ func TestChiefSkillReincarnationTearsDownRetiredChief(t *testing.T) {
 	}
 }
 
+// TestRoleSkillsUseProjectVerifyCommand pins that the role skills verify with
+// the project's own command instead of hardcoding one project's: a skill that
+// hardcodes `mise run ci` silently breaks for every other project. It must
+// name `ft config get verify` as the way to read the project's recorded command.
+func TestRoleSkillsUseProjectVerifyCommand(t *testing.T) {
+	cases := []struct {
+		skill     string
+		forbidden []string
+	}{
+		{".agents/skills/single-task-builder/SKILL.md", []string{"mise run ci"}},
+		{".agents/skills/single-task-reviewer/SKILL.md", []string{"mise run ci"}},
+		{".agents/skills/single-task-qa/SKILL.md", []string{"mise run ci", "mise run build"}},
+		{".agents/skills/chief/SKILL.md", []string{"mise run ci"}},
+	}
+	for _, tc := range cases {
+		body := agentSkill(t, tc.skill)
+		for _, bad := range tc.forbidden {
+			if strings.Contains(body, bad) {
+				t.Errorf("%s hardcodes %q; run the project's verify command instead (ft config get verify)", tc.skill, bad)
+			}
+		}
+		if !strings.Contains(body, "ft config get verify") {
+			t.Errorf("%s must reference `ft config get verify` to run the project's verification command", tc.skill)
+		}
+	}
+}
+
 // TestArchitectureReviewerSkillReviewsDocsNotCode guards the architecture
 // reviewer's charter: it reviews a feature's documents (spec, plan, tech design)
 // with a project-wide, zoomed-out view and never drops to line-level code. It

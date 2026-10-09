@@ -53,8 +53,9 @@ Message peers over **`ft msg`**, not cmux targets. The chief launched this sessi
   `ft/<task-id>-<short-brief>` — already created. **Do not create or switch branches**; commit in the
   worktree you were given.
 - `ft task get <task-id>` is the spec. Run `ft task start <task-id>` and `ft task assign <task-id> --actor claude`.
-- Build test-first: RED, implement, GREEN, then `mise run ci`. Update the embedded skill when the CLI
-  surface changes.
+- Build test-first: RED, implement, GREEN, then run the project's verification command
+  (`ft config get verify`; when the project records none, discover it from its own docs). Update the
+  embedded skill when the CLI surface changes.
 - **Never point a non-installed branch binary at the real project DB.** A branch build can
   forward-migrate the shared database to a newer schema, which then breaks the installed `ft`. Run
   every branch-binary invocation against a throwaway store

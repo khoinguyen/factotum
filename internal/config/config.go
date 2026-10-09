@@ -530,8 +530,9 @@ func applyServeEnv(serve *Serve, getenv func(string) string) {
 
 // FormatStoreOptions renders store options as the comma-separated key=value
 // list applyStoreOptions parses, with keys sorted so the result is deterministic
-// and safe to hand to a child ft as FACTOTUM_STORE_OPTS. An empty map renders
-// empty, so a caller injects no variable.
+// and safe to hand to a child ft as FACTOTUM_STORE_OPTS. The list is
+// comma-separated, so an option value cannot itself contain a comma. An empty
+// map renders empty, so a caller injects no variable.
 func FormatStoreOptions(options map[string]string) string {
 	if len(options) == 0 {
 		return ""

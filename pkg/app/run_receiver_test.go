@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -144,24 +145,29 @@ func TestRunWithoutHubOmitsHubEnv(t *testing.T) {
 	}
 }
 
-// TestRunIncompleteHubOmitsHubEnv proves a hub URL with no token is treated as
-// no hub. The transport is always token-gated, so injecting the URL alone would
-// make a launched receiver speak it unauthenticated and fail-close every
-// message; both halves are required. `ft run` warns about the half-configured
-// hub, so the fallback to the local ft store is not silent.
+// TestRunIncompleteHubOmitsHubEnv proves a hub URL with no usable token is
+// treated as no hub. The transport is always token-gated, so injecting the URL
+// with a missing or whitespace-only token would make a launched receiver speak
+// it unauthenticated and fail-close every message; both halves are required. `ft
+// run` warns about the half-configured hub, so the fallback to the local ft
+// store is not silent.
 func TestRunIncompleteHubOmitsHubEnv(t *testing.T) {
-	f := newRunFixture(t)
-	f.backend.Program(isolation.ExecResult{Stdout: []byte("ok\n"), ExitCode: 0})
+	for _, token := range []string{"", "   ", "\t"} {
+		t.Run("token="+strconv.Quote(token), func(t *testing.T) {
+			f := newRunFixture(t)
+			f.backend.Program(isolation.ExecResult{Stdout: []byte("ok\n"), ExitCode: 0})
 
-	actor := core.ActorID("act-agent")
-	if _, err := f.run(t, RunInput{Actor: &actor, MsgURL: "http://hub:8484"}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	env := f.backend.Prepared()[0].Env
-	if _, ok := env[harnesspkg.EnvMsgURL]; ok {
-		t.Errorf("env %s = %q, want no hub URL without a token", harnesspkg.EnvMsgURL, env[harnesspkg.EnvMsgURL])
-	}
-	if _, ok := env[harnesspkg.EnvServeToken]; ok {
-		t.Errorf("env %s = %q, want no serve token without one", harnesspkg.EnvServeToken, env[harnesspkg.EnvServeToken])
+			actor := core.ActorID("act-agent")
+			if _, err := f.run(t, RunInput{Actor: &actor, MsgURL: "http://hub:8484", ServeToken: token}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			env := f.backend.Prepared()[0].Env
+			if _, ok := env[harnesspkg.EnvMsgURL]; ok {
+				t.Errorf("env %s = %q, want no hub URL without a usable token", harnesspkg.EnvMsgURL, env[harnesspkg.EnvMsgURL])
+			}
+			if _, ok := env[harnesspkg.EnvServeToken]; ok {
+				t.Errorf("env %s = %q, want no serve token without a usable one", harnesspkg.EnvServeToken, env[harnesspkg.EnvServeToken])
+			}
+		})
 	}
 }

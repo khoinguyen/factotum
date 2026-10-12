@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -345,6 +346,106 @@ func TestRunLoopRejectsMissingGoalOrEmptyCapture(t *testing.T) {
 	}
 	if _, err := svc.Run(ctx, LoopInput{GoalID: idea.ID, Runner: runner.run}); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("empty capture error = %v, want ErrInvalid", err)
+	}
+}
+
+// The empty-capture error class is core.ErrInvalid, not a CLI usage error: the
+// capture is a well-formed graph target that merely owns no runnable task. It
+// mirrors the non-executable-goal rejection, and the CLI renders it as
+// "invalid:" (exit 5). The message names the capture so a user can see which
+// target is empty.
+func TestRunLoopEmptyCaptureIsInvalidWithNamedMessage(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := addCapture(t, h, project, "empty")
+
+	runner := &fakeLoopRunner{tasks: h.tasks}
+	_, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: idea.ID, Runner: runner.run})
+	if !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("empty capture error = %v, want core.ErrInvalid", err)
+	}
+	if want := "capture " + string(idea.ID) + " has no tasks to run"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("empty capture error = %q, want it to contain %q", err, want)
+	}
+	if len(runner.order) != 0 {
+		t.Fatalf("run order = %v, want none", runner.order)
+	}
+}
+
+// A capture whose only children are milestones has no runnable work: a
+// milestone is a human gate the loop completes the prerequisites for and then
+// stops at, never runs. The rejection says so explicitly rather than reporting
+// the same "no tasks" as a genuinely empty capture, so a user who attached only
+// a milestone learns why nothing ran.
+func TestRunLoopMilestoneOnlyCaptureHasNoRunnableWork(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := addCapture(t, h, project, "release plan")
+	gate, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Kind: core.KindMilestone, Title: "ship it"})
+	if err != nil {
+		t.Fatalf("Add(milestone) error = %v", err)
+	}
+	mustDep(t, h, gate, idea)
+
+	runner := &fakeLoopRunner{tasks: h.tasks}
+	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: idea.ID, Runner: runner.run})
+	if !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("milestone-only capture error = %v, want core.ErrInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "no tasks to run") {
+		t.Fatalf("milestone-only capture error = %q, want it to mention no tasks to run", err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "milestone") {
+		t.Fatalf("milestone-only capture error = %q, want it to mention the milestone gate", err)
+	}
+	if len(runner.order) != 0 {
+		t.Fatalf("run order = %v, want none", runner.order)
+	}
+	if outcome != nil && len(outcome.Steps) != 0 {
+		t.Fatalf("steps = %d, want 0", len(outcome.Steps))
+	}
+}
+
+// A capture whose tasks have mixed readiness: the loop runs the agent-ready
+// task it can, then stalls with no_ready_work and names the non-agent-ready
+// task in not_run, leaving it for a human to groom. This pins the stopping
+// path the PR #257 review verified only by hand.
+func TestRunLoopCaptureStallReportsUngroomedAfterAgentWork(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	agent := loopAgent(t, h)
+	idea := addCapture(t, h, project, "feature")
+	ready := addLoopTask(t, h, project, "ready", 0)
+	// Assigned to the agent but ungroomed, so it is still human work.
+	ungroomed, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "ungroomed", AssigneeID: &agent.ID})
+	if err != nil {
+		t.Fatalf("Add(ungroomed) error = %v", err)
+	}
+	mustDep(t, h, ready, idea)
+	mustDep(t, h, ungroomed, idea)
+
+	runner := &fakeLoopRunner{tasks: h.tasks}
+	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: idea.ID, Runner: runner.run})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if outcome.Stop != StopNoReadyWork {
+		t.Fatalf("Stop = %q, want no_ready_work", outcome.Stop)
+	}
+	if !equalIDs(runner.order, []core.TicketID{ready.ID}) {
+		t.Fatalf("run order = %v, want only the agent-ready task", runner.order)
+	}
+	if !equalIDs(outcome.NotRun, []core.TicketID{ungroomed.ID}) {
+		t.Fatalf("NotRun = %v, want [%s]", outcome.NotRun, ungroomed.ID)
+	}
+	if outcome.Remaining != 1 {
+		t.Fatalf("Remaining = %d, want 1", outcome.Remaining)
+	}
+	if stored, err := h.tasks.Get(ctx, ungroomed.ID); err != nil || stored.Status != core.StatusTodo {
+		t.Fatalf("ungroomed task = %v (err %v), want todo and untouched", stored, err)
 	}
 }
 

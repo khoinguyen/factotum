@@ -377,7 +377,7 @@ ft run --goal t-abc123 --sandbox local --harness opencode --allow-host --max-tas
 ```
 
 - The goal is a task, a milestone, or a capture. A task resolves; a milestone is a human gate, so
-  the loop runs its prerequisites and stops `no_ready_work`; a capture (idea/bug) is done when every task carrying it as its origin edge resolves.
+  the loop runs its prerequisites and stops `no_ready_work`; a capture (idea/bug) is done when every task carrying it as its origin edge resolves. A capture that owns no runnable task is rejected (`invalid:`, exit 5): an empty one says `no tasks to run`, and one whose only children are milestones names the gates it cannot run, since the loop runs tasks, not gates.
 - Only agent-ready work is run: a task must be assigned to an agent and `groomed`, the
   bucket `ft task next --for <agent>` offers. Startable but non-agent-ready on-path work
   (unassigned, human-owned, or ungroomed) is left for a human and named in `not_run:`.

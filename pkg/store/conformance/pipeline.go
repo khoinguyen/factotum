@@ -73,6 +73,7 @@ func testPipelineRoundtrip(t *testing.T, repo store.PipelineRepo, ctx context.Co
 	got.Session = "sess-1"
 	got.RunID = "run-1"
 	got.Produced = []core.TicketID{"t-1", "t-2"}
+	got.ResumeState = core.PipelineBuilding
 	got.Attempts = 2
 	got.UpdatedAt = pipelineBase.Add(time.Minute)
 	if err := repo.Update(ctx, got); err != nil {
@@ -94,6 +95,9 @@ func testPipelineRoundtrip(t *testing.T, repo store.PipelineRepo, ctx context.Co
 	if reloaded.Attempts != 2 {
 		t.Fatalf("Get().Attempts = %d, want 2", reloaded.Attempts)
 	}
+	if reloaded.ResumeState != core.PipelineBuilding {
+		t.Fatalf("Get().ResumeState = %q, want building", reloaded.ResumeState)
+	}
 
 	missing := &core.Pipeline{ID: "pl-missing", ProjectID: project, CaptureID: "i-x", State: core.PipelineQueued}
 	if err := repo.Update(ctx, missing); !errors.Is(err, core.ErrNotFound) {
@@ -114,6 +118,7 @@ func testPipelineValidate(t *testing.T, repo store.PipelineRepo, ctx context.Con
 		{"empty capture", core.Pipeline{ID: "pl", ProjectID: project, State: core.PipelineQueued}},
 		{"unknown state", core.Pipeline{ID: "pl", ProjectID: project, CaptureID: capture, State: "lost"}},
 		{"unknown gate", core.Pipeline{ID: "pl", ProjectID: project, CaptureID: capture, State: core.PipelineQueued, Gate: "bad"}},
+		{"invalid resume state", core.Pipeline{ID: "pl", ProjectID: project, CaptureID: capture, State: core.PipelinePaused, ResumeState: core.PipelineDone}},
 	}
 	for _, tt := range invalids {
 		t.Run(tt.name, func(t *testing.T) {

@@ -191,6 +191,20 @@ opens the advisory `groom_questions` gate. To steer a live groom session yoursel
 terminal with `unattended = false` (or `--unattended=false`): the daemon attaches you to the session
 so you can answer the grill.
 
+The daemon stops at every human gate and never clears one on its own. Clear a gate — or hold, resume,
+retry, or cancel a pipeline — with the operator verbs. They act on the durable pipeline, so they work
+while the daemon runs or against a stopped store; a running daemon picks the change up and resumes the
+phase:
+
+```sh
+ft up answer <pipeline> -f answers.md     # answer deferred groom questions; clear groom_questions
+ft up approve <pipeline>                  # accept the design; clear design_rework and resume review
+ft up merge <pipeline>                    # mark the PRs merged; clear merge_approval and build on
+ft up release <pipeline>                  # close the release milestone; clear the release gate
+ft up promote <pipeline>                  # approve the rollout promotion; clear the rollout gate
+ft up pause|resume|retry|cancel <pipeline>
+```
+
 ```sh
 ft serve
 ft doc search "<query>"

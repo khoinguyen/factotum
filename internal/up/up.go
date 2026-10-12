@@ -319,6 +319,9 @@ func (c *Controller) drive(ctx context.Context, pipeline *core.Pipeline) error {
 			if ctx.Err() != nil {
 				return err
 			}
+			// Record the phase it failed in so `ft up retry` can return to it
+			// (design §5).
+			pipeline.ResumeState = pipeline.State
 			pipeline.State = core.PipelineFailed
 			pipeline.Error = err.Error()
 			pipeline.UpdatedAt = c.clock.Now()
@@ -348,6 +351,7 @@ func (c *Controller) drive(ctx context.Context, pipeline *core.Pipeline) error {
 		pipeline.RunID = ""
 		pipeline.Attempts++
 		pipeline.Gate = result.Gate
+		pipeline.ResumeState = ""
 		pipeline.UpdatedAt = c.clock.Now()
 
 		// A blocking gate holds its phase: record it and stop without

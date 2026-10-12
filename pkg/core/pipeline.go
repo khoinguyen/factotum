@@ -123,6 +123,11 @@ type Pipeline struct {
 	// Error is the last failure reason.
 	Error    string
 	Attempts int
+	// ResumeState is the phase to return to when the pipeline leaves paused or
+	// failed: pause and a stage failure park the pipeline in a holding state, and
+	// resume/retry restore the phase it held (docs/up/design.md §5). It is empty
+	// whenever the pipeline is not parked.
+	ResumeState PipelineState
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -143,6 +148,9 @@ func (p Pipeline) Validate() error {
 	}
 	if !p.Gate.Valid() {
 		return fmt.Errorf("%w: unknown pipeline gate %q", ErrInvalid, p.Gate)
+	}
+	if p.ResumeState != "" && (!p.ResumeState.Valid() || p.ResumeState.Terminal()) {
+		return fmt.Errorf("%w: invalid pipeline resume state %q", ErrInvalid, p.ResumeState)
 	}
 	return nil
 }

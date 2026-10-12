@@ -84,6 +84,20 @@ func TestPipelineValidate(t *testing.T) {
 		t.Fatalf("Validate(valid) error = %v, want nil", err)
 	}
 
+	// A parked pipeline records the phase it will resume to, which must be a
+	// real, non-terminal phase.
+	parked := Pipeline{
+		ID:          "pl-1",
+		ProjectID:   "prj-1",
+		CaptureID:   capture,
+		State:       PipelinePaused,
+		Gate:        GateNone,
+		ResumeState: PipelineBuilding,
+	}
+	if err := parked.Validate(); err != nil {
+		t.Fatalf("Validate(paused with a resume phase) error = %v, want nil", err)
+	}
+
 	cases := []struct {
 		name     string
 		pipeline Pipeline
@@ -93,6 +107,8 @@ func TestPipelineValidate(t *testing.T) {
 		{"empty capture", Pipeline{ID: "pl-1", ProjectID: "prj-1", State: PipelineQueued}},
 		{"unknown state", Pipeline{ID: "pl-1", ProjectID: "prj-1", CaptureID: capture, State: "lost"}},
 		{"unknown gate", Pipeline{ID: "pl-1", ProjectID: "prj-1", CaptureID: capture, State: PipelineQueued, Gate: "bad"}},
+		{"unknown resume state", Pipeline{ID: "pl-1", ProjectID: "prj-1", CaptureID: capture, State: PipelinePaused, ResumeState: "lost"}},
+		{"terminal resume state", Pipeline{ID: "pl-1", ProjectID: "prj-1", CaptureID: capture, State: PipelinePaused, ResumeState: PipelineDone}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

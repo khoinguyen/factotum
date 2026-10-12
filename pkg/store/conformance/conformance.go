@@ -840,6 +840,9 @@ func testEvent(t *testing.T, be store.Backend) {
 	if len(bySession) != 1 || bySession[0].ID != "ev-sess" {
 		t.Fatalf("List(session) = %v, want [ev-sess]", bySession)
 	}
+	if bySession[0].Session != "sess-1" {
+		t.Fatalf("List(session).Session = %q, want sess-1 (session survives the round-trip)", bySession[0].Session)
+	}
 	if none, err := repo.List(ctx, store.EventFilter{ProjectID: "prj-1", Session: "sess-none"}); err != nil {
 		t.Fatalf("List(unknown session) error = %v", err)
 	} else if len(none) != 0 {

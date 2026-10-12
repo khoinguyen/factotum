@@ -706,6 +706,9 @@ func testRun(t *testing.T, be store.Backend) {
 	if len(all) != 1 {
 		t.Fatalf("List() len = %d, want 1 after upsert", len(all))
 	}
+	if all[0].Session != "sess-1b" {
+		t.Fatalf("List().Session = %q, want sess-1b (session survives the round-trip)", all[0].Session)
+	}
 
 	// Heartbeat renews the lease.
 	heartbeatAt := created.Add(5 * time.Minute)
@@ -791,10 +794,15 @@ func testRun(t *testing.T, be store.Backend) {
 	if len(bySession) != 1 || bySession[0].ID != "run-1" {
 		t.Fatalf("List(session sess-1b) = %v, want [run-1]", runIDs(bySession))
 	}
+	if bySession[0].Session != "sess-1b" {
+		t.Fatalf("List(session sess-1b).Session = %q, want sess-1b (session survives the round-trip)", bySession[0].Session)
+	}
 	if byOtherSession, err := repo.List(ctx, store.RunFilter{ProjectID: "prj-1", Session: "sess-2"}); err != nil {
 		t.Fatalf("List(session sess-2) error = %v", err)
 	} else if len(byOtherSession) != 1 || byOtherSession[0].ID != "run-stale" {
 		t.Fatalf("List(session sess-2) = %v, want [run-stale]", runIDs(byOtherSession))
+	} else if byOtherSession[0].Session != "sess-2" {
+		t.Fatalf("List(session sess-2).Session = %q, want sess-2 (session survives the round-trip)", byOtherSession[0].Session)
 	}
 
 	if err := repo.Delete(ctx, "run-1"); err != nil {

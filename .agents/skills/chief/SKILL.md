@@ -114,6 +114,11 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
 - **Always pass `--window`** to `new-workspace`. From the env-less shell it otherwise defaults to the
   caller's window and can land a pair in a stale duplicate window, and `--group` placement then
   silently fails.
+- **A pair is anchored to an explicit cwd.** `new-workspace` inherits the FOCUSED surface's cwd, so
+  a relative command could 404 when the focused surface is another repo, leaving a created-but-dead
+  pair workspace. `cmux-layout.sh pair` passes `--cwd <repo-root>` to `new-workspace` and prefixes
+  the reviewer's `new-split` command with `cd <repo-root> &&` (new-split has no `--cwd` flag), so a
+  pair starts regardless of what was focused.
 - A pair that still lands in another window: repair with
   `cmux move-workspace-to-window --workspace <ref> --window <active>`, then add it to the group.
 - `cmux workspace-group add` resolves refs in the caller's window, so pass the workspace **UUID**

@@ -125,6 +125,11 @@ func (h *Harness) Spec(req harness.Request) (isolation.Spec, error) {
 	// When the run carries receiver configuration, stage the ft msg plugin so
 	// the launched session registers and claims messages. Without a configured
 	// project/actor the plugin is not installed and the session is unmanaged.
+	//
+	// The plugin shells out to `ft` for the local transport, so the environment
+	// must provide it: a sandboxed/containerized image needs `ft` on PATH, or
+	// the run must set FACTOTUM_BIN to one it staged. A remote hub
+	// (FACTOTUM_MSG_URL) needs no local ft.
 	if MessagingEnabled(req.Env) {
 		spec.Files = append(spec.Files, MsgPluginFile())
 	}

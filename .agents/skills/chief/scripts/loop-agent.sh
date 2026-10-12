@@ -51,5 +51,18 @@ else
   unset FACTOTUM_TASK_ID || true
 fi
 
+# Session identity: a chief launch mints a NEW session id and records its start,
+# so every ft call this session makes is attributed to it (FACTOTUM_SESSION) and
+# the sessions dashboard can show when it began. Builders/reviewers/QA inherit
+# the chief's FACTOTUM_SESSION from the environment, so their work rolls up to
+# the same session. The actor ids stay role-scoped (chief, builder-<task>); the
+# session is a separate field, not encoded in the id.
+role="${actor%%-*}"
+if [ "$role" = "chief" ]; then
+  session="$("$ft_bin" session start --project "$project" | sed -n 's/^session_id: //p')"
+  [ -n "$session" ] || { echo "loop-agent: could not start a session for $actor" >&2; exit 1; }
+  export FACTOTUM_SESSION="$session"
+fi
+
 cd "$worktree"
 exec "$opencode_bin" --prompt "$prompt" --auto

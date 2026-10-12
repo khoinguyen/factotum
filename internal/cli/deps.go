@@ -51,14 +51,17 @@ type IsolationBackendFactory func(cfg config.Run, errOut io.Writer) (isolation.I
 type HarnessFactory func(cfg config.Run) (harness.Harness, error)
 
 type Deps struct {
-	Config       config.Config
-	Backend      store.Backend
-	Clock        app.Clock
-	IDs          app.IDGen
-	Out          io.Writer
-	Err          io.Writer
-	Getenv       func(string) string
-	ActorRef     string
+	Config   config.Config
+	Backend  store.Backend
+	Clock    app.Clock
+	IDs      app.IDGen
+	Out      io.Writer
+	Err      io.Writer
+	Getenv   func(string) string
+	ActorRef string
+	// Session is the chief session id from FACTOTUM_SESSION, recorded on the
+	// caller context so every event this invocation appends is attributed to it.
+	Session      string
 	OutputFormat string
 	NoHints      bool
 	// UserConfigPath is the machine-scoped config path this invocation loaded,
@@ -104,6 +107,7 @@ type Deps struct {
 	Actors    *app.ActorService
 	Artifacts *app.ArtifactService
 	Messages  *app.MessageService
+	Sessions  *app.SessionService
 	// TaskChecks runs advisory checks and caches their results.
 	TaskChecks *app.CheckService
 
@@ -373,6 +377,7 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 		d.Actors = app.NewActorService(backend, d.Clock, d.IDs)
 		d.Artifacts = app.NewArtifactService(backend, d.Clock, d.IDs)
 		d.Messages = app.NewMessageService(backend, d.Clock, d.IDs)
+		d.Sessions = app.NewSessionService(backend, d.Clock, d.IDs)
 		d.TaskChecks = app.NewCheckService(backend, d.Clock, d.IDs, d.Checks)
 	}
 	if d.EmbedderOverride != nil {

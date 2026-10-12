@@ -826,4 +826,23 @@ func testEvent(t *testing.T, be store.Backend) {
 	if len(sinceEvents) != 2 {
 		t.Fatalf("List(since) len = %d, want 2", len(sinceEvents))
 	}
+
+	// A session-attributed event is queryable by session; an event without one
+	// is excluded.
+	sessionEvent := &core.Event{ID: "ev-sess", ProjectID: "prj-1", Kind: core.EventTaskStatusChanged, Session: "sess-1", Summary: "by session", CreatedAt: base.Add(3 * time.Second)}
+	if err := repo.Append(ctx, sessionEvent); err != nil {
+		t.Fatalf("Append(session) error = %v", err)
+	}
+	bySession, err := repo.List(ctx, store.EventFilter{ProjectID: "prj-1", Session: "sess-1"})
+	if err != nil {
+		t.Fatalf("List(session) error = %v", err)
+	}
+	if len(bySession) != 1 || bySession[0].ID != "ev-sess" {
+		t.Fatalf("List(session) = %v, want [ev-sess]", bySession)
+	}
+	if none, err := repo.List(ctx, store.EventFilter{ProjectID: "prj-1", Session: "sess-none"}); err != nil {
+		t.Fatalf("List(unknown session) error = %v", err)
+	} else if len(none) != 0 {
+		t.Fatalf("List(unknown session) = %v, want none", none)
+	}
 }

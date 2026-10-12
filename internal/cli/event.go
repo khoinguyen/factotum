@@ -10,7 +10,7 @@ import (
 func newEventCommand(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "event", Short: "Inspect the audit log"}
 
-	var projectID, taskID string
+	var projectID, taskID, session string
 	var kinds []string
 	var limit int
 
@@ -19,7 +19,7 @@ func newEventCommand(deps *Deps) *cobra.Command {
 		Short: "List events, newest first",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			projectID = string(deps.resolveProject(projectID))
-			filter := store.EventFilter{ProjectID: core.ProjectID(projectID), Limit: limit}
+			filter := store.EventFilter{ProjectID: core.ProjectID(projectID), Session: session, Limit: limit}
 			if taskID != "" {
 				id := core.TicketID(taskID)
 				filter.TicketID = &id
@@ -43,6 +43,7 @@ func newEventCommand(deps *Deps) *cobra.Command {
 	list.Flags().StringVarP(&projectID, "project", "p", "", "filter by project id")
 	list.Flags().StringVarP(&taskID, "task", "t", "", "filter by task id")
 	list.Flags().StringArrayVarP(&kinds, "kind", "k", nil, "filter by event kind (repeatable)")
+	list.Flags().StringVar(&session, "session", "", "filter by chief session id")
 	list.Flags().IntVarP(&limit, "limit", "n", 20, "maximum number of events")
 
 	cmd.AddCommand(list)

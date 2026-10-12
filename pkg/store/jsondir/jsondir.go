@@ -935,6 +935,9 @@ func (r *eventRepo) List(_ context.Context, filter store.EventFilter) ([]*core.E
 		if len(filter.Kinds) > 0 && !containsKind(filter.Kinds, event.Kind) {
 			continue
 		}
+		if filter.Session != "" && event.Session != filter.Session {
+			continue
+		}
 		if filter.Since != nil && event.CreatedAt.Before(*filter.Since) {
 			continue
 		}
@@ -1239,6 +1242,7 @@ func (r *runRepo) Register(_ context.Context, run *core.Run) (*core.Run, error) 
 		existing := record.run
 		if existing.ProjectID == run.ProjectID && existing.ActorID == run.ActorID && existing.Host == run.Host && existing.PID == run.PID {
 			existing.TaskID = run.TaskID
+			existing.Session = run.Session
 			existing.Harness = run.Harness
 			existing.CanInject = run.CanInject
 			existing.SeenAt = run.SeenAt

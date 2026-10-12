@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/khoinguyen/factotum/internal/config"
+	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/registry"
 	"github.com/khoinguyen/factotum/pkg/store"
@@ -38,6 +39,7 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 		"prompt":    newPromptCommand,
 		"run":       newRunCommand,
 		"serve":     newServeCommand,
+		"session":   newSessionCommand,
 		"skill":     newSkillCommand,
 		"task":      newTaskCommand,
 		"start":     statusShortcut("start", core.StatusInProgress, "Mark a task in progress"),
@@ -119,6 +121,12 @@ func NewRoot(deps *Deps) *cobra.Command {
 			} else if deps.ActorRef == "" {
 				deps.ActorRef = cfg.DefaultActor
 			}
+			// FACTOTUM_SESSION is exported by loop-agent.sh so every ft call an
+			// agent makes is attributed to the chief session it inherited.
+			if session := deps.Getenv("FACTOTUM_SESSION"); session != "" {
+				deps.Session = session
+			}
+			cmd.SetContext(app.WithCaller(cmd.Context(), core.ActorID(deps.ActorRef), deps.Session))
 			deps.OutputFormat = output
 			switch output {
 			case "", "text", "json", "yaml":

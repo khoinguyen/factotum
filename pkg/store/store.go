@@ -117,8 +117,10 @@ type EventFilter struct {
 	ProjectID core.ProjectID
 	TicketID  *core.TicketID
 	Kinds     []core.EventKind
-	Since     *time.Time
-	Limit     int
+	// Session, when set, keeps only events attributed to that chief session.
+	Session string
+	Since   *time.Time
+	Limit   int
 }
 
 type EventRepo interface {
@@ -207,6 +209,8 @@ type RunFilter struct {
 	ProjectID core.ProjectID
 	ActorID   *core.ActorID
 	Task      *core.TicketID
+	// Session, when set, keeps only runs belonging to that chief session.
+	Session string
 	// Live, when set, keeps only runs whose lease is valid at Now (or the
 	// backend clock when Now is zero).
 	Live  *bool
@@ -401,6 +405,9 @@ func MatchRunFilter(run *core.Run, filter RunFilter, now time.Time) bool {
 		return false
 	}
 	if filter.Task != nil && (run.TaskID == nil || *run.TaskID != *filter.Task) {
+		return false
+	}
+	if filter.Session != "" && run.Session != filter.Session {
 		return false
 	}
 	if filter.Live != nil && run.Live(now) != *filter.Live {

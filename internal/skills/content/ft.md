@@ -247,7 +247,11 @@ ft msg send <address|role|ticket-id> <text> -p <project>; ft msg inbox -p <proje
 ft msg install [--harness opencode|pi] [--dir <plugin-dir>]; ft msg agent register|claim|ack|nack|heartbeat|deregister   # receiver staging + protocol
 ```
 
-A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`). A bare **loop role** - `chief`, or `builder-<task>`/`reviewer-<task>`/`qa-<task>` - is sugar for `actor:<role>`, the stable mailbox a loop session registers as; `--from` accepts a role even before an `Actor` record exists, so peers address each other by role with no cmux surface. `ft msg read` is idempotent and `--from` defaults to the configured actor. `ft msg install` stages the receiver plugin where a harness loads it: OpenCode's global plugin dir by default (so a session launched directly, not through `ft run`, still loads it), or the `--dir` you pass; the plugin is inert without `FACTOTUM_PROJECT`/`FACTOTUM_ACTOR`. A receiver registers with `ft msg agent register`, long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode and pi harnesses stage that receiver (per the `FACTOTUM_*` env it sets) when the run has an actor. For a receiver on another host, the same protocol rides `ft serve` at `/api/msg/*` (token-gated by `serve.token`); the shipped receivers take the HTTP transport when `FACTOTUM_MSG_URL` points at a hub (auth via `FACTOTUM_SERVE_TOKEN`) and fall back to the local `ft` binary when it is unset. `ft run` sets both from `serve.url`/`serve.token` (or their `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` env), so a launched remote agent receives over the hub; a URL without a token is a half-configured hub, so a run with an actor warns and drops it rather than launch a receiver that fails every message (a run with no actor launches no receiver and stays quiet). A local `ft msg ...` and a remote HTTP client are two transports over one store.
+A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`). A bare **loop role** - `chief`, or `builder-<task>`/`reviewer-<task>`/`qa-<task>` - is sugar for `actor:<role>`, the stable mailbox a loop session registers as; `--from` accepts a role even before an `Actor` record exists, so peers address each other by role with no cmux surface. `ft msg read` is idempotent and `--from` defaults to the configured actor. `ft msg install` stages the receiver plugin where a harness loads it: OpenCode's global plugin dir by default (so a session launched directly, not through `ft run`, still loads it), or the `--dir` you pass; the plugin is inert without `FACTOTUM_PROJECT`/`FACTOTUM_ACTOR`. A receiver registers with `ft msg agent register` (passing the chief session via `--session` or `FACTOTUM_SESSION`), long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode and pi harnesses stage that receiver (per the `FACTOTUM_*` env it sets) when the run has an actor. For a receiver on another host, the same protocol rides `ft serve` at `/api/msg/*` (token-gated by `serve.token`); the shipped receivers take the HTTP transport when `FACTOTUM_MSG_URL` points at a hub (auth via `FACTOTUM_SERVE_TOKEN`) and fall back to the local `ft` binary when it is unset. `ft run` sets both from `serve.url`/`serve.token` (or their `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` env), so a launched remote agent receives over the hub; a URL without a token is a half-configured hub, so a run with an actor warns and drops it rather than launch a receiver that fails every message (a run with no actor launches no receiver and stays quiet). A local `ft msg ...` and a remote HTTP client are two transports over one store.
+
+## Chief sessions
+
+A chief session is an identity for one chief run and the work it drives; actor ids stay role-scoped, the session is a separate field. `ft session start -p <project> [--session <sid>]` records `session.started` (minting an id when none is given); `ft session retire ... [--successor <sid>]` records `session.retired`. `loop-agent.sh` mints a new id per chief launch and exports `FACTOTUM_SESSION`, which builders/reviewers/QA inherit; every `ft` call attributes its events to the caller actor (`FACTOTUM_DEFAULT_ACTOR`) and session (`FACTOTUM_SESSION`), queryable with `ft event list --session <sid>`.
 
 ## Diagnose the optional subsystems
 
@@ -271,25 +275,21 @@ fails, so a script can gate on it.
 ## Conventions that matter
 
 - `-p/--project` falls back to the configured default (`project` in
-  `.factotum/config.toml`, `default_project` in `~/.factotum/config.toml`).
-  Mutating commands error without a default; list/filter commands fall back to
-  all.
+  `.factotum/config.toml`, `default_project` in `~/.factotum/config.toml`);
+  mutating commands error without a default, list/filter commands fall back to all.
 - `-o json|yaml` is the machine-readable interface. Text output is yaml-like
   `key: value` lines for single results and tables for lists.
-- Large output is bounded so it cannot flood an agent's context: when stdout is
-  not a terminal and output exceeds 32 KiB or 400 lines, `ft` spills the full text
-  to a temp file and prints a head/tail window plus its path (interactive output is
-  never bounded); pass `--full` to print everything, `FACTOTUM_MAX_OUTPUT=<bytes>`
-  to set a byte budget, or `=unlimited` to disable the bound. `-o json|yaml` becomes
-  a truncation envelope.
+- Large output is bounded so it cannot flood an agent's context: when stdout is not a terminal and
+  output exceeds 32 KiB or 400 lines, `ft` spills the full text to a temp file and prints a head/tail
+  window plus its path; pass `--full` to print everything, `FACTOTUM_MAX_OUTPUT=<bytes>` to set a byte
+  budget, or `=unlimited` to disable it (interactive output is never bounded; `-o json|yaml` truncates).
 - Never edit a database by hand: go through `ft`.
 - A branch build can forward-migrate the shared database; SQLite now guards this: a newer-schema
   database is rejected and an older one migrates only with `--store-opt migrate=yes` (after a backup);
   `ft version`/`ft skill` never open the store. If `ft` reports a newer schema, install a newer `ft`
   that matches it; never point an uninstalled branch binary at the real DB.
-- `ft task set <id> field=value ...` updates fields, including
-  `not_before=YYYY-MM-DD` (or `+7d`) to defer a task and `not_before=` to clear
-  it.
+- `ft task set <id> field=value ...` updates fields, including `not_before=YYYY-MM-DD`
+  (or `+7d`) to defer a task and `not_before=` to clear it.
 
 ## Agent runs and isolation
 

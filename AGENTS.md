@@ -135,6 +135,20 @@ longer changes the installed CLI. To update the installed CLI, run `mise run ins
 Both stamp the git SHA into `ft version` (`git describe --tags --always --dirty`), so an installed
 binary is identifiable.
 
+## CI (GitHub Actions)
+
+`.github/workflows/ci.yml` runs on every push and pull request, on a GitHub-hosted `ubuntu-latest`
+runner. It is the fast gate that keeps `main` compiling: after `actions/setup-go` reads the Go
+version from `go.mod`, it runs `go build ./...` (compile gate) and `go test -race ./...` (unit
+tests), and fails the run if either step fails.
+
+It is deliberately dependency-light: **Go and network only** — no `sudo`, no browser/Playwright
+download, and not the full `mise run ci` (the browser and pnpm-backed checks stay deferred). A
+semantic merge conflict that lands non-compiling code fails the compile gate here.
+
+The workflow contract is guarded hermetically by `scripts/ci-workflow_test.sh` (triggers, runner,
+both commands, and the absence of sudo/browser/full-CI), which runs under `mise run test:scripts`.
+
 ## Architecture
 
 The codebase is hexagonal (ports and adapters) with everything pluggable from day one.

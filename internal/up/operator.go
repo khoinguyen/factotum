@@ -24,12 +24,9 @@ func (c *Controller) Answer(ctx context.Context, id core.PipelineID, answers str
 	if strings.TrimSpace(answers) == "" {
 		return nil, fmt.Errorf("%w: answers are required", core.ErrInvalid)
 	}
-	pipeline, err := c.operatorPipeline(ctx, id)
+	pipeline, err := c.ValidateGate(ctx, id, core.GateGroomQuestions)
 	if err != nil {
 		return nil, err
-	}
-	if pipeline.Gate != core.GateGroomQuestions {
-		return nil, notAtGate(pipeline, core.GateGroomQuestions)
 	}
 	tickets := app.NewTicketService(c.backend, c.clock, c.ids)
 	if _, err := tickets.AddNote(ctx, pipeline.CaptureID, app.NoteInput{
@@ -46,12 +43,9 @@ func (c *Controller) Answer(ctx context.Context, id core.PipelineID, answers str
 // recorded through `ft groom review` (reusing its existing block, design §5), so
 // approve is the operator's gate-clearing counterpart, not a second reviewer.
 func (c *Controller) Approve(ctx context.Context, id core.PipelineID) (*core.Pipeline, error) {
-	pipeline, err := c.operatorPipeline(ctx, id)
+	pipeline, err := c.ValidateGate(ctx, id, core.GateDesignRework)
 	if err != nil {
 		return nil, err
-	}
-	if pipeline.Gate != core.GateDesignRework {
-		return nil, notAtGate(pipeline, core.GateDesignRework)
 	}
 	return c.clearGate(ctx, pipeline, core.GateDesignRework)
 }
@@ -61,12 +55,9 @@ func (c *Controller) Approve(ctx context.Context, id core.PipelineID) (*core.Pip
 // blocking merge_approval gate is cleared so the resumed build stage sees the
 // work resolved and advances.
 func (c *Controller) Merge(ctx context.Context, id core.PipelineID) (*core.Pipeline, error) {
-	pipeline, err := c.operatorPipeline(ctx, id)
+	pipeline, err := c.ValidateGate(ctx, id, core.GateMergeApproval)
 	if err != nil {
 		return nil, err
-	}
-	if pipeline.Gate != core.GateMergeApproval {
-		return nil, notAtGate(pipeline, core.GateMergeApproval)
 	}
 	tickets := app.NewTicketService(c.backend, c.clock, c.ids)
 	for _, taskID := range pipeline.Produced {
@@ -90,12 +81,9 @@ func (c *Controller) Merge(ctx context.Context, id core.PipelineID) (*core.Pipel
 // Release closes a pipeline's release milestone (the release decision, design
 // §9) and clears the blocking release gate so the rollout stage proceeds.
 func (c *Controller) Release(ctx context.Context, id core.PipelineID) (*core.Pipeline, error) {
-	pipeline, err := c.operatorPipeline(ctx, id)
+	pipeline, err := c.ValidateGate(ctx, id, core.GateRelease)
 	if err != nil {
 		return nil, err
-	}
-	if pipeline.Gate != core.GateRelease {
-		return nil, notAtGate(pipeline, core.GateRelease)
 	}
 	if pipeline.Milestone == nil {
 		return nil, fmt.Errorf("%w: pipeline %s has no release milestone to close", core.ErrInvalid, pipeline.ID)
@@ -109,12 +97,9 @@ func (c *Controller) Release(ctx context.Context, id core.PipelineID) (*core.Pip
 // Promote approves the rollout promotion and clears the blocking rollout gate so
 // the rollout stage proceeds.
 func (c *Controller) Promote(ctx context.Context, id core.PipelineID) (*core.Pipeline, error) {
-	pipeline, err := c.operatorPipeline(ctx, id)
+	pipeline, err := c.ValidateGate(ctx, id, core.GateRollout)
 	if err != nil {
 		return nil, err
-	}
-	if pipeline.Gate != core.GateRollout {
-		return nil, notAtGate(pipeline, core.GateRollout)
 	}
 	return c.clearGate(ctx, pipeline, core.GateRollout)
 }
@@ -182,6 +167,25 @@ func (c *Controller) Cancel(ctx context.Context, id core.PipelineID) (*core.Pipe
 	pipeline.Gate = core.GateNone
 	pipeline.ResumeState = ""
 	return c.persist(ctx, pipeline)
+}
+
+// ValidateGate reports whether pipeline id is owned by the controller and is
+// currently holding want, without mutating it. A verb that performs a side
+// effect before clearing the gate (approve re-records the review) validates
+// first, so a wrong-state call is side-effect-free; the clearing verb still
+// re-checks, so ValidateGate is an early guard, not the authority.
+func (c *Controller) ValidateGate(ctx context.Context, id core.PipelineID, want core.GateKind) (*core.Pipeline, error) {
+	pipeline, err := c.operatorPipeline(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if pipeline.State.Terminal() {
+		return nil, terminalPipeline(pipeline)
+	}
+	if pipeline.Gate != want {
+		return nil, notAtGate(pipeline, want)
+	}
+	return pipeline, nil
 }
 
 // operatorPipeline loads a pipeline the controller owns. A missing id or one in

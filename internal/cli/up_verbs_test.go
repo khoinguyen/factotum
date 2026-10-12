@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/internal/groom"
+	"github.com/khoinguyen/factotum/internal/up"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store/memory"
@@ -64,6 +65,90 @@ func runUpExpectError(r *runner, args ...string) error {
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	return root.Execute()
+}
+
+// TestApproveWrongGateHasNoSideEffects is the regression test for the wrong-state
+// side effect: approvePipeline must reject a pipeline that is not at design_rework
+// before it re-records the review or releases the held task gate.
+func TestApproveWrongGateHasNoSideEffects(t *testing.T) {
+	ctx := context.Background()
+	backend := memory.New()
+	t.Cleanup(func() { _ = backend.Close() })
+	clock := app.SystemClock{}
+	ids := app.RandomIDGen{}
+	projects := app.NewProjectService(backend, clock, ids)
+	tasks := app.NewTicketService(backend, clock, ids)
+
+	project, err := projects.Create(ctx, "Acme", "acme", nil)
+	if err != nil {
+		t.Fatalf("Create(project) error = %v", err)
+	}
+	capture, err := tasks.Add(ctx, app.TicketInput{ProjectID: project.ID, Kind: core.KindIdea, Title: "spark"})
+	if err != nil {
+		t.Fatalf("Add(capture) error = %v", err)
+	}
+	task, err := tasks.Add(ctx, app.TicketInput{ProjectID: project.ID, Kind: core.KindTask, Title: "produced"})
+	if err != nil {
+		t.Fatalf("Add(task) error = %v", err)
+	}
+	if _, err := tasks.AddDep(ctx, task.ID, capture.ID); err != nil {
+		t.Fatalf("AddDep() error = %v", err)
+	}
+	if _, err := tasks.SetStatus(ctx, task.ID, core.StatusBlocked); err != nil {
+		t.Fatalf("SetStatus(blocked) error = %v", err)
+	}
+
+	dataDir := t.TempDir()
+	if err := groom.WriteSession(dataDir, groom.SessionRecord{
+		ID:            "groom-1",
+		Project:       string(project.ID),
+		Produced:      []string{string(task.ID)},
+		Blocked:       []string{string(task.ID)},
+		ReviewVerdict: string(groom.VerdictNeedsRework),
+	}); err != nil {
+		t.Fatalf("WriteSession() error = %v", err)
+	}
+
+	// A pipeline parked at merge_approval, not design_rework.
+	pipeline := &core.Pipeline{
+		ID:        "pl-1",
+		ProjectID: project.ID,
+		CaptureID: capture.ID,
+		State:     core.PipelineBuilding,
+		Gate:      core.GateMergeApproval,
+		Session:   "groom-1",
+	}
+	if err := backend.Pipelines().Create(ctx, pipeline); err != nil {
+		t.Fatalf("Create(pipeline) error = %v", err)
+	}
+	controller, err := up.New(up.Options{Backend: backend, Clock: clock, IDs: ids, Project: project.ID})
+	if err != nil {
+		t.Fatalf("up.New() error = %v", err)
+	}
+
+	if _, err := approvePipeline(ctx, controller, groomTarget{dataDir: dataDir, tasks: tasks}, pipeline.ID); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("approvePipeline(wrong gate) error = %v, want ErrConflict", err)
+	}
+
+	record, err := groom.ReadSession(dataDir, "groom-1")
+	if err != nil {
+		t.Fatalf("ReadSession() error = %v", err)
+	}
+	if record.ReviewVerdict != string(groom.VerdictNeedsRework) || len(record.Blocked) != 1 {
+		t.Fatalf("session mutated by a rejected approve: verdict=%q blocked=%v", record.ReviewVerdict, record.Blocked)
+	}
+	if status := taskStatus(t, tasks, task.ID); status != core.StatusBlocked {
+		t.Fatalf("held task status = %q, want blocked (unchanged)", status)
+	}
+}
+
+func taskStatus(t *testing.T, tasks *app.TicketService, id core.TicketID) core.TicketStatus {
+	t.Helper()
+	task, err := tasks.Get(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Get(%s) error = %v", id, err)
+	}
+	return task.Status
 }
 
 // TestApproveGroomSessionReRecordsReview proves `ft up approve`'s side effect:

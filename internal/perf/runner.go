@@ -99,10 +99,16 @@ func isolatedEnv(key string) string {
 // subprocessEnv returns os.Environ with any FACTOTUM_* variable removed and the
 // harness's own settings applied, so a developer's environment cannot leak into
 // a measurement. The caller supplies explicit --config/--user-config paths.
+//
+// It also drops TYPESAFE_*: the default judge provider reads its credential from
+// the environment, and a leaked key makes `task search` rerank over the network,
+// returning a different result set rather than the store's lexical hits. The
+// in-process runner hides all ambient env, so the subprocess must hide the
+// judge's too. Extend this if another judge provider gains env-based config.
 func subprocessEnv() []string {
 	env := make([]string, 0, len(os.Environ())+2)
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "FACTOTUM_") {
+		if strings.HasPrefix(entry, "FACTOTUM_") || strings.HasPrefix(entry, "TYPESAFE_") {
 			continue
 		}
 		env = append(env, entry)

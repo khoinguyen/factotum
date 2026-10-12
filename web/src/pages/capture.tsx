@@ -4,7 +4,7 @@ import { PageShell } from "@/components/page-shell"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { fetchCaptureConfig, submitCapture, type CaptureKind } from "@/lib/api"
+import { fetchCaptureConfig, submitCapture, submitPrompt, type CaptureKind } from "@/lib/api"
 import { navigate } from "@/lib/router"
 import { cn } from "@/lib/utils"
 
@@ -38,6 +38,9 @@ export function Capture() {
   const [token, setToken] = useState(loadToken)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
+  const [prompt, setPrompt] = useState("")
+  const [promptError, setPromptError] = useState("")
+  const [promptBusy, setPromptBusy] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -72,6 +75,25 @@ export function Capture() {
     }
   }
 
+  async function onPromptSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (promptBusy) return
+    if (prompt.trim() === "") {
+      setPromptError("Type a prompt.")
+      return
+    }
+    setPromptBusy(true)
+    setPromptError("")
+    saveToken(token)
+    try {
+      const result = await submitPrompt(prompt, token)
+      navigate(result.url)
+    } catch (err) {
+      setPromptError(err instanceof Error ? err.message : "Prompt failed.")
+      setPromptBusy(false)
+    }
+  }
+
   const noun = kind === "bug" ? "bug" : "idea"
 
   return (
@@ -90,62 +112,98 @@ export function Capture() {
           config or <code>FACTOTUM_SERVE_TOKEN</code> to enable it.
         </p>
       ) : (
-        <form className="flex max-w-prose flex-col gap-4" onSubmit={onSubmit}>
-          <div className="flex gap-2">
-            <KindButton
-              active={kind === "idea"}
-              onClick={() => setKind("idea")}
-            >
-              Idea
-            </KindButton>
-            <KindButton active={kind === "bug"} onClick={() => setKind("bug")}>
-              Bug
-            </KindButton>
-          </div>
+        <div className="flex max-w-prose flex-col gap-8">
+          <form className="flex flex-col gap-4" onSubmit={onSubmit}>
+            <div className="flex gap-2">
+              <KindButton
+                active={kind === "idea"}
+                onClick={() => setKind("idea")}
+              >
+                Idea
+              </KindButton>
+              <KindButton active={kind === "bug"} onClick={() => setKind("bug")}>
+                Bug
+              </KindButton>
+            </div>
 
-          <div className="flex flex-col gap-2">
-            <label htmlFor="capture-text" className="text-sm font-medium">
-              What is it?
-            </label>
-            <Textarea
-              id="capture-text"
-              rows={5}
-              required
-              autoFocus
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              placeholder="One sentence is enough."
-            />
-          </div>
+            <div className="flex flex-col gap-2">
+              <label htmlFor="capture-text" className="text-sm font-medium">
+                What is it?
+              </label>
+              <Textarea
+                id="capture-text"
+                rows={5}
+                required
+                autoFocus
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                placeholder="One sentence is enough."
+              />
+            </div>
 
-          <div className="flex flex-col gap-2">
-            <label htmlFor="capture-token" className="text-sm font-medium">
-              Capture token
-            </label>
-            <Input
-              id="capture-token"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-            />
-          </div>
+            <div className="flex flex-col gap-2">
+              <label htmlFor="capture-token" className="text-sm font-medium">
+                Capture token
+              </label>
+              <Input
+                id="capture-token"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+              />
+            </div>
 
-          {error ? (
-            <p role="alert" className="break-words text-sm text-red-600 dark:text-red-400">
-              {error}
+            {error ? (
+              <p role="alert" className="break-words text-sm text-red-600 dark:text-red-400">
+                {error}
+              </p>
+            ) : null}
+
+            <Button type="submit" disabled={busy} className="self-start">
+              Capture
+            </Button>
+
+            <p className="text-xs text-muted-foreground">
+              Stored as a {noun} immediately; refined later.
             </p>
-          ) : null}
+          </form>
 
-          <Button type="submit" disabled={busy} className="self-start">
-            Capture
-          </Button>
+          <section className="flex flex-col gap-4 border-t pt-6">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-sm font-medium">Prompt the chief</h2>
+              <p className="text-xs text-muted-foreground">
+                The prompt is stored as a document and the chief is notified. Uses
+                the capture token above.
+              </p>
+            </div>
+            <form className="flex flex-col gap-4" onSubmit={onPromptSubmit}>
+              <div className="flex flex-col gap-2">
+                <label htmlFor="prompt-text" className="text-sm font-medium">
+                  Prompt
+                </label>
+                <Textarea
+                  id="prompt-text"
+                  rows={4}
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder="Describe what you want, in your own words."
+                />
+              </div>
 
-          <p className="text-xs text-muted-foreground">
-            Stored as a {noun} immediately; refined later.
-          </p>
-        </form>
+              {promptError ? (
+                <p role="alert" className="break-words text-sm text-red-600 dark:text-red-400">
+                  {promptError}
+                </p>
+              ) : null}
+
+              <Button type="submit" disabled={promptBusy} className="self-start">
+                Send prompt
+              </Button>
+            </form>
+          </section>
+        </div>
       )}
     </PageShell>
   )

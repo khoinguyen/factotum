@@ -42,7 +42,11 @@ func TaskGraphFacts(ctx context.Context, backend store.Backend, task *core.Ticke
 		}
 	}
 
-	built, err := graph.NewAt(neighborhood, project.Policy, now)
+	externalCaptures, err := externalCaptureDeps(ctx, backend, neighborhood)
+	if err != nil {
+		return nil, nil, err
+	}
+	built, err := graph.NewAtCaptures(neighborhood, project.Policy, now, externalCaptures)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -60,9 +64,10 @@ func TaskGraphFacts(ctx context.Context, backend store.Backend, task *core.Ticke
 }
 
 // addNeighbor fetches a task by id and passes it to add. A missing task, or one
-// in another project, is skipped: absent from the neighborhood, graph.Readiness
-// treats it as unresolved, exactly as the full-snapshot graph (scoped to one
-// project) would.
+// in another project, is skipped: absent from the neighborhood, a dangling dep
+// stays unresolved unless externalCaptureDeps later declares it a
+// non-blocking capture. This matches the full-snapshot graph, scoped to one
+// project.
 func addNeighbor(ctx context.Context, backend store.Backend, projectID core.ProjectID, id core.TicketID, add func(*core.Ticket)) error {
 	task, err := backend.Tickets().Get(ctx, id)
 	if errors.Is(err, core.ErrNotFound) {

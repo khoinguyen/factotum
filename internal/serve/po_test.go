@@ -895,6 +895,15 @@ func TestCrossProjectCaptureIsOrigin(t *testing.T) {
 			if doc.Origin.URL != "/idea/"+string(foreign.ID) {
 				t.Fatalf("cross-project origin url = %q, want /idea/%s", doc.Origin.URL, foreign.ID)
 			}
+			// A capture never blocks, so the task is ready and carries no
+			// not-ready reason on a scoped server and an all-projects server
+			// alike - the same verdict ft task get and the graph report.
+			if doc.Class != "ready-human" {
+				t.Fatalf("task class = %q, want ready-human (a capture dep never blocks)", doc.Class)
+			}
+			if doc.Reason != "" {
+				t.Fatalf("task reason = %q, want empty", doc.Reason)
+			}
 		})
 	}
 }

@@ -8,6 +8,7 @@ package groom
 import (
 	_ "embed"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -246,6 +247,28 @@ func StagedPlanPath(sessionID string) string {
 // feature tech design to.
 func StagedTechDesignPath(sessionID string) string {
 	return path.Join(StagingDirName, sessionID, TechDesignFileName)
+}
+
+// CleanStaging removes a session's staging tree from a run workspace: the
+// .ft-groom/<session> directory a session wrote its outputs into, and the shared
+// .ft-groom parent once its last session is gone. `ft groom` captures the staged
+// files through the run backend before calling this, so the tree is disposable;
+// a backend that uploads the workspace into an ephemeral environment leaves
+// nothing here and this is a no-op. An empty workspace is a no-op, so a caller
+// never resolves a relative path against its own working directory.
+func CleanStaging(workspace, sessionID string) error {
+	if workspace == "" {
+		return nil
+	}
+	dir := filepath.Join(workspace, StagingDirName, sessionID)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("remove grooming staging dir %s: %w", dir, err)
+	}
+	// Best-effort: drop the shared parent when no other session is staging in
+	// it. os.Remove fails on a non-empty directory, which is the signal to keep
+	// it, so the error is deliberately ignored.
+	_ = os.Remove(filepath.Join(workspace, StagingDirName))
+	return nil
 }
 
 // ScopeItem is one item a grooming session covers, as named in the kickoff.

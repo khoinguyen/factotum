@@ -194,6 +194,16 @@ func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groo
 		OnResolve:        d.warnLocalPlan,
 	})
 	progress.stop()
+	// The run captured the staged outputs before returning, even when the
+	// harness failed, so the workspace staging tree is disposable: drop it so a
+	// reused workspace does not accumulate .ft-groom/<session> directories. A
+	// cleanup failure is a hygiene warning, not a run failure, because the
+	// session's outputs are already safe.
+	if outcome != nil {
+		if err := groom.CleanStaging(outcome.Workdir, sessionID); err != nil {
+			d.warnf("groom: %v", err)
+		}
+	}
 	if errors.Is(runErr, local.ErrNotOptedIn) {
 		return groom.SessionRecord{}, usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
 	}

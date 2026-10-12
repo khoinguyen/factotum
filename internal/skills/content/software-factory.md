@@ -185,6 +185,11 @@ ft up status -p <project>                                      # phases and open
 ft up start <capture> -p <project>                             # enqueue a pipeline by hand
 ```
 
+Groom runs headless by default (`up.unattended = true`): it defers the capture's product questions and
+opens the advisory `groom_questions` gate. To steer a live groom session yourself, run `ft up` on a
+terminal with `unattended = false` (or `--unattended=false`): the daemon attaches you to the session
+so you can answer the grill.
+
 ```sh
 ft serve
 ft doc search "<query>"

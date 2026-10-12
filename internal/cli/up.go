@@ -42,8 +42,11 @@ func newUpCommand(deps *Deps) *cobra.Command {
 			"capture into a feature in flight. A capture stored through /api/capture starts a\n" +
 			"pipeline automatically (config `up.auto_groom`, default on; disable with\n" +
 			"--no-auto-groom). The controller runs each phase as a stage, stops at every human\n" +
-			"gate, and reflects each transition into the store. It is project-scoped: one project\n" +
-			"per process. `ft serve` is unchanged; `ft up` is additive.",
+			"gate, and reflects each transition into the store. Groom runs headless by default\n" +
+			"(config `up.unattended`, default on), deferring product questions to the advisory\n" +
+			"groom_questions gate; on a terminal with `up.unattended=false` it attaches you to\n" +
+			"the live groom session so you can answer the grill. It is project-scoped: one\n" +
+			"project per process. `ft serve` is unchanged; `ft up` is additive.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return deps.runUp(cmd, opts)
 		},
@@ -51,7 +54,7 @@ func newUpCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&opts.bind, "bind", defaultServeBind, "host:port to bind (loopback only by default)")
 	cmd.Flags().StringVarP(&opts.project, "project", "p", "", "project id (defaults to the configured project)")
 	cmd.Flags().BoolVar(&opts.noAutoGroom, "no-auto-groom", false, "do not start a pipeline when a capture is stored")
-	cmd.Flags().BoolVar(&opts.unattended, "unattended", false, "run groom and agent stages headless (overrides up.unattended)")
+	cmd.Flags().BoolVar(&opts.unattended, "unattended", false, "groom and agent stages headless; without it a terminal attaches the PO to the groom session (overrides up.unattended)")
 	cmd.AddCommand(newUpStatusCommand(deps), newUpListCommand(deps), newUpStartCommand(deps))
 	return cmd
 }
@@ -82,12 +85,17 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 	if cmd.Flags().Changed("unattended") {
 		unattended = opts.unattended
 	}
+	// Attach the PO only when the operator opted out of unattended mode and
+	// `ft up` runs on a terminal. A headless daemon always grooms unattended,
+	// deferring product questions to the advisory groom_questions gate rather
+	// than waiting on a PO who is not there (design §3/§8/§11).
+	interactive := d.runInteractive(cmd, unattended)
 
 	// A groom session needs a harness and sandbox. With them configured, resolve
 	// the selection once so a bad name fails the daemon immediately. Without
 	// them the daemon still serves and captures; the first groom parks the
 	// pipeline failed with a clear message instead of prompting on a goroutine.
-	session, err := d.upGroomSessionFor(cmd, target, unattended)
+	session, err := d.upGroomSessionFor(cmd, target, interactive)
 	if err != nil {
 		return err
 	}
@@ -161,8 +169,9 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 // upGroomSessionFor resolves the groom stage's session function. It requires a
 // configured [run] harness and sandbox, because a groom session is a real agent
 // run; without them it returns a session function that fails the stage with a
-// clear message, so the daemon can still serve and capture.
-func (d *Deps) upGroomSessionFor(cmd *cobra.Command, target groomTarget, unattended bool) (up.SessionFunc, error) {
+// clear message, so the daemon can still serve and capture. interactive attaches
+// the PO to the session; it is false in unattended mode or off a terminal.
+func (d *Deps) upGroomSessionFor(cmd *cobra.Command, target groomTarget, interactive bool) (up.SessionFunc, error) {
 	if d.Config.Run.Sandbox == "" || d.Config.Run.Harness == "" {
 		return func(context.Context, *core.Pipeline, string) (up.SessionResult, error) {
 			return up.SessionResult{}, errors.New("up: run.sandbox and run.harness are required to groom a capture; set them in the [run] config table")
@@ -172,13 +181,15 @@ func (d *Deps) upGroomSessionFor(cmd *cobra.Command, target groomTarget, unatten
 	if err != nil {
 		return nil, err
 	}
-	return d.upGroomSession(cmd, target, sel, unattended), nil
+	return d.upGroomSession(cmd, target, sel, interactive), nil
 }
 
 // upGroomSession builds the groom stage's session function: it scopes a groom
 // session to the pipeline's capture, runs it through the shared groom path, and
-// reports the produced tasks and whether product questions were deferred.
-func (d *Deps) upGroomSession(cmd *cobra.Command, target groomTarget, sel *runSelection, unattended bool) up.SessionFunc {
+// reports the produced tasks and whether product questions were deferred. When a
+// PO is attached (interactive) the session runs with the PO's terminal; with no
+// PO it runs unattended, deferring every product question.
+func (d *Deps) upGroomSession(cmd *cobra.Command, target groomTarget, sel *runSelection, interactive bool) up.SessionFunc {
 	return func(ctx context.Context, p *core.Pipeline, sessionID string) (up.SessionResult, error) {
 		project, err := target.projects.Get(ctx, p.ProjectID)
 		if err != nil {
@@ -192,7 +203,7 @@ func (d *Deps) upGroomSession(cmd *cobra.Command, target groomTarget, sel *runSe
 		if err != nil {
 			return up.SessionResult{}, fmt.Errorf("read session prompt %s: %w", groom.PromptPath, err)
 		}
-		record, err := d.groomSession(ctx, cmd, target, project, []*core.Ticket{capture}, sessionID, promptBytes, unattended, sel, false)
+		record, err := d.groomSession(ctx, cmd, target, project, []*core.Ticket{capture}, sessionID, promptBytes, !interactive, sel, interactive)
 		if err != nil {
 			return up.SessionResult{}, err
 		}

@@ -16,7 +16,7 @@ export function Updates({ updates }: { updates: UpdateView[] }) {
               <time className="shrink-0 font-mono text-xs text-muted-foreground">
                 {update.time}
               </time>
-              <span className="break-words">{update.summary}</span>
+              <span className="min-w-0 break-words">{update.summary}</span>
             </div>
           ))
         )}

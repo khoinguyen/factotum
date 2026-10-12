@@ -133,8 +133,7 @@ function snapshot(): Snapshot {
     updates: [
       {
         time: "2026-10-12T17:06:41Z",
-        summary:
-          "builder-t-h3ksy6ytay moved t-h3ksy6ytay to in_progress and opened PR #312",
+        summary: "builder-t-h3ksy6ytay added task t-h3ksy6ytay: Investigate flaky run " + LONG_URL,
       },
     ],
     flags: ["cycle detected: t-a -> t-b -> t-a"],

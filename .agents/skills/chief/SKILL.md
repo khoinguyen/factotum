@@ -166,7 +166,8 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    <role> -b "proceed without asking: decide and document, or report the blocker to the chief and
    stop"` (cmux-msg.sh as the fallback), and file a skill-bug task if it repeats.
 6. **Briefly check.** Confirm: PR approved, the project's verification command green
-   (`ft config get verify`), task status. That is the whole
+   (`ft config get verify`; when the project records none, discover it from its own docs), task
+   status. That is the whole
    check — the reviewer did the deep verification. Then `gh pr merge <n> --rebase --delete-branch`,
    sync `main`, and `ft task done <t>`.
 7. **Triage any escalation.** A subagent may escalate: a follow-up worth doing, a disagreement, or a

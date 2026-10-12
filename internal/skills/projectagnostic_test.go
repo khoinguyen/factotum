@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,6 +76,33 @@ func TestEmbeddedSkillsNameNoConcreteProject(t *testing.T) {
 			if strings.Contains(skill.Body, bad.text) {
 				t.Errorf("embedded skill %q %s (%q); keep it project-agnostic", skill.Name, bad.why, bad.text)
 			}
+		}
+	}
+}
+
+// TestAuditRowSevenKeepsChiefWorktreeAndDashboard guards the audit's honesty:
+// row 7's disposition must not drop assumptions the chief skill still makes. The
+// chief still names `/tmp/ft-<t>` worktrees and the Factotum Dashboard, so the
+// row must account for them rather than claim only the verify fix.
+func TestAuditRowSevenKeepsChiefWorktreeAndDashboard(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "project-agnostic.md"))
+	if err != nil {
+		t.Fatalf("read audit doc: %v", err)
+	}
+	row := ""
+	for _, line := range strings.Split(string(doc), "\n") {
+		if strings.HasPrefix(line, "| 7 |") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatal("docs/project-agnostic.md has no row 7")
+	}
+	row = strings.ToLower(row)
+	for _, assumption := range []string{"/tmp/ft-<t>", "dashboard"} {
+		if !strings.Contains(row, assumption) {
+			t.Errorf("audit row 7 dropped the chief skill's %q assumption; the chief still makes it, so row 7 must account for it", assumption)
 		}
 	}
 }

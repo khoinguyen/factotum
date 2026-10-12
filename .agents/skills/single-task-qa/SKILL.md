@@ -18,9 +18,9 @@ run a testing task by exercising it for real. You do **not** build or edit produ
 
 - **Throwaway labs only.** Never touch the real database. Use `mktemp -d`, `--store jsonfile
   --store-opt path=$LAB/db.json`, and temp `--config`/`--user-config` files.
-- Build the artifact under test from your worktree using the project's verification command
-  (`ft config get verify`; when the project records none, discover it from its own docs). Exercise
-  that artifact.
+- Build the artifact under test from your worktree (its artifact path comes from the project's own
+  docs), then run the project's verification command (`ft config get verify`; when the project
+  records none, discover it from its own docs) and exercise the built artifact.
 - **You may drive cmux.** Create your own terminal surface(s) with
   `cmux new-workspace --window <active-window> --command '<cmd>'` for anything that needs a real TTY
   (attended/interactive runs, the config prompt). Read state with `cmux read-screen --surface <ref>`.

@@ -19,20 +19,25 @@ and defaults (`internal/config`, `pkg/store`), and prompts
 | 4 | `internal/skills/content/ft.md` (`ft feedback`) | the feedback sink defaults to the `factotum` project | **Parameterized** — `--feedback-store` (default `factotum`, the tool's own maintainer project); a deployment points it at its own project through the machine `[projects.<id>]` registry |
 | 5 | `internal/config/write.go` templates | "Factotum config" | **Not an assumption** — names the tool, not a project |
 | 6 | `pkg/store/sqlite`, `pkg/store/jsonfile`, `pkg/store/jsondir` defaults | `.factotum/factotum.db` / `.factotum/factotum.json` / `.factotum/jsondir` | **Not an assumption** — a tool-named fallback; the live path is each project's `[projects.<id>].db_path` |
-| 7 | `.agents/skills/*` role skills | `mise run ci` as the verification command | **Fixed** — the verification command is now a project-scoped `verify` setting (`ft config get verify`); the role skills read it (falling back to the repo's own docs) instead of hardcoding one project's command |
+| 7 | `.agents/skills/*` role skills | `mise run ci` as the verification command | **Fixed** — the verification command is now a project-scoped `verify` setting (`ft config get verify`); the role skills read it (falling back to the repo's own docs) instead of hardcoding one project's command. The `/tmp/ft-<t>` worktree paths and the "Factotum Dashboard" name the chief skill still uses are **not assumptions** — they name the tool and its worktree convention, not a project (cf. rows 5–6) |
 | 8 | `.agents/skills/chief/SKILL.md`, `internal/skills/content/ft.md` | factotum's `mise run install`/`build`/`build-web` tasks in self-update and dashboard prose | **Fixed** — the tool-install/build guidance is generic now (run the project's own install task; the dashboard is an embedded SPA), naming no project's task |
 
 ## Guard
 
-Six tests pin the invariant so it cannot regress:
+Tests pin the invariant so it cannot regress:
 
 - `internal/skills/projectagnostic_test.go` — no embedded skill hardcodes the
   `factotum` project or assumes the reader is in this repo, and no shipped skill
-  (embedded or committed agent skill) names factotum's mise install/build tasks.
+  (embedded or committed agent skill) names factotum's mise install/build tasks;
+  this audit's row 7 keeps accounting for the chief skill's worktree/dashboard
+  naming.
 - `internal/skills/softwarefactory_test.go` (`TestSoftwareFactorySkillUsesProjectVerifyCommand`)
   — the factory recipe reads the project's `verify` command, not a hardcoded one.
-- `internal/skills/agentskills_test.go` (`TestRoleSkillsUseProjectVerifyCommand`)
-  — the role skills read the project's `verify` command, not a hardcoded one.
+- `internal/skills/agentskills_test.go` (`TestRoleSkillsUseProjectVerifyCommand`,
+  `TestVerifySkillsCarryDocsFallback`, `TestQASkillBuildsThenVerifies`)
+  — the role skills read the project's `verify` command, not a hardcoded one,
+  every skill that names it also says to discover it from the project's docs when
+  unset, and QA builds the artifact under test before verifying it.
 - `internal/groom/groom_test.go` (`TestSessionPromptIsProjectAgnostic`) — the
   durable session prompt names no concrete project.
 - `pkg/agent/command/command_test.go` (`TestInstructionIsProjectAgnostic`) — the

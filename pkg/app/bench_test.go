@@ -11,6 +11,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/graph"
 	"github.com/khoinguyen/factotum/pkg/rank"
 	"github.com/khoinguyen/factotum/pkg/store"
+	"github.com/khoinguyen/factotum/pkg/store/jsondir"
 	"github.com/khoinguyen/factotum/pkg/store/jsonfile"
 	"github.com/khoinguyen/factotum/pkg/store/memory"
 	"github.com/khoinguyen/factotum/pkg/store/sqlite"
@@ -45,6 +46,8 @@ func openBenchBackend(tb testing.TB, name string) store.Backend {
 		be = memory.New()
 	case "jsonfile":
 		be, err = jsonfile.Open(context.Background(), store.Config{Options: map[string]string{"path": filepath.Join(dir, "db.json")}})
+	case "jsondir":
+		be, err = jsondir.Open(context.Background(), store.Config{Options: map[string]string{"path": filepath.Join(dir, "store")}})
 	case "sqlite":
 		be, err = sqlite.Open(context.Background(), store.Config{Options: map[string]string{"path": filepath.Join(dir, "db.sqlite")}})
 	default:
@@ -106,12 +109,13 @@ func syntheticTasks(n int) []core.Ticket {
 // BenchmarkLoadSnapshot measures the dominant read path: load every task,
 // decode it, build the graph, and compute readiness. It runs per backend and
 // per scale; jsonfile is capped at 1k because it rewrites its whole document on
-// every insert (see t-ewr3xidxtk).
+// every insert (see t-ewr3xidxtk). jsondir seeds in O(n) and keeps its list
+// index in memory, so it is measured across the full 1k/10k/50k tiers.
 func BenchmarkLoadSnapshot(b *testing.B) {
-	scales := map[string][]int{"memory": {1000, 10000}, "sqlite": {1000, 10000}, "jsonfile": {1000}}
+	scales := map[string][]int{"memory": {1000, 10000}, "sqlite": {1000, 10000}, "jsonfile": {1000}, "jsondir": {1000, 10000, 50000}}
 	ctx := context.Background()
 	now := time.Unix(0, 0).UTC()
-	for _, name := range []string{"memory", "sqlite", "jsonfile"} {
+	for _, name := range []string{"memory", "sqlite", "jsonfile", "jsondir"} {
 		for _, n := range scales[name] {
 			b.Run(fmt.Sprintf("%s/%d", name, n), func(b *testing.B) {
 				be := openBenchBackend(b, name)
@@ -133,10 +137,10 @@ func BenchmarkLoadSnapshot(b *testing.B) {
 // their in-memory set for DependsOn, so they grow O(tasks) (still well within
 // the point budget); the benchmark tracks both.
 func BenchmarkTaskGraphFacts(b *testing.B) {
-	scales := map[string][]int{"memory": {1000, 10000, 50000}, "sqlite": {1000, 10000, 50000}, "jsonfile": {1000}}
+	scales := map[string][]int{"memory": {1000, 10000, 50000}, "sqlite": {1000, 10000, 50000}, "jsonfile": {1000}, "jsondir": {1000, 10000, 50000}}
 	ctx := context.Background()
 	now := time.Unix(0, 0).UTC()
-	for _, name := range []string{"memory", "sqlite", "jsonfile"} {
+	for _, name := range []string{"memory", "sqlite", "jsonfile", "jsondir"} {
 		for _, n := range scales[name] {
 			b.Run(fmt.Sprintf("%s/%d", name, n), func(b *testing.B) {
 				be := openBenchBackend(b, name)

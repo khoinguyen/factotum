@@ -29,6 +29,9 @@ func TestSeedCapCapsJSONFile(t *testing.T) {
 	if got := SeedCap("jsonfile"); got != JSONFileSeedCap {
 		t.Fatalf("SeedCap(jsonfile) = %d, want %d", got, JSONFileSeedCap)
 	}
+	if got := SeedCap("jsondir"); got != JSONDirSeedCap {
+		t.Fatalf("SeedCap(jsondir) = %d, want %d", got, JSONDirSeedCap)
+	}
 	if got := SeedCap("sqlite"); got != 0 {
 		t.Fatalf("SeedCap(sqlite) = %d, want 0 (unlimited)", got)
 	}

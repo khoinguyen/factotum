@@ -175,7 +175,7 @@ func TestDefaultOpsCoverHotHeavyAndPoint(t *testing.T) {
 
 func TestDefaultConfigCoversBackendsAndScales(t *testing.T) {
 	cfg := DefaultConfig()
-	if fmt.Sprint(cfg.Backends) != "[memory sqlite jsonfile]" {
+	if fmt.Sprint(cfg.Backends) != "[memory sqlite jsonfile jsondir]" {
 		t.Fatalf("backends = %v", cfg.Backends)
 	}
 	if len(cfg.Scales) < 4 || cfg.Scales[len(cfg.Scales)-1] != 100000 {

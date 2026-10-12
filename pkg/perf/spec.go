@@ -18,6 +18,12 @@ const DefaultProjectID core.ProjectID = "perf"
 // 1000 keeps the harness usable while 10k takes minutes (see t-ewr3xidxtk).
 const JSONFileSeedCap = 1000
 
+// JSONDirSeedCap bounds the jsondir backend at the 50k tier. jsondir seeds and
+// writes in O(1) per mutation, but opening it is O(n): it reads and parses every
+// markdown document on open, so the 100k tier would run for minutes without
+// adding signal (see t-bbyg7tyypx). The 1k/10k/50k tiers are the measured scope.
+const JSONDirSeedCap = 50000
+
 // Spec is the shape of a synthetic dataset.
 type Spec struct {
 	Tasks     int `json:"tasks"`
@@ -47,10 +53,14 @@ func secondaryTier(tasks int) int {
 // SeedCap returns the maximum task count a backend may be seeded with, or 0
 // when the backend has no cap. The harness skips scales above the cap.
 func SeedCap(backend string) int {
-	if backend == "jsonfile" {
+	switch backend {
+	case "jsonfile":
 		return JSONFileSeedCap
+	case "jsondir":
+		return JSONDirSeedCap
+	default:
+		return 0
 	}
-	return 0
 }
 
 // Seed creates the dataset in a fresh project and returns its id. Tasks are

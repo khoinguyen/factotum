@@ -11,6 +11,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/perf"
 	"github.com/khoinguyen/factotum/pkg/store"
+	"github.com/khoinguyen/factotum/pkg/store/jsondir"
 	"github.com/khoinguyen/factotum/pkg/store/jsonfile"
 	"github.com/khoinguyen/factotum/pkg/store/memory"
 	"github.com/khoinguyen/factotum/pkg/store/sqlite"
@@ -49,6 +50,8 @@ func openSeeded(t *testing.T, backend, path string, spec perf.Spec) store.Backen
 	switch backend {
 	case "jsonfile":
 		be, err = jsonfile.Open(ctx, store.Config{Backend: backend, Options: map[string]string{"path": path}})
+	case "jsondir":
+		be, err = jsondir.Open(ctx, store.Config{Backend: backend, Options: map[string]string{"path": path}})
 	case "sqlite":
 		be, err = sqlite.Open(ctx, store.Config{Backend: backend, Options: map[string]string{"path": path}})
 	case "memory":
@@ -68,7 +71,7 @@ func openSeeded(t *testing.T, backend, path string, spec perf.Spec) store.Backen
 
 func TestProvisionFileBackendsRunTheRealCLI(t *testing.T) {
 	ctx := context.Background()
-	for _, backend := range []string{"sqlite", "jsonfile"} {
+	for _, backend := range []string{"sqlite", "jsonfile", "jsondir"} {
 		t.Run(backend, func(t *testing.T) {
 			provisioner := Provisioner{Binary: ftBinary}
 			runner, cleanup, err := provisioner.Provision(ctx, backend, perf.Spec{Tasks: 5, Artifacts: 2, Events: 3})

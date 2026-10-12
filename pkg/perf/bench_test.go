@@ -9,6 +9,7 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
+	"github.com/khoinguyen/factotum/pkg/store/jsondir"
 	"github.com/khoinguyen/factotum/pkg/store/jsonfile"
 	"github.com/khoinguyen/factotum/pkg/store/memory"
 	"github.com/khoinguyen/factotum/pkg/store/sqlite"
@@ -18,11 +19,17 @@ func itoa(n int) string { return strconv.Itoa(n) }
 
 // benchmarkScales is the per-backend scale set the store micro-benchmarks use.
 // jsonfile is capped so its O(n^2) seed does not dominate the benchmark run.
+// jsondir seeds in O(n) (one file per write), and its list/search index is
+// in-memory, so it is measured across the full 1k/10k/50k tiers.
 func benchmarkScales(backend string) []int {
-	if backend == "jsonfile" {
+	switch backend {
+	case "jsonfile":
 		return []int{1000}
+	case "jsondir":
+		return []int{1000, 10000, 50000}
+	default:
+		return []int{1000, 10000}
 	}
-	return []int{1000, 10000}
 }
 
 func openBenchBackend(tb testing.TB, backend string) store.Backend {
@@ -38,6 +45,8 @@ func openBenchBackend(tb testing.TB, backend string) store.Backend {
 		be = memory.New()
 	case "jsonfile":
 		be, err = jsonfile.Open(ctx, store.Config{Backend: backend, Options: map[string]string{"path": filepath.Join(dir, "db.json")}})
+	case "jsondir":
+		be, err = jsondir.Open(ctx, store.Config{Backend: backend, Options: map[string]string{"path": filepath.Join(dir, "store")}})
 	case "sqlite":
 		be, err = sqlite.Open(ctx, store.Config{Backend: backend, Options: map[string]string{"path": filepath.Join(dir, "db.db")}})
 	default:
@@ -63,7 +72,7 @@ func seedBenchBackend(tb testing.TB, backend string, spec Spec) store.Backend {
 // project), which LoadSnapshot calls implicitly.
 func BenchmarkTaskList(b *testing.B) {
 	ctx := context.Background()
-	for _, backend := range []string{"memory", "sqlite", "jsonfile"} {
+	for _, backend := range []string{"memory", "sqlite", "jsonfile", "jsondir"} {
 		for _, n := range benchmarkScales(backend) {
 			b.Run(backend+"/"+itoa(n), func(b *testing.B) {
 				be := seedBenchBackend(b, backend, Spec{Tasks: n})
@@ -83,7 +92,7 @@ func BenchmarkTaskList(b *testing.B) {
 // matches every synthetic task.
 func BenchmarkTaskSearch(b *testing.B) {
 	ctx := context.Background()
-	for _, backend := range []string{"memory", "sqlite", "jsonfile"} {
+	for _, backend := range []string{"memory", "sqlite", "jsonfile", "jsondir"} {
 		for _, n := range benchmarkScales(backend) {
 			b.Run(backend+"/"+itoa(n), func(b *testing.B) {
 				be := seedBenchBackend(b, backend, Spec{Tasks: n})
@@ -117,6 +126,32 @@ func BenchmarkEventList(b *testing.B) {
 				}
 			})
 		}
+	}
+}
+
+// BenchmarkJSONDirWriteFlat measures a single mutation (Update of an existing
+// task) at several state sizes for jsondir. jsondir writes only the affected
+// file, so ns/op should stay flat as the store grows: this is the O(1)-per-write
+// claim from the partitioned layout (idea t-aa5c2dqqki, task t-bbyg7tyypx). A
+// climb here would mean a superlinear write path (for example a whole-store
+// rewrite or an index rewrite on every mutation).
+func BenchmarkJSONDirWriteFlat(b *testing.B) {
+	ctx := context.Background()
+	for _, n := range []int{1000, 10000, 50000} {
+		b.Run(itoa(n), func(b *testing.B) {
+			be := seedBenchBackend(b, "jsondir", Spec{Tasks: n})
+			task, err := be.Tickets().Get(ctx, core.TicketID("t-000000"))
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				task.UpdatedAt = task.UpdatedAt.Add(time.Millisecond)
+				if err := be.Tickets().Update(ctx, task); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

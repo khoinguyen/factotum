@@ -48,12 +48,13 @@ func DefaultOps() []Op {
 }
 
 // DefaultConfig is the full manual/nightly matrix: the 1k/10k/50k/100k task
-// tiers across all three backends. The jsonfile backend is capped by SeedCap, so
-// it only appears at 1k. The heavy graph render is superlinear, so a full run
-// takes tens of minutes at the 100k tier; use -tasks/-backends to subset it.
+// tiers across all backends. jsonfile is capped by SeedCap and so appears only
+// at 1k; jsondir is capped at 50k (its open is O(n)). The heavy graph render is
+// superlinear, so a full run takes tens of minutes at the 100k tier; use
+// -tasks/-backends to subset it.
 func DefaultConfig() Config {
 	return Config{
-		Backends:   []string{"memory", "sqlite", "jsonfile"},
+		Backends:   []string{"memory", "sqlite", "jsonfile", "jsondir"},
 		Scales:     []int{1000, 10000, 50000, 100000},
 		Ops:        DefaultOps(),
 		Iterations: 5,

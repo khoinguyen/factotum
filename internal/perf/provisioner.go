@@ -8,6 +8,7 @@ import (
 
 	perf "github.com/khoinguyen/factotum/pkg/perf"
 	"github.com/khoinguyen/factotum/pkg/store"
+	"github.com/khoinguyen/factotum/pkg/store/jsondir"
 	"github.com/khoinguyen/factotum/pkg/store/jsonfile"
 	"github.com/khoinguyen/factotum/pkg/store/memory"
 	"github.com/khoinguyen/factotum/pkg/store/sqlite"
@@ -49,12 +50,15 @@ func (p Provisioner) Provision(ctx context.Context, backend string, spec perf.Sp
 			return nil, nil, fmt.Errorf("seed memory: %w", err)
 		}
 		return &inProcessRunner{backend: be, configPath: configPath}, cleanup, nil
-	case "jsonfile", "sqlite":
+	case "jsonfile", "jsondir", "sqlite":
 		if p.Binary == "" {
 			cleanup()
 			return nil, nil, fmt.Errorf("backend %s needs a binary path", backend)
 		}
 		path := filepath.Join(dir, backend+".db")
+		if backend == "jsondir" {
+			path = filepath.Join(dir, backend)
+		}
 		be, err := openBackend(ctx, backend, path)
 		if err != nil {
 			cleanup()
@@ -87,6 +91,8 @@ func openBackend(ctx context.Context, backend, path string) (store.Backend, erro
 	switch backend {
 	case "jsonfile":
 		return jsonfile.Open(ctx, cfg)
+	case "jsondir":
+		return jsondir.Open(ctx, cfg)
 	case "sqlite":
 		return sqlite.Open(ctx, cfg)
 	default:

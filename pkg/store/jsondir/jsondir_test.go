@@ -3,6 +3,7 @@ package jsondir
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,6 +129,59 @@ func TestWriteTouchesOnlyAffectedFile(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatalf("updating t-2 changed t-1:\n before=%s\n after=%s", before, after)
 	}
+}
+
+// TestWriteLatencyStaysFlatAsStateGrows demonstrates the O(1)-per-mutation claim
+// of the partitioned layout: an Update touches one file, so its latency must not
+// grow with the total number of tasks. It times the fastest Update in a batch at
+// two very different store sizes and bounds the ratio generously, so it catches a
+// superlinear write path (a whole-store rewrite, or an index rebuilt on every
+// mutation) without flaking on filesystem or scheduler noise.
+func TestWriteLatencyStaysFlatAsStateGrows(t *testing.T) {
+	small := measureWriteLatency(t, 50)
+	large := measureWriteLatency(t, 2000)
+	const maxRatio = 4
+	if large > small*maxRatio {
+		t.Fatalf("write latency grew with state: %v at 50 tasks vs %v at 2000 tasks (want <= %dx)", small, large, maxRatio)
+	}
+}
+
+// measureWriteLatency seeds n tasks, then returns the fastest of a batch of
+// Updates. The minimum filters out scheduler and filesystem noise; the
+// write-path cost is what remains.
+func measureWriteLatency(t *testing.T, n int) time.Duration {
+	t.Helper()
+	backend := newBackend(t)
+	ctx := context.Background()
+	for i := 0; i < n; i++ {
+		id := core.TicketID(fmt.Sprintf("t-%06d", i))
+		task := &core.Ticket{ID: id, ProjectID: "prj-1", Kind: core.KindTask, Title: string(id), Status: core.StatusTodo}
+		if err := backend.Tickets().Create(ctx, task); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	target, err := backend.Tickets().Get(ctx, "t-000000")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		target.UpdatedAt = target.UpdatedAt.Add(time.Millisecond)
+		if err := backend.Tickets().Update(ctx, target); err != nil {
+			t.Fatalf("warmup Update() error = %v", err)
+		}
+	}
+	best := time.Duration(1<<62 - 1)
+	for i := 0; i < 100; i++ {
+		target.UpdatedAt = target.UpdatedAt.Add(time.Millisecond)
+		start := time.Now()
+		if err := backend.Tickets().Update(ctx, target); err != nil {
+			t.Fatalf("Update() error = %v", err)
+		}
+		if elapsed := time.Since(start); elapsed < best {
+			best = elapsed
+		}
+	}
+	return best
 }
 
 func TestUnknownFrontmatterSurvivesUpdate(t *testing.T) {

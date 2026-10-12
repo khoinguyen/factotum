@@ -9,6 +9,7 @@ import (
 
 	"github.com/khoinguyen/factotum/internal/groom"
 	"github.com/khoinguyen/factotum/internal/up"
+	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
 )
 
@@ -192,20 +193,26 @@ func (d *Deps) emitUpPipeline(p *core.Pipeline) error {
 // upOperatorHints names the next operator action a pipeline is waiting on, so a
 // gated or parked pipeline surfaces its clearing command (design §6).
 func upOperatorHints(p *core.Pipeline) []hint {
-	switch {
-	case p.Gate == core.GateGroomQuestions:
-		return []hint{{Command: fmt.Sprintf("ft up answer %s -f answers.md", p.ID), About: "answer the deferred groom questions"}}
-	case p.Gate == core.GateDesignRework:
-		return []hint{
-			{Command: fmt.Sprintf("ft groom review %s --verdict approve -f review.md", p.Session), About: "re-review the design"},
-			{Command: fmt.Sprintf("ft up approve %s", p.ID), About: "accept the design"},
+	// The gate-clearing command comes from app.GateCommand so the CLI and the
+	// dashboard's /factory view name the same command (design §6).
+	if command, ok := app.GateCommand(p); ok {
+		switch p.Gate {
+		case core.GateGroomQuestions:
+			return []hint{{Command: command, About: "answer the deferred groom questions"}}
+		case core.GateDesignRework:
+			return []hint{
+				{Command: fmt.Sprintf("ft groom review %s --verdict approve -f review.md", p.Session), About: "re-review the design"},
+				{Command: command, About: "accept the design"},
+			}
+		case core.GateMergeApproval:
+			return []hint{{Command: command, About: "clear merge_approval after merging the PRs"}}
+		case core.GateRelease:
+			return []hint{{Command: command, About: "close the release milestone"}}
+		case core.GateRollout:
+			return []hint{{Command: command, About: "approve the rollout promotion"}}
 		}
-	case p.Gate == core.GateMergeApproval:
-		return []hint{{Command: fmt.Sprintf("ft up merge %s", p.ID), About: "clear merge_approval after merging the PRs"}}
-	case p.Gate == core.GateRelease:
-		return []hint{{Command: fmt.Sprintf("ft up release %s", p.ID), About: "close the release milestone"}}
-	case p.Gate == core.GateRollout:
-		return []hint{{Command: fmt.Sprintf("ft up promote %s", p.ID), About: "approve the rollout promotion"}}
+	}
+	switch {
 	case p.State == core.PipelineFailed:
 		return []hint{
 			{Command: fmt.Sprintf("ft up retry %s", p.ID), About: "retry the failed stage"},

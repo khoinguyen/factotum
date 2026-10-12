@@ -440,6 +440,7 @@ func (r *runRepo) Register(ctx context.Context, run *core.Run) (*core.Run, error
 		return nil, err
 	}
 	existing.TaskID = run.TaskID
+	existing.Session = run.Session
 	existing.Harness = run.Harness
 	existing.CanInject = run.CanInject
 	existing.SeenAt = run.SeenAt

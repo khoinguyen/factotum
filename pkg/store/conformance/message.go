@@ -658,6 +658,7 @@ func testRun(t *testing.T, be store.Backend) {
 		ProjectID:  "prj-1",
 		ActorID:    "act-1",
 		TaskID:     &taskOne,
+		Session:    "sess-1",
 		Harness:    "opencode",
 		Host:       "host-a",
 		PID:        42,
@@ -680,6 +681,7 @@ func testRun(t *testing.T, be store.Backend) {
 		ProjectID:  "prj-1",
 		ActorID:    "act-1",
 		TaskID:     &taskOne,
+		Session:    "sess-1b",
 		Harness:    "opencode",
 		Host:       "host-a",
 		PID:        42,
@@ -693,6 +695,9 @@ func testRun(t *testing.T, be store.Backend) {
 	}
 	if again.ID != "run-1" {
 		t.Fatalf("Register() duplicate id = %q, want stable run-1", again.ID)
+	}
+	if again.Session != "sess-1b" {
+		t.Fatalf("Register() duplicate session = %q, want sess-1b (session updates on upsert)", again.Session)
 	}
 	all, err := repo.List(ctx, store.RunFilter{})
 	if err != nil {
@@ -726,6 +731,7 @@ func testRun(t *testing.T, be store.Backend) {
 		ProjectID:  "prj-1",
 		ActorID:    "act-2",
 		TaskID:     &taskTwo,
+		Session:    "sess-2",
 		Host:       "host-b",
 		PID:        7,
 		CreatedAt:  created,
@@ -776,6 +782,19 @@ func testRun(t *testing.T, be store.Backend) {
 	}
 	if len(byOtherTask) != 1 || byOtherTask[0].ID != "run-stale" {
 		t.Fatalf("List(task t-2) = %v, want [run-stale]", runIDs(byOtherTask))
+	}
+
+	bySession, err := repo.List(ctx, store.RunFilter{ProjectID: "prj-1", Session: "sess-1b"})
+	if err != nil {
+		t.Fatalf("List(session) error = %v", err)
+	}
+	if len(bySession) != 1 || bySession[0].ID != "run-1" {
+		t.Fatalf("List(session sess-1b) = %v, want [run-1]", runIDs(bySession))
+	}
+	if byOtherSession, err := repo.List(ctx, store.RunFilter{ProjectID: "prj-1", Session: "sess-2"}); err != nil {
+		t.Fatalf("List(session sess-2) error = %v", err)
+	} else if len(byOtherSession) != 1 || byOtherSession[0].ID != "run-stale" {
+		t.Fatalf("List(session sess-2) = %v, want [run-stale]", runIDs(byOtherSession))
 	}
 
 	if err := repo.Delete(ctx, "run-1"); err != nil {

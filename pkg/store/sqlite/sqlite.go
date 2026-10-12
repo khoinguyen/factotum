@@ -79,7 +79,7 @@ const migrateConsent = "yes"
 
 // currentSchemaVersion is the schema version this binary writes. It is a var so
 // tests can exercise pending and failing migrations.
-var currentSchemaVersion = 8
+var currentSchemaVersion = 9
 
 // nowFunc is overridable in tests so backup names are deterministic.
 var nowFunc = time.Now
@@ -99,6 +99,20 @@ var migrations = []migration{
 	{version: 6, apply: migrateV6},
 	{version: 7, apply: migrateV7},
 	{version: 8, apply: migrateV8},
+	{version: 9, apply: migrateV9},
+}
+
+// migrateV9 adds events.session so events can be filtered by the chief session
+// that produced them. Existing rows keep a NULL session (their actor id, if it
+// encoded one, is still in data).
+func migrateV9(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE events ADD COLUMN session TEXT"); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("events.session: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS idx_events_session ON events(session)"); err != nil {
+		return fmt.Errorf("index events.session: %w", err)
+	}
+	return nil
 }
 
 // migrateV1 creates the base schema and the pre-release additive columns.
@@ -1257,16 +1271,19 @@ func (r *eventRepo) Append(ctx context.Context, event *core.Event) error {
 	if err != nil {
 		return err
 	}
-	var projectID, taskID any
+	var projectID, taskID, session any
 	if event.ProjectID != "" {
 		projectID = string(event.ProjectID)
 	}
 	if event.TicketID != nil {
 		taskID = string(*event.TicketID)
 	}
+	if event.Session != "" {
+		session = event.Session
+	}
 	_, err = r.db.ExecContext(ctx,
-		"INSERT INTO events (project_id, task_id, kind, created_at, data) VALUES (?, ?, ?, ?, ?)",
-		projectID, taskID, string(event.Kind), formatTime(event.CreatedAt), data)
+		"INSERT INTO events (project_id, task_id, kind, session, created_at, data) VALUES (?, ?, ?, ?, ?, ?)",
+		projectID, taskID, string(event.Kind), session, formatTime(event.CreatedAt), data)
 	if err != nil {
 		return fmt.Errorf("append event: %w", err)
 	}
@@ -1290,6 +1307,10 @@ func (r *eventRepo) List(ctx context.Context, filter store.EventFilter) ([]*core
 		for _, kind := range filter.Kinds {
 			args = append(args, string(kind))
 		}
+	}
+	if filter.Session != "" {
+		conditions = append(conditions, "session = ?")
+		args = append(args, filter.Session)
 	}
 	if filter.Since != nil {
 		conditions = append(conditions, "created_at >= ?")

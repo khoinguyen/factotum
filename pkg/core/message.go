@@ -162,9 +162,13 @@ type Run struct {
 	ProjectID ProjectID
 	ActorID   ActorID
 	TaskID    *TicketID // the task this session is working, when any
-	Harness   string    // "opencode", "pi", ... (free-form, for display)
-	Host      string    // machine identity, for cross-host diagnostics
-	PID       int
+	// Session is the chief session the run belongs to, threaded from
+	// FACTOTUM_SESSION (or --session) at registration. The actor id stays
+	// role-scoped; the session is a separate field.
+	Session string
+	Harness string // "opencode", "pi", ... (free-form, for display)
+	Host    string // machine identity, for cross-host diagnostics
+	PID     int
 	// CanInject means a receiver adapter is running that can accept an
 	// out-of-band injection. Empty means "poll only".
 	CanInject  bool

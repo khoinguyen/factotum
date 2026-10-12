@@ -294,6 +294,7 @@ type agentRegisterResult struct {
 	RunID      string `json:"run_id" yaml:"run_id"`
 	Project    string `json:"project" yaml:"project"`
 	Actor      string `json:"actor" yaml:"actor"`
+	Session    string `json:"session,omitempty" yaml:"session,omitempty"`
 	LeaseUntil string `json:"lease_until" yaml:"lease_until"`
 }
 
@@ -337,7 +338,7 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 	}
 	cmd.PersistentFlags().StringVarP(&project, "project", "p", "", "project id (defaults to the configured project)")
 
-	var regActor, regTask, regHarness, regHost string
+	var regActor, regTask, regSession, regHarness, regHost string
 	var regPID int
 	var regTTL time.Duration
 	var regCanInject bool
@@ -353,9 +354,14 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 			if regActor == "" {
 				return usageError(cmd, "--actor is required")
 			}
+			session := regSession
+			if session == "" {
+				session = deps.Session
+			}
 			in := app.RegisterRunInput{
 				ProjectID: projectID,
 				ActorID:   core.ActorID(regActor),
+				Session:   session,
 				Harness:   regHarness,
 				Host:      regHost,
 				PID:       regPID,
@@ -374,15 +380,17 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 				RunID:      string(run.ID),
 				Project:    string(run.ProjectID),
 				Actor:      string(run.ActorID),
+				Session:    run.Session,
 				LeaseUntil: run.LeaseUntil.UTC().Format(time.RFC3339),
 			}
 			return deps.emit(result, func() {
-				deps.printFields(f("run_id", result.RunID), f("actor", result.Actor), f("lease_until", result.LeaseUntil), f("project", result.Project))
+				deps.printFields(f("run_id", result.RunID), f("actor", result.Actor), f("session", result.Session), f("lease_until", result.LeaseUntil), f("project", result.Project))
 			})
 		},
 	}
 	register.Flags().StringVar(&regActor, "actor", "", "actor id (required)")
 	register.Flags().StringVar(&regTask, "task", "", "task this session is working (optional)")
+	register.Flags().StringVar(&regSession, "session", "", "chief session id (default: FACTOTUM_SESSION)")
 	register.Flags().StringVar(&regHarness, "harness", "", "harness name (opencode, pi, ...)")
 	register.Flags().StringVar(&regHost, "host", defaultHost(), "machine identity")
 	register.Flags().IntVar(&regPID, "pid", os.Getpid(), "process id")

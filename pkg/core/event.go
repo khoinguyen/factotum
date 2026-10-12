@@ -41,6 +41,12 @@ const (
 	EventMessageClaimed EventKind = "message.claimed"
 	EventMessageRead    EventKind = "message.read"
 	EventMessageFailed  EventKind = "message.failed"
+
+	// EventSessionStarted and EventSessionRetired bracket a chief session. A
+	// retired event names its successor in Data["successor"], so a session's
+	// stop and the reason (reincarnation) are derivable from the log.
+	EventSessionStarted EventKind = "session.started"
+	EventSessionRetired EventKind = "session.retired"
 )
 
 func (k EventKind) Valid() bool {
@@ -53,7 +59,8 @@ func (k EventKind) Valid() bool {
 		EventTaskRunStarted, EventTaskRunFinished,
 		EventActorCreated, EventActorUpdated, EventActorDeleted,
 		EventArtifactCreated, EventArtifactUpdated, EventArtifactDeleted,
-		EventMessageSent, EventMessageClaimed, EventMessageRead, EventMessageFailed:
+		EventMessageSent, EventMessageClaimed, EventMessageRead, EventMessageFailed,
+		EventSessionStarted, EventSessionRetired:
 		return true
 	default:
 		return false
@@ -76,9 +83,13 @@ type Event struct {
 	// The JSON key stays "TaskID": backends persist Event verbatim, so changing
 	// it would silently drop the link in documents written before the
 	// Task->Ticket rename.
-	TicketID  *TicketID `json:"TaskID"`
-	Kind      EventKind
-	By        *ActorID
+	TicketID *TicketID `json:"TaskID"`
+	Kind     EventKind
+	By       *ActorID
+	// Session is the chief session the acting actor belongs to, stamped at
+	// append time from the caller context (FACTOTUM_SESSION). It lets events be
+	// grouped by session without parsing every actor id.
+	Session   string
 	Summary   string
 	Data      map[string]any
 	Tally     *Tally

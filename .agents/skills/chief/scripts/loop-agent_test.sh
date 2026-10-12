@@ -21,14 +21,17 @@ mkdir -p "$tmp/bin" "$tmp/worktree"
 cat >"$tmp/bin/ft" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$FT_STUB_LOG"
+if [ "${1:-}" = "session" ] && [ "${2:-}" = "start" ]; then
+  printf 'session_id: sid-test\n'
+fi
 exit 0
 STUB
 cat >"$tmp/bin/opencode" <<'STUB'
 #!/usr/bin/env bash
 {
   printf 'cwd=%s\n' "$PWD"
-  printf 'project=%s actor=%s task=%s default=%s\n' \
-    "${FACTOTUM_PROJECT:-}" "${FACTOTUM_ACTOR:-}" "${FACTOTUM_TASK_ID:-}" "${FACTOTUM_DEFAULT_ACTOR:-}"
+  printf 'project=%s actor=%s task=%s default=%s session=%s\n' \
+    "${FACTOTUM_PROJECT:-}" "${FACTOTUM_ACTOR:-}" "${FACTOTUM_TASK_ID:-}" "${FACTOTUM_DEFAULT_ACTOR:-}" "${FACTOTUM_SESSION:-}"
   printf 'argv=%s\n' "$*"
 } >>"$OPENCODE_STUB_LOG"
 exit 0
@@ -50,11 +53,23 @@ if grep -q "cwd=$tmp/worktree" "$OPENCODE_STUB_LOG" \
   && grep -q "argv=--prompt you are builder-t-1 --auto" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
   echo "FAIL builder: wrong agent launch: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
 
-# The chief has no task: FACTOTUM_TASK_ID must not leak in.
-: >"$OPENCODE_STUB_LOG"
+# The chief has no task: FACTOTUM_TASK_ID must not leak in. A chief launch also
+# mints a session id, records its start, and exports FACTOTUM_SESSION.
+: >"$FT_STUB_LOG"; : >"$OPENCODE_STUB_LOG"
 "$script" chief factotum - "$tmp/worktree" "you are chief" >/dev/null
-if grep -q "project=factotum actor=chief task= default=chief" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
-  echo "FAIL chief: task should be unset: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
+if grep -q "project=factotum actor=chief task= default=chief session=sid-test" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL chief: task should be unset and session exported: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
+if grep -q "session start --project factotum" "$FT_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL chief: did not record the session start: $(cat "$FT_STUB_LOG")"; fail=$((fail+1)); fi
+
+# A subagent inherits the chief's session from the environment.
+: >"$FT_STUB_LOG"; : >"$OPENCODE_STUB_LOG"
+FACTOTUM_SESSION=sid-inherit "$script" builder-t-2 factotum t-2 "$tmp/worktree" "you are builder-t-2" >/dev/null
+if grep -q "actor=builder-t-2 task=t-2 default=builder-t-2 session=sid-inherit" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL builder: did not inherit FACTOTUM_SESSION: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
+if grep -q "session start" "$FT_STUB_LOG"; then
+  echo "FAIL builder: should not start its own session: $(cat "$FT_STUB_LOG")"; fail=$((fail+1));
+else pass=$((pass+1)); fi
 
 # Missing args and a bad worktree fail loudly without launching anything.
 : >"$OPENCODE_STUB_LOG"

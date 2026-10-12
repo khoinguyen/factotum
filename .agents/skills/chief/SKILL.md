@@ -239,6 +239,11 @@ When a just-merged feature would help your own work, don't keep running a stale 
   `opencode --prompt "load the chief skill; you are chief; read ft memory get art-y7p3u3t3mf and
   continue the loop"`, verify it can receive over ft msg, then have it kill your session and tear
   down your leftovers (next bullet).
+- **Sessions.** Launching the chief through `loop-agent.sh` mints a NEW session id and records
+  `session.started`; it exports `FACTOTUM_SESSION`, which your builders/reviewers/QA inherit, so all
+  their work rolls up to your session. Before you retire, record it: ask the successor for its
+  session id (it reports over ft msg) and run `ft session retire -p <project> --successor <sid>` (drop
+  `--successor` if you cannot get it). `ft event list --session <sid>` shows a session's timeline.
 - **Tear down the retired chief after reincarnating.** Killing the outgoing chief's session PID is
   not enough: two leftovers survive it. (1) The retired session's `ft msg agent claim --actor chief`
   receiver is a child of the dead session, so it reparents to PID 1 and keeps long-polling

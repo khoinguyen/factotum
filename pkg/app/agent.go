@@ -19,6 +19,7 @@ type RegisterRunInput struct {
 	ProjectID core.ProjectID
 	ActorID   core.ActorID
 	TaskID    *core.TicketID
+	Session   string
 	Harness   string
 	Host      string
 	PID       int
@@ -46,6 +47,7 @@ func (s *MessageService) RegisterRun(ctx context.Context, in RegisterRunInput) (
 		ProjectID:  in.ProjectID,
 		ActorID:    in.ActorID,
 		TaskID:     in.TaskID,
+		Session:    in.Session,
 		Harness:    in.Harness,
 		Host:       in.Host,
 		PID:        in.PID,

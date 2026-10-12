@@ -68,7 +68,7 @@ function IdeaLane({ title, ideas }: { title: string; ideas: IdeaView[] }) {
 // The captured lane leads as the backlog; the rest follow in lifecycle order.
 export function IdeaBoard({ ideas }: { ideas: Snapshot["ideas"] }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
       <IdeaLane title="Backlog" ideas={ideas.captured} />
       <IdeaLane title="Blocked — needs unblock" ideas={ideas.blocked} />
       <IdeaLane title="In progress" ideas={ideas.active} />

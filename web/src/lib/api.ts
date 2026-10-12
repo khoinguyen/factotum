@@ -206,6 +206,12 @@ export type CaptureResult = {
   url: string
 }
 
+// PromptResult is a stored prompt document artifact and the doc URL to open.
+export type PromptResult = {
+  id: string
+  url: string
+}
+
 // CaptureError carries the HTTP status of a rejected capture so the page can
 // tell a bad token (401) from a disabled server (403) from a bad request (400).
 export class CaptureError extends Error {
@@ -285,6 +291,24 @@ export async function submitCapture(
     throw new CaptureError(res.status, await captureErrorMessage(res))
   }
   return (await res.json()) as CaptureResult
+}
+
+// submitPrompt posts a free-form prompt to the token-gated write side. The
+// server stores it as a document artifact and notifies the chief; the app opens
+// the document when it lands.
+export async function submitPrompt(text: string, token: string): Promise<PromptResult> {
+  const res = await fetch("/api/prompt", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ text }),
+  })
+  if (!res.ok) {
+    throw new CaptureError(res.status, await captureErrorMessage(res))
+  }
+  return (await res.json()) as PromptResult
 }
 
 // captureErrorMessage extracts the server's error text, falling back to the

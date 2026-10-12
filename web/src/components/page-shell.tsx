@@ -8,6 +8,7 @@ import type { LiveState } from "@/hooks/use-live-resource"
 export function PageShell({
   eyebrow,
   title,
+  titleAction,
   state,
   back,
   capture = true,
@@ -16,6 +17,7 @@ export function PageShell({
 }: {
   eyebrow?: string
   title: string
+  titleAction?: React.ReactNode
   state?: LiveState
   back?: { href: string; label: string }
   capture?: boolean
@@ -39,7 +41,10 @@ export function PageShell({
               {eyebrow}
             </p>
           ) : null}
-          <h1 className="break-words text-xl font-semibold">{title}</h1>
+          <div className="flex items-center gap-1">
+            <h1 className="min-w-0 break-words text-xl font-semibold">{title}</h1>
+            {titleAction}
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-4">
           {capture ? (

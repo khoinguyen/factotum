@@ -61,7 +61,54 @@ func newUpCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVarP(&opts.project, "project", "p", "", "project id (defaults to the configured project)")
 	cmd.Flags().BoolVar(&opts.noAutoGroom, "no-auto-groom", false, "do not start a pipeline when a capture is stored")
 	cmd.Flags().BoolVar(&opts.unattended, "unattended", false, "groom and agent stages headless; without it a terminal attaches the PO to the groom session (overrides up.unattended)")
-	cmd.AddCommand(newUpStatusCommand(deps), newUpListCommand(deps), newUpStartCommand(deps))
+	cmd.AddCommand(
+		newUpStatusCommand(deps), newUpListCommand(deps), newUpStartCommand(deps),
+		newUpAnswerCommand(deps), newUpApproveCommand(deps),
+		newUpOperatorCommand(deps, "merge <pipeline>",
+			"Clear merge_approval after merging the pipeline's PRs",
+			"Record that the operator merged the pull requests a build stage left awaiting\n"+
+				"merge, then clear the blocking merge_approval gate. The produced tasks awaiting\n"+
+				"review are marked done, so the resumed build stage sees the work resolved.",
+			func(ctx context.Context, c *up.Controller, id core.PipelineID) (*core.Pipeline, error) {
+				return c.Merge(ctx, id)
+			}),
+		newUpOperatorCommand(deps, "release <pipeline>",
+			"Close the pipeline's release milestone and clear the release gate",
+			"Close the release milestone that holds the pipeline at the blocking release gate\n"+
+				"(the release decision, design §9) and clear the gate so the rollout stage proceeds.",
+			func(ctx context.Context, c *up.Controller, id core.PipelineID) (*core.Pipeline, error) {
+				return c.Release(ctx, id)
+			}),
+		newUpOperatorCommand(deps, "promote <pipeline>",
+			"Approve the rollout promotion and clear the rollout gate",
+			"Approve the rollout promotion and clear the blocking rollout gate so the rollout\n"+
+				"stage proceeds.",
+			func(ctx context.Context, c *up.Controller, id core.PipelineID) (*core.Pipeline, error) {
+				return c.Promote(ctx, id)
+			}),
+		newUpOperatorCommand(deps, "pause <pipeline>", "Hold a pipeline at its current phase",
+			"Hold a pipeline at the phase it is in. A paused pipeline is not auto-resumed by a\n"+
+				"daemon restart; resume it with `ft up resume`.",
+			func(ctx context.Context, c *up.Controller, id core.PipelineID) (*core.Pipeline, error) {
+				return c.Pause(ctx, id)
+			}),
+		newUpOperatorCommand(deps, "resume <pipeline>", "Resume a paused pipeline",
+			"Return a paused pipeline to the phase it held, so the controller resumes that\nstage.",
+			func(ctx context.Context, c *up.Controller, id core.PipelineID) (*core.Pipeline, error) {
+				return c.Resume(ctx, id)
+			}),
+		newUpOperatorCommand(deps, "retry <pipeline>", "Retry a failed pipeline",
+			"Return a failed pipeline to the phase it failed in and clear the failure reason,\n"+
+				"so the controller resumes that stage.",
+			func(ctx context.Context, c *up.Controller, id core.PipelineID) (*core.Pipeline, error) {
+				return c.Retry(ctx, id)
+			}),
+		newUpOperatorCommand(deps, "cancel <pipeline>", "Cancel a pipeline",
+			"Terminate a pipeline from any non-terminal state. cancelled is immutable, like done.",
+			func(ctx context.Context, c *up.Controller, id core.PipelineID) (*core.Pipeline, error) {
+				return c.Cancel(ctx, id)
+			}),
+	)
 	return cmd
 }
 
@@ -472,7 +519,7 @@ func (d *Deps) runUpStatus(cmd *cobra.Command, projectID string) error {
 			d.printFields(fields...)
 			d.printf("\n")
 		}
-	})
+	}, upPipelineHints(pipelines)...)
 }
 
 func newUpListCommand(deps *Deps) *cobra.Command {

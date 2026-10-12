@@ -19,7 +19,13 @@ export default defineConfig({
     include: ["src/**/*.browser.test.{ts,tsx}"],
     browser: {
       enabled: true,
-      provider: playwright(),
+      // clipboard-read/clipboard-write let the copy controls' tests read back
+      // what the app wrote, proving the real text lands on the clipboard.
+      provider: playwright({
+        contextOptions: {
+          permissions: ["clipboard-read", "clipboard-write"],
+        },
+      }),
       headless: true,
       instances: [{ browser: "chromium" }],
     },

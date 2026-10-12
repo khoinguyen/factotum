@@ -1,5 +1,6 @@
 import { AppLink } from "@/components/app-link"
 import { Chip } from "@/components/chip"
+import { CopyButton } from "@/components/copy-button"
 import { PageShell } from "@/components/page-shell"
 import { RefreshBanner } from "@/components/refresh-banner"
 import { useLiveResource } from "@/hooks/use-live-resource"
@@ -35,12 +36,25 @@ export function IdeaDetail({ id }: { id: string }) {
     <PageShell
       eyebrow={`${idea.kind} · ${idea.state}`}
       title={idea.title}
+      // The title control copies one "id: title" payload, so a pasted reference
+      // carries both without opening the capture.
+      titleAction={
+        <CopyButton
+          value={`${idea.id}: ${idea.title}`}
+          label="Copy capture id and title"
+        />
+      }
       state={state}
       back={{ href: "/", label: "dashboard" }}
     >
       {error ? <RefreshBanner error={error} stale subject="idea" /> : null}
 
       <dl className="grid max-w-2xl grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm">
+        <dt className="text-muted-foreground">ID</dt>
+        <dd className="flex items-center gap-1">
+          <span className="font-mono text-xs">{idea.id}</span>
+          <CopyButton value={idea.id} label="Copy capture id" />
+        </dd>
         <dt className="text-muted-foreground">Status</dt>
         <dd>
           <Chip label={idea.state} toneKey={idea.state} />

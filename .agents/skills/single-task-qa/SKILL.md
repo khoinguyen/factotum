@@ -30,8 +30,8 @@ run a testing task by exercising it for real. You do **not** build or edit produ
 ## What to do
 
 1. Read your task (`ft task get <task-id>`) and any testing plan it points at. List the items to
-   exercise. When you are dispatched for a **finished feature** (an `idea`/`bug` whose tasks all
-   resolved), read the feature with `ft task get <capture>`, exercise the whole feature, and
+   exercise. When you are dispatched for a **finished feature** (an `idea`/`bug` whose tasks are all
+   done), read the feature with `ft task get <capture>`, exercise the whole feature, and
    **retest the bug and its related features** — not only the one path.
 2. For each item: set up a throwaway lab, run the exact flow (attended vs unattended as its nature
    requires), and capture the **exact command + observed output** as evidence.

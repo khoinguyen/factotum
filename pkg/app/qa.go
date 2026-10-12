@@ -45,6 +45,18 @@ func NewQAService(backend store.Backend, clock Clock, ids IDGen) *QAService {
 	}
 }
 
+// featurePolicy is the completeness rule for a feature's tasks: QA verifies a
+// feature only once every task it produced is finished or deliberately dropped.
+// It is stricter than the graph's default resolution policy — which also lets
+// ready_for_review unblock dependents — so a feature is never QA'd (or accepted)
+// while a task still sits in review with its PR unmerged.
+func featurePolicy() core.ResolutionPolicy {
+	return core.ResolutionPolicy{
+		TaskStatuses:      []core.TicketStatus{core.StatusDone, core.StatusCancelled},
+		MilestoneStatuses: []core.TicketStatus{core.StatusDone},
+	}
+}
+
 // Ready returns the project's captures whose every task has resolved and which
 // have not yet passed QA, oldest id first. A capture with no tasks is not ready:
 // there is nothing to verify. A capture that failed QA stays ready, so the loop
@@ -54,7 +66,7 @@ func (s *QAService) Ready(ctx context.Context, projectID core.ProjectID) ([]*cor
 	if err != nil {
 		return nil, err
 	}
-	policy := core.DefaultResolutionPolicy()
+	policy := featurePolicy()
 	children := featureChildrenByCapture(tasks)
 	var ready []*core.Ticket
 	for _, capture := range tasks {
@@ -166,33 +178,66 @@ func requireEveryTaskResolved(ctx context.Context, backend store.Backend, captur
 	if len(features) == 0 {
 		return fmt.Errorf("%w: qa record %s: it has no tasks to verify", core.ErrInvalid, captureID)
 	}
+	policy := featurePolicy()
 	for _, task := range features {
-		if !task.Resolves(core.DefaultResolutionPolicy()) {
-			return fmt.Errorf("%w: qa record %s: task %s is not done; every task must resolve before QA passes",
+		if !task.Resolves(policy) {
+			return fmt.Errorf("%w: qa record %s: task %s is not done; every task must be done before QA passes",
 				core.ErrConflict, captureID, task.ID)
 		}
 	}
 	return nil
 }
 
-// featureQAPassed reports whether a passing QA artifact is recorded on captureID.
+// featureQAPassed reports whether the capture's latest QA verdict is a pass that
+// still verifies the current work. The verdict with the greatest CreatedAt wins
+// (ties break on artifact id), so a later fail revokes an earlier pass; and the
+// pass must not predate the newest update to any task it verified, so a task
+// reopened (and redone) after the pass makes it stale and re-gates the feature.
 func featureQAPassed(ctx context.Context, backend store.Backend, captureID core.TicketID) (bool, error) {
-	kind := core.ArtifactQA
-	artifacts, err := backend.Artifacts().List(ctx, store.ArtifactFilter{TicketID: &captureID, Kind: &kind})
+	verdict, ok, err := latestQA(ctx, backend, captureID)
+	if err != nil || !ok {
+		return false, err
+	}
+	if verdict.Brief != string(QAPass) {
+		return false, nil
+	}
+	features, err := featureTasks(ctx, backend, captureID)
 	if err != nil {
 		return false, err
 	}
-	for _, artifact := range artifacts {
-		if artifact.Brief == string(QAPass) {
-			return true, nil
+	for _, task := range features {
+		if task.UpdatedAt.After(verdict.CreatedAt) {
+			return false, nil
 		}
 	}
-	return false, nil
+	return true, nil
+}
+
+// latestQA returns the capture's most recently recorded QA verdict. Ordering is
+// by CreatedAt, with the artifact id as a deterministic tie-break.
+func latestQA(ctx context.Context, backend store.Backend, captureID core.TicketID) (*core.Artifact, bool, error) {
+	kind := core.ArtifactQA
+	artifacts, err := backend.Artifacts().List(ctx, store.ArtifactFilter{TicketID: &captureID, Kind: &kind})
+	if err != nil {
+		return nil, false, err
+	}
+	var latest *core.Artifact
+	for _, artifact := range artifacts {
+		switch {
+		case latest == nil:
+			latest = artifact
+		case artifact.CreatedAt.After(latest.CreatedAt):
+			latest = artifact
+		case artifact.CreatedAt.Equal(latest.CreatedAt) && artifact.ID > latest.ID:
+			latest = artifact
+		}
+	}
+	return latest, latest != nil, nil
 }
 
 // captureAcceptGate enforces the auto-QA gate: a capture with tasks cannot be
-// accepted (set done) until every task has resolved and QA has passed. A capture
-// with no tasks has nothing to verify, so it is accepted freely.
+// accepted (set done) until every task is done and QA has passed. A capture with
+// no tasks has nothing to verify, so it is accepted freely.
 func captureAcceptGate(ctx context.Context, backend store.Backend, capture *core.Ticket) error {
 	features, err := featureTasks(ctx, backend, capture.ID)
 	if err != nil {
@@ -201,8 +246,9 @@ func captureAcceptGate(ctx context.Context, backend store.Backend, capture *core
 	if len(features) == 0 {
 		return nil
 	}
+	policy := featurePolicy()
 	for _, task := range features {
-		if !task.Resolves(core.DefaultResolutionPolicy()) {
+		if !task.Resolves(policy) {
 			return fmt.Errorf("%w: cannot accept %s %s: task %s is not done",
 				core.ErrConflict, capture.Kind, capture.ID, task.ID)
 		}

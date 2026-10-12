@@ -153,7 +153,17 @@ func TestSeedWritesReadableStoreForSubprocess(t *testing.T) {
 }
 
 func TestSubprocessEnvStripsFactotumAndSetsHarnessSettings(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "sk-should-not-leak")
+	t.Setenv("FACTOTUM_PROJECT", "factotum")
 	env := subprocessEnv()
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "TYPESAFE_") {
+			t.Fatalf("subprocessEnv leaked %q: an ambient judge key makes search rerank over the network", entry)
+		}
+		if strings.HasPrefix(entry, "FACTOTUM_") && !strings.HasPrefix(entry, "FACTOTUM_MAX_OUTPUT=") && !strings.HasPrefix(entry, "FACTOTUM_NO_HINTS=") {
+			t.Fatalf("subprocessEnv leaked %q", entry)
+		}
+	}
 	joined := strings.Join(env, "\n")
 	if !strings.Contains(joined, "FACTOTUM_MAX_OUTPUT=unlimited") {
 		t.Fatal("expected FACTOTUM_MAX_OUTPUT=unlimited")

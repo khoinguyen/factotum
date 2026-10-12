@@ -186,6 +186,10 @@ ft up status -p <project>                                      # phases and open
 ft up start <capture> -p <project>                             # enqueue a pipeline by hand
 ```
 
+The dashboard shows the same live: its `/factory` view lists every pipeline with its phase, open
+gate, produced tasks, and the exact command that clears the gate, updated over the `/events` SSE
+stream.
+
 Groom runs headless by default (`up.unattended = true`): it defers the capture's product questions and
 opens the advisory `groom_questions` gate. To steer a live groom session yourself, run `ft up` on a
 terminal with `unattended = false` (or `--unattended=false`): the daemon attaches you to the session

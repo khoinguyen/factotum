@@ -2,6 +2,7 @@ import { PageShell } from "@/components/page-shell"
 import { ArtifactDetail } from "@/pages/artifact-detail"
 import { Capture } from "@/pages/capture"
 import { Dashboard } from "@/pages/dashboard"
+import { Factory } from "@/pages/factory"
 import { IdeaDetail } from "@/pages/idea-detail"
 import { Sessions } from "@/pages/sessions"
 import { TaskDetail } from "@/pages/task-detail"
@@ -16,6 +17,8 @@ export default function App() {
       return <Capture />
     case "sessions":
       return <Sessions />
+    case "factory":
+      return <Factory />
     case "idea":
       return <IdeaDetail id={route.id} />
     case "task":

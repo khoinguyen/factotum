@@ -57,6 +57,7 @@ test("the work board nests grouped tasks under their origin", () => {
     in_flight_groups: [{ idea_id: "t-d2tmr544nk", idea_title: "Grouped idea", tasks: [childTask] }],
     waiting_groups: [],
     ideas: { blocked: [], active: [], finished: [], captured: [] },
+    pipelines: [],
     updates: [],
     flags: [],
   }

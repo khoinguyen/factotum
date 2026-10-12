@@ -170,6 +170,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.getOrHead(s.handleAppIndex)(w, r)
 	case path == "/sessions":
 		s.getOrHead(s.handleAppIndex)(w, r)
+	case path == "/factory":
+		s.getOrHead(s.handleAppIndex)(w, r)
 	case path == "/api/capture":
 		s.routeCapture(w, r)
 	case path == "/api/msg" || strings.HasPrefix(path, "/api/msg/"):
@@ -423,6 +425,23 @@ type taskLink struct {
 	URL    string        `json:"url"`
 }
 
+// pipelineView is one factory pipeline projected for the /factory board: the
+// origin capture, the phase, the open gate, the produced tasks, and the exact
+// operator command that clears the gate (docs/up/design.md §7).
+type pipelineView struct {
+	ID           core.PipelineID `json:"id"`
+	Capture      core.TicketID   `json:"capture"`
+	CaptureTitle string          `json:"capture_title,omitempty"`
+	CaptureURL   string          `json:"capture_url"`
+	State        string          `json:"state"`
+	Gate         string          `json:"gate,omitempty"`
+	Command      string          `json:"command,omitempty"`
+	Session      string          `json:"session,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	Produced     []taskLink      `json:"produced"`
+	UpdatedAt    string          `json:"updated_at,omitempty"`
+}
+
 // noteView is one note on a task detail document.
 type noteView struct {
 	Author    string     `json:"author"`
@@ -493,6 +512,7 @@ type pageData struct {
 	ActiveIdeas    []ideaView
 	FinishedIdeas  []ideaView
 	CapturedIdeas  []ideaView
+	Pipelines      []pipelineView
 	Updates        []updateView
 	Flags          []string
 }
@@ -500,19 +520,20 @@ type pageData struct {
 // snapshotJSON is the /api/snapshot document the shadcn/ui app consumes. It is
 // the same projection the dashboard renders, marshaled for the client.
 type snapshotJSON struct {
-	Title          string        `json:"title"`
-	Project        string        `json:"project"`
-	Snapshot       string        `json:"snapshot"`
-	Stats          pageStats     `json:"stats"`
-	NextAgent      []taskView    `json:"next_agent"`
-	NextHuman      []taskView    `json:"next_human"`
-	InFlight       []taskView    `json:"in_flight"`
-	Waiting        []taskView    `json:"waiting"`
-	InFlightGroups []taskGroup   `json:"in_flight_groups"`
-	WaitingGroups  []taskGroup   `json:"waiting_groups"`
-	Ideas          ideaBoardJSON `json:"ideas"`
-	Updates        []updateView  `json:"updates"`
-	Flags          []string      `json:"flags"`
+	Title          string         `json:"title"`
+	Project        string         `json:"project"`
+	Snapshot       string         `json:"snapshot"`
+	Stats          pageStats      `json:"stats"`
+	NextAgent      []taskView     `json:"next_agent"`
+	NextHuman      []taskView     `json:"next_human"`
+	InFlight       []taskView     `json:"in_flight"`
+	Waiting        []taskView     `json:"waiting"`
+	InFlightGroups []taskGroup    `json:"in_flight_groups"`
+	WaitingGroups  []taskGroup    `json:"waiting_groups"`
+	Ideas          ideaBoardJSON  `json:"ideas"`
+	Pipelines      []pipelineView `json:"pipelines"`
+	Updates        []updateView   `json:"updates"`
+	Flags          []string       `json:"flags"`
 }
 
 // ideaBoardJSON is the four-lane ideas board as the app renders it.
@@ -544,8 +565,9 @@ func (p *pageData) snapshot() snapshotJSON {
 			Finished: nonNil(p.FinishedIdeas),
 			Captured: nonNil(p.CapturedIdeas),
 		},
-		Updates: nonNil(p.Updates),
-		Flags:   nonNil(p.Flags),
+		Pipelines: nonNil(p.Pipelines),
+		Updates:   nonNil(p.Updates),
+		Flags:     nonNil(p.Flags),
 	}
 }
 
@@ -691,6 +713,12 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 	page.InFlightGroups = groupByOrigin(page.InFlight, ideaStates)
 	page.WaitingGroups = groupByOrigin(page.Waiting, ideaStates)
 
+	pipelines, err := s.pipelineViews(ctx, scope, vs)
+	if err != nil {
+		return nil, err
+	}
+	page.Pipelines = pipelines
+
 	for _, cycle := range vs.cycles {
 		parts := make([]string, 0, len(cycle))
 		for _, id := range cycle {
@@ -713,6 +741,52 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		})
 	}
 	return page, nil
+}
+
+// pipelineViews projects the project's factory pipelines for the /factory
+// board: the origin capture (linked), the phase, the open gate, the produced
+// tasks, and the exact operator command that clears the gate, so an operator
+// sees what needs clearing (docs/up/design.md §7). Produced tasks resolve
+// through the loaded snapshot; one the snapshot omitted (for example a deleted
+// task) still links by id. It is project-scoped: scope is empty only on an
+// all-projects server, which lists every project's pipelines.
+func (s *Server) pipelineViews(ctx context.Context, scope core.ProjectID, vs viewSet) ([]pipelineView, error) {
+	pipelines, err := s.options.Backend.Pipelines().List(ctx, store.PipelineFilter{ProjectID: scope})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]pipelineView, 0, len(pipelines))
+	for _, pipeline := range pipelines {
+		view := pipelineView{
+			ID:         pipeline.ID,
+			Capture:    pipeline.CaptureID,
+			CaptureURL: ideaURL(pipeline.CaptureID),
+			State:      string(pipeline.State),
+			Gate:       string(pipeline.Gate),
+			Session:    pipeline.Session,
+			Error:      pipeline.Error,
+			Produced:   make([]taskLink, 0, len(pipeline.Produced)),
+		}
+		if !pipeline.UpdatedAt.IsZero() {
+			view.UpdatedAt = pipeline.UpdatedAt.UTC().Format(time.RFC3339)
+		}
+		if capture, ok := vs.byID[pipeline.CaptureID]; ok {
+			view.CaptureTitle = capture.Title
+			view.CaptureURL = taskOrIdeaURL(capture)
+		}
+		if command, ok := app.GateCommand(pipeline); ok {
+			view.Command = command
+		}
+		for _, id := range pipeline.Produced {
+			if _, ok := vs.byID[id]; ok {
+				view.Produced = append(view.Produced, taskLinkOf(vs.views[id]))
+				continue
+			}
+			view.Produced = append(view.Produced, taskLink{ID: id, URL: taskURL(id)})
+		}
+		out = append(out, view)
+	}
+	return out, nil
 }
 
 // viewSet is the shared projection of one snapshot used by both the dashboard

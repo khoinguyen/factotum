@@ -72,3 +72,34 @@ func TestQARecordRequiresAVerdict(t *testing.T) {
 		t.Fatal("qa record without a verdict should fail")
 	}
 }
+
+func TestQARecordFailRevokesAnEarlierPass(t *testing.T) {
+	r, projectID, ideaID, _ := completedFeature(t)
+	r.run("qa", "record", ideaID, "--verdict", "pass", "-b", "green")
+	if out := r.run("qa", "ready", "-p", projectID); strings.Contains(out, ideaID) {
+		t.Fatalf("a passed feature must not be listed as ready:\n%s", out)
+	}
+	r.run("qa", "record", ideaID, "--verdict", "fail", "-b", "regressed")
+	if out := r.run("qa", "ready", "-p", projectID); !strings.Contains(out, ideaID) {
+		t.Fatalf("a revoking fail must return the feature to the QA queue:\n%s", out)
+	}
+	if err := r.runErr("done", ideaID); err == nil {
+		t.Fatal("accepting after a revoking fail should fail")
+	}
+}
+
+func TestQAReadyRequiresDoneNotReview(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "a feature"))
+	r.run("actor", "create", "claude", "-k", "agent")
+	taskID := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+	r.run("task", "review", taskID)
+
+	if out := r.run("qa", "ready", "-p", projectID); strings.Contains(out, ideaID) {
+		t.Fatalf("a task only in review must not make the feature QA-ready:\n%s", out)
+	}
+	if err := r.runErr("qa", "record", ideaID, "--verdict", "pass", "-b", "premature"); err == nil {
+		t.Fatal("a passing QA with a task in review should fail")
+	}
+}

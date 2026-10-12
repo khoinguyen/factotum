@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 )
@@ -32,7 +33,7 @@ func qaReadyIDs(t *testing.T, h *harness, project *core.Project) []core.TicketID
 	return ids
 }
 
-func TestQAReadyListsFeatureWithEveryTaskResolved(t *testing.T) {
+func TestQAReadyListsFeatureWithEveryTaskDone(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
@@ -188,5 +189,108 @@ func TestAcceptCaptureWithoutTasksIsUnchanged(t *testing.T) {
 	}
 	if accepted.Status != core.StatusDone {
 		t.Fatalf("status = %q, want done", accepted.Status)
+	}
+}
+
+// TestQAPassIsStaleAfterAReopenedTaskIsRedone proves a pass does not survive a
+// task leaving a resolved status: the reopened-then-redone work is re-QA'd.
+func TestQAPassIsStaleAfterAReopenedTaskIsRedone(t *testing.T) {
+	h := newHarnessWithClock(t, &stepClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+	clock := h.clock.(*stepClock)
+	ctx := context.Background()
+	project := h.newProject(t)
+	agent := newAgent(t, h, "claude")
+	idea := newIdea(t, h, project, "a feature")
+	task := promoteTask(t, h, idea, agent)
+
+	clock.t = clock.t.Add(time.Minute)
+	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusDone); err != nil {
+		t.Fatalf("SetStatus(done) error = %v", err)
+	}
+	if _, err := h.qa.Record(ctx, idea.ID, QAPass, "green"); err != nil {
+		t.Fatalf("Record(pass) error = %v", err)
+	}
+	if ready := qaReadyIDs(t, h, project); len(ready) != 0 {
+		t.Fatalf("Ready after a pass = %v, want none", ready)
+	}
+
+	clock.t = clock.t.Add(time.Minute)
+	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusTodo); err != nil {
+		t.Fatalf("reopen error = %v", err)
+	}
+	clock.t = clock.t.Add(time.Minute)
+	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusDone); err != nil {
+		t.Fatalf("re-done error = %v", err)
+	}
+	if ready := qaReadyIDs(t, h, project); len(ready) != 1 || ready[0] != idea.ID {
+		t.Fatalf("Ready after reopened work = %v, want [%s]", ready, idea.ID)
+	}
+	if _, err := h.tasks.SetStatus(ctx, idea.ID, core.StatusDone); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("accept on a stale pass error = %v, want ErrConflict", err)
+	}
+	if _, err := h.qa.Record(ctx, idea.ID, QAPass, "re-verified"); err != nil {
+		t.Fatalf("Record(pass) again error = %v", err)
+	}
+	if _, err := h.tasks.SetStatus(ctx, idea.ID, core.StatusDone); err != nil {
+		t.Fatalf("accept after re-QA error = %v", err)
+	}
+}
+
+// TestQAFailRevokesAnEarlierPass proves the latest verdict wins: a fail after a
+// pass drops the feature back into the QA queue and re-gates acceptance.
+func TestQAFailRevokesAnEarlierPass(t *testing.T) {
+	h := newHarnessWithClock(t, &stepClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+	clock := h.clock.(*stepClock)
+	ctx := context.Background()
+	project := h.newProject(t)
+	agent := newAgent(t, h, "claude")
+	idea := newIdea(t, h, project, "a feature")
+	task := promoteTask(t, h, idea, agent)
+	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusDone); err != nil {
+		t.Fatalf("SetStatus(done) error = %v", err)
+	}
+	clock.t = clock.t.Add(time.Minute)
+	if _, err := h.qa.Record(ctx, idea.ID, QAPass, "green"); err != nil {
+		t.Fatalf("Record(pass) error = %v", err)
+	}
+	clock.t = clock.t.Add(time.Minute)
+	if _, err := h.qa.Record(ctx, idea.ID, QAFail, "regressed"); err != nil {
+		t.Fatalf("Record(fail) error = %v", err)
+	}
+	passed, err := h.qa.Passed(ctx, idea)
+	if err != nil {
+		t.Fatalf("Passed error = %v", err)
+	}
+	if passed {
+		t.Fatal("a fail after a pass must revoke it")
+	}
+	if ready := qaReadyIDs(t, h, project); len(ready) != 1 || ready[0] != idea.ID {
+		t.Fatalf("Ready after a revoking fail = %v, want [%s]", ready, idea.ID)
+	}
+	if _, err := h.tasks.SetStatus(ctx, idea.ID, core.StatusDone); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("accept after a fail error = %v, want ErrConflict", err)
+	}
+}
+
+// TestQARequiresDoneNotReadyForReview proves a task in review is not yet done:
+// QA cannot pass, the feature is not listed, and the capture is not acceptable.
+func TestQARequiresDoneNotReadyForReview(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	agent := newAgent(t, h, "claude")
+	idea := newIdea(t, h, project, "a feature")
+	task := promoteTask(t, h, idea, agent)
+	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusReadyForReview); err != nil {
+		t.Fatalf("SetStatus(ready_for_review) error = %v", err)
+	}
+	if ready := qaReadyIDs(t, h, project); len(ready) != 0 {
+		t.Fatalf("Ready with a task only in review = %v, want none", ready)
+	}
+	if _, err := h.qa.Record(ctx, idea.ID, QAPass, "premature"); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("Record(pass) with a task in review error = %v, want ErrConflict", err)
+	}
+	if _, err := h.tasks.SetStatus(ctx, idea.ID, core.StatusDone); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("accept with a task in review error = %v, want ErrConflict", err)
 	}
 }

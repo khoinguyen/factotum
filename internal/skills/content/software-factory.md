@@ -141,8 +141,8 @@ and never merges on fakes alone. A review that flags a real, unverified path is 
 
 ### 7. QA
 
-A feature (an `idea` or `bug`) is ready for QA once every task produced from it has
-resolved. `ft qa ready` lists the features the loop must dispatch a fresh
+A feature (an `idea` or `bug`) is ready for QA once every task produced from it is
+done or cancelled. `ft qa ready` lists the features the loop must dispatch a fresh
 `single-task-qa` agent for — never a build agent. QA exercises the feature for real
 on throwaway labs, retests the bug and its related features, and reports
 PASS/FAIL/not-available per item, then records its verdict:
@@ -154,8 +154,9 @@ ft qa record <capture> --verdict fail -b "crashes on submit"     # a FAIL become
 ```
 
 A `pass` certifies the feature and unlocks accepting the capture (`ft task done`);
-a `fail` keeps the findings and gates the next attempt. Accepting a capture that
-has tasks is refused until a passing QA is recorded.
+a `fail` keeps the findings and gates the next attempt. The **latest** verdict wins,
+and a pass counts only while no task changes after it, so reopening a task re-gates
+the feature. Accepting a capture that has tasks is refused until a passing QA.
 
 ### 8. Rollout
 

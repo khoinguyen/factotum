@@ -19,9 +19,10 @@ func newQACommand(deps *Deps) *cobra.Command {
 		Use:   "qa",
 		Short: "Auto-QA: find features ready for QA and record QA verdicts",
 		Long: "The auto-QA surface of the build loop. A feature (an idea or bug) is ready for QA\n" +
-			"once every task produced from it has resolved; `ft qa ready` lists the ones that have\n" +
-			"not passed QA yet, so the loop can dispatch a QA for each. A QA agent records its\n" +
-			"verdict with `ft qa record`; a passing verdict is what unlocks accepting the capture.",
+			"once every task produced from it is done (or cancelled); `ft qa ready` lists the ones\n" +
+			"that have not passed QA yet, so the loop can dispatch a QA for each. A QA agent records\n" +
+			"its verdict with `ft qa record`; the latest verdict wins, and a passing verdict that no\n" +
+			"later task change invalidated is what unlocks accepting the capture.",
 	}
 	cmd.AddCommand(newQAReadyCommand(deps), newQARecordCommand(deps))
 	return cmd

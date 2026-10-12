@@ -36,12 +36,13 @@ pair, merging an approved PR, and filing follow-ups. Everything substantive goes
   `ft msg`, the task to exercise, any testing plan to read, and your chief role. It drives
   cmux itself for attended/TTY paths and reports a one-screen summary.
 
-  **Auto-QA a finished feature.** When every task of an `idea`/`bug` resolves, QA is not optional:
-  `ft qa ready -p <project>` names each feature the loop must dispatch a `qa-<capture>` for (the
-  capture is `qa-<t>`'s `<t>`). Dispatch one, and accept the capture (`ft task done <capture>`) only
-  after the QA records `ft qa record <capture> --verdict pass`. `ft` enforces the gate: accepting a
-  capture that has tasks is refused until a passing QA exists, so the QA result *is* what gates
-  accepting the idea/bug.
+  **Auto-QA a finished feature.** When every task of an `idea`/`bug` is done (or cancelled), QA is
+  not optional: `ft qa ready -p <project>` names each feature the loop must dispatch a `qa-<capture>`
+  for (the capture is `qa-<t>`'s `<t>`). Dispatch one, and accept the capture
+  (`ft task done <capture>`) only after the QA records `ft qa record <capture> --verdict pass`. `ft`
+  enforces the gate: accepting a capture that has tasks is refused until a passing QA exists, and the
+  pass is only good while no task changes after it (reopening a task re-gates the feature). So the QA
+  result *is* what gates accepting the idea/bug.
 
   **Never pass a long charter as an inline `--prompt`.** A multi-hundred-character `--command` gets
   truncated at the terminal/cmux layer and the agent never starts (observed: the command cut mid-text

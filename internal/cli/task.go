@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -1527,42 +1528,91 @@ func (d *Deps) warnDuplicateTitle(ctx context.Context, task *core.Ticket) {
 		verdict.Candidate.ID, verdict.Rating, task.ID, verdict.Candidate.ID)
 }
 
-// similarTasks returns up to limit tasks in the same project whose title shares a
-// token with the new task, ranked by overlap. Retrieval stays in code.
+// similarTasks returns up to limit tasks in the same project that best match the
+// new task's title. Retrieval stays in code.
 func similarTasks(task *core.Ticket, tasks []*core.Ticket, limit int) []*core.Ticket {
-	return rankSimilar(titleTokens(task.Title), tasks, task.ID, limit)
+	return rankSimilar(task.Title, tasks, task.ID, limit)
 }
 
-// similarTasksByText ranks tasks by overlap with a piece of prose (a note body).
+// similarTasksByText ranks tasks against a piece of prose (a note body).
 func similarTasksByText(text string, tasks []*core.Ticket, exclude core.TicketID, limit int) []*core.Ticket {
-	return rankSimilar(titleTokens(text), tasks, exclude, limit)
+	return rankSimilar(text, tasks, exclude, limit)
 }
 
-func rankSimilar(want map[string]bool, tasks []*core.Ticket, exclude core.TicketID, limit int) []*core.Ticket {
-	if len(want) == 0 {
+// rankSimilar retrieves up to limit tasks that best match the query, in code, so
+// the judge only reranks a bounded shortlist. It mirrors pkg/store/search.go's
+// LexicalScore weighting: a match in a candidate's title weighs more than one in
+// its description. Stopwords are dropped and terms are stemmed, so filler cannot
+// crowd out the true match and morphological variants still match. Retrieval is
+// partial-overlap, not AND: a shared term is enough to shortlist a candidate.
+func rankSimilar(query string, tasks []*core.Ticket, exclude core.TicketID, limit int) []*core.Ticket {
+	terms := similarTerms(query)
+	if len(terms) == 0 {
 		return nil
 	}
-	type scored struct {
-		task    *core.Ticket
-		overlap int
+	type candidate struct {
+		task  *core.Ticket
+		title map[string]bool
+		body  map[string]bool
 	}
-	var ranked []scored
+	candidates := make([]candidate, 0, len(tasks))
 	for _, other := range tasks {
 		if other.ID == exclude {
 			continue
 		}
-		have := titleTokens(other.Title + " " + other.Description)
-		overlap := 0
-		for token := range want {
-			if have[token] {
-				overlap++
+		candidates = append(candidates, candidate{
+			task:  other,
+			title: similarTokenSet(other.Title),
+			body:  similarTokenSet(other.Description),
+		})
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	// Document frequency over the candidate corpus: a term shared by many
+	// candidates carries little signal. Computed by iterating the ordered slice,
+	// so it is a deterministic function of the candidate set, not of store order.
+	df := make(map[string]int, len(terms))
+	for _, term := range terms {
+		for _, c := range candidates {
+			if c.title[term] || c.body[term] {
+				df[term]++
 			}
 		}
-		if overlap > 0 {
-			ranked = append(ranked, scored{task: other, overlap: overlap})
+	}
+	type scored struct {
+		task  *core.Ticket
+		score float64
+	}
+	ranked := make([]scored, 0, len(candidates))
+	for _, c := range candidates {
+		score := 0.0
+		for _, term := range terms {
+			weight := inverseFrequency(len(candidates), df[term])
+			switch {
+			case c.title[term]:
+				score += 3 * weight
+			case c.body[term]:
+				score += 2 * weight
+			}
+		}
+		if score > 0 {
+			ranked = append(ranked, scored{task: c.task, score: score})
 		}
 	}
-	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].overlap > ranked[j].overlap })
+	// Score descending, then title and id ascending: a stable key that does not
+	// depend on the order a store happened to list the tasks in.
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		left := strings.ToLower(ranked[i].task.Title)
+		right := strings.ToLower(ranked[j].task.Title)
+		if left != right {
+			return left < right
+		}
+		return ranked[i].task.ID < ranked[j].task.ID
+	})
 	if len(ranked) > limit {
 		ranked = ranked[:limit]
 	}
@@ -1573,16 +1623,83 @@ func rankSimilar(want map[string]bool, tasks []*core.Ticket, exclude core.Ticket
 	return out
 }
 
-func titleTokens(title string) map[string]bool {
+// inverseFrequency is a smoothed IDF: a term appearing in many candidates scores
+// closer to zero, while a rare term scores higher. It stays positive so a term
+// never fully vanishes, and is a pure function of the counts.
+func inverseFrequency(n, df int) float64 {
+	if df <= 0 {
+		return 0
+	}
+	return math.Log(1 + float64(n)/float64(df))
+}
+
+// similarTerms returns the distinct stems of a query's tokens, sorted so the term
+// order is deterministic regardless of map iteration.
+func similarTerms(text string) []string {
+	set := similarTokenSet(text)
+	if len(set) == 0 {
+		return nil
+	}
+	terms := make([]string, 0, len(set))
+	for term := range set {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	return terms
+}
+
+// similarTokenSet splits text into lowercase alphanumeric tokens, drops
+// stopwords and tokens shorter than three runes, and reduces the rest to stems.
+func similarTokenSet(text string) map[string]bool {
 	tokens := map[string]bool{}
-	for _, token := range strings.FieldsFunc(strings.ToLower(title), func(r rune) bool {
+	for _, raw := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return !isTokenRune(r)
 	}) {
-		if len(token) > 2 {
-			tokens[token] = true
+		if len(raw) < 3 || similarStopwords[raw] {
+			continue
 		}
+		tokens[similarStem(raw)] = true
 	}
 	return tokens
+}
+
+// similarStopwords are high-frequency English and task-tracking tokens that carry
+// no retrieval signal. They are stripped so shared filler ("task", "add", "fix")
+// cannot crowd out the true match. The list is fixed, never learned from the
+// data, so ranking stays deterministic and store-independent.
+var similarStopwords = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "from": true,
+	"into": true, "that": true, "this": true, "these": true, "those": true,
+	"are": true, "was": true, "were": true, "will": true, "would": true,
+	"can": true, "could": true, "should": true, "not": true, "but": true,
+	"you": true, "your": true, "our": true, "its": true, "his": true,
+	"her": true, "their": true, "them": true, "then": true, "than": true,
+	"when": true, "where": true, "which": true, "while": true, "who": true,
+	"what": true, "how": true, "why": true, "all": true, "any": true,
+	"some": true, "more": true, "most": true, "such": true, "only": true,
+	"also": true, "just": true, "does": true, "did": true, "done": true,
+	"get": true, "got": true, "make": true, "made": true, "use": true,
+	"used": true, "using": true, "via": true, "per": true, "out": true,
+	"off": true, "over": true, "under": true, "new": true, "old": true,
+	"task": true, "tasks": true, "add": true, "adds": true, "added": true,
+	"fix": true, "fixes": true, "fixed": true, "update": true, "updates": true,
+}
+
+// similarSuffixes are stripped longest-first to reduce a token to a coarse stem,
+// so morphological variants ("paginate"/"pagination") match. A stem never shrinks
+// below three runes, so distinct short words are not collapsed.
+var similarSuffixes = []string{
+	"ational", "ization", "ations", "ation", "izing", "ities",
+	"ing", "ers", "ies", "ate", "ed", "es", "er", "s",
+}
+
+func similarStem(token string) string {
+	for _, suffix := range similarSuffixes {
+		if strings.HasSuffix(token, suffix) && len(token)-len(suffix) >= 3 {
+			return token[:len(token)-len(suffix)]
+		}
+	}
+	return token
 }
 
 func isTokenRune(r rune) bool {

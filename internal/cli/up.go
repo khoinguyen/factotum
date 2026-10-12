@@ -33,6 +33,37 @@ type upOptions struct {
 	unattended  bool
 }
 
+// upSettings are the effective settings the daemon resolves from its flags over
+// the loaded config: the project it is scoped to, whether a stored capture
+// auto-starts a pipeline, and whether a PO is attached to the live groom session
+// (interactive).
+type upSettings struct {
+	project     core.ProjectID
+	autoGroom   bool
+	interactive bool
+}
+
+// resolveUpSettings resolves the daemon's flags over the config: -p names the
+// project (else the configured one), --no-auto-groom forces auto-groom off, and
+// --unattended overrides up.unattended only when the flag was explicitly given,
+// so an omitted flag leaves the config default. interactive is a terminal
+// session that is not unattended.
+func (d *Deps) resolveUpSettings(cmd *cobra.Command, opts upOptions) upSettings {
+	autoGroom := d.Config.Up.AutoGroom
+	if opts.noAutoGroom {
+		autoGroom = false
+	}
+	unattended := d.Config.Up.Unattended
+	if cmd.Flags().Changed("unattended") {
+		unattended = opts.unattended
+	}
+	return upSettings{
+		project:     d.resolveProject(opts.project),
+		autoGroom:   autoGroom,
+		interactive: d.runInteractive(cmd, unattended),
+	}
+}
+
 func newUpCommand(deps *Deps) *cobra.Command {
 	var opts upOptions
 
@@ -117,7 +148,11 @@ func newUpCommand(deps *Deps) *cobra.Command {
 func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 	ctx := cmd.Context()
 	d.warnIncompleteHub()
-	projectID := d.resolveProject(opts.project)
+	settings := d.resolveUpSettings(cmd, opts)
+	if d.upProbe != nil {
+		d.upProbe(settings)
+	}
+	projectID := settings.project
 	if err := requireProject(cmd, projectID); err != nil {
 		return err
 	}
@@ -130,19 +165,12 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 	tasks := app.NewTicketService(backend, d.Clock, d.IDs)
 	messages := app.NewMessageService(backend, d.Clock, d.IDs)
 
-	autoGroom := d.Config.Up.AutoGroom
-	if opts.noAutoGroom {
-		autoGroom = false
-	}
-	unattended := d.Config.Up.Unattended
-	if cmd.Flags().Changed("unattended") {
-		unattended = opts.unattended
-	}
+	autoGroom := settings.autoGroom
 	// Attach the PO only when the operator opted out of unattended mode and
 	// `ft up` runs on a terminal. A headless daemon always grooms unattended,
 	// deferring product questions to the advisory groom_questions gate rather
 	// than waiting on a PO who is not there (design §3/§8/§11).
-	interactive := d.runInteractive(cmd, unattended)
+	interactive := settings.interactive
 
 	// The agent stages (groom, review, QA) need a harness and sandbox. With them
 	// configured, resolve the selection once so a bad name fails the daemon

@@ -169,6 +169,12 @@ type Deps struct {
 	Duplicate *app.DuplicateService
 	// Reference finds the task a note refers to in prose.
 	Reference *app.ReferenceService
+
+	// upProbe, when set, receives the daemon's resolved flag/config wiring just
+	// before `ft up` acts on it. Tests inject it to assert the project,
+	// auto-groom, and interactive settings through the real command without
+	// keeping the serve loop up; nil is a no-op.
+	upProbe func(upSettings)
 }
 
 func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(string) string) *Deps {

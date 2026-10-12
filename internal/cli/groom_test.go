@@ -241,6 +241,67 @@ func TestGroomCommandInjectsKickoffAndCapturesOutputs(t *testing.T) {
 	}
 }
 
+// TestGroomCommandCleansUpStagingDir pins the hygiene fix: the session stages its
+// outputs inside the run workspace and `ft groom` removes the staging tree once
+// the run has captured them, so a reused workspace does not accumulate
+// .ft-groom/<id> directories. Capture happens even when the harness exits
+// non-zero, so a failed session is cleaned up too.
+func TestGroomCommandCleansUpStagingDir(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		exitCode int
+	}{
+		{"after a completed session", 0},
+		{"after a failed session", 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRunner(t)
+			projectID, cfgPath := tasklessContext(t, r)
+			r.run("task", "create", "-p", projectID, "-t", "Add widget")
+
+			promptPath := filepath.Join(t.TempDir(), "prompt.md")
+			mustWrite(t, promptPath, "# Grooming session prompt\n")
+
+			workspace := t.TempDir()
+			base := isofake.New("sandbox")
+			base.Program(isolation.ExecResult{Stdout: []byte("groomed\n"), ExitCode: tt.exitCode})
+			r.runBackend = groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
+				prompt := cmd.Argv[len(cmd.Argv)-1]
+				stageGroomOutputs(t, base, prompt, defaultGroomDocs())
+				// A real local session writes the staged files into its workspace;
+				// mirror that on disk so cleanup has a tree to remove.
+				for _, label := range []string{
+					"Write the report to: ", "Write the deferred questions to: ",
+					"Write the feature spec to: ", "Write the feature plan to: ",
+					"Write the feature tech design to: ",
+				} {
+					full := filepath.Join(workspace, filepath.FromSlash(kickoffPath(prompt, label)))
+					if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(full, []byte("body\n"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}}
+			r.runHarness = harnessfake.New("opencode")
+
+			out, err := runGroomCapture(r, "--config", cfgPath, "groom", "-p", projectID,
+				"--prompt-file", promptPath, "--sandbox", "fake", "--harness", "fake",
+				"--workspace", workspace)
+			if tt.exitCode == 0 && err != nil {
+				t.Fatalf("groom error = %v\n%s", err, out)
+			}
+			if tt.exitCode != 0 && err == nil {
+				t.Fatalf("groom with a failing harness error = nil, want a run error\n%s", out)
+			}
+			if _, err := os.Stat(filepath.Join(workspace, groom.StagingDirName)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("groom left its staging dir behind: %v", err)
+			}
+		})
+	}
+}
+
 // TestGroomInteractiveOnTerminalAttachesAgent pins the mode selection: on a
 // terminal without --unattended the session runs attached (the harness command
 // requests a TTY) and the manifest records mode interactive. --unattended on the

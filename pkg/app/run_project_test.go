@@ -114,6 +114,23 @@ func TestRunProjectMaterializesAllReposAndDeliversPromptVerbatim(t *testing.T) {
 	}
 }
 
+// TestRunProjectReportsWorkdir pins that the outcome names the directory the
+// harness ran in, so a caller that stages files there (a groom session) can
+// resolve and clean them up: the workspace root when the project spans several
+// repos.
+func TestRunProjectReportsWorkdir(t *testing.T) {
+	f := newProjectRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("done"), ExitCode: 0})
+
+	outcome, err := f.run(t, ProjectRunInput{Prompt: "prompt"})
+	if err != nil {
+		t.Fatalf("RunProject() error = %v", err)
+	}
+	if outcome.Workdir != f.root {
+		t.Fatalf("outcome.Workdir = %q, want the workspace root %q", outcome.Workdir, f.root)
+	}
+}
+
 // TestRunProjectCallsOnResolveWithPlanBeforeHarness pins that the resolve hook
 // receives the materialized plan after resolution and before the backend is
 // prepared, so a caller can advise on in-place checkouts before any work starts.

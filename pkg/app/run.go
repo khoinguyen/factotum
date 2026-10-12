@@ -255,6 +255,10 @@ type ProjectRunOutcome struct {
 	// harness is a zero exit code.
 	Complete  bool
 	Workspace string
+	// Workdir is the directory the harness ran in: the single checkout's path
+	// when the project has one repo, else the workspace root. A caller that
+	// stages files in the workspace resolves them against it.
+	Workdir string
 	// Checkouts are the project's repos materialized for the run.
 	Checkouts []workspace.Checkout
 	// Captured holds the contents of the requested Capture paths, keyed by the
@@ -316,6 +320,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		ExitCode:  res.exitCode,
 		Complete:  res.exitCode == 0,
 		Workspace: plan.Root,
+		Workdir:   runWorkdir(plan),
 		Checkouts: plan.Checkouts,
 		Captured:  res.captured,
 	}

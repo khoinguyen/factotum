@@ -1,6 +1,7 @@
 package groom
 
 import (
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -457,6 +458,64 @@ func TestParseReviewVerdict(t *testing.T) {
 		if v.BlocksBuild() {
 			t.Fatalf("%s must not block the build", v)
 		}
+	}
+}
+
+// TestCleanStagingRemovesSessionTreeAndEmptyParent pins the staging hygiene
+// contract: after the run captured a session's outputs, `ft groom` drops the
+// .ft-groom/<id> tree it staged them in, and the shared .ft-groom parent once
+// its last session is gone, while leaving a sibling session's staged files
+// behind until that session is cleaned too.
+func TestCleanStagingRemovesSessionTreeAndEmptyParent(t *testing.T) {
+	workspace := t.TempDir()
+	mustStage := func(session, name string) string {
+		t.Helper()
+		path := filepath.Join(workspace, StagingDirName, session, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("body\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	sibling := mustStage("groom-2", ReportFileName)
+	mustStage("groom-1", ReportFileName)
+
+	if err := CleanStaging(workspace, "groom-1"); err != nil {
+		t.Fatalf("CleanStaging() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, StagingDirName, "groom-1")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("session staging dir survived cleanup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, StagingDirName)); err != nil {
+		t.Fatalf("a sibling session's staging kept the parent, want it present: %v", err)
+	}
+	if _, err := os.Stat(sibling); err != nil {
+		t.Fatalf("cleanup removed a sibling session's staged file: %v", err)
+	}
+
+	if err := CleanStaging(workspace, "groom-2"); err != nil {
+		t.Fatalf("CleanStaging() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, StagingDirName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("shared staging parent survived the last session's cleanup: %v", err)
+	}
+}
+
+// TestCleanStagingIsNoOpWhenNothingStaged pins that cleanup is safe for a
+// workspace that never staged anything (an ephemeral backend) and for an empty
+// workspace, and never disturbs the workspace itself.
+func TestCleanStagingIsNoOpWhenNothingStaged(t *testing.T) {
+	workspace := t.TempDir()
+	if err := CleanStaging(workspace, "groom-1"); err != nil {
+		t.Fatalf("CleanStaging() on a clean workspace error = %v", err)
+	}
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("cleanup disturbed the workspace: %v", err)
+	}
+	if err := CleanStaging("", "groom-1"); err != nil {
+		t.Fatalf("CleanStaging() with no workspace error = %v, want a no-op", err)
 	}
 }
 

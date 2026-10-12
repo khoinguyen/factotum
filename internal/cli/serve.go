@@ -49,14 +49,15 @@ func newServeCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			server, err := serve.New(serve.Options{
-				Backend:  deps.Backend,
-				Clock:    deps.Clock,
-				Ranker:   ranker,
-				Project:  project,
-				All:      serveAll,
-				Token:    deps.Config.Serve.Token,
-				Tasks:    deps.Tasks,
-				Messages: deps.Messages,
+				Backend:   deps.Backend,
+				Clock:     deps.Clock,
+				Ranker:    ranker,
+				Project:   project,
+				All:       serveAll,
+				Token:     deps.Config.Serve.Token,
+				Tasks:     deps.Tasks,
+				Messages:  deps.Messages,
+				Artifacts: deps.Artifacts,
 			})
 			if err != nil {
 				return err

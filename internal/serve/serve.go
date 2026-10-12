@@ -92,6 +92,9 @@ type Options struct {
 	// Messages is the app service behind the /api/msg/* transport. Nil disables
 	// the transport, so a read-only server or an all-projects one omits it.
 	Messages *app.MessageService
+	// Artifacts is the app service that stores a prompt as a document artifact.
+	// Nil disables the prompt write side.
+	Artifacts *app.ArtifactService
 	// Assets is the built shadcn/ui app: it is served under /app and its index
 	// shell answers the read-side client routes (/, /capture, /sessions, /idea,
 	// /task, /memory, /doc).
@@ -174,6 +177,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.getOrHead(s.handleAppIndex)(w, r)
 	case path == "/api/capture":
 		s.routeCapture(w, r)
+	case path == "/api/prompt":
+		s.routePrompt(w, r)
 	case path == "/api/msg" || strings.HasPrefix(path, "/api/msg/"):
 		s.routeMessage(w, r)
 	case strings.HasPrefix(path, "/api/idea/"):

@@ -164,6 +164,7 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 	backend := target.backend
 	tasks := app.NewTicketService(backend, d.Clock, d.IDs)
 	messages := app.NewMessageService(backend, d.Clock, d.IDs)
+	artifacts := app.NewArtifactService(backend, d.Clock, d.IDs)
 
 	autoGroom := settings.autoGroom
 	// Attach the PO only when the operator opted out of unattended mode and
@@ -207,6 +208,7 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 		Token:      d.Config.Serve.Token,
 		Tasks:      tasks,
 		Messages:   messages,
+		Artifacts:  artifacts,
 		AutoGroom:  autoGroom,
 		Controller: controller,
 	})

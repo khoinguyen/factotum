@@ -285,6 +285,113 @@ func TestStepReattachesLiveExternalRun(t *testing.T) {
 	}
 }
 
+// liveRun registers a real external agent run in the store, so a test exercises
+// the controller's re-attach path against a live run rather than a fake
+// (docs/up/design.md §5).
+func (f *fixture) liveRun(t *testing.T) core.RunID {
+	t.Helper()
+	ctx := context.Background()
+	actor, err := f.actors.Add(ctx, core.ActorAgent, "stage")
+	if err != nil {
+		t.Fatalf("Add(actor) error = %v", err)
+	}
+	run, err := f.messages.RegisterRun(ctx, app.RegisterRunInput{
+		ProjectID: f.project.ID,
+		ActorID:   actor.ID,
+		Harness:   "opencode",
+		TTL:       time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("RegisterRun() error = %v", err)
+	}
+	return run.ID
+}
+
+// TestStepReattachesLiveBuildRun exercises the restart re-attach path for the
+// build phase (docs/up/design.md §5): a pipeline in building whose recorded
+// external run is live is not re-dispatched, and once the run's lease lapses the
+// controller re-runs the real BuildRunner and advances to QA.
+func TestStepReattachesLiveBuildRun(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := context.Background()
+	buildCalls := 0
+	f.controller = mustController(t, f, map[core.PipelineState]StageRunner{
+		core.PipelineBuilding: &BuildRunner{Backend: f.backend, Build: func(context.Context, *core.Pipeline) (BuildOutcome, error) {
+			buildCalls++
+			return BuildOutcome{Detail: "built"}, nil
+		}},
+	})
+
+	pipeline, _ := buildPipeline(t, f, core.StatusDone)
+	pipeline.RunID = f.liveRun(t)
+	if err := f.backend.Pipelines().Update(ctx, pipeline); err != nil {
+		t.Fatalf("Update(run id) error = %v", err)
+	}
+
+	if err := f.controller.Step(ctx); err != nil {
+		t.Fatalf("Step() error = %v", err)
+	}
+	if buildCalls != 0 {
+		t.Fatalf("build dispatches with a live run = %d, want 0 (re-attached)", buildCalls)
+	}
+	if got := f.pipeline(t, pipeline.ID); got.State != core.PipelineBuilding {
+		t.Fatalf("state with a live run = %q, want building", got.State)
+	}
+
+	f.clock.t = f.clock.t.Add(2 * time.Minute)
+	if err := f.controller.Step(ctx); err != nil {
+		t.Fatalf("Step() after lease lapse error = %v", err)
+	}
+	if buildCalls != 1 {
+		t.Fatalf("build dispatches after lease lapse = %d, want 1 (re-run)", buildCalls)
+	}
+	if got := f.pipeline(t, pipeline.ID); got.State != core.PipelineQA {
+		t.Fatalf("state after re-run = %q, want qa", got.State)
+	}
+}
+
+// TestStepReattachesLiveQARun exercises the restart re-attach path for the QA
+// phase (docs/up/design.md §5): a pipeline in qa whose recorded external run is
+// live is not re-dispatched, and once the run's lease lapses the controller
+// re-runs the real QARunner and advances to rollout.
+func TestStepReattachesLiveQARun(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := context.Background()
+	pipeline, qa := qaPipeline(t, f, app.QAPass)
+	qaCalls := 0
+	f.controller = mustController(t, f, map[core.PipelineState]StageRunner{
+		core.PipelineQA: &QARunner{Backend: f.backend, QA: func(ctx context.Context, p *core.Pipeline) (QAOutcome, error) {
+			qaCalls++
+			return qa(ctx, p)
+		}},
+	})
+	pipeline.RunID = f.liveRun(t)
+	if err := f.backend.Pipelines().Update(ctx, pipeline); err != nil {
+		t.Fatalf("Update(run id) error = %v", err)
+	}
+
+	if err := f.controller.Step(ctx); err != nil {
+		t.Fatalf("Step() error = %v", err)
+	}
+	if qaCalls != 0 {
+		t.Fatalf("qa dispatches with a live run = %d, want 0 (re-attached)", qaCalls)
+	}
+	if got := f.pipeline(t, pipeline.ID); got.State != core.PipelineQA {
+		t.Fatalf("state with a live run = %q, want qa", got.State)
+	}
+
+	f.clock.t = f.clock.t.Add(2 * time.Minute)
+	if err := f.controller.Step(ctx); err != nil {
+		t.Fatalf("Step() after lease lapse error = %v", err)
+	}
+	if qaCalls != 1 {
+		t.Fatalf("qa dispatches after lease lapse = %d, want 1 (re-run)", qaCalls)
+	}
+	if got := f.pipeline(t, pipeline.ID); got.State != core.PipelineRollout {
+		t.Fatalf("state after re-run = %q, want rollout", got.State)
+	}
+}
+
 // TestStepHoldsPhaseOnBlockingGate proves a blocking gate holds the phase: a
 // stage that finished with a blocking gate leaves the pipeline in its phase
 // (design §5), so clearing the gate resumes the same stage rather than the next

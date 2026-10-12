@@ -1,16 +1,17 @@
 package skills
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // TestShippedSkillsNameNoFactotumMiseTasks pins that no shipped skill — embedded
-// usage skills or committed agent role skills — hardcodes factotum's own mise
-// tasks. ft is a general factory, so a skill that names `mise run install` or
-// `mise run build`/`build-web` reads as factotum's repository and breaks in every
-// other project. Tool-install and build guidance must be generic or read from
-// config, never a concrete task name.
+// usage skills or committed agent skills (all of .agents/skills/*) — hardcodes
+// factotum's own mise tasks. ft is a general factory, so a skill that names
+// `mise run install` or `mise run build`/`build-web` reads as factotum's
+// repository and breaks in every other project. Tool-install and build guidance
+// must be generic or read from config, never a concrete task name.
 func TestShippedSkillsNameNoFactotumMiseTasks(t *testing.T) {
 	forbidden := []string{"mise run install", "mise run build"}
 
@@ -28,13 +29,18 @@ func TestShippedSkillsNameNoFactotumMiseTasks(t *testing.T) {
 		}
 	}
 
-	agents := []string{
-		".agents/skills/chief/SKILL.md",
-		".agents/skills/single-task-builder/SKILL.md",
-		".agents/skills/single-task-reviewer/SKILL.md",
-		".agents/skills/single-task-qa/SKILL.md",
+	agents, err := filepath.Glob(filepath.Join(repoRoot(t), ".agents", "skills", "*", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("glob agent skills: %v", err)
 	}
-	for _, rel := range agents {
+	if len(agents) == 0 {
+		t.Fatal("no agent skills found under .agents/skills")
+	}
+	for _, path := range agents {
+		rel, err := filepath.Rel(repoRoot(t), path)
+		if err != nil {
+			t.Fatalf("rel path %s: %v", path, err)
+		}
 		body := agentSkill(t, rel)
 		for _, bad := range forbidden {
 			if strings.Contains(body, bad) {

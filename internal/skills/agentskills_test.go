@@ -8,17 +8,22 @@ import (
 	"testing"
 )
 
-// agentSkill reads a committed agent skill (.agents/skills/...) relative to the
-// repository root, located from this test file so it does not depend on the
-// test's working directory.
-func agentSkill(t *testing.T, rel string) string {
+// repoRoot locates the repository root from this test file so tests do not
+// depend on the working directory.
+func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller(0) failed")
 	}
-	root := filepath.Join(filepath.Dir(file), "..", "..")
-	data, err := os.ReadFile(filepath.Join(root, rel))
+	return filepath.Join(filepath.Dir(file), "..", "..")
+}
+
+// agentSkill reads a committed agent skill (.agents/skills/...) relative to the
+// repository root.
+func agentSkill(t *testing.T, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
 	if err != nil {
 		t.Fatalf("read agent skill %s: %v", rel, err)
 	}

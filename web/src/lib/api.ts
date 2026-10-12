@@ -72,6 +72,7 @@ export type TaskGroup = {
   idea_id?: string
   idea_title?: string
   idea_state?: string
+  idea_kind?: string
   ungrouped?: boolean
   tasks: TaskView[]
 }

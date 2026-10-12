@@ -2,9 +2,10 @@
 # Contract test for the committed CI workflow. It cannot run the workflow, so it
 # asserts the properties the fast compile+unit gate depends on: it triggers on
 # push and pull_request, runs on a GitHub-hosted Linux runner, runs `go build
-# ./...` (compile gate) and `go test -race ./...` (unit tests), and stays
-# dependency-light — no sudo, no browser/Playwright download, and not the full
-# `mise run ci`.
+# ./...` (compile gate) and `go test -race ./...` (unit tests), runs this
+# contract test itself (so a workflow edit that breaks the contract turns the
+# job red), and stays dependency-light — no sudo, no browser/Playwright
+# download, and not the full `mise run ci`.
 #
 # Run: bash scripts/ci-workflow_test.sh
 set -euo pipefail
@@ -43,6 +44,9 @@ has "runs on a GitHub-hosted Linux runner" "runs-on: ubuntu-latest"
 has "sets up a Go toolchain" "setup-go@"
 has "runs the compile gate" "go build ./..."
 has "runs the unit tests with the race detector" "go test -race ./..."
+
+# The gate must run this contract test, or the workflow can drift from it.
+has "runs the workflow contract test" "bash scripts/ci-workflow_test.sh"
 
 # Dependency-light: the gate must not need sudo or download a browser.
 lacks "does not use sudo" '(^|[^[:alnum:]_])sudo([^[:alnum:]_]|$)'

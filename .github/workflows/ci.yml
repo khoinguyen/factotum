@@ -20,6 +20,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Workflow contract
+        run: bash scripts/ci-workflow_test.sh
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:

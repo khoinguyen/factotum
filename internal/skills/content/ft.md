@@ -50,7 +50,7 @@ ft serve                        # live dashboard + token-gated capture; also -p 
 ```
 `ft serve` is an idea-centric live dashboard: ideas roll up promoted tasks, a kanban groups by
 origin idea, idea/task/memory/doc drill down; reads open and SSE-live. The whole app is an embedded
-shadcn/ui SPA served at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` posts a sentence to the token-gated `/api/capture` as an idea or a bug. The message port rides the same token at `/api/msg/*` (`send`,`inbox`,`get`,`read`,`ack`,`nack`,`register`,`claim`,`heartbeat`,`deregister`) so a receiver on another host can message through the project backend; no token leaves it off.
+shadcn/ui SPA served at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` posts a sentence to the token-gated `/api/capture` as an idea or a bug, and its prompt box stores a free-form prompt as a document artifact and ft-msgs the chief at the token-gated `/api/prompt`. The message port rides the same token at `/api/msg/*` (`send`,`inbox`,`get`,`read`,`ack`,`nack`,`register`,`claim`,`heartbeat`,`deregister`) so a receiver on another host can message through the project backend; no token leaves it off.
 
 ## Move work through its lifecycle
 

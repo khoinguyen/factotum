@@ -543,6 +543,43 @@ test("renders a memory detail with its body and attached task", async () => {
   expect(screen.getByText("Promoted task")).toBeTruthy()
 })
 
+// Khoi 2026-10-12: a QA verdict artifact is linked at /doc/<id>, so the doc
+// viewer must render it like any other document rather than showing a missing
+// page.
+test("renders a QA verdict artifact on the doc route", async () => {
+  stubFetch({
+    "/api/doc/art-qa": {
+      ...memoryDoc,
+      id: "art-qa",
+      kind: "qa",
+      title: "QA pass t-idea",
+      brief: "pass",
+      body: "all checks good",
+      url: "/doc/art-qa",
+    },
+  })
+  renderAt("/doc/art-qa")
+  expect(await screen.findByText("QA pass t-idea")).toBeTruthy()
+  expect(screen.getByText("all checks good")).toBeTruthy()
+})
+
+// Khoi 2026-10-12: the live badge must reflect the SSE stream, not the document
+// read. A failed read used to flip the badge to "reconnecting" even while the
+// stream was up, which is what a QA artifact page showed.
+test("the live badge tracks the SSE stream, not the document fetch", async () => {
+  stubFailure("/api/doc/art-1", 503, "boom")
+  vi.stubGlobal("EventSource", FakeEventSource)
+
+  renderAt("/doc/art-1")
+  const source = FakeEventSource.instances[0]
+
+  source.emit("open")
+  expect(await screen.findByText("live")).toBeTruthy()
+
+  source.emit("error")
+  expect(await screen.findByText("reconnecting…")).toBeTruthy()
+})
+
 // A drill-down whose read fails with a store error (503 application/json) must
 // show the failure. Before this, the page ignored the error and sat on
 // "Loading …" forever because only 404 was handled. subject is the noun the

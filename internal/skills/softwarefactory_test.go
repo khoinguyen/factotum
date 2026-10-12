@@ -18,6 +18,9 @@ func TestSoftwareFactorySkillUsesProjectVerifyCommand(t *testing.T) {
 	if !strings.Contains(skill.Body, "ft config get verify") {
 		t.Error("software-factory body must name `ft config get verify` as the project's verification command")
 	}
+	if !strings.Contains(strings.Join(strings.Fields(skill.Body), " "), "discover it from") {
+		t.Error("software-factory body must tell the reader to discover the verification command from the project's docs when unset")
+	}
 }
 
 // TestSoftwareFactorySkillIsEmbedded pins that the factory recipe is an embedded

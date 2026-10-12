@@ -159,6 +159,61 @@ func TestRoleSkillsUseProjectVerifyCommand(t *testing.T) {
 	}
 }
 
+// TestQASkillBuildsThenVerifies guards the verify-vs-build wording: QA must
+// build the artifact under test (keeping its path) and then verify with the
+// project's verification command. The pre-fix wording built the artifact
+// "using the project's verification command", conflating verify with build and
+// dropping the artifact path.
+func TestQASkillBuildsThenVerifies(t *testing.T) {
+	const skill = ".agents/skills/single-task-qa/SKILL.md"
+	body := strings.Join(strings.Fields(agentSkill(t, skill)), " ")
+	if strings.Contains(body, "using the project's verification command") {
+		t.Errorf("%s conflates build with verify: it builds the artifact 'using the project's verification command'", skill)
+	}
+	for _, want := range []string{"artifact path", "ft config get verify", "discover it from"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s must contain %q (build the artifact, keep its path, then verify)", skill, want)
+		}
+	}
+}
+
+// TestVerifySkillsCarryDocsFallback guards the discovery fallback: any skill that
+// names `ft config get verify` must also say what to do when the project records
+// none — discover the command from the project's own docs. A skill that only
+// says `ft config get verify` strands a project that never set it.
+func TestVerifySkillsCarryDocsFallback(t *testing.T) {
+	check := func(name, body string) {
+		body = strings.Join(strings.Fields(body), " ")
+		if !strings.Contains(body, "ft config get verify") {
+			return
+		}
+		if !strings.Contains(body, "discover it from") {
+			t.Errorf("%s names `ft config get verify` but never says to discover the command from the project's docs when unset", name)
+		}
+	}
+	all, err := All()
+	if err != nil {
+		t.Fatalf("All() error = %v", err)
+	}
+	for _, s := range all {
+		check("embedded skill "+s.Name, s.Body)
+	}
+	paths, err := filepath.Glob(filepath.Join(repoRoot(t), ".agents", "skills", "*", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("glob agent skills: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no agent skills found under .agents/skills")
+	}
+	for _, path := range paths {
+		rel, err := filepath.Rel(repoRoot(t), path)
+		if err != nil {
+			t.Fatalf("rel path %s: %v", path, err)
+		}
+		check(rel, agentSkill(t, rel))
+	}
+}
+
 // TestArchitectureReviewerSkillReviewsDocsNotCode guards the architecture
 // reviewer's charter: it reviews a feature's documents (spec, plan, tech design)
 // with a project-wide, zoomed-out view and never drops to line-level code. It

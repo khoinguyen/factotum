@@ -116,7 +116,8 @@ ft task get <task>
 ```
 
 The builder runs one task through its lifecycle test-first (RED, implement, GREEN, then the
-project's verification command — `ft config get verify`):
+project's verification command — `ft config get verify`; when the project records none, discover it
+from its own docs):
 
 ```sh
 ft task start <task>

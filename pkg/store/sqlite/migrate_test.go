@@ -639,6 +639,149 @@ func TestMigrateV7ToV8AddsPipelineCaptureIndex(t *testing.T) {
 	}
 }
 
+func TestMigrateV8ToV9AddsEventSession(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.db")
+
+	// Build a v8 database: the schema through the runs/events tables, with one
+	// session-attributed event and one session-attributed run already stored.
+	// The session lives in the data blob in v8; v9 adds the events.session
+	// column the filter reads, which must not disturb the stored data.
+	raw := openRaw(t, path)
+	tx, err := raw.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	for _, step := range migrations {
+		if step.version > 8 {
+			break
+		}
+		if err := step.apply(ctx, tx); err != nil {
+			t.Fatalf("apply v%d: %v", step.version, err)
+		}
+	}
+	created := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	existing := &core.Event{ID: "ev-old", ProjectID: "prj-1", Kind: core.EventTaskStatusChanged, Session: "sess-old", Summary: "old", CreatedAt: created}
+	eventData, err := encode(existing)
+	if err != nil {
+		t.Fatalf("encode event: %v", err)
+	}
+	if _, err := tx.Exec(
+		"INSERT INTO events (project_id, task_id, kind, created_at, data) VALUES (?, ?, ?, ?, ?)",
+		string(existing.ProjectID), nil, string(existing.Kind), formatTime(existing.CreatedAt), eventData,
+	); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	run := &core.Run{
+		ID: "run-old", ProjectID: "prj-1", ActorID: "act-1", Session: "sess-old",
+		Host: "host-a", PID: 1, CreatedAt: created, SeenAt: created, LeaseUntil: created.Add(time.Minute),
+	}
+	runData, err := encode(run)
+	if err != nil {
+		t.Fatalf("encode run: %v", err)
+	}
+	if _, err := tx.Exec(
+		"INSERT INTO runs (id, project_id, actor_id, host, pid, data) VALUES (?, ?, ?, ?, ?, ?)",
+		string(run.ID), string(run.ProjectID), string(run.ActorID), run.Host, run.PID, runData,
+	); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 8"); err != nil {
+		t.Fatalf("stamp v8: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	// Reopen: the v9 migration adds the events.session column and its index.
+	backend, err := Open(ctx, consentedConfig(path))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	if got := userVersion(t, path); got != currentSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", got, currentSchemaVersion)
+	}
+	if got := backups(t, path); len(got) != 1 {
+		t.Fatalf("upgrade should create one backup, got %v", got)
+	}
+
+	// The pre-existing event's session survives the upgrade.
+	events, err := backend.Events().List(ctx, store.EventFilter{ProjectID: "prj-1"})
+	if err != nil {
+		t.Fatalf("List(events) error = %v", err)
+	}
+	if len(events) != 1 || events[0].ID != "ev-old" || events[0].Session != "sess-old" {
+		t.Fatalf("List(events) = %+v, want one ev-old with session sess-old", events)
+	}
+
+	// The pre-existing run's session survives too.
+	runs, err := backend.Runs().List(ctx, store.RunFilter{ProjectID: "prj-1"})
+	if err != nil {
+		t.Fatalf("List(runs) error = %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != "run-old" || runs[0].Session != "sess-old" {
+		t.Fatalf("List(runs) = %+v, want one run-old with session sess-old", runs)
+	}
+
+	// The new column is wired: an event appended after the upgrade is
+	// filterable by session and its session round-trips.
+	if err := backend.Events().Append(ctx, &core.Event{ID: "ev-new", ProjectID: "prj-1", Kind: core.EventTaskStatusChanged, Session: "sess-new", CreatedAt: created.Add(time.Minute)}); err != nil {
+		t.Fatalf("Append(ev-new) error = %v", err)
+	}
+	bySession, err := backend.Events().List(ctx, store.EventFilter{ProjectID: "prj-1", Session: "sess-new"})
+	if err != nil {
+		t.Fatalf("List(session sess-new) error = %v", err)
+	}
+	if len(bySession) != 1 || bySession[0].ID != "ev-new" || bySession[0].Session != "sess-new" {
+		t.Fatalf("List(session sess-new) = %+v, want one ev-new with session sess-new", bySession)
+	}
+
+	// The events table has the session column and its index.
+	if columns := tableColumns(t, path, "events"); !columns["session"] {
+		t.Fatalf("events columns = %v, want a session column", columns)
+	}
+	var count int
+	if err := openRaw(t, path).QueryRow("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_events_session'").Scan(&count); err != nil {
+		t.Fatalf("inspect index: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("idx_events_session count = %d, want 1", count)
+	}
+}
+
+// tableColumns returns the columns of a table by name.
+func tableColumns(t *testing.T, path, table string) map[string]bool {
+	t.Helper()
+	rows, err := openRaw(t, path).Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		t.Fatalf("table_info(%s): %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	columns := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue any
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			t.Fatalf("scan table_info(%s): %v", table, err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("table_info(%s): %v", table, err)
+	}
+	return columns
+}
+
 func taskHitIDs(hits []store.TicketSearchHit) []core.TicketID {
 	out := make([]core.TicketID, 0, len(hits))
 	for _, hit := range hits {

@@ -199,26 +199,41 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 
 // loopRoots returns the executable tasks whose resolution ends the loop: the
 // goal itself for a task or milestone, or every task belonging to a capture.
-// A capture with no tasks has nothing to run and is rejected.
+// A capture's runnable work is its executable tasks; a milestone is a human
+// gate the loop stops at, never runs. A capture with no tasks has nothing to
+// run and is rejected; when its only children are milestones the message says
+// so, so a user who attached only a gate learns why nothing ran.
 func loopRoots(snapshot *Snapshot, goal *core.Ticket, capture bool) (map[core.TicketID]bool, error) {
 	if !capture {
 		return map[core.TicketID]bool{goal.ID: true}, nil
 	}
 	roots := make(map[core.TicketID]bool)
+	gates := 0
 	for _, task := range snapshot.Tasks {
-		// A capture's tasks are executable tasks; a milestone is a human gate,
-		// not work the loop runs.
-		if task.Kind != core.KindTask {
-			continue
-		}
+		owned := false
 		for _, dep := range task.Deps {
 			if dep == goal.ID {
-				roots[task.ID] = true
+				owned = true
 				break
 			}
 		}
+		if !owned {
+			continue
+		}
+		// A capture's tasks are executable tasks; a milestone is a human gate,
+		// not work the loop runs.
+		if task.Kind != core.KindTask {
+			if task.IsMilestone() {
+				gates++
+			}
+			continue
+		}
+		roots[task.ID] = true
 	}
 	if len(roots) == 0 {
+		if gates > 0 {
+			return nil, fmt.Errorf("%w: capture %s has no tasks to run, only milestones (the loop runs tasks, not gates)", core.ErrInvalid, goal.ID)
+		}
 		return nil, fmt.Errorf("%w: capture %s has no tasks to run", core.ErrInvalid, goal.ID)
 	}
 	return roots, nil

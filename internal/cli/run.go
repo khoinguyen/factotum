@@ -41,24 +41,27 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	var opts runOptions
 
 	cmd := &cobra.Command{
-		Use:   "run [task-id]",
-		Short: "Run a task, or drive the DAG loop toward a goal",
+		Use:   "run [target-id]",
+		Short: "Run a task, capture, or drive the DAG loop toward a goal",
 		Long: "Run one task end-to-end, or with --goal drive the graph toward a goal. In single\n" +
 			"task mode `ft run <task-id>` resolves the task's workspace, prepares the selected\n" +
 			"isolation backend, runs the selected harness, captures its output, and reflects\n" +
-			"progress back into the store. With --goal the launcher repeatedly selects the\n" +
-			"highest-ranked agent-ready (groomed) task on the path to the goal, runs it, and re-reads the\n" +
-			"graph until the goal is reached, no work is ready, on-path work is blocked, or the\n" +
-			"--max-tasks budget is exhausted. With a prompt source and no task id, `ft run`\n" +
-			"runs the prompt once over every repository of the configured project, writing\n" +
-			"nothing to the task graph. The sandbox and harness resolve from --sandbox and\n" +
-			"--harness, then FACTOTUM_RUN_*, then the [run] config table (project over user);\n" +
-			"on a terminal an unset one prompts once and is saved, while a non-interactive\n" +
-			"unset one is an error. Choosing the local backend in that prompt asks to opt in\n" +
-			"(default no) and records run.allow_host in the user config; the local backend is\n" +
-			"unsandboxed and otherwise requires --allow-host (or run.allow_host). On a\n" +
-			"terminal, a single-task run or a task-less prompt run attaches the agent to\n" +
-			"the terminal (for example the OpenCode TUI) so a human can answer it;\n" +
+			"progress back into the store. A positional id may instead be an idea or bug\n" +
+			"capture: `ft run <capture-id>` runs every task that belongs to it, in DAG order\n" +
+			"(the same loop as --goal). With --goal the launcher repeatedly selects the\n" +
+			"highest-ranked agent-ready (groomed) task on the path to the goal - a task, a\n" +
+			"milestone, or a capture - runs it, and re-reads the graph until the goal is\n" +
+			"reached, no work is ready, on-path work is blocked, or the --max-tasks budget\n" +
+			"is exhausted. With a prompt source and no task id, `ft run` runs the prompt\n" +
+			"once over every repository of the configured project, writing nothing to the\n" +
+			"task graph. The sandbox and harness resolve from --sandbox and --harness,\n" +
+			"then FACTOTUM_RUN_*, then the [run] config table (project over user); on a\n" +
+			"terminal an unset one prompts once and is saved, while a non-interactive\n" +
+			"unset one is an error. Choosing the local backend in that prompt asks to opt\n" +
+			"in (default no) and records run.allow_host in the user config; the local\n" +
+			"backend is unsandboxed and otherwise requires --allow-host (or run.allow_host).\n" +
+			"On a terminal, a single-task run or a task-less prompt run attaches the agent\n" +
+			"to the terminal (for example the OpenCode TUI) so a human can answer it;\n" +
 			"--unattended, or a pipe or redirect, keeps the run headless. The --goal loop\n" +
 			"always runs headless.",
 		Args: cobra.MaximumNArgs(1),
@@ -94,7 +97,7 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.args, "arg", nil, "extra argument passed to the harness (repeatable)")
 	cmd.Flags().BoolVar(&opts.allowHost, "allow-host", false, "opt in to the unsandboxed local backend (dev-only)")
 	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "fetch and reset a reused workspace checkout to its upstream before running")
-	cmd.Flags().StringVar(&opts.goal, "goal", "", "drive the DAG loop toward this goal task or milestone")
+	cmd.Flags().StringVar(&opts.goal, "goal", "", "drive the DAG loop toward this goal task, milestone, or capture (idea/bug)")
 	cmd.Flags().BoolVar(&opts.unattended, "unattended", false, "run headless on a terminal (no attached agent); the agent runs attached to the terminal by default")
 	cmd.Flags().IntVar(&opts.maxTasks, "max-tasks", 0, "stop the loop after this many task runs (0 = no budget)")
 	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "use this file's content as the harness prompt (single task or task-less run)")
@@ -502,12 +505,21 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 	if err != nil {
 		return err
 	}
-	interactive := d.runInteractive(cmd, opts.unattended)
 
 	task, err := d.Tasks.Get(cmd.Context(), core.TicketID(taskID))
 	if err != nil {
 		return err
 	}
+	// A capture (idea or bug) is not a task to run once: target it as a loop
+	// over every task that belongs to it.
+	if task.Kind.CapturedByHuman() {
+		if prompt != "" {
+			return usageError(cmd, "--prompt-file and --prompt-artifact apply to a single task or task-less run, not a capture (%s %s)", task.Kind, task.ID)
+		}
+		return d.driveLoop(cmd, taskID, opts, sel, actor)
+	}
+
+	interactive := d.runInteractive(cmd, opts.unattended)
 
 	progress := d.startRunProgress(runProgressLabel("run "+taskID, sel.backendName, sel.harness.Name()), interactive)
 	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).Run(cmd.Context(), app.RunInput{
@@ -597,8 +609,8 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 	return runErr
 }
 
-// runGoal drives the DAG loop toward goal, running each selected task through
-// the same single-task service.
+// runGoal drives the DAG loop toward a goal: a task, a milestone, or a capture
+// (idea/bug), whose tasks the loop runs in DAG order.
 func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error {
 	actor := d.currentActorID(cmd.Context())
 	d.warnIncompleteHubForRun(actor)
@@ -606,7 +618,13 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 	if err != nil {
 		return err
 	}
-	goal, err := d.Tasks.Get(cmd.Context(), core.TicketID(goalID))
+	return d.driveLoop(cmd, goalID, opts, sel, actor)
+}
+
+// driveLoop runs the loop target - a task, milestone, or capture - through the
+// single-task service, reusing an already-resolved run selection.
+func (d *Deps) driveLoop(cmd *cobra.Command, targetID string, opts runOptions, sel *runSelection, actor *core.ActorID) error {
+	target, err := d.Tasks.Get(cmd.Context(), core.TicketID(targetID))
 	if err != nil {
 		return err
 	}
@@ -638,7 +656,7 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 
 	text := !d.structured()
 	outcome, runErr := app.NewRunLoopService(d.Backend, ranker, d.Clock).Run(cmd.Context(), app.LoopInput{
-		GoalID:   goal.ID,
+		GoalID:   target.ID,
 		Runner:   runner,
 		MaxTasks: opts.maxTasks,
 		OnStep: func(step app.LoopStep) {
@@ -653,7 +671,7 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 	if outcome == nil {
 		return runErr
 	}
-	if err := d.printLoopOutcome(goal, outcome, runErr); err != nil {
+	if err := d.printLoopOutcome(target, outcome, runErr); err != nil {
 		return err
 	}
 	return runErr

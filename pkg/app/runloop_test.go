@@ -329,7 +329,7 @@ func TestRunLoopStopsOnFailure(t *testing.T) {
 	}
 }
 
-func TestRunLoopRejectsMissingOrNonExecutableGoal(t *testing.T) {
+func TestRunLoopRejectsMissingGoalOrEmptyCapture(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
@@ -344,7 +344,160 @@ func TestRunLoopRejectsMissingOrNonExecutableGoal(t *testing.T) {
 		t.Fatalf("missing goal error = %v, want ErrNotFound", err)
 	}
 	if _, err := svc.Run(ctx, LoopInput{GoalID: idea.ID, Runner: runner.run}); !errors.Is(err, core.ErrInvalid) {
-		t.Fatalf("idea goal error = %v, want ErrInvalid", err)
+		t.Fatalf("empty capture error = %v, want ErrInvalid", err)
+	}
+}
+
+// addCapture adds an idea capture to the project.
+func addCapture(t *testing.T, h *harness, project *core.Project, title string) *core.Ticket {
+	t.Helper()
+	capture, err := h.tasks.Add(context.Background(), TicketInput{
+		ProjectID: project.ID,
+		Kind:      core.KindIdea,
+		Title:     title,
+	})
+	if err != nil {
+		t.Fatalf("Add(%s) error = %v", title, err)
+	}
+	return capture
+}
+
+// A capture (idea) goal runs every task that carries it as its origin edge, in
+// dependency order: a task waits for the task it depends on.
+func TestRunLoopRunsCaptureTasksInDAGOrder(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := addCapture(t, h, project, "feature")
+	first := addLoopTask(t, h, project, "first", 0)
+	second := addLoopTask(t, h, project, "second", 0)
+	third := addLoopTask(t, h, project, "third", 0)
+	for _, task := range []*core.Ticket{first, second, third} {
+		mustDep(t, h, task, idea)
+	}
+	mustDep(t, h, second, first)
+	mustDep(t, h, third, second)
+
+	runner := &fakeLoopRunner{tasks: h.tasks}
+	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: idea.ID, Runner: runner.run})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if outcome.Stop != StopGoalReached {
+		t.Fatalf("Stop = %q, want goal_reached", outcome.Stop)
+	}
+	if outcome.GoalKind != core.KindIdea {
+		t.Fatalf("GoalKind = %q, want idea", outcome.GoalKind)
+	}
+	if !equalIDs(runner.order, []core.TicketID{first.ID, second.ID, third.ID}) {
+		t.Fatalf("run order = %v, want [%s %s %s]", runner.order, first.ID, second.ID, third.ID)
+	}
+	if len(outcome.Steps) != 3 {
+		t.Fatalf("steps = %d, want 3", len(outcome.Steps))
+	}
+	if outcome.Remaining != 0 {
+		t.Fatalf("Remaining = %d, want 0", outcome.Remaining)
+	}
+}
+
+// A bug is a capture too: its tasks are the work toward it.
+func TestRunLoopRunsBugCaptureTasks(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	bug, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Kind: core.KindBug, Title: "crash"})
+	if err != nil {
+		t.Fatalf("Add(bug) error = %v", err)
+	}
+	fix := addLoopTask(t, h, project, "fix", 0)
+	mustDep(t, h, fix, bug)
+
+	runner := &fakeLoopRunner{tasks: h.tasks}
+	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: bug.ID, Runner: runner.run})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if outcome.GoalKind != core.KindBug {
+		t.Fatalf("GoalKind = %q, want bug", outcome.GoalKind)
+	}
+	if !equalIDs(runner.order, []core.TicketID{fix.ID}) {
+		t.Fatalf("run order = %v, want [%s]", runner.order, fix.ID)
+	}
+}
+
+// A capture's task may depend on work outside the capture; the loop runs that
+// prerequisite first so the DAG stays respected.
+func TestRunLoopRunsPrerequisiteOutsideCapture(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := addCapture(t, h, project, "feature")
+	prereq := addLoopTask(t, h, project, "prereq", 0)
+	feature := addLoopTask(t, h, project, "feature task", 0)
+	mustDep(t, h, feature, idea)
+	mustDep(t, h, feature, prereq)
+
+	runner := &fakeLoopRunner{tasks: h.tasks}
+	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: idea.ID, Runner: runner.run})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if outcome.Stop != StopGoalReached {
+		t.Fatalf("Stop = %q, want goal_reached", outcome.Stop)
+	}
+	if !equalIDs(runner.order, []core.TicketID{prereq.ID, feature.ID}) {
+		t.Fatalf("run order = %v, want [%s %s]", runner.order, prereq.ID, feature.ID)
+	}
+}
+
+func TestRunLoopCaptureStopsBlocked(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := addCapture(t, h, project, "feature")
+	task := addLoopTask(t, h, project, "blocked", 0)
+	mustDep(t, h, task, idea)
+	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusBlocked); err != nil {
+		t.Fatalf("block task: %v", err)
+	}
+
+	runner := &fakeLoopRunner{tasks: h.tasks}
+	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: idea.ID, Runner: runner.run})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if outcome.Stop != StopBlocked {
+		t.Fatalf("Stop = %q, want blocked", outcome.Stop)
+	}
+	if len(runner.order) != 0 {
+		t.Fatalf("run order = %v, want none", runner.order)
+	}
+}
+
+func TestRunLoopCaptureStopsOnBudget(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := addCapture(t, h, project, "feature")
+	first := addLoopTask(t, h, project, "first", 0)
+	second := addLoopTask(t, h, project, "second", 0)
+	mustDep(t, h, first, idea)
+	mustDep(t, h, second, idea)
+	mustDep(t, h, second, first)
+
+	runner := &fakeLoopRunner{tasks: h.tasks}
+	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: idea.ID, Runner: runner.run, MaxTasks: 1})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if outcome.Stop != StopBudgetExhausted {
+		t.Fatalf("Stop = %q, want budget_exhausted", outcome.Stop)
+	}
+	if !equalIDs(runner.order, []core.TicketID{first.ID}) {
+		t.Fatalf("run order = %v, want [%s]", runner.order, first.ID)
+	}
+	if outcome.Remaining != 1 {
+		t.Fatalf("Remaining = %d, want 1", outcome.Remaining)
 	}
 }
 

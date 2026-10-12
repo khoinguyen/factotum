@@ -333,11 +333,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
+	// Subscribe before announcing hello, so the baseline is fixed before the
+	// client can observe the stream and trigger a mutation.
+	updates, cancel := s.broker.subscribe()
+	defer cancel()
+
 	_, _ = fmt.Fprint(w, "retry: 1000\nevent: hello\ndata: {}\n\n")
 	flusher.Flush()
 
-	updates, cancel := s.broker.subscribe()
-	defer cancel()
 	for {
 		select {
 		case <-r.Context().Done():

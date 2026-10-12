@@ -38,6 +38,11 @@ const (
 type Config struct {
 	Project      string
 	DefaultActor string
+	// Caller is the explicit caller identity from FACTOTUM_CALLER, kept distinct
+	// from DefaultActor so the CLI can rank it above the default actor. It is an
+	// environment variable, so it is spoofable by whoever launched the process;
+	// callers that need trustworthy identity must not rely on it.
+	Caller string
 	// TechStack is the project's recorded language/framework choice from the
 	// project-scoped config; empty when none was recorded.
 	TechStack string
@@ -337,6 +342,9 @@ func Load(in Input) (Config, error) {
 	applyStoreOptions(&cfg.Store, getenv("FACTOTUM_STORE_OPTS"))
 	if actor := getenv("FACTOTUM_DEFAULT_ACTOR"); actor != "" {
 		cfg.DefaultActor = actor
+	}
+	if caller := getenv("FACTOTUM_CALLER"); caller != "" {
+		cfg.Caller = caller
 	}
 	if truthy(getenv("FACTOTUM_NO_HINTS")) {
 		cfg.NoHints = true

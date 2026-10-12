@@ -271,6 +271,45 @@ backend = "jsonfile"
 	}
 }
 
+// TestLoadCallerEnvStaysDistinct pins that FACTOTUM_CALLER is read into its own
+// field, separate from DefaultActor, so the CLI can rank it above
+// FACTOTUM_DEFAULT_ACTOR without either clobbering the other.
+func TestLoadCallerEnvStaysDistinct(t *testing.T) {
+	cfg, err := Load(Input{
+		Getenv: func(key string) string {
+			switch key {
+			case "FACTOTUM_CALLER":
+				return "alice"
+			case "FACTOTUM_DEFAULT_ACTOR":
+				return "codex"
+			default:
+				return ""
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Caller != "alice" {
+		t.Fatalf("Caller = %q, want alice", cfg.Caller)
+	}
+	if cfg.DefaultActor != "codex" {
+		t.Fatalf("DefaultActor = %q, want codex (FACTOTUM_CALLER must not clobber it)", cfg.DefaultActor)
+	}
+}
+
+// TestLoadCallerEmptyWhenUnset pins that an unset FACTOTUM_CALLER leaves Caller
+// empty, so the CLI falls through to the default actor.
+func TestLoadCallerEmptyWhenUnset(t *testing.T) {
+	cfg, err := Load(Input{Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Caller != "" {
+		t.Fatalf("Caller = %q, want empty", cfg.Caller)
+	}
+}
+
 // TestFormatStoreOptionsRoundTrips pins the env form a caller forwards to a
 // child ft: the rendered string is the comma-separated key=value list
 // applyStoreOptions parses, keys are sorted for determinism, and an empty map

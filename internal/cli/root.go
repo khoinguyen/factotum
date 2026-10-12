@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -118,9 +119,16 @@ func NewRoot(deps *Deps) *cobra.Command {
 				}
 				cfg.Store.Options[key] = value
 			}
-			if actorRef != "" {
+			// Caller precedence: --actor > FACTOTUM_CALLER > FACTOTUM_DEFAULT_ACTOR >
+			// project/user default_actor. FACTOTUM_DEFAULT_ACTOR is already folded
+			// into cfg.DefaultActor; FACTOTUM_CALLER stays separate until it can be
+			// checked against the store's actors (bindCaller, after the store opens).
+			switch {
+			case actorRef != "":
 				deps.ActorRef = actorRef
-			} else if deps.ActorRef == "" {
+			case cfg.Caller != "":
+				deps.Caller = cfg.Caller
+			case deps.ActorRef == "":
 				deps.ActorRef = cfg.DefaultActor
 			}
 			// FACTOTUM_SESSION is exported by loop-agent.sh so every ft call an
@@ -128,7 +136,6 @@ func NewRoot(deps *Deps) *cobra.Command {
 			if session := deps.Getenv("FACTOTUM_SESSION"); session != "" {
 				deps.Session = session
 			}
-			cmd.SetContext(app.WithCaller(cmd.Context(), core.ActorID(deps.ActorRef), deps.Session))
 			deps.OutputFormat = output
 			switch output {
 			case "", "text", "json", "yaml":
@@ -149,6 +156,7 @@ func NewRoot(deps *Deps) *cobra.Command {
 
 			if !needsCallerStore(cmd) {
 				deps.Attach(cfg, nil)
+				deps.bindCaller(cmd)
 				return nil
 			}
 			factory, err := deps.StoreFactories.MustLookup(cfg.Store.Backend)
@@ -166,6 +174,7 @@ func NewRoot(deps *Deps) *cobra.Command {
 				return err
 			}
 			deps.Attach(cfg, backend)
+			deps.bindCaller(cmd)
 			return nil
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
@@ -203,6 +212,27 @@ func NewRoot(deps *Deps) *cobra.Command {
 		root.AddCommand(factory(deps))
 	}
 	return root
+}
+
+// bindCaller resolves the detected FACTOTUM_CALLER against the opened store's
+// actors, then records the resulting actor and session on the command context so
+// every event this invocation appends is attributed. An unregistered caller is
+// dropped with a warning, never auto-created, and never fails the command. A
+// command that opens no caller store cannot check registration, so it attributes
+// nothing and stays quiet.
+func (d *Deps) bindCaller(cmd *cobra.Command) {
+	if d.Caller != "" && d.Actors != nil {
+		actor, err := d.Actors.Resolve(cmd.Context(), d.Caller)
+		switch {
+		case err == nil:
+			d.ActorRef = string(actor.ID)
+		case errors.Is(err, core.ErrNotFound):
+			d.warnf("caller %q is not a registered actor; this invocation is unattributed", d.Caller)
+		default:
+			d.warnf("could not resolve caller %q (%v); this invocation is unattributed", d.Caller, err)
+		}
+	}
+	cmd.SetContext(app.WithCaller(cmd.Context(), core.ActorID(d.ActorRef), d.Session))
 }
 
 func (d *Deps) printf(format string, args ...any) {

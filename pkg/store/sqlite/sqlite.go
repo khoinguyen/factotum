@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
@@ -335,10 +335,14 @@ func Open(ctx context.Context, cfg store.Config) (store.Backend, error) {
 	} else {
 		dsn = "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	}
-	db, err := sql.Open("sqlite", dsn)
+	// Route every operation through a guard that detects a stale WAL under a
+	// live connection, so a truncated -wal/-shm returns an error instead of
+	// crashing the process with SIGBUS in the WAL header read.
+	connector, err := sqlite.NewConnector(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	db := sql.OpenDB(&guardedConnector{base: connector, path: path})
 	if path == ":memory:" {
 		db.SetMaxOpenConns(1)
 	}

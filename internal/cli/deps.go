@@ -59,6 +59,10 @@ type Deps struct {
 	Err      io.Writer
 	Getenv   func(string) string
 	ActorRef string
+	// Caller is the detected caller from FACTOTUM_CALLER. It is resolved against
+	// the opened store's actors before it becomes the attribution actor, so an
+	// unregistered caller is dropped rather than trusted.
+	Caller string
 	// Session is the chief session id from FACTOTUM_SESSION, recorded on the
 	// caller context so every event this invocation appends is attributed to it.
 	Session      string

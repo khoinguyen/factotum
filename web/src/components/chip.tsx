@@ -40,3 +40,8 @@ export function Chip({
     </Badge>
   )
 }
+
+// kindLabel renders a capture kind ("idea", "bug") as the chip text.
+export function kindLabel(kind: string) {
+  return kind.charAt(0).toUpperCase() + kind.slice(1)
+}

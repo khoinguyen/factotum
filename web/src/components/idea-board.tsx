@@ -1,12 +1,7 @@
 import { AppLink } from "@/components/app-link"
-import { Chip } from "@/components/chip"
+import { Chip, kindLabel } from "@/components/chip"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { IdeaView, Snapshot } from "@/lib/api"
-
-// kindLabel renders a capture kind ("idea", "bug") as the chip text.
-function kindLabel(kind: string) {
-  return kind.charAt(0).toUpperCase() + kind.slice(1)
-}
 
 function IdeaCard({ idea }: { idea: IdeaView }) {
   const artifacts = idea.artifacts?.length ?? 0

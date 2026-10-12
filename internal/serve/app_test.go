@@ -217,6 +217,7 @@ func TestSnapshotAPICarriesKanbanGroups(t *testing.T) {
 		InFlightGroups []struct {
 			IdeaID    string `json:"idea_id"`
 			IdeaTitle string `json:"idea_title"`
+			IdeaKind  string `json:"idea_kind"`
 			Tasks     []struct {
 				ID string `json:"id"`
 			} `json:"tasks"`
@@ -230,6 +231,9 @@ func TestSnapshotAPICarriesKanbanGroups(t *testing.T) {
 	group := doc.InFlightGroups[0]
 	if group.IdeaID != string(idea.ID) || group.IdeaTitle != idea.Title {
 		t.Fatalf("group = %+v, want idea %s %q", group, idea.ID, idea.Title)
+	}
+	if group.IdeaKind != string(core.KindIdea) {
+		t.Fatalf("group idea_kind = %q, want %q", group.IdeaKind, core.KindIdea)
 	}
 	if len(group.Tasks) != 1 || group.Tasks[0].ID != string(promoted.ID) {
 		t.Fatalf("group tasks = %+v, want %s", group.Tasks, promoted.ID)

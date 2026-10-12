@@ -275,6 +275,59 @@ func TestTasksGroupedByOriginEdge(t *testing.T) {
 	}
 }
 
+// TestGroupParentRowCarriesCaptureKind proves the work-board parent row can
+// name the origin capture's kind, so a bug-origin group and an idea-origin group
+// are not shown identically. Ungrouped tasks have no origin capture, so their
+// bucket carries no kind.
+func TestGroupParentRowCarriesCaptureKind(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+
+	bug := f.addBug(t, project.ID, "Checkout total is wrong", "")
+	bugTask := f.promote(t, bug.ID)
+	f.setStatus(t, bugTask.ID, core.StatusInProgress)
+
+	idea := f.addIdea(t, project.ID, "Add CSV import", "")
+	ideaTask := f.promote(t, idea.ID)
+	f.setStatus(t, ideaTask.ID, core.StatusInProgress)
+
+	plain := f.addTask(t, project.ID, "Standalone task")
+	f.setStatus(t, plain.ID, core.StatusInProgress)
+
+	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(context.Background())
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+
+	bugGroup, ok := findGroup(page.InFlightGroups, bug.ID)
+	if !ok {
+		t.Fatalf("InFlightGroups = %v, want a group for %s", groupIDs(page.InFlightGroups), bug.ID)
+	}
+	if bugGroup.IdeaKind != core.KindBug {
+		t.Fatalf("bug group kind = %q, want %q", bugGroup.IdeaKind, core.KindBug)
+	}
+
+	ideaGroup, ok := findGroup(page.InFlightGroups, idea.ID)
+	if !ok {
+		t.Fatalf("InFlightGroups = %v, want a group for %s", groupIDs(page.InFlightGroups), idea.ID)
+	}
+	if ideaGroup.IdeaKind != core.KindIdea {
+		t.Fatalf("idea group kind = %q, want %q", ideaGroup.IdeaKind, core.KindIdea)
+	}
+
+	ungrouped, ok := findGroup(page.InFlightGroups, "")
+	if !ok {
+		t.Fatalf("InFlightGroups = %v, want an ungrouped bucket", groupIDs(page.InFlightGroups))
+	}
+	if ungrouped.IdeaKind != "" {
+		t.Fatalf("ungrouped bucket kind = %q, want empty", ungrouped.IdeaKind)
+	}
+}
+
 // TestWaitingTasksGroupedByOriginEdge covers the second kanban column.
 func TestWaitingTasksGroupedByOriginEdge(t *testing.T) {
 	f := newFixture(t)

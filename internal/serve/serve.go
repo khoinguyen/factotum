@@ -486,14 +486,23 @@ type ideaView struct {
 }
 
 // taskGroup is a set of tasks sharing an origin idea. IdeaState is the origin
-// idea's rollup state, shown as the parent row's status chip. Ungrouped marks
-// the bucket for tasks with no origin idea.
+// idea's rollup state and IdeaKind is its capture kind (idea or bug); both are
+// shown as chips on the parent row. Ungrouped marks the bucket for tasks with no
+// origin idea.
 type taskGroup struct {
-	IdeaID    core.TicketID `json:"idea_id,omitempty"`
-	IdeaTitle string        `json:"idea_title,omitempty"`
-	IdeaState string        `json:"idea_state,omitempty"`
-	Ungrouped bool          `json:"ungrouped,omitempty"`
-	Tasks     []taskView    `json:"tasks"`
+	IdeaID    core.TicketID   `json:"idea_id,omitempty"`
+	IdeaTitle string          `json:"idea_title,omitempty"`
+	IdeaState string          `json:"idea_state,omitempty"`
+	IdeaKind  core.TicketKind `json:"idea_kind,omitempty"`
+	Ungrouped bool            `json:"ungrouped,omitempty"`
+	Tasks     []taskView      `json:"tasks"`
+}
+
+// ideaSummary is the origin capture's read-side identity the work-board parent
+// row needs: its rollup state (status chip) and its kind (Idea/Bug chip).
+type ideaSummary struct {
+	state string
+	kind  core.TicketKind
 }
 
 // columnView is one work-board column (in-progress or waiting).
@@ -696,16 +705,16 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		}
 	}
 
-	// Roll each idea up once, then reuse its state for both the ideas board and
-	// the status chip on the idea/bug parent row of each work-board group.
-	ideaStates := make(map[core.TicketID]string)
+	// Roll each idea up once, then reuse its state and kind for the chips on the
+	// idea/bug parent row of each work-board group.
+	ideaSummaries := make(map[core.TicketID]ideaSummary)
 	for _, id := range vs.ids {
 		task := vs.byID[id]
 		if !task.Kind.CapturedByHuman() {
 			continue
 		}
 		idea := s.rollupIdea(task, vs)
-		ideaStates[id] = idea.State
+		ideaSummaries[id] = ideaSummary{state: idea.State, kind: idea.Kind}
 		switch idea.State {
 		case "blocked":
 			page.BlockedIdeas = append(page.BlockedIdeas, idea)
@@ -722,8 +731,8 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 	if err != nil {
 		return nil, err
 	}
-	page.InFlightGroups = groupByOrigin(page.InFlight, ideaStates, boardRank)
-	page.WaitingGroups = groupByOrigin(page.Waiting, ideaStates, boardRank)
+	page.InFlightGroups = groupByOrigin(page.InFlight, ideaSummaries, boardRank)
+	page.WaitingGroups = groupByOrigin(page.Waiting, ideaSummaries, boardRank)
 
 	pipelines, err := s.pipelineViews(ctx, scope, vs)
 	if err != nil {
@@ -1029,12 +1038,12 @@ func (s *Server) boardRanks(ctx context.Context, snapshot *app.Snapshot, tasks [
 }
 
 // groupByOrigin groups tasks under the idea they were promoted from, with the
-// ungrouped bucket last. ideaStates carries each origin idea's rollup state for
-// the parent row's status chip. ranking maps each task to its position in the
-// next-task rank (lower is better), so groups lead with their best-ranked task
-// and tasks within a group follow the rank instead of idea-id order; a task
-// absent from the ranking sorts last, deterministically.
-func groupByOrigin(tasks []taskView, ideaStates map[core.TicketID]string, ranking map[core.TicketID]int) []taskGroup {
+// ungrouped bucket last. ideaSummaries carries each origin capture's rollup
+// state and kind for the parent row's chips. ranking maps each task to its
+// position in the next-task rank (lower is better), so groups lead with their
+// best-ranked task and tasks within a group follow the rank instead of idea-id
+// order; a task absent from the ranking sorts last, deterministically.
+func groupByOrigin(tasks []taskView, ideaSummaries map[core.TicketID]ideaSummary, ranking map[core.TicketID]int) []taskGroup {
 	order := make([]core.TicketID, 0)
 	best := make(map[core.TicketID]int)
 	byIdea := make(map[core.TicketID]*taskGroup)
@@ -1042,10 +1051,12 @@ func groupByOrigin(tasks []taskView, ideaStates map[core.TicketID]string, rankin
 		position := rankPosition(ranking, task.ID)
 		group, ok := byIdea[task.Origin]
 		if !ok {
+			summary := ideaSummaries[task.Origin]
 			group = &taskGroup{
 				IdeaID:    task.Origin,
 				IdeaTitle: task.OriginTitle,
-				IdeaState: ideaStates[task.Origin],
+				IdeaState: summary.state,
+				IdeaKind:  summary.kind,
 				Ungrouped: task.Origin == "",
 			}
 			byIdea[task.Origin] = group

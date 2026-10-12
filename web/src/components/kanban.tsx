@@ -1,5 +1,5 @@
 import { AppLink } from "@/components/app-link"
-import { Chip } from "@/components/chip"
+import { Chip, kindLabel } from "@/components/chip"
 import { TaskRow } from "@/components/task-row"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { TaskGroup } from "@/lib/api"
@@ -49,6 +49,9 @@ function TaskGroupBlock({ group }: { group: TaskGroup }) {
           <Chip label="ungrouped" toneKey="capture" />
         ) : (
           <>
+            {group.idea_kind ? (
+              <Chip label={kindLabel(group.idea_kind)} toneKey={group.idea_kind} />
+            ) : null}
             {group.idea_state ? (
               <Chip label={group.idea_state} toneKey={group.idea_state} />
             ) : null}

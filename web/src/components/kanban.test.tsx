@@ -84,3 +84,43 @@ test("the ungrouped bucket shows no capture kind chip", () => {
   const header = screen.getByText("ungrouped").closest("div")!
   expect(chipsIn(header)).toEqual(["ungrouped"])
 })
+
+// The "In progress" column already names the status its in-progress rows share,
+// so those rows drop the redundant per-item chip (like Agent next / Human next)
+// while keeping their metadata. A review row in the same column keeps its chip,
+// because "in review" says something the column header does not.
+test("an in-progress row drops the redundant status chip", () => {
+  const inProgress: TaskView = {
+    id: "t-ip01",
+    title: "Build the thing",
+    class: "in-progress",
+    chip: "in progress",
+    url: "/task/t-ip01",
+    unblocks: 2,
+  }
+  const inReview: TaskView = {
+    id: "t-rev01",
+    title: "Review the thing",
+    class: "review",
+    chip: "in review",
+    url: "/task/t-rev01",
+  }
+  render(
+    <Kanban
+      columns={[
+        {
+          name: "In progress",
+          count: 2,
+          groups: [{ ungrouped: true, tasks: [inProgress, inReview] }],
+        },
+      ]}
+    />,
+  )
+
+  const ipRow = screen.getByText("t-ip01").closest("div")!
+  expect(chipsIn(ipRow)).toEqual([])
+  expect(screen.getByText("unblocks 2")).toBeTruthy()
+
+  const reviewRow = screen.getByText("t-rev01").closest("div")!
+  expect(chipsIn(reviewRow)).toContain("in review")
+})

@@ -69,7 +69,15 @@ function TaskGroupBlock({ group }: { group: TaskGroup }) {
       </div>
       <div className="flex flex-col gap-1">
         {group.tasks.map((task) => (
-          <TaskRow key={task.id} task={task} nested={!group.ungrouped} />
+          // The "In progress" column already names an in-progress row's status,
+          // so its chip is redundant (a review row keeps "in review", which the
+          // column header does not say).
+          <TaskRow
+            key={task.id}
+            task={task}
+            nested={!group.ungrouped}
+            showChip={task.class !== "in-progress"}
+          />
         ))}
       </div>
     </div>

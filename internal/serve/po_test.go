@@ -275,6 +275,33 @@ func TestTasksGroupedByOriginEdge(t *testing.T) {
 	}
 }
 
+// TestClassifyInProgress proves an in-progress task gets its own class rather
+// than falling through to the generic "waiting" one: the work board's "In
+// progress" column already names that status, so chipping the row "waiting"
+// mislabels it.
+func TestClassifyInProgress(t *testing.T) {
+	cases := []struct {
+		name   string
+		status core.TicketStatus
+		class  string
+		chip   string
+	}{
+		{"in progress", core.StatusInProgress, "in-progress", "in progress"},
+		{"waiting", core.StatusTodo, "waiting", "waiting"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			class := classify(core.Ticket{Status: tc.status}, false, false, false)
+			if class != tc.class {
+				t.Fatalf("classify(%s) = %q, want %q", tc.status, class, tc.class)
+			}
+			if got := chip(class); got != tc.chip {
+				t.Fatalf("chip(%q) = %q, want %q", class, got, tc.chip)
+			}
+		})
+	}
+}
+
 // TestGroupParentRowCarriesCaptureKind proves the work-board parent row can
 // name the origin capture's kind, so a bug-origin group and an idea-origin group
 // are not shown identically. Ungrouped tasks have no origin capture, so their

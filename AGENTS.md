@@ -126,7 +126,7 @@ Never claim a unit is done because the code "looks right". Run the tests.
 | `mise run build` | Build the CLI to `./bin/ft` (never the installed binary). |
 | `mise run install` | Install the CLI to `~/.local/bin/ft` (explicit; build does not). |
 | `mise run hooks` | Install the git pre-commit hook. |
-| `mise run ci` | `fmt-check`, `lint`, `test`, `cover`, `build`. |
+| `mise run ci` | `fmt-check`, `lint`, `test`, `test:scripts`, `cover`, `web-test`, `web-test-browser`, `build`, `smoke-web`, `smoke-quickstart`. |
 
 Run `mise run ci` before considering any task complete.
 

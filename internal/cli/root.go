@@ -37,6 +37,7 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 		"msg":       newMessageCommand,
 		"project":   newProjectCommand,
 		"prompt":    newPromptCommand,
+		"qa":        newQACommand,
 		"run":       newRunCommand,
 		"serve":     newServeCommand,
 		"session":   newSessionCommand,

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, expect, test, vi } from "vitest"
 
 import { CopyButton } from "@/components/copy-button"
@@ -15,6 +15,7 @@ function stubClipboard() {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -27,15 +28,23 @@ test("copies its value to the clipboard", async () => {
   await waitFor(() => expect(writeText).toHaveBeenCalledWith("t-idea"))
 })
 
-test("confirms the copy until it resets", async () => {
+test("confirms the copy, then resets", async () => {
+  vi.useFakeTimers()
   stubClipboard()
   render(<CopyButton value="t-idea" label="Copy capture id" />)
   const button = screen.getByRole("button", { name: "Copy capture id" })
   expect(button.getAttribute("title")).toBe("Copy capture id")
 
   fireEvent.click(button)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0)
+  })
+  expect(button.getAttribute("title")).toBe("Copied")
 
-  await waitFor(() => expect(button.getAttribute("title")).toBe("Copied"))
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1500)
+  })
+  expect(button.getAttribute("title")).toBe("Copy capture id")
 })
 
 test("stays quiet when the clipboard is unavailable", async () => {

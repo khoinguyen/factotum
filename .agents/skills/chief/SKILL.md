@@ -94,6 +94,9 @@ resolve your own refs once and pass them explicitly.
   `paste-buffer` only for input that genuinely needs a terminal.
 - Waking: the ft msg receiver wakes an idle peer at its next poll, exactly as `cmux agent message`
   did. You wake them the same way; do not poll after sending.
+- **Never poll `ft msg inbox` in a loop.** The receiver delivers each message to you as it arrives;
+  a long blocking `ft msg inbox` poll holds the endpoint and delays that delivery (observed twice).
+  Send your message, then stop and wait — the receiver wakes you when the reply lands.
 
 ## Workspace layout
 

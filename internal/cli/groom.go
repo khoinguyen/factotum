@@ -105,8 +105,55 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		return fmt.Errorf("session prompt %s is empty", promptPath)
 	}
 
-	dataDir := target.dataDir
 	sessionID := d.IDs.NewID("groom")
+	sel, err := d.prepareRun(cmd, opts.run)
+	if err != nil {
+		return err
+	}
+	interactive := d.runInteractive(cmd, opts.unattended)
+	record, err := d.groomSession(ctx, cmd, target, project, items, sessionID, promptBytes, opts.unattended, sel, interactive)
+	if err != nil {
+		return err
+	}
+
+	doc := groomDoc{
+		Session:    record.ID,
+		Scope:      scopeIDs(items),
+		Report:     record.Report,
+		Deferred:   record.Deferred,
+		Spec:       record.Spec,
+		Plan:       record.Plan,
+		TechDesign: record.TechDesign,
+		Run:        "finished",
+		Mode:       record.Mode,
+		Project:    string(project.ID),
+		Repo:       "",
+	}
+	return d.emit(doc, func() {
+		d.printFields(
+			f("session", record.ID),
+			f("scope", strings.Join(doc.Scope, ", ")),
+			f("report", core.ArtifactID(record.Report)),
+			f("deferred", core.ArtifactID(record.Deferred)),
+			f("spec", core.ArtifactID(record.Spec)),
+			f("plan", core.ArtifactID(record.Plan)),
+			f("tech_design", core.ArtifactID(record.TechDesign)),
+			f("run", "finished"),
+			f("mode", record.Mode),
+			f("project", project.ID),
+			f("repo", d.repoValue("")),
+		)
+	}, groomHints(project.ID, record.ID, core.ArtifactID(record.Report))...)
+}
+
+// groomSession runs one durable groom session and records its outputs: the run
+// through the run service, the five captured documents, their artifacts, and the
+// session manifest. `ft groom` names a fresh session id and scopes to the chosen
+// items; the `ft up` groom stage names the controller's session id and scopes to
+// one capture, so the manifest is deterministic and resumable.
+func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groomTarget, project *core.Project, items []*core.Ticket, sessionID string, promptBytes []byte, unattended bool, sel *runSelection, interactive bool) (groom.SessionRecord, error) {
+	projectID := project.ID
+	dataDir := target.dataDir
 	// Every session emits five deterministic documents. The session writes them
 	// inside its workspace (a sandboxed backend denies any other path); ft
 	// copies the staged files out to the durable session dir.
@@ -116,7 +163,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	// manifest can name the tasks the session produced.
 	before, err := projectTaskIDs(ctx, target.tasks, projectID)
 	if err != nil {
-		return err
+		return groom.SessionRecord{}, err
 	}
 	started := d.Clock.Now()
 
@@ -128,13 +175,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	}
 
 	prompt := strings.TrimRight(string(promptBytes), "\n") + "\n\n" +
-		groom.Kickoff(string(projectID), groomScopeItems(items), groom.StagedPaths(sessionID), sessionID, opts.unattended)
-
-	sel, err := d.prepareRun(cmd, opts.run)
-	if err != nil {
-		return err
-	}
-	interactive := d.runInteractive(cmd, opts.unattended)
+		groom.Kickoff(string(projectID), groomScopeItems(items), groom.StagedPaths(sessionID), sessionID, unattended)
 
 	progress := d.startRunProgress(runProgressLabel("groom session "+sessionID, sel.backendName, sel.harness.Name()), interactive)
 	outcome, runErr := app.NewRunService(target.backend, target.tasks, d.Clock, d.IDs).RunProject(ctx, app.ProjectRunInput{
@@ -154,13 +195,13 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	})
 	progress.stop()
 	if errors.Is(runErr, local.ErrNotOptedIn) {
-		return usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
+		return groom.SessionRecord{}, usageError(cmd, "backend %q runs unsandboxed and is not opted in; pass --allow-host (or set run.allow_host) only for trusted work", sel.backendName)
 	}
 	if err := d.interactiveUnsupported(cmd, interactive, sel.backendName, runErr); err != nil {
-		return err
+		return groom.SessionRecord{}, err
 	}
 	if runErr != nil {
-		return runErr
+		return groom.SessionRecord{}, runErr
 	}
 
 	// The session mutates the graph in its own process, so re-read the target's
@@ -168,7 +209,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	// jsonfile) would otherwise serve the pre-session snapshot.
 	post, err := d.postRun(ctx, target)
 	if err != nil {
-		return err
+		return groom.SessionRecord{}, err
 	}
 	defer post.close()
 
@@ -178,20 +219,20 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	for _, o := range outputs {
 		body, err := captureGroomOutput(sessionID, o.staged, outcome.Captured)
 		if err != nil {
-			return err
+			return groom.SessionRecord{}, err
 		}
 		bodies[o.key] = body
 	}
 	for _, o := range outputs {
 		if err := writeGroomOutput(o.path, bodies[o.key]); err != nil {
-			return err
+			return groom.SessionRecord{}, err
 		}
 	}
 	artifacts := make(map[string]core.ArtifactID, len(outputs))
 	for _, o := range outputs {
 		artifact, err := addGroomArtifact(ctx, post.artifacts, project.ID, items, sessionID, o.path, bodies[o.key], o.kind, o.title, o.brief)
 		if err != nil {
-			return err
+			return groom.SessionRecord{}, err
 		}
 		artifacts[o.key] = artifact.ID
 	}
@@ -201,22 +242,22 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	// Unattended runs must not leave work silently stranded: every scoped item
 	// is either agent-ready or named in the deferred file by the time the
 	// session ends.
-	if opts.unattended {
+	if unattended {
 		unresolved, err := unattendedUnresolved(ctx, post.tasks, post.actors, project.ID, items, deferredBody)
 		if err != nil {
-			return err
+			return groom.SessionRecord{}, err
 		}
 		if len(unresolved) > 0 {
-			return fmt.Errorf("groom: unattended session %s left items neither agent-ready nor deferred: %s (see %s)",
+			return groom.SessionRecord{}, fmt.Errorf("groom: unattended session %s left items neither agent-ready nor deferred: %s (see %s)",
 				sessionID, joinTaskIDs(unresolved), groom.DeferredQuestionsPath(dataDir, sessionID))
 		}
 	}
 
-	mode := groomMode(opts.unattended, interactive)
+	mode := groomMode(unattended, interactive)
 
 	produced, err := producedTaskIDs(ctx, post.tasks, project.ID, before)
 	if err != nil {
-		return err
+		return groom.SessionRecord{}, err
 	}
 	record := groom.SessionRecord{
 		ID:         sessionID,
@@ -232,37 +273,9 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 		Produced:   produced,
 	}
 	if err := groom.WriteSession(dataDir, record); err != nil {
-		return err
+		return groom.SessionRecord{}, err
 	}
-
-	doc := groomDoc{
-		Session:    sessionID,
-		Scope:      scopeIDs(items),
-		Report:     string(report),
-		Deferred:   string(deferred),
-		Spec:       string(artifacts["spec"]),
-		Plan:       string(artifacts["plan"]),
-		TechDesign: string(artifacts["tech_design"]),
-		Run:        "finished",
-		Mode:       mode,
-		Project:    string(project.ID),
-		Repo:       "",
-	}
-	return d.emit(doc, func() {
-		d.printFields(
-			f("session", sessionID),
-			f("scope", strings.Join(doc.Scope, ", ")),
-			f("report", report),
-			f("deferred", deferred),
-			f("spec", artifacts["spec"]),
-			f("plan", artifacts["plan"]),
-			f("tech_design", artifacts["tech_design"]),
-			f("run", "finished"),
-			f("mode", mode),
-			f("project", project.ID),
-			f("repo", d.repoValue("")),
-		)
-	}, groomHints(project.ID, sessionID, report)...)
+	return record, nil
 }
 
 // groomMode names a session's mode for its manifest and output. A session is

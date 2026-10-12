@@ -42,6 +42,7 @@ func builtinCommands() *registry.Registry[CommandFactory] {
 		"session":   newSessionCommand,
 		"skill":     newSkillCommand,
 		"task":      newTaskCommand,
+		"up":        newUpCommand,
 		"start":     statusShortcut("start", core.StatusInProgress, "Mark a task in progress"),
 		"review":    statusShortcut("review", core.StatusReadyForReview, "Mark a task ready for review"),
 		"done":      statusShortcut("done", core.StatusDone, "Mark a task done"),

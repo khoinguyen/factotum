@@ -35,6 +35,57 @@ func TestLoadMissingReturnsDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadUpDefaultsAndScopes(t *testing.T) {
+	dir := t.TempDir()
+
+	// Defaults: auto_groom and unattended on.
+	cfg, err := Load(Input{
+		UserPath:    filepath.Join(dir, "user.toml"),
+		ProjectPath: filepath.Join(dir, "project.toml"),
+		Getenv:      emptyEnv,
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Up.AutoGroom || !cfg.Up.Unattended {
+		t.Fatalf("Up defaults = %+v, want auto_groom and unattended on", cfg.Up)
+	}
+
+	// The project file commits auto_groom off; project intent beats the user
+	// file and the default, while unattended keeps the default.
+	user := writeConfig(t, dir, "user.toml", "[up]\nunattended = false\n")
+	project := writeConfig(t, dir, "project.toml", "[up]\nauto_groom = false\n")
+	cfg, err = Load(Input{UserPath: user, ProjectPath: project, Getenv: emptyEnv})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Up.AutoGroom {
+		t.Fatalf("Up.AutoGroom = true, want false from the project file")
+	}
+	if cfg.Up.Unattended {
+		t.Fatalf("Up.Unattended = true, want false from the user file")
+	}
+
+	// The environment overrides both.
+	env := func(key string) string {
+		switch key {
+		case "FACTOTUM_UP_AUTO_GROOM":
+			return "true"
+		case "FACTOTUM_UP_UNATTENDED":
+			return "true"
+		default:
+			return ""
+		}
+	}
+	cfg, err = Load(Input{UserPath: user, ProjectPath: project, Getenv: env})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Up.AutoGroom || !cfg.Up.Unattended {
+		t.Fatalf("Up after env = %+v, want both on", cfg.Up)
+	}
+}
+
 func TestLoadUserConfigSuppliesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	user := writeConfig(t, dir, "user.toml", `

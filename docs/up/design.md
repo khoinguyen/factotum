@@ -168,6 +168,7 @@ type Pipeline struct {
     State      PipelineState
     Gate       GateKind
     Session    string      // groom session id, once grooming has run
+    RunID      RunID       // live external agent run the stage waits on, if any
     Produced   []TicketID  // tasks the groom session created
     Error      string      // last failure reason
     Attempts   int
@@ -271,8 +272,10 @@ Each clears its gate and resumes the phase; the daemon never clears a blocking g
 
 `Pipeline` is a first-class entity with a `PipelineRepo` on `Backend`, exactly like `Message`/`Run`
 in `docs/msg/design.md`: `Create`/`Get`/`List`/`Update`, plus a **claim** primitive so the single
-controller worker takes a queued pipeline atomically (memory mutex, sqlite transaction, jsonfile
-write lock, jsondir lock file). `pkg/store/conformance` grows a `Pipeline` case set: round-trip,
+controller worker takes a pipeline atomically (memory mutex, sqlite transaction, jsonfile
+write lock, jsondir lock file). The claim takes the oldest queued pipeline (moving it to `grooming`)
+when unnamed, and — for the §5 restart re-own — claims one named pipeline in any non-terminal state,
+leaving an in-flight pipeline's phase unchanged so the controller resumes its current stage. `pkg/store/conformance` grows a `Pipeline` case set: round-trip,
 `ErrAlreadyExists`/`ErrNotFound`, `Validate` (empty id/capture/project, unknown state, unknown
 gate), list filters (project, state, gate), claim concurrency (one winner), and terminal-state
 immutability for `done`/`cancelled` only (`failed`/`paused` stay mutable so `retry`/`resume` can

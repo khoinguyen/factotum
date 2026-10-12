@@ -34,7 +34,7 @@ export function PageShell({
           ← {back.label}
         </AppLink>
       ) : null}
-      <header className="flex items-start justify-between gap-4">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0">
           {eyebrow ? (
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -46,7 +46,7 @@ export function PageShell({
             {titleAction}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:shrink-0">
           {capture ? (
             <AppLink
               href="/capture"

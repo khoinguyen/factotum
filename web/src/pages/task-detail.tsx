@@ -4,6 +4,7 @@ import { PageShell } from "@/components/page-shell"
 import { RefreshBanner } from "@/components/refresh-banner"
 import { useLiveResource } from "@/hooks/use-live-resource"
 import type { TaskDetail as TaskDetailDoc, TaskLink } from "@/lib/api"
+import { withFrom } from "@/lib/router"
 
 function TaskRefs({ title, tasks, empty }: { title: string; tasks: TaskLink[]; empty: string }) {
   return (
@@ -168,7 +169,7 @@ export function TaskDetail({ id }: { id: string }) {
           data.artifacts.map((artifact) => (
             <AppLink
               key={artifact.id}
-              href={artifact.url}
+              href={withFrom(artifact.url, data.url)}
               className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent"
             >
               <Chip label={artifact.kind} toneKey="capture" />

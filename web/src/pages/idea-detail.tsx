@@ -5,6 +5,7 @@ import { PageShell } from "@/components/page-shell"
 import { RefreshBanner } from "@/components/refresh-banner"
 import { useLiveResource } from "@/hooks/use-live-resource"
 import type { IdeaView } from "@/lib/api"
+import { withFrom } from "@/lib/router"
 
 export function IdeaDetail({ id }: { id: string }) {
   const { data, state, status, error } = useLiveResource<IdeaView>(
@@ -111,7 +112,7 @@ export function IdeaDetail({ id }: { id: string }) {
           idea.artifacts.map((artifact) => (
             <AppLink
               key={artifact.id}
-              href={artifact.url}
+              href={withFrom(artifact.url, idea.url)}
               className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent"
             >
               <Chip label={artifact.kind} toneKey="capture" />

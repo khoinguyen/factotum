@@ -3,6 +3,7 @@ import { PageShell } from "@/components/page-shell"
 import { RefreshBanner } from "@/components/refresh-banner"
 import { useLiveResource } from "@/hooks/use-live-resource"
 import type { ArtifactDetail as ArtifactDetailDoc } from "@/lib/api"
+import { backTarget } from "@/lib/router"
 
 export function ArtifactDetail({
   id,
@@ -15,13 +16,16 @@ export function ArtifactDetail({
     `/api/${kind}/${id}`,
   )
   const subject = kind === "memory" ? "memory" : "document"
+  // The back-link returns to where the document was opened from (carried in
+  // ?from=), or the dashboard when it was opened directly.
+  const back = backTarget(window.location.search)
 
   if (!data) {
     return (
       <PageShell
         title={kind === "memory" ? "Memory" : "Document"}
         state={state}
-        back={{ href: "/", label: "dashboard" }}
+        back={back}
       >
         {status === 404 ? (
           <p className="text-sm text-muted-foreground">No such {kind}.</p>
@@ -39,7 +43,7 @@ export function ArtifactDetail({
       eyebrow={`${data.kind}`}
       title={data.title}
       state={state}
-      back={{ href: "/", label: "dashboard" }}
+      back={back}
     >
       {error ? <RefreshBanner error={error} stale subject={subject} /> : null}
 

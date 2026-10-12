@@ -14,17 +14,57 @@ import (
 
 // TestPluginLoadsOnInstalledOpenCode loads the receiver plugin in the installed
 // OpenCode. It is the regression guard for the cmux bug this task fixes: the
-// plugin must default-export server(), not setup(), or OpenCode 1.18.35 logs
-// `failed to load plugin ... must default export an object with server()` and
-// refuses to load it.
+// plugin must default-export server(), not setup(), or OpenCode refuses it.
 //
-// The guard is the LOAD error, not registration: `opencode run` with a bogus
-// model can exit before its plugin subsystem runs, so registration is observed
-// best-effort. When the run does reach plugin loading, the stub ft records a
-// register call; when it does not, the test skips rather than flaking (the
-// deterministic shape check lives in the plugin's Node unit tests). Gated on the
-// binary so CI without OpenCode skips.
+// The guard fails on a load error and passes once the staged plugin's server()
+// registers with the stub ft. OpenCode's first run in a fresh checkout forks a
+// detached install and can exit before its plugin subsystem runs, so when no
+// register is observed in the attempts the test skips explicitly rather than
+// flaking; the static server() shape is covered deterministically by the
+// plugin's Node unit tests and by TestPluginLoadGuardRejectsWrongShape. Gated on
+// the binary, so CI without OpenCode skips.
 func TestPluginLoadsOnInstalledOpenCode(t *testing.T) {
+	res := runLoadGuard(t, opencode.MsgPluginBytes(), 6)
+	if res.loadError {
+		t.Fatalf("receiver plugin failed to load on opencode:\n%s", res.output)
+	}
+	if !res.registered {
+		t.Skipf("opencode did not reach the staged plugin's server() in the attempts (no load error seen); skipped rather than flaked. The static shape is covered by the plugin's Node unit tests\nopencode output:\n%s", res.output)
+	}
+}
+
+// TestPluginLoadGuardRejectsWrongShape pins that the guard is real: a
+// setup()-shaped plugin (the exact cmux regression) must NOT be observed as
+// loaded. The guard is isolated from the machine's global OpenCode config, so a
+// pre-installed global factotum-msg.js (loop agents `ft msg install` one) cannot
+// register on the broken plugin's behalf and mask the regression.
+func TestPluginLoadGuardRejectsWrongShape(t *testing.T) {
+	res := runLoadGuard(t, []byte("export const setup = () => ({});\n"), 3)
+	if res.registered {
+		t.Fatalf("a setup()-shaped plugin was observed as loaded; the guard is not real:\n%s", res.output)
+	}
+}
+
+// loadGuardResult is what a guarded opencode run observed.
+type loadGuardResult struct {
+	// registered is true when the staged plugin ran server() and registered
+	// with the stub ft.
+	registered bool
+	// loadError is true when opencode logged a load failure naming the plugin.
+	loadError bool
+	// output is the last opencode run's combined output.
+	output []byte
+}
+
+// runLoadGuard stages plugin where OpenCode loads project plugins and runs
+// `opencode run` until the plugin registers or the attempts are exhausted. It
+// runs with an isolated XDG_CONFIG_HOME so the machine's own global plugins
+// (including a pre-installed factotum-msg.js) do not load: only the staged
+// plugin can register, which is the whole point of the guard. A bogus model
+// makes opencode exit quickly, so a register can race the exit; the retry loop
+// waits it out. Skips explicitly when opencode is not on PATH.
+func runLoadGuard(t *testing.T, plugin []byte, attempts int) loadGuardResult {
+	t.Helper()
 	opencodePath, err := exec.LookPath("opencode")
 	if err != nil {
 		t.Skipf("opencode is not on PATH: %v", err)
@@ -48,7 +88,7 @@ func TestPluginLoadsOnInstalledOpenCode(t *testing.T) {
 	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pluginDir, "factotum-msg.js"), opencode.MsgPluginBytes(), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(pluginDir, "factotum-msg.js"), plugin, 0o644); err != nil {
 		t.Fatalf("write plugin: %v", err)
 	}
 
@@ -65,7 +105,18 @@ func TestPluginLoadsOnInstalledOpenCode(t *testing.T) {
 		t.Fatalf("write stub: %v", err)
 	}
 
+	// Isolate OpenCode's global config so the machine's own plugins never
+	// load: without this, a pre-installed global factotum-msg.js registers and
+	// satisfies the guard even when the staged plugin is broken, and the
+	// unrelated cmux plugins add load-error noise. A fresh XDG_CONFIG_HOME
+	// keeps project-plugin loading (the staged plugin) and drops the globals.
+	xdgConfig := filepath.Join(dir, "xdg")
+	if err := os.MkdirAll(filepath.Join(xdgConfig, "opencode"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(xdg) error = %v", err)
+	}
+
 	env := append(os.Environ(),
+		"XDG_CONFIG_HOME="+xdgConfig,
 		"FACTOTUM_PROJECT=prj-test",
 		"FACTOTUM_ACTOR=act-test",
 		"FACTOTUM_BIN="+stub,
@@ -73,25 +124,30 @@ func TestPluginLoadsOnInstalledOpenCode(t *testing.T) {
 		"FACTOTUM_MSG_TTL_MS=1000",
 		"CALLS="+callsPath,
 	)
-	var lastOut []byte
-	for attempt := 0; attempt < 3; attempt++ {
+
+	res := loadGuardResult{}
+	for attempt := 0; attempt < attempts; attempt++ {
+		_ = os.Remove(callsPath)
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		cmd := exec.CommandContext(ctx, opencodePath, "run", "--print-logs", "--log-level", "ERROR", "--model", "bogus/none", "hi")
 		cmd.Dir = dir
 		cmd.Env = env
-		lastOut, _ = cmd.CombinedOutput()
+		res.output, _ = cmd.CombinedOutput()
 		cancel()
 
-		// The regression this test exists for: an invalid plugin shape is
-		// reported as a load error naming the plugin.
-		if pluginLoadFailed(lastOut) {
-			t.Fatalf("receiver plugin failed to load on opencode:\n%s", lastOut)
+		// An invalid plugin shape can be reported as a load error naming the
+		// plugin (OpenCode validates global plugins; the project path is
+		// silent on some versions, so the register probe below is the guard).
+		if pluginLoadFailed(res.output) {
+			res.loadError = true
+			return res
 		}
 		if calls, _ := os.ReadFile(callsPath); strings.Contains(string(calls), "msg agent register") {
-			return // loaded and ran server()
+			res.registered = true
+			return res
 		}
 	}
-	t.Skipf("opencode did not reach plugin loading in the attempts (no load error seen); skipped rather than flaked\nopencode output:\n%s", lastOut)
+	return res
 }
 
 // pluginLoadFailed reports whether OpenCode logged a load failure for the

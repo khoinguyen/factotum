@@ -449,6 +449,11 @@ long-poll claim, inject as a user turn, ack.
 - The loop is off the agent's turn, so injection never blocks tool execution.
 - `ft run`'s opencode harness injects at launch when the run itself is the reason the session
   exists (it passes the initial message, and the plugin claims the rest).
+- **`ft` must be reachable where the receiver runs.** With the local transport the plugin shells
+  out to `FACTOTUM_BIN` (default `ft`), so a sandboxed or containerized harness image must ship
+  `ft` on PATH, or the run must stage a binary and set `FACTOTUM_BIN` to its path in the
+  environment. A remote hub (`FACTOTUM_MSG_URL` + `FACTOTUM_SERVE_TOKEN`) is the escape hatch: it
+  speaks the token-gated HTTP transport and needs no local `ft`.
 
 ### pi extension (t-eedgwt6g6g)
 

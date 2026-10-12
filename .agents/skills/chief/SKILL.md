@@ -225,8 +225,9 @@ exists to prevent.
 
 When a just-merged feature would help your own work, don't keep running a stale binary or session:
 
-- **`mise run install`** — put the latest `ft` on PATH (both `mise run build` and `install` stamp the
-  git SHA; build alone never touches `~/.local/bin/ft`). Use the fresh binary for graph ops and loops.
+- **Put the latest `ft` on PATH** — run the project's own install task (it stamps the git SHA into
+  `ft version`, so an installed binary is identifiable). Use the fresh binary for graph ops and
+  loops.
 - **Reincarnate on a cadence** — one chief session accumulates context (Khoi 2026-10-09: it reached
   ~479k tokens over ~50+ merged PRs, which slows the loop and risks compaction loss). **Reincarnate
   after roughly 50 merged PRs in a single session** (sooner if the session feels heavy). Keep a

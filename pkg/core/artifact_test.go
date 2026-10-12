@@ -10,6 +10,8 @@ func TestArtifactKindValid(t *testing.T) {
 		{ArtifactSpec, true},
 		{ArtifactDoc, true},
 		{ArtifactMemory, true},
+		{ArtifactTaskCheck, true},
+		{ArtifactQA, true},
 		{"note", false},
 		{"", false},
 	}

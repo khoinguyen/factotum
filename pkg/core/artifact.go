@@ -15,11 +15,15 @@ const (
 	// ArtifactTaskCheck is the derived cache for advisory task checks: one
 	// artifact per check run, or a human decision override.
 	ArtifactTaskCheck ArtifactKind = "task_check"
+	// ArtifactQA is a feature QA verdict recorded on a capture (an idea or bug):
+	// one artifact per QA run, carrying the verdict and the findings. A passing
+	// verdict is what unlocks accepting the capture.
+	ArtifactQA ArtifactKind = "qa"
 )
 
 func (k ArtifactKind) Valid() bool {
 	switch k {
-	case ArtifactSpec, ArtifactDoc, ArtifactMemory, ArtifactTaskCheck:
+	case ArtifactSpec, ArtifactDoc, ArtifactMemory, ArtifactTaskCheck, ArtifactQA:
 		return true
 	default:
 		return false

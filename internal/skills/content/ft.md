@@ -49,8 +49,8 @@ lists each excluded task with its reason, applying the same
 ft serve                        # live dashboard + token-gated capture; also -p <project>, --all, --bind <host:port>
 ```
 `ft serve` is an idea-centric live dashboard: ideas roll up promoted tasks, a kanban groups by
-origin idea, idea/task/memory/doc drill down; reads open and SSE-live. The whole app is the
-shadcn/ui app (`mise run build-web` → `web/dist`, embedded) at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` posts a sentence to the token-gated `/api/capture` as an idea or a bug. The message port rides the same token at `/api/msg/*` (`send`,`inbox`,`get`,`read`,`ack`,`nack`,`register`,`claim`,`heartbeat`,`deregister`) so a receiver on another host can message through the project backend; no token leaves it off.
+origin idea, idea/task/memory/doc drill down; reads open and SSE-live. The whole app is an embedded
+shadcn/ui SPA served at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` posts a sentence to the token-gated `/api/capture` as an idea or a bug. The message port rides the same token at `/api/msg/*` (`send`,`inbox`,`get`,`read`,`ack`,`nack`,`register`,`claim`,`heartbeat`,`deregister`) so a receiver on another host can message through the project backend; no token leaves it off.
 
 ## Move work through its lifecycle
 
@@ -285,8 +285,8 @@ fails, so a script can gate on it.
 - Never edit a database by hand: go through `ft`.
 - A branch build can forward-migrate the shared database; SQLite now guards this: a newer-schema
   database is rejected and an older one migrates only with `--store-opt migrate=yes` (after a backup);
-  `ft version`/`ft skill` never open the store. If `ft` reports a newer schema, `mise run install` or
-  use the newer branch binary; never point an uninstalled branch binary at the real DB.
+  `ft version`/`ft skill` never open the store. If `ft` reports a newer schema, install a newer `ft`
+  that matches it; never point an uninstalled branch binary at the real DB.
 - `ft task set <id> field=value ...` updates fields, including
   `not_before=YYYY-MM-DD` (or `+7d`) to defer a task and `not_before=` to clear
   it.

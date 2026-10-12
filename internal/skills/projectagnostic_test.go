@@ -5,6 +5,46 @@ import (
 	"testing"
 )
 
+// TestShippedSkillsNameNoFactotumMiseTasks pins that no shipped skill — embedded
+// usage skills or committed agent role skills — hardcodes factotum's own mise
+// tasks. ft is a general factory, so a skill that names `mise run install` or
+// `mise run build`/`build-web` reads as factotum's repository and breaks in every
+// other project. Tool-install and build guidance must be generic or read from
+// config, never a concrete task name.
+func TestShippedSkillsNameNoFactotumMiseTasks(t *testing.T) {
+	forbidden := []string{"mise run install", "mise run build"}
+
+	all, err := All()
+	if err != nil {
+		t.Fatalf("All() error = %v", err)
+	}
+	for _, skill := range all {
+		body := strings.ToLower(skill.Body)
+		for _, bad := range forbidden {
+			if strings.Contains(body, bad) {
+				t.Errorf("embedded skill %q hardcodes %q; keep tool-install/build guidance generic or config-driven",
+					skill.Name, bad)
+			}
+		}
+	}
+
+	agents := []string{
+		".agents/skills/chief/SKILL.md",
+		".agents/skills/single-task-builder/SKILL.md",
+		".agents/skills/single-task-reviewer/SKILL.md",
+		".agents/skills/single-task-qa/SKILL.md",
+	}
+	for _, rel := range agents {
+		body := agentSkill(t, rel)
+		for _, bad := range forbidden {
+			if strings.Contains(body, bad) {
+				t.Errorf("agent skill %s hardcodes %q; keep tool-install/build guidance generic or config-driven",
+					rel, bad)
+			}
+		}
+	}
+}
+
 // TestEmbeddedSkillsNameNoConcreteProject pins that every embedded usage skill
 // stays project-agnostic: ft builds other software, so a skill must take the
 // <project> placeholder (or the configured default), never a concrete id. A

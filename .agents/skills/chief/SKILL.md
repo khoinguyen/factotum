@@ -235,14 +235,15 @@ When a just-merged feature would help your own work, don't keep running a stale 
   running count of your merges and treat ~50 as the trigger. First write your current state to the
   resume memory (`ft memory update art-y7p3u3t3mf ...`), then hand off: **quiesce** — never reincarnate
   with a builder/reviewer pair mid-flight (they would keep messaging the dead `chief` surface); wait,
-  or tell both agents the new chief ref. Open a new cmux surface, spawn the successor
-  `opencode --prompt "load the chief skill; you are chief; read ft memory get art-y7p3u3t3mf and
-  continue the loop"`, verify it can receive over ft msg, then have it kill your session and tear
-  down your leftovers (next bullet).
-- **Sessions.** Launching the chief through `loop-agent.sh` mints a NEW session id and records
-  `session.started`; it exports `FACTOTUM_SESSION`, which your builders/reviewers/QA inherit, so all
-  their work rolls up to your session. Before you retire, record it: ask the successor for its
-  session id (it reports over ft msg) and run `ft session retire -p <project> --successor <sid>` (drop
+  or tell both agents the new chief ref. Open a new cmux surface and spawn the successor through the
+  loop wrapper, so it mints and records a fresh session:
+  `.agents/skills/chief/scripts/loop-agent.sh chief <project> - <repo-dir> "load the chief skill; you
+  are chief; read ft memory get art-y7p3u3t3mf and continue the loop"`. Verify it can receive over ft
+  msg, then have it kill your session and tear down your leftovers (next bullet).
+- **Sessions.** `loop-agent.sh` mints a NEW session id on every chief launch, records
+  `session.started`, and exports `FACTOTUM_SESSION`; your builders/reviewers/QA inherit it, so their
+  work rolls up to your session. Before you retire, have the successor report its session id (from its
+  `FACTOTUM_SESSION`) over ft msg and run `ft session retire -p <project> --successor <sid>` (drop
   `--successor` if you cannot get it). `ft event list --session <sid>` shows a session's timeline.
 - **Tear down the retired chief after reincarnating.** Killing the outgoing chief's session PID is
   not enough: two leftovers survive it. (1) The retired session's `ft msg agent claim --actor chief`

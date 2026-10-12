@@ -384,7 +384,12 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 				LeaseUntil: run.LeaseUntil.UTC().Format(time.RFC3339),
 			}
 			return deps.emit(result, func() {
-				deps.printFields(f("run_id", result.RunID), f("actor", result.Actor), f("session", result.Session), f("lease_until", result.LeaseUntil), f("project", result.Project))
+				fields := []field{f("run_id", result.RunID), f("actor", result.Actor)}
+				if result.Session != "" {
+					fields = append(fields, f("session", result.Session))
+				}
+				fields = append(fields, f("lease_until", result.LeaseUntil), f("project", result.Project))
+				deps.printFields(fields...)
 			})
 		},
 	}

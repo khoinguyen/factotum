@@ -23,10 +23,11 @@ func newSessionCommand(deps *Deps) *cobra.Command {
 			if err := requireProject(cmd, project); err != nil {
 				return err
 			}
+			// start mints a fresh id unless one is given explicitly. It must
+			// NOT reuse an inherited FACTOTUM_SESSION: loop-agent.sh launches a
+			// reincarnated chief from a shell that already carries the outgoing
+			// session, and every reincarnation must get a NEW id.
 			id := startSID
-			if id == "" {
-				id = deps.Session
-			}
 			if id == "" {
 				id = deps.Sessions.NewID()
 			}
@@ -39,7 +40,7 @@ func newSessionCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	start.Flags().StringVarP(&projectID, "project", "p", "", "project id")
-	start.Flags().StringVar(&startSID, "session", "", "session id (default: mint one)")
+	start.Flags().StringVar(&startSID, "session", "", "session id (default: mint a new one)")
 
 	var retireSID, successor string
 	retire := &cobra.Command{
@@ -59,7 +60,12 @@ func newSessionCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			return deps.emit(sessionResult{SessionID: id, Project: project, Retired: true, Successor: successor}, func() {
-				deps.printFields(f("session_id", id), f("retired", true), f("successor", successor), f("project", string(project)))
+				fields := []field{f("session_id", id), f("retired", true)}
+				if successor != "" {
+					fields = append(fields, f("successor", successor))
+				}
+				fields = append(fields, f("project", string(project)))
+				deps.printFields(fields...)
 			})
 		},
 	}

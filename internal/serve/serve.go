@@ -1132,6 +1132,8 @@ func classify(task core.Ticket, readyAgent, readyHuman, cycle bool) string {
 		return "done"
 	case task.Status == core.StatusReadyForReview:
 		return "review"
+	case task.Status == core.StatusInProgress:
+		return "in-progress"
 	case readyAgent:
 		return "ready-agent"
 	case readyHuman:
@@ -1151,6 +1153,8 @@ func chip(class string) string {
 		return "cancelled"
 	case "review":
 		return "in review"
+	case "in-progress":
+		return "in progress"
 	case "ready-agent":
 		return "agent next"
 	case "ready-human":

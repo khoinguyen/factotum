@@ -30,7 +30,9 @@ run a testing task by exercising it for real. You do **not** build or edit produ
 ## What to do
 
 1. Read your task (`ft task get <task-id>`) and any testing plan it points at. List the items to
-   exercise.
+   exercise. When you are dispatched for a **finished feature** (an `idea`/`bug` whose tasks all
+   resolved), read the feature with `ft task get <capture>`, exercise the whole feature, and
+   **retest the bug and its related features** — not only the one path.
 2. For each item: set up a throwaway lab, run the exact flow (attended vs unattended as its nature
    requires), and capture the **exact command + observed output** as evidence.
 3. Judge each item **PASS**, **FAIL**, or **not-available** (with the reason). A FAIL worth fixing is
@@ -39,6 +41,9 @@ run a testing task by exercising it for real. You do **not** build or edit produ
    or low-priority tasks. That is often the most valuable output.
 5. Record everything on the task (or the testing task it references) with `ft task note create`
    and/or `ft task create`, so it survives.
+6. **Record the feature verdict** with `ft qa record <capture> --verdict pass|fail -b "<findings>"`.
+   A `pass` certifies the feature and unlocks accepting it; a `fail` keeps the findings and gates the
+   next attempt — file the fail's follow-up task before recording it.
 
 ## Report to the chief
 

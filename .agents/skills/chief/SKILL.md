@@ -28,9 +28,14 @@ pair, merging an approved PR, and filing follow-ups. Everything substantive goes
   **`single-task-qa` skill**; dispatch it exactly like a builder, with a **short** kickoff:
 
   ```sh
-  cmux new-workspace --name qa-<t> --window <active-window> --group <group> --command \
+  cmux new-workspace --name qa-<t> --window <active-window> --group <group> \
+    --cwd <repo-root> --command \
     '.agents/skills/chief/scripts/loop-agent.sh qa-<t> <project> <t> /tmp/qa-<t> "load the single-task-qa skill; you are qa-<t>"'
   ```
+
+  Anchor it with an explicit `--cwd <repo-root>` (the factotum checkout), exactly as `pair()`
+  does: a new workspace inherits the FOCUSED surface's cwd, so the relative `loop-agent.sh` path
+  could 404 when another repo is focused, leaving a created-but-dead QA workspace.
 
   Give it its own worktree (`git worktree add --detach /tmp/qa-<t> origin/main`) and, over
   `ft msg`, the task to exercise, any testing plan to read, and your chief role. It drives

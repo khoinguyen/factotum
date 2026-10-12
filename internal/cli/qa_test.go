@@ -1,9 +1,47 @@
 package cli
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+// inboxEntries decodes `ft msg inbox --for <actor> -o json` for a project.
+func inboxEntries(t *testing.T, r *runner, projectID, actor string) []messageEntry {
+	t.Helper()
+	var entries []messageEntry
+	if err := json.Unmarshal([]byte(r.run("msg", "inbox", "-p", projectID, "--for", actor, "-o", "json")), &entries); err != nil {
+		t.Fatalf("parse msg inbox json: %v", err)
+	}
+	return entries
+}
+
+// TestResolvingLastTaskRemindsTheChiefToPlanQA exercises the reminder end to
+// end: finishing a capture's last task queues an ft msg to the actor that
+// performed the transition, while finishing a non-final task does not.
+func TestResolvingLastTaskRemindsTheChiefToPlanQA(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "a feature"))
+	r.run("actor", "create", "claude", "-k", "agent")
+	first := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+	second := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+
+	r.run("task", "done", first, "--actor", "chief")
+	if entries := inboxEntries(t, r, projectID, "chief"); len(entries) != 0 {
+		t.Fatalf("reminder before the capture is complete: %+v", entries)
+	}
+
+	r.run("task", "done", second, "--actor", "chief")
+	entries := inboxEntries(t, r, projectID, "chief")
+	if len(entries) != 1 || entries[0].To != "actor:chief" {
+		t.Fatalf("inbox for chief = %+v, want exactly one reminder to actor:chief", entries)
+	}
+	body := r.run("msg", "get", entries[0].ID)
+	if !strings.Contains(body, ideaID) || !strings.Contains(body, "ft qa") {
+		t.Fatalf("reminder body:\n%s\nwant it to name %s and point at ft qa", body, ideaID)
+	}
+}
 
 // completedFeature creates a project with one idea whose single task is done,
 // leaving the feature ready for QA.

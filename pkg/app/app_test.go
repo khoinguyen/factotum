@@ -51,7 +51,7 @@ func newHarnessWithClock(t *testing.T, clock Clock) *harness {
 	backend := memory.New()
 	ids := &seqIDs{}
 	t.Cleanup(func() { _ = backend.Close() })
-	return &harness{
+	h := &harness{
 		backend:   backend,
 		clock:     clock,
 		projects:  NewProjectService(backend, clock, ids),
@@ -60,6 +60,8 @@ func newHarnessWithClock(t *testing.T, clock Clock) *harness {
 		artifacts: NewArtifactService(backend, clock, ids),
 		qa:        NewQAService(backend, clock, ids),
 	}
+	h.tasks.SetCaptureReminder(h.qa)
+	return h
 }
 
 func equalIDs(got, want []core.TicketID) bool {

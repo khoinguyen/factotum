@@ -12,13 +12,29 @@ import (
 )
 
 type TicketService struct {
-	backend store.Backend
-	clock   Clock
-	ids     IDGen
+	backend  store.Backend
+	clock    Clock
+	ids      IDGen
+	reminder CaptureReminder
+}
+
+// CaptureReminder is notified when an executable task's status transition
+// resolves it, so a capture whose every task just finished can be handed to QA.
+// The QA service implements it.
+type CaptureReminder interface {
+	RemindResolvedCapture(ctx context.Context, task *core.Ticket) (*core.Message, error)
 }
 
 func NewTicketService(backend store.Backend, clock Clock, ids IDGen) *TicketService {
 	return &TicketService{backend: backend, clock: clock, ids: ids}
+}
+
+// SetCaptureReminder wires the notification sent when a task's resolution
+// completes its origin capture. Without one no reminder is sent, so a caller
+// that does not run the chief loop stays quiet; the CLI wires the QA service so
+// the actor that finished a capture is prompted to dispatch QA.
+func (s *TicketService) SetCaptureReminder(reminder CaptureReminder) {
+	s.reminder = reminder
 }
 
 type TicketInput struct {
@@ -378,7 +394,19 @@ func (s *TicketService) Set(ctx context.Context, id core.TicketID, set TicketSet
 			return nil, err
 		}
 	}
+	if s.reminder != nil && set.Status != nil && resolvedTaskStatus(*set.Status) && !resolvedTaskStatus(from) {
+		if _, err := s.reminder.RemindResolvedCapture(ctx, task); err != nil {
+			return nil, err
+		}
+	}
 	return task, nil
+}
+
+// resolvedTaskStatus reports whether a status resolves a task under the feature
+// resolution policy, so reaching it can complete the capture it was promoted
+// from.
+func resolvedTaskStatus(status core.TicketStatus) bool {
+	return featurePolicy().Resolves(core.KindTask, status)
 }
 
 func (s *TicketService) SetStatus(ctx context.Context, id core.TicketID, status core.TicketStatus) (*core.Ticket, error) {

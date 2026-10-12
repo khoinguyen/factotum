@@ -33,6 +33,7 @@ type QAService struct {
 	clock     Clock
 	ids       IDGen
 	artifacts *ArtifactService
+	messages  *MessageService
 }
 
 // NewQAService returns a QA service over backend.
@@ -42,7 +43,47 @@ func NewQAService(backend store.Backend, clock Clock, ids IDGen) *QAService {
 		clock:     clock,
 		ids:       ids,
 		artifacts: NewArtifactService(backend, clock, ids),
+		messages:  NewMessageService(backend, clock, ids),
 	}
+}
+
+// RemindResolvedCapture prompts the acting caller to dispatch QA when the
+// executable task just resolved and thereby completed its origin capture, and
+// that capture has no passing QA. It is a no-op when nobody performed the
+// transition (no caller to remind), when the task has no origin capture, when
+// the capture still has unresolved work, or when it already has a passing QA. It
+// returns the sent reminder, or nil when none was due.
+func (s *QAService) RemindResolvedCapture(ctx context.Context, task *core.Ticket) (*core.Message, error) {
+	actor, _, ok := Caller(ctx)
+	if !ok || actor == "" || !task.Kind.Executable() {
+		return nil, nil
+	}
+	capture, err := originTicket(ctx, s.backend, task)
+	if err != nil || capture == nil {
+		return nil, err
+	}
+	features, err := featureTasks(ctx, s.backend, capture.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(features) == 0 || !everyResolved(features, featurePolicy()) {
+		return nil, nil
+	}
+	passed, err := featureQAPassed(ctx, s.backend, capture.ID)
+	if err != nil {
+		return nil, err
+	}
+	if passed {
+		return nil, nil
+	}
+	body := fmt.Sprintf(
+		"QA needed: capture %s (%s) is complete but has no passing QA. Dispatch QA, then record the verdict with `ft qa record %s --verdict pass|fail`; `ft qa ready -p %s` lists what is waiting.",
+		capture.ID, capture.Kind, capture.ID, capture.ProjectID)
+	return s.messages.Send(ctx, SendMessageInput{
+		ProjectID: capture.ProjectID,
+		Target:    string(core.ActorAddress(actor)),
+		Body:      body,
+	})
 }
 
 // featurePolicy is the completeness rule for a feature's tasks: QA verifies a

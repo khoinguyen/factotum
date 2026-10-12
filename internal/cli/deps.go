@@ -392,6 +392,7 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 		d.Sessions = app.NewSessionService(backend, d.Clock, d.IDs)
 		d.TaskChecks = app.NewCheckService(backend, d.Clock, d.IDs, d.Checks)
 		d.QA = app.NewQAService(backend, d.Clock, d.IDs)
+		d.Tasks.SetCaptureReminder(d.QA)
 	}
 	if d.EmbedderOverride != nil {
 		d.Embedder = d.EmbedderOverride

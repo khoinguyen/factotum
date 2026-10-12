@@ -158,6 +158,10 @@ a `fail` keeps the findings and gates the next attempt. The **latest** verdict w
 and a pass counts only while no task changes after it, so reopening a task re-gates
 the feature. Accepting a capture that has tasks is refused until a passing QA.
 
+Finishing a capture's last task (done or cancelled) sends the actor that performed the
+transition an `ft msg` reminder to dispatch QA, unless the capture already has a passing
+verdict — so the loop is prompted at the moment a feature completes.
+
 ### 8. Rollout
 
 Close the loop: mark the release milestones done to unblock dependents, verify the whole graph, and

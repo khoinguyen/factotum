@@ -93,6 +93,38 @@ func (f *fixture) setStatus(t *testing.T, id core.TicketID, status core.TicketSt
 	}
 }
 
+func (f *fixture) setPriority(t *testing.T, id core.TicketID, priority int) {
+	t.Helper()
+	if _, err := f.tasks.Set(context.Background(), id, app.TicketSet{Priority: &priority}); err != nil {
+		t.Fatalf("Set(%s, priority=%d) error = %v", id, priority, err)
+	}
+}
+
+// addTicketWithID stores a task under an explicit id so a test can pin the id
+// order independently of the rank order it asserts.
+func (f *fixture) addTicketWithID(t *testing.T, projectID core.ProjectID, id core.TicketID, kind core.TicketKind, title string) *core.Ticket {
+	t.Helper()
+	task, err := f.tasks.Add(context.Background(), app.TicketInput{
+		ID:        &id,
+		ProjectID: projectID,
+		Kind:      kind,
+		Title:     title,
+	})
+	if err != nil {
+		t.Fatalf("Add(%s) error = %v", id, err)
+	}
+	return task
+}
+
+// groupTask links an executable task to its origin capture, the edge the board
+// groups by.
+func (f *fixture) groupTask(t *testing.T, task, idea *core.Ticket) {
+	t.Helper()
+	if _, err := f.tasks.AddDep(context.Background(), task.ID, idea.ID); err != nil {
+		t.Fatalf("AddDep(%s, %s) error = %v", task.ID, idea.ID, err)
+	}
+}
+
 func (f *fixture) addArtifact(t *testing.T, projectID core.ProjectID, taskID *core.TicketID, kind core.ArtifactKind, title, body string) *core.Artifact {
 	t.Helper()
 	artifact, err := f.artifacts.Add(context.Background(), app.ArtifactInput{
@@ -279,6 +311,84 @@ func TestWaitingTasksGroupedByOriginEdge(t *testing.T) {
 	}
 	if waiting.Reason != ReasonDepUnresolved {
 		t.Fatalf("waiting reason = %q, want %q", waiting.Reason, ReasonDepUnresolved)
+	}
+}
+
+// TestBoardOrdersGroupsByNextRank proves the work board leads with the work
+// most worth doing next rather than with the lowest idea id: groups follow the
+// same composite rank `ft task next` uses (here the priority term). The
+// higher-ranked idea's id sorts after the lower one, so idea-id order would put
+// it last.
+func TestBoardOrdersGroupsByNextRank(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+
+	lowIdea := f.addTicketWithID(t, project.ID, "t-a", core.KindIdea, "Low priority idea")
+	lowTask := f.addTicketWithID(t, project.ID, "t-m", core.KindTask, "low work")
+	f.groupTask(t, lowTask, lowIdea)
+	f.setStatus(t, lowTask.ID, core.StatusInProgress)
+
+	highIdea := f.addTicketWithID(t, project.ID, "t-b", core.KindIdea, "High priority idea")
+	highTask := f.addTicketWithID(t, project.ID, "t-n", core.KindTask, "high work")
+	f.groupTask(t, highTask, highIdea)
+	f.setStatus(t, highTask.ID, core.StatusInProgress)
+	f.setPriority(t, highTask.ID, 5)
+
+	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(context.Background())
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+
+	if len(page.InFlightGroups) != 2 {
+		t.Fatalf("InFlightGroups = %v, want the two idea groups", groupIDs(page.InFlightGroups))
+	}
+	if page.InFlightGroups[0].IdeaID != highIdea.ID {
+		t.Fatalf("InFlightGroups order = %v, want %s (higher rank) first", groupIDs(page.InFlightGroups), highIdea.ID)
+	}
+	if page.InFlightGroups[1].IdeaID != lowIdea.ID {
+		t.Fatalf("InFlightGroups order = %v, want %s last", groupIDs(page.InFlightGroups), lowIdea.ID)
+	}
+}
+
+// TestBoardOrdersTasksWithinGroupByNextRank proves the tasks inside one idea
+// group are ordered by the same rank, not by id: the higher-ranked sibling
+// leads even though its id sorts after the lower-ranked one.
+func TestBoardOrdersTasksWithinGroupByNextRank(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+
+	idea := f.addTicketWithID(t, project.ID, "t-c", core.KindIdea, "Multi-task idea")
+	first := f.addTicketWithID(t, project.ID, "t-p", core.KindTask, "first work")
+	f.groupTask(t, first, idea)
+	f.setStatus(t, first.ID, core.StatusInProgress)
+
+	second := f.addTicketWithID(t, project.ID, "t-q", core.KindTask, "second work")
+	f.groupTask(t, second, idea)
+	f.setStatus(t, second.ID, core.StatusInProgress)
+	f.setPriority(t, second.ID, 9)
+
+	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(context.Background())
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+
+	group, ok := findGroup(page.InFlightGroups, idea.ID)
+	if !ok {
+		t.Fatalf("InFlightGroups = %v, want a group for %s", groupIDs(page.InFlightGroups), idea.ID)
+	}
+	if len(group.Tasks) != 2 {
+		t.Fatalf("group tasks = %v, want both promoted tasks", taskIDs(group.Tasks))
+	}
+	if group.Tasks[0].ID != second.ID {
+		t.Fatalf("group task order = %v, want %s (higher rank) first", taskIDs(group.Tasks), second.ID)
 	}
 }
 

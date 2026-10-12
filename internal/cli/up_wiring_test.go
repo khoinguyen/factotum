@@ -148,6 +148,45 @@ func TestUpWiringUnattendedAndAutoGroom(t *testing.T) {
 	}
 }
 
+// TestUpWiringInteractiveNeedsBothTerminals pins runUp's tty-detection branch:
+// even when the config asks for a PO (up.unattended=false), the daemon attaches
+// one only on a full interactive session (stdout and stdin both terminals).
+// A daemon started headless, or with stdin piped, falls back to unattended and
+// defers product questions. This is the tty half of runInteractive's wiring,
+// which TestUpWiringUnattendedAndAutoGroom's always-terminal cases do not cover.
+func TestUpWiringInteractiveNeedsBothTerminals(t *testing.T) {
+	cases := []struct {
+		name            string
+		stdoutTerminal  bool
+		stdinTerminal   bool
+		wantInteractive bool
+	}{
+		{"redirected stdout stays unattended", false, true, false},
+		{"piped stdin stays unattended", true, false, false},
+		{"full terminal attaches a PO", true, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			projectID := firstField(t, r.run("project", "create", "Acme"))
+			writeUpProjectConfig(t, r.projectPath,
+				"project = \""+projectID+"\"\n[up]\nunattended = false\n")
+
+			terminal := func(d *Deps) {
+				d.IsTerminal = func(io.Writer) bool { return tc.stdoutTerminal }
+				d.IsTerminalReader = func(io.Reader) bool { return tc.stdinTerminal }
+			}
+			settings, _, err := runUpWiring(t, r, terminal, "up", "--bind", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("ft up error = %v", err)
+			}
+			if settings.interactive != tc.wantInteractive {
+				t.Fatalf("interactive = %v, want %v", settings.interactive, tc.wantInteractive)
+			}
+		})
+	}
+}
+
 // TestUpWiringStoreOverrideReachesDaemon proves the CLI store override wins over
 // the project file: the file names an unopenable backend, so the daemon only
 // starts because --store/--store-opt (from the runner's base args) overrode it

@@ -17,8 +17,11 @@ type Graph struct {
 	tasks      map[core.TicketID]core.Ticket
 	deps       map[core.TicketID][]core.TicketID
 	dependents map[core.TicketID][]core.TicketID
-	ids        []core.TicketID
-	now        time.Time
+	// nonBlocking holds out-of-scope capture ids: dependency edges to them are
+	// provenance, never blockers, so they resolve without being graph nodes.
+	nonBlocking map[core.TicketID]struct{}
+	ids         []core.TicketID
+	now         time.Time
 }
 
 // ReadyBucket classifies startable tasks by the kind of actor that should pick
@@ -34,23 +37,38 @@ type ReadyBucket struct {
 // New builds a graph with no time reference, so not_before constraints are
 // ignored. Use NewAt to evaluate readiness against a clock.
 func New(tasks []core.Ticket, policy core.ResolutionPolicy) (*Graph, error) {
-	return newGraph(tasks, policy, time.Time{})
+	return newGraph(tasks, policy, time.Time{}, nil)
 }
 
 // NewAt builds a graph that evaluates not_before constraints at now: a task
 // whose not_before is in the future is excluded from the ready set while still
 // blocking its dependents.
 func NewAt(tasks []core.Ticket, policy core.ResolutionPolicy, now time.Time) (*Graph, error) {
-	return newGraph(tasks, policy, now)
+	return newGraph(tasks, policy, now, nil)
 }
 
-func newGraph(tasks []core.Ticket, policy core.ResolutionPolicy, now time.Time) (*Graph, error) {
+// NewAtCaptures builds a graph like NewAt, and additionally treats every id in
+// externalCaptures as a resolved, out-of-scope capture. A capture is provenance,
+// never a blocker, so a dependency on a capture in another project must not
+// exclude its dependent from the ready set even though the capture's ticket is
+// absent from the graph. Pass only ids known to be human captures (ideas and
+// bugs); a dangling dep that is a real task - or that does not exist - keeps
+// blocking.
+func NewAtCaptures(tasks []core.Ticket, policy core.ResolutionPolicy, now time.Time, externalCaptures []core.TicketID) (*Graph, error) {
+	return newGraph(tasks, policy, now, externalCaptures)
+}
+
+func newGraph(tasks []core.Ticket, policy core.ResolutionPolicy, now time.Time, externalCaptures []core.TicketID) (*Graph, error) {
 	g := &Graph{
-		policy:     policy,
-		tasks:      make(map[core.TicketID]core.Ticket, len(tasks)),
-		deps:       make(map[core.TicketID][]core.TicketID, len(tasks)),
-		dependents: make(map[core.TicketID][]core.TicketID, len(tasks)),
-		now:        now,
+		policy:      policy,
+		tasks:       make(map[core.TicketID]core.Ticket, len(tasks)),
+		deps:        make(map[core.TicketID][]core.TicketID, len(tasks)),
+		dependents:  make(map[core.TicketID][]core.TicketID, len(tasks)),
+		nonBlocking: make(map[core.TicketID]struct{}, len(externalCaptures)),
+		now:         now,
+	}
+	for _, id := range externalCaptures {
+		g.nonBlocking[id] = struct{}{}
 	}
 	for _, t := range tasks {
 		if _, ok := g.tasks[t.ID]; ok {
@@ -96,13 +114,17 @@ func (g *Graph) Dependents(id core.TicketID) []core.TicketID {
 }
 
 // ExternalDeps returns dependency IDs referenced by tasks in the graph but not
-// present in it (out of scope or missing).
+// present in it (out of scope or missing), excluding out-of-scope captures:
+// a capture is non-blocking provenance, so it is not an external dependency.
 func (g *Graph) ExternalDeps() []core.TicketID {
 	seen := make(map[core.TicketID]struct{})
 	var out []core.TicketID
 	for _, id := range g.ids {
 		for _, d := range g.deps[id] {
 			if _, ok := g.tasks[d]; ok {
+				continue
+			}
+			if _, ok := g.nonBlocking[d]; ok {
 				continue
 			}
 			if _, ok := seen[d]; ok {
@@ -188,16 +210,28 @@ func (g *Graph) ReadySet() []core.TicketID {
 }
 
 // unresolvedDeps returns the dependency ids that keep a task out of the ready
-// set: unknown to the graph, or not resolved under the policy.
+// set: unknown to the graph, or not resolved under the policy. An out-of-scope
+// capture is resolved (see depResolved), so it never blocks.
 func (g *Graph) unresolvedDeps(t core.Ticket) []core.TicketID {
 	var out []core.TicketID
 	for _, d := range g.deps[t.ID] {
-		if dep, ok := g.tasks[d]; ok && dep.Resolves(g.policy) {
+		if g.depResolved(d) {
 			continue
 		}
 		out = append(out, d)
 	}
 	return out
+}
+
+// depResolved reports whether a dependency edge is satisfied for readiness:
+// its ticket is in the graph and resolves under the policy, or it is a declared
+// out-of-scope capture, which is provenance and never blocks.
+func (g *Graph) depResolved(id core.TicketID) bool {
+	if _, ok := g.nonBlocking[id]; ok {
+		return true
+	}
+	dep, ok := g.tasks[id]
+	return ok && dep.Resolves(g.policy)
 }
 
 // snoozeActive reports whether a task is parked by a snooze whose condition has
@@ -366,13 +400,12 @@ func (g *Graph) Waves() (map[core.TicketID]int, error) {
 	for _, id := range order {
 		w := 0
 		for _, d := range g.deps[id] {
-			dep, known := g.tasks[d]
-			if known && dep.Resolves(g.policy) {
+			if g.depResolved(d) {
 				continue
 			}
 			depWave := 0
-			if known {
-				depWave = waves[d]
+			if dep, known := g.tasks[d]; known {
+				depWave = waves[dep.ID]
 			}
 			if depWave+1 > w {
 				w = depWave + 1
@@ -436,8 +469,7 @@ func (g *Graph) UnblockCount(id core.TicketID) int {
 			if other == id {
 				continue
 			}
-			ot, ok := g.tasks[other]
-			if !ok || !ot.Resolves(g.policy) {
+			if !g.depResolved(other) {
 				blockedByOther = true
 				break
 			}

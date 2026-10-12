@@ -149,6 +149,47 @@ func TestAgentRenderCaptureSection(t *testing.T) {
 	}
 }
 
+// A task whose only dependency is a capture in another project renders as
+// startable work: the capture is non-blocking provenance, so the task joins the
+// ready group and the graph reports no external dependency for it. A real
+// foreign task keeps blocking.
+func TestAgentRenderCrossProjectCaptureIsReady(t *testing.T) {
+	policy := core.DefaultResolutionPolicy()
+	project := &core.Project{ID: "prj-1", Name: "Acme", Policy: policy}
+	onlyCapture := task("only", core.StatusTodo, "foreign-idea")
+	withForeignTask := task("foreign", core.StatusTodo, "foreign-task")
+	tasks := []*core.Ticket{onlyCapture, withForeignTask}
+	values := []core.Ticket{*onlyCapture, *withForeignTask}
+	built, err := graph.NewAtCaptures(values, policy, time.Time{}, []core.TicketID{"foreign-idea"})
+	if err != nil {
+		t.Fatalf("graph.NewAtCaptures() error = %v", err)
+	}
+	view := View{
+		Project: project,
+		Tasks:   tasks,
+		Graph:   built,
+		Ready:   built.ReadyByActor(nil),
+	}
+	out := renderString(t, Agent{}, view)
+	if !strings.Contains(out, "next human:") {
+		t.Fatalf("agent output missing next human group:\n%s", out)
+	}
+	human := out[strings.Index(out, "next human:"):strings.Index(out, "dep-blocked:")]
+	if !strings.Contains(human, "only") {
+		t.Fatalf("capture-dependent task should be ready:\n%s", out)
+	}
+	blocked := out[strings.Index(out, "dep-blocked:"):]
+	if !strings.Contains(blocked, "foreign") {
+		t.Fatalf("foreign-task-dependent task should stay blocked:\n%s", out)
+	}
+	if strings.Contains(out, "external_deps: [foreign-idea]") {
+		t.Fatalf("non-blocking capture must not be an external dep:\n%s", out)
+	}
+	if !strings.Contains(out, "external_deps: [foreign-task]") {
+		t.Fatalf("a real foreign task is still an external dep:\n%s", out)
+	}
+}
+
 func TestClassifyIdea(t *testing.T) {
 	view := ideaView(t)
 	idea, _ := view.Graph.Ticket("i-1")

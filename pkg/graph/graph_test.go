@@ -176,6 +176,52 @@ func TestExternalDeps(t *testing.T) {
 	}
 }
 
+// A dependency declared as an out-of-scope capture is provenance, never a
+// blocker: it must not exclude its dependent from the ready set, add a wave, or
+// count as an external dependency, even though its ticket is absent from the
+// graph. A dangling dep that is not declared keeps blocking, so a real foreign
+// task is unaffected.
+func TestExternalCapturesDoNotBlock(t *testing.T) {
+	captureOnly := task("only", core.KindTask, core.StatusTodo, "idea")
+	withGhost := task("ghosted", core.KindTask, core.StatusTodo, "idea", "ghost")
+	g, err := NewAtCaptures([]core.Ticket{captureOnly, withGhost}, core.DefaultResolutionPolicy(), time.Time{}, []core.TicketID{"idea"})
+	if err != nil {
+		t.Fatalf("NewAtCaptures() error = %v", err)
+	}
+	if ready, reason := g.Readiness("only"); !ready || reason != nil {
+		t.Fatalf("Readiness(only) = (%v, %+v), want ready with no reason", ready, reason)
+	}
+	if ready, reason := g.Readiness("ghosted"); ready || reason == nil || reason.Code != ReasonDepUnresolved || reason.Detail != "ghost" {
+		t.Fatalf("Readiness(ghosted) = (%v, %+v), want not ready with dep_unresolved/ghost", ready, reason)
+	}
+	if got := g.ExternalDeps(); !equalIDs(got, []core.TicketID{"ghost"}) {
+		t.Fatalf("ExternalDeps() = %v, want [ghost] (the capture is not a blocking external dep)", got)
+	}
+	waves, err := g.Waves()
+	if err != nil {
+		t.Fatalf("Waves() error = %v", err)
+	}
+	if waves["only"] != 0 {
+		t.Fatalf("waves[only] = %d, want 0 (the capture adds no wave)", waves["only"])
+	}
+	if waves["ghosted"] != 1 {
+		t.Fatalf("waves[ghosted] = %d, want 1 (only ghost adds a wave)", waves["ghosted"])
+	}
+}
+
+// A real task in another project is not a capture, so its edge still blocks
+// readiness: the fix is scoped to captures.
+func TestUndeclaredExternalDepStillBlocks(t *testing.T) {
+	dep := task("mine", core.KindTask, core.StatusTodo, "foreign")
+	g, err := NewAtCaptures([]core.Ticket{dep}, core.DefaultResolutionPolicy(), time.Time{}, nil)
+	if err != nil {
+		t.Fatalf("NewAtCaptures() error = %v", err)
+	}
+	if ready, reason := g.Readiness("mine"); ready || reason == nil || reason.Code != ReasonDepUnresolved {
+		t.Fatalf("Readiness(mine) = (%v, %+v), want not ready with dep_unresolved", ready, reason)
+	}
+}
+
 func TestReadyByActor(t *testing.T) {
 	agentID := core.ActorID("ag")
 	humanID := core.ActorID("hu")

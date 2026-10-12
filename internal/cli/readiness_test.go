@@ -92,6 +92,46 @@ func TestTaskGetJSONCarriesNotReadyReason(t *testing.T) {
 	}
 }
 
+// A dependency on a capture in another project is provenance, not a blocker:
+// ft task get shows it as the origin and prints no not-ready reason, and the
+// task is startable. A real task in another project keeps blocking, so the
+// exemption is scoped to captures.
+func TestTaskGetCrossProjectCaptureIsReady(t *testing.T) {
+	r := newRunner(t)
+	acme := firstField(t, r.run("project", "create", "Acme"))
+	other := firstField(t, r.run("project", "create", "Other"))
+	foreignIdea := firstField(t, r.run("idea", "create", "-p", other, "-t", "foreign idea"))
+	taskID := firstField(t, r.run("task", "create", "-p", acme, "-t", "work"))
+	r.run("task", "dep", "create", taskID, foreignIdea)
+
+	out := r.run("task", "get", taskID)
+	if strings.Contains(out, "not ready because") {
+		t.Fatalf("cross-project capture dep must not carry a not-ready reason:\n%s", out)
+	}
+	if !strings.Contains(out, "origin: "+foreignIdea) {
+		t.Fatalf("task get missing the cross-project origin:\n%s", out)
+	}
+	next := r.run("task", "next", "-p", acme)
+	if !strings.Contains(next, taskID) {
+		t.Fatalf("task with only a cross-project capture dep should be ready:\n%s", next)
+	}
+}
+
+func TestTaskGetCrossProjectTaskStillBlocks(t *testing.T) {
+	r := newRunner(t)
+	acme := firstField(t, r.run("project", "create", "Acme"))
+	other := firstField(t, r.run("project", "create", "Other"))
+	foreignTask := firstField(t, r.run("task", "create", "-p", other, "-t", "foreign task"))
+	taskID := firstField(t, r.run("task", "create", "-p", acme, "-t", "work"))
+	r.run("task", "dep", "create", taskID, foreignTask)
+
+	out := r.run("task", "get", taskID)
+	want := "not ready because: dep_unresolved: " + foreignTask
+	if !strings.Contains(out, want) {
+		t.Fatalf("cross-project task dep must still block (%q):\n%s", want, out)
+	}
+}
+
 func TestTaskNextExplainListsExcludedTasks(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

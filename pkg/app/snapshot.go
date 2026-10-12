@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -45,7 +47,11 @@ func LoadSnapshot(ctx context.Context, backend store.Backend, projectID core.Pro
 	for _, task := range tasks {
 		copied = append(copied, *task)
 	}
-	built, err := graph.NewAt(copied, project.Policy, now)
+	externalCaptures, err := externalCaptureDeps(ctx, backend, copied)
+	if err != nil {
+		return nil, fmt.Errorf("resolve external captures: %w", err)
+	}
+	built, err := graph.NewAtCaptures(copied, project.Policy, now, externalCaptures)
 	if err != nil {
 		return nil, fmt.Errorf("build graph: %w", err)
 	}
@@ -91,4 +97,43 @@ func LoadAllSnapshot(ctx context.Context, backend store.Backend, now time.Time) 
 		Graph:  built,
 		Ready:  built.ReadyByActor(actorMap),
 	}, nil
+}
+
+// externalCaptureDeps returns the dependency ids a task set references but does
+// not contain, whose stored ticket is a human capture (idea or bug). A capture
+// is provenance, never a blocker, so its edge must not exclude the dependent
+// from the ready set even when the capture lives in another project and the
+// scoped graph omits it. A dep that is a real task in another project - or one
+// that does not exist - is not returned and keeps blocking. A store error other
+// than ErrNotFound is surfaced.
+func externalCaptureDeps(ctx context.Context, backend store.Backend, tasks []core.Ticket) ([]core.TicketID, error) {
+	inScope := make(map[core.TicketID]struct{}, len(tasks))
+	for _, t := range tasks {
+		inScope[t.ID] = struct{}{}
+	}
+	seen := make(map[core.TicketID]struct{})
+	var out []core.TicketID
+	for _, t := range tasks {
+		for _, dep := range t.Deps {
+			if _, ok := inScope[dep]; ok {
+				continue
+			}
+			if _, ok := seen[dep]; ok {
+				continue
+			}
+			seen[dep] = struct{}{}
+			found, err := backend.Tickets().Get(ctx, dep)
+			if errors.Is(err, core.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if found.Kind.CapturedByHuman() {
+				out = append(out, dep)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
 }

@@ -168,6 +168,59 @@ func TestTaskGraphFactsIgnoresCrossProjectDeps(t *testing.T) {
 	}
 }
 
+// A dependency on a capture in another project is provenance, not a blocker:
+// the capture never finishes, so it must not keep the task out of the ready set
+// even though the scoped neighborhood omits it. This matches serve, which
+// resolves the capture regardless of project scope.
+func TestTaskGraphFactsCrossProjectCaptureIsReady(t *testing.T) {
+	ctx := context.Background()
+	backend, projectID := factsBackend(t)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	if err := backend.Projects().Create(ctx, &core.Project{ID: "other", Name: "Other", Policy: core.DefaultResolutionPolicy()}); err != nil {
+		t.Fatalf("Create(other project) error = %v", err)
+	}
+	createTask(t, backend, &core.Ticket{ID: "foreign-idea", ProjectID: "other", Kind: core.KindIdea, Title: "foreign idea", Status: core.StatusTodo})
+	createTask(t, backend, &core.Ticket{ID: "local", ProjectID: projectID, Kind: core.KindTask, Title: "local", Status: core.StatusTodo, Deps: []core.TicketID{"foreign-idea"}})
+
+	local, err := backend.Tickets().Get(ctx, "local")
+	if err != nil {
+		t.Fatalf("Get(local) error = %v", err)
+	}
+	_, reason, err := TaskGraphFacts(ctx, backend, local, now)
+	if err != nil {
+		t.Fatalf("TaskGraphFacts(local) error = %v", err)
+	}
+	if reason != nil {
+		t.Fatalf("local reason = %+v, want ready (cross-project capture is non-blocking)", reason)
+	}
+}
+
+// LoadSnapshot agrees with TaskGraphFacts: a task whose only dependency is a
+// capture in another project is in the ready bucket, not dep-blocked.
+func TestLoadSnapshotCrossProjectCaptureIsReady(t *testing.T) {
+	ctx := context.Background()
+	backend, projectID := factsBackend(t)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	if err := backend.Projects().Create(ctx, &core.Project{ID: "other", Name: "Other", Policy: core.DefaultResolutionPolicy()}); err != nil {
+		t.Fatalf("Create(other project) error = %v", err)
+	}
+	createTask(t, backend, &core.Ticket{ID: "foreign-idea", ProjectID: "other", Kind: core.KindIdea, Title: "foreign idea", Status: core.StatusTodo})
+	createTask(t, backend, &core.Ticket{ID: "local", ProjectID: projectID, Kind: core.KindTask, Title: "local", Status: core.StatusTodo, Deps: []core.TicketID{"foreign-idea"}})
+
+	snapshot, err := LoadSnapshot(ctx, backend, projectID, now)
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if ready, reason := snapshot.Graph.Readiness("local"); !ready || reason != nil {
+		t.Fatalf("Readiness(local) = (%v, %+v), want ready", ready, reason)
+	}
+	if got := snapshot.Graph.ExternalDeps(); len(got) != 0 {
+		t.Fatalf("ExternalDeps() = %v, want none (the capture is non-blocking provenance)", got)
+	}
+}
+
 // Dependents are scoped to the task's project: a task in another project that
 // names the id is not a dependent.
 func TestTaskGraphFactsDependentsAreProjectScoped(t *testing.T) {

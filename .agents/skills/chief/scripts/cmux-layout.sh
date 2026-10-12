@@ -17,6 +17,12 @@
 # from an env-less shell it can land in the wrong (e.g. stale) window.
 #
 # Gotchas learned the hard way (do not rediscover):
+#   - ALWAYS anchor a pair to an explicit cwd. A new workspace inherits the FOCUSED
+#     surface's cwd, so a relative command (e.g. .agents/skills/chief/scripts/
+#     loop-agent.sh) can 404 when the focused surface is another repo, leaving a
+#     created-but-dead pair workspace. pair() passes --cwd <repo-root> to
+#     new-workspace; new-split has no --cwd flag, so the reviewer's command is
+#     prefixed with `cd <repo-root> &&` to anchor it the same way.
 #   - NEVER paste into a fresh workspace's anchor surface: paste-buffer fails with
 #     "invalid_params: Surface is not a terminal". Create the builder with
 #     `new-workspace --command` (and the reviewer with `new-split --command`).
@@ -27,6 +33,11 @@
 #   - Do NOT create a second dashboard browser pane if one already exists (this
 #     script checks the tree and skips).
 set -euo pipefail
+
+# repo_root is the factotum checkout that holds this script - the directory the
+# relative agent commands resolve against. Derive it from the script's own
+# location so it never depends on the caller's or the focused surface's cwd.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 
 usage() {
   echo "usage: cmux-layout.sh dashboard <chief-workspace-ref> <url>" >&2
@@ -74,8 +85,9 @@ pair() { # <task-id> <group-ref> <window-ref> <builder-cmd> <reviewer-cmd>
   local task="${1:-}" group="${2:-}" window="${3:-}" builder="${4:-}" reviewer="${5:-}" out ws surf rev
   [ -n "$task" ] && [ -n "$group" ] && [ -n "$window" ] && [ -n "$builder" ] && [ -n "$reviewer" ] || usage
 
-  # Builder runs as the new workspace's initial command (left pane).
-  out="$(cmux new-workspace --name "$task" --command "$builder" \
+  # Builder runs as the new workspace's initial command (left pane), anchored to
+  # the repo root so a relative command resolves regardless of what was focused.
+  out="$(cmux new-workspace --name "$task" --cwd "$repo_root" --command "$builder" \
          --window "$window" --group "$group" --group-placement end)"
   ws="$(printf '%s' "$out" | grep -o 'workspace:[0-9]*' | head -1)"
   [ -n "$ws" ] || { echo "cmux-layout: no workspace ref in: $out" >&2; exit 1; }
@@ -83,8 +95,10 @@ pair() { # <task-id> <group-ref> <window-ref> <builder-cmd> <reviewer-cmd>
   surf="$(surfaces_in_workspace "$ws" | head -1)"
   [ -n "$surf" ] || { echo "cmux-layout: no surface in $ws" >&2; exit 1; }
 
-  # Reviewer to the right of the builder.
-  out="$(cmux new-split right --workspace "$ws" --surface "$surf" --command "$reviewer")"
+  # Reviewer to the right of the builder. new-split has no --cwd flag, so anchor
+  # the reviewer to the repo root in its command; otherwise it could inherit an
+  # unrelated cwd the same way the workspace used to.
+  out="$(cmux new-split right --workspace "$ws" --surface "$surf" --command "cd '$repo_root' && $reviewer")"
   rev="$(printf '%s' "$out" | grep -o 'surface:[0-9]*' | head -1)"
   [ -n "$rev" ] || { echo "cmux-layout: no surface ref in: $out" >&2; exit 1; }
 

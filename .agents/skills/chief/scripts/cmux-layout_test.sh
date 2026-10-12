@@ -8,6 +8,10 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/cmux-layout.sh"
+# The pair's agents must start anchored to the repo root (t-sca2nign2h), not to
+# whatever cwd the focused cmux surface happens to have. The script derives it
+# from its own location: <repo-root>/.agents/skills/chief/scripts.
+root="$(cd "$here/../../../.." && pwd)"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -129,8 +133,8 @@ window window:1 [current]
         └── surface surface:8 [terminal] "x" [selected]
 TREE
 assert_run "pair lays out builder left, reviewer right" \
-  "new-workspace --name t-demo --command BUILDER --window window:1 --group workspace_group:7 --group-placement end
-new-split right --workspace workspace:52 --surface surface:463 --command REVIEWER
+  "new-workspace --name t-demo --cwd $root --command BUILDER --window window:1 --group workspace_group:7 --group-placement end
+new-split right --workspace workspace:52 --surface surface:463 --command cd '$root' && REVIEWER
 rename-tab --workspace workspace:52 --surface surface:463 builder-t-demo
 rename-tab --workspace workspace:52 --surface surface:464 reviewer-t-demo" \
   -- pair t-demo workspace_group:7 window:1 BUILDER REVIEWER
@@ -172,12 +176,48 @@ unset CMUX_STUB_RACE CMUX_LAYOUT_SURFACE_INTERVAL
 if [ "$race_rc" -ne 0 ]; then
   echo "FAIL pair retries until the builder surface appears: exited $race_rc: $race_out"
   fail=$((fail + 1))
-elif [ "$(cat "$CMUX_STUB_LOG")" != "new-workspace --name t-demo --command BUILDER --window window:1 --group workspace_group:7 --group-placement end
-new-split right --workspace workspace:52 --surface surface:463 --command REVIEWER
+elif [ "$(cat "$CMUX_STUB_LOG")" != "new-workspace --name t-demo --cwd $root --command BUILDER --window window:1 --group workspace_group:7 --group-placement end
+new-split right --workspace workspace:52 --surface surface:463 --command cd '$root' && REVIEWER
 rename-tab --workspace workspace:52 --surface surface:463 builder-t-demo
 rename-tab --workspace workspace:52 --surface surface:464 reviewer-t-demo" ]; then
   echo "FAIL pair retries until the builder surface appears"
   echo "  got: $(cat "$CMUX_STUB_LOG")"
+  fail=$((fail + 1))
+else
+  pass=$((pass + 1))
+fi
+
+# t-sca2nign2h: the pair is cwd-independent. A new workspace used to inherit
+# the FOCUSED surface's cwd, so a relative command could 404 and the pair would
+# be dead. Run the script from an unrelated directory and assert that both the
+# workspace and the reviewer split are anchored to the repo root explicitly.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1 [current]
+├── workspace workspace:10 "chief"
+│   └── pane pane:21
+│       └── surface surface:37 [terminal] "chief" [selected]
+├── workspace workspace:52 "t-demo"
+│   └── pane pane:262
+│       └── surface surface:463 [terminal] "builder-t-demo" [selected]
+└── workspace workspace:7 "other"
+    └── pane pane:8
+        └── surface surface:8 [terminal] "x" [selected]
+TREE
+rm -f "$CMUX_STUB_TREE.calls"
+: >"$CMUX_STUB_LOG"
+otherdir="$(mktemp -d)"
+cwd_rc=0
+cwd_out="$(cd "$otherdir" && "$script" pair t-demo workspace_group:7 window:1 BUILDER REVIEWER 2>&1)" || cwd_rc=$?
+rmdir "$otherdir" 2>/dev/null || true
+cwd_log="$(cat "$CMUX_STUB_LOG")"
+if [ "$cwd_rc" -ne 0 ]; then
+  echo "FAIL pair is cwd-independent: exited $cwd_rc: $cwd_out"
+  fail=$((fail + 1))
+elif ! printf '%s' "$cwd_log" | grep -Fq -- "--cwd $root "; then
+  echo "FAIL pair is cwd-independent: new-workspace missing '--cwd $root': $cwd_log"
+  fail=$((fail + 1))
+elif ! printf '%s' "$cwd_log" | grep -Fq -- "--command cd '$root' && REVIEWER"; then
+  echo "FAIL pair is cwd-independent: new-split not anchored to '$root': $cwd_log"
   fail=$((fail + 1))
 else
   pass=$((pass + 1))

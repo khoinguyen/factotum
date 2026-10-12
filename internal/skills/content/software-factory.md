@@ -141,14 +141,21 @@ and never merges on fakes alone. A review that flags a real, unverified path is 
 
 ### 7. QA
 
-For end-to-end, integration, or UX verification, the chief dispatches a fresh `single-task-qa`
-agent — never a build agent. QA exercises the feature for real on throwaway labs and reports
-PASS/FAIL/not-available per item; a FAIL becomes a new task with acceptance criteria. Track the
-testing work like any other:
+A feature (an `idea` or `bug`) is ready for QA once every task produced from it has
+resolved. `ft qa ready` lists the features the loop must dispatch a fresh
+`single-task-qa` agent for — never a build agent. QA exercises the feature for real
+on throwaway labs, retests the bug and its related features, and reports
+PASS/FAIL/not-available per item, then records its verdict:
 
 ```sh
-ft task create -p <project> -t "QA: <feature> end-to-end" --groomed --acceptance "observable result"
+ft qa ready -p <project>
+ft qa record <capture> --verdict pass -b "verified end to end"   # unlocks accepting
+ft qa record <capture> --verdict fail -b "crashes on submit"     # a FAIL becomes a new task
 ```
+
+A `pass` certifies the feature and unlocks accepting the capture (`ft task done`);
+a `fail` keeps the findings and gates the next attempt. Accepting a capture that
+has tasks is refused until a passing QA is recorded.
 
 ### 8. Rollout
 

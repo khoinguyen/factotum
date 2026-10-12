@@ -80,20 +80,30 @@ if ! printf '%s' "$next" | grep -Fq "$id"; then
   exit 1
 fi
 
-# The README documents ft's embedded agent skill; exercise the documented commands.
+# The README's "Teach your agent" block enumerates the embedded skills between
+# `<!-- skills:begin -->` / `<!-- skills:end -->`, each as an `ft skill get <name>`
+# line. Assert that documented set matches `ft skill list` exactly, then exercise
+# every documented command.
 skills="$(cd "$work" && ft skill list)"
-for name in ft groom; do
-  if ! printf '%s' "$skills" | grep -Fq "$name"; then
-    echo "smoke-quickstart: 'ft skill list' does not list the $name skill:" >&2
-    printf '%s\n' "$skills" >&2
-    exit 1
-  fi
-done
-for name in ft groom; do
+listed="$(printf '%s\n' "$skills" | awk 'NR>1 && NF {print $1}' | sort -u)"
+readme_skills="$(awk '/<!-- skills:begin -->/{f=1;next} /<!-- skills:end -->/{f=0} f' "$readme" \
+  | sed -n 's/^ft skill get \([a-z][a-z-]*\).*/\1/p' | sort -u)"
+if [ -z "$readme_skills" ]; then
+  echo "smoke-quickstart: no skills block found in README.md" >&2
+  echo "  expected markers: <!-- skills:begin --> ... <!-- skills:end -->" >&2
+  exit 1
+fi
+if [ "$readme_skills" != "$listed" ]; then
+  echo "smoke-quickstart: README skill list does not match 'ft skill list':" >&2
+  echo "  README: $(printf '%s ' $readme_skills)" >&2
+  echo "  ft:     $(printf '%s ' $listed)" >&2
+  exit 1
+fi
+while read -r name; do
   if ! (cd "$work" && ft skill get "$name") | grep -Fq "# $name"; then
     echo "smoke-quickstart: 'ft skill get $name' did not print the $name skill" >&2
     exit 1
   fi
-done
+done <<< "$readme_skills"
 
 echo "smoke-quickstart: ok - the README quickstart (init, create, list, next, skill) ran against a throwaway store"

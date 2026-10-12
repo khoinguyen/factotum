@@ -129,6 +129,8 @@ Ideas and bugs are non-executable captures over the same storage as tasks. They 
 and keeps the capture as history. Grooming precedes promotion: `promote`/`triage` require at least
 one `--acceptance` criterion and an agent `--actor`, so the linked task lands groomed and assigned
 (agent-ready) rather than in the human bucket; without them they error and ask for what is missing.
+The `--actor` names a registered actor, so create the agent first with
+`ft actor create <name> --kind agent`.
 
 ```sh
 ft idea create -p acme -t "A half-formed thought" -b "what if?"
@@ -183,19 +185,22 @@ file never carries a host path or opts into the unsandboxed backend.
 
 ## Teach your agent to use ft
 
-`ft` ships the usage skill it expects an agent to follow, embedded in the binary (source:
-[`internal/skills/content`](internal/skills/content)). Load it into a harness and the harness knows
-the ft loop — rank, start, review, done — and the conventions around it.
+`ft` ships the usage skills it expects an agent to follow, embedded in the binary (source:
+[`internal/skills/content`](internal/skills/content)). Load one into a harness and the harness knows
+its loop and the conventions around it. There are three: **ft** (how to use `ft`), **groom** (how to
+run a grooming session), and **software-factory** (how to run a project end to end).
 
+<!-- skills:begin -->
 ```sh
-ft skill list          # NAME/DESCRIPTION for the embedded skills
-ft skill get           # ft: the core loop, commands, and conventions (the default skill)
-ft skill get ft        # the same skill, named explicitly
-ft skill get groom     # the grooming session protocol
+ft skill list                   # NAME/DESCRIPTION for the embedded skills
+ft skill get                    # ft: the core loop, commands, and conventions (the default skill)
+ft skill get ft                 # the same skill, named explicitly
+ft skill get groom              # the grooming session protocol
+ft skill get software-factory   # run a project end to end as a software factory
 ```
+<!-- skills:end -->
 
-The two skills are **ft** (how to use `ft`) and **groom** (how to run a grooming session).
-`ft skill get` prints the skill's markdown to stdout; put it where your harness reads its
+`ft skill get` prints a skill's markdown to stdout; put it where your harness reads its
 instructions. OpenCode reads an `AGENTS.md` in the project, so append the skill there, or write it
 to a file and list that file under `instructions` in `opencode.json`:
 
@@ -250,18 +255,23 @@ build-web` rebuilds it into `web/dist`.
 | Area | Commands |
 | --- | --- |
 | Setup | `init [-u\|-p [name]]`, `doctor`, `feedback create`, `version`, `skill list\|get\|lint` |
+| Config | `config get` |
 | Project | `project create\|list\|get\|delete`, `project repo create\|list\|update\|delete` |
 | Actor | `actor create --kind human\|agent`, `actor list` |
 | Task | `task create`, `task list`, `task get`, `task update`, `task set field=value...`, `task search`, `task context`, `task apply`, `task edit`, `task delete` |
 | Lifecycle | `task start\|review\|done\|reopen\|block\|cancel`, `task claim`, `task assign`, `task snooze\|unsnooze`, `task wait` |
 | Graph | `task dep create\|delete`, `task next`, `graph render --format summary\|agent\|json\|tree\|html\|dot\|mermaid` |
 | Grooming | `task check`, `task decide`, `task promote`, `groom [item...]`, `groom list\|show\|review` |
+| QA | `qa ready\|record` |
 | Prompt | `prompt [-y] <words>` (break a free-form prompt into tasks via the configured agent CLI) |
 | Notes | `task note create [--system]` |
+| Messages | `msg send\|get\|read\|inbox\|install` |
+| Session | `session start\|retire` |
 | Capture | `idea create\|list\|get\|search\|promote`, `bug create\|list\|get\|search\|triage` |
 | Artifacts | `doc create --kind spec\|doc\|memory`, `doc list\|get\|search`, `memory create\|list\|get\|update\|delete\|search\|context\|reindex` |
 | Milestone | `milestone create\|list\|done` |
 | Run & serve | `run`, `groom`, `serve` |
+| Factory | `up start\|list\|status\|pause\|resume\|cancel\|retry\|answer\|approve\|promote\|release\|merge` |
 | Audit | `event list` |
 
 Global flags: `-c/--config`, `--user-config`, `--store`, `--store-opt key=value`, `--actor`,
@@ -333,7 +343,7 @@ Developed test-first; see [AGENTS.md](AGENTS.md) for the workflow and definition
 managed by `ft` — start from the graph:
 
 ```sh
-mise run ci                 # fmt-check, lint, test, cover, web-test, build, smoke-web, smoke-quickstart
+mise run ci                 # fmt-check, lint, test, test:scripts, cover, web-test, web-test-browser, build, smoke-web, smoke-quickstart
 ft task next                # the highest-ranked ready task
 ft graph render --project factotum --format agent
 ```

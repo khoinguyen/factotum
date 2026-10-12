@@ -341,6 +341,11 @@ func (s *TicketService) Set(ctx context.Context, id core.TicketID, set TicketSet
 	if set.Status != nil {
 		task.Status = *set.Status
 	}
+	if set.Status != nil && *set.Status == core.StatusDone && from != core.StatusDone && task.Kind.CapturedByHuman() {
+		if err := captureAcceptGate(ctx, s.backend, task); err != nil {
+			return nil, err
+		}
+	}
 	task.UpdatedAt = s.clock.Now()
 	if err := task.Validate(); err != nil {
 		return nil, err

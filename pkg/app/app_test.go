@@ -37,6 +37,7 @@ type harness struct {
 	tasks     *TicketService
 	actors    *ActorService
 	artifacts *ArtifactService
+	qa        *QAService
 }
 
 func newHarness(t *testing.T) *harness {
@@ -55,6 +56,7 @@ func newHarnessWithClock(t *testing.T, clock Clock) *harness {
 		tasks:     NewTicketService(backend, clock, ids),
 		actors:    NewActorService(backend, clock, ids),
 		artifacts: NewArtifactService(backend, clock, ids),
+		qa:        NewQAService(backend, clock, ids),
 	}
 }
 

@@ -7,7 +7,33 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/internal/groom"
+	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
+	"github.com/khoinguyen/factotum/pkg/isolation"
 )
+
+// seedGroomSessionWithCapture runs one grooming session whose window diff
+// produces both a task and a filed idea capture, using the fake backend. It
+// returns the session id, the produced task id, and the capture id.
+func seedGroomSessionWithCapture(t *testing.T, r *runner, projectID, cfgPath string) (sessionID, taskID, captureID string) {
+	t.Helper()
+	promptPath := t.TempDir() + "/prompt.md"
+	mustWrite(t, promptPath, "# Grooming session prompt\n\nYou are the team lead.\n")
+
+	backend := writingGroomBackend(t)
+	stage := backend.onExec
+	backend.onExec = func(cmd isolation.Command) {
+		stage(cmd)
+		captureID = firstField(t, r.run("idea", "create", "-p", projectID, "-t", "Maybe batch the cache"))
+		taskID = firstField(t, r.run("task", "create", "-p", projectID, "-t", "Extract cache module"))
+	}
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	sessionID = firstField(t, out)
+	return sessionID, taskID, captureID
+}
 
 // TestGroomReviewRecordsVerdictAndFindings pins the happy path: the review is
 // captured as a session artifact and a note on the origin idea, the verdict is
@@ -91,6 +117,67 @@ func TestGroomReviewNeedsReworkBlocksThenApproves(t *testing.T) {
 	produced = r.run("--config", cfgPath, "task", "get", producedID)
 	if !strings.Contains(produced, "(todo)") {
 		t.Fatalf("a later approve must unblock the produced task:\n%s", produced)
+	}
+	session, err = groom.ReadSession(dataDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(session.Blocked) != 0 {
+		t.Fatalf("manifest blocked = %v, want none after approve", session.Blocked)
+	}
+}
+
+// TestGroomReviewNeedsReworkSkipsCaptures pins the bug: the produced window
+// diff includes any idea/bug the session filed, and captures reject a blocked
+// status. A needs-rework verdict must block only the produced tasks and record
+// those ids; a later approve unblocks exactly them and never touches the
+// capture.
+func TestGroomReviewNeedsReworkSkipsCaptures(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("idea", "create", "-p", projectID, "-t", "Maybe cache")
+	sessionID, taskID, captureID := seedGroomSessionWithCapture(t, r, projectID, cfgPath)
+
+	dataDir := filepath.Dir(r.path)
+	session, err := groom.ReadSession(dataDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	produced := make(map[string]bool, len(session.Produced))
+	for _, id := range session.Produced {
+		produced[id] = true
+	}
+	if !produced[captureID] || !produced[taskID] {
+		t.Fatalf("produced = %v, want both the capture %s and the task %s", session.Produced, captureID, taskID)
+	}
+
+	out := r.run("--config", cfgPath, "groom", "review", sessionID, "--verdict", "needs-rework", "-b", "Wrong boundary.")
+	if !strings.Contains(out, "blocked: "+taskID) {
+		t.Fatalf("needs-rework did not report the blocked produced task:\n%s", out)
+	}
+	if strings.Contains(out, captureID) {
+		t.Fatalf("needs-rework claimed the capture %s in blocked:\n%s", captureID, out)
+	}
+	if got := r.run("--config", cfgPath, "task", "get", taskID); !strings.Contains(got, "(blocked)") {
+		t.Fatalf("produced task not blocked:\n%s", got)
+	}
+	if got := r.run("--config", cfgPath, "task", "get", captureID); !strings.Contains(got, "(todo)") {
+		t.Fatalf("capture must stay untouched, not blocked:\n%s", got)
+	}
+	session, err = groom.ReadSession(dataDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(session.Blocked) != 1 || session.Blocked[0] != taskID {
+		t.Fatalf("manifest blocked = %v, want [%s] only", session.Blocked, taskID)
+	}
+
+	r.run("--config", cfgPath, "groom", "review", sessionID, "--verdict", "approve", "-b", "Boundary fixed.")
+	if got := r.run("--config", cfgPath, "task", "get", taskID); !strings.Contains(got, "(todo)") {
+		t.Fatalf("approve did not unblock the produced task:\n%s", got)
+	}
+	if got := r.run("--config", cfgPath, "task", "get", captureID); !strings.Contains(got, "(todo)") {
+		t.Fatalf("approve disturbed the capture:\n%s", got)
 	}
 	session, err = groom.ReadSession(dataDir, sessionID)
 	if err != nil {

@@ -166,6 +166,17 @@ The chief owns the release decision; a subagent reports, it never merges on its 
 
 ## Operate and observe
 
+`ft up` is `ft serve` plus the factory controller: a capture stored through the dashboard starts a
+pipeline automatically and the daemon drives it to the first human gate (the dashboard, the
+token-gated capture write side, and the message transport are the same). Watch the pipelines and
+enqueue one by hand:
+
+```sh
+ft up -p <project>                                             # the factory daemon (capture auto-groom)
+ft up status -p <project>                                      # phases and open gates
+ft up start <capture> -p <project>                             # enqueue a pipeline by hand
+```
+
 ```sh
 ft serve
 ft doc search "<query>"

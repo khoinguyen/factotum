@@ -70,6 +70,20 @@ type Config struct {
 	// that gates idea capture; the read side is always open. It is machine-scoped
 	// (the user file) so a committed project file never carries the secret.
 	Serve Serve
+	// Up configures the `ft up` factory daemon: whether a capture auto-starts a
+	// pipeline (the opt-out), whether groom/agents run headless, and the
+	// in-flight cap. auto_groom and unattended may be committed project intent;
+	// the rest are machine-scoped.
+	Up Up
+}
+
+// Up configures the `ft up` daemon (docs/up/design.md §11). AutoGroom defaults
+// on under `ft up`: a stored capture starts a pipeline unless the operator opts
+// out. Unattended defaults on: groom and agent stages run headless, deferring
+// product questions.
+type Up struct {
+	AutoGroom  bool
+	Unattended bool
 }
 
 // Serve configures `ft serve` and the messaging hub. An empty Token disables
@@ -169,7 +183,16 @@ type userFile struct {
 	Judge          judgeFile               `toml:"judge"`
 	Run            runFile                 `toml:"run"`
 	Serve          serveFile               `toml:"serve"`
+	Up             upFile                  `toml:"up"`
 	Projects       map[string]projectEntry `toml:"projects"`
+}
+
+// upFile is the [up] table. auto_groom and unattended use pointers so an absent
+// key is distinct from an explicit false, since both default on. Both may be set
+// in either scope (project intent over machine default).
+type upFile struct {
+	AutoGroom  *bool `toml:"auto_groom"`
+	Unattended *bool `toml:"unattended"`
 }
 
 // serveFile is the machine-scoped [serve] table. It is deliberately absent from
@@ -224,6 +247,7 @@ type projectFile struct {
 	Store  fileStore      `toml:"store"`
 	Judge  judgeFile      `toml:"judge"`
 	Run    projectRunFile `toml:"run"`
+	Up     upFile         `toml:"up"`
 }
 
 // Default returns the built-in configuration. TypeSafe is the default judge provider.
@@ -236,6 +260,7 @@ func Default() Config {
 		Judge: Judge{Provider: "typesafe", Options: map[string]string{}},
 		Embed: Embed{Options: map[string]string{}},
 		Agent: Agent{Provider: "command", Options: map[string]string{}},
+		Up:    Up{AutoGroom: true, Unattended: true},
 	}
 }
 
@@ -300,6 +325,8 @@ func Load(in Input) (Config, error) {
 	applyRunEnv(&cfg.Run, getenv)
 	cfg.Serve = Serve{Token: user.Serve.Token, URL: user.Serve.URL}
 	applyServeEnv(&cfg.Serve, getenv)
+	cfg.Up = resolveUp(project.Up, user.Up)
+	applyUpEnv(&cfg.Up, getenv)
 	cfg.DefaultActor = firstNonEmpty(project.DefaultActor, entry.DefaultActor, user.DefaultActor)
 	cfg.NoHints = boolAt(user.NoHints, false)
 	cfg.NoHints = boolAt(entry.NoHints, cfg.NoHints)
@@ -367,6 +394,36 @@ func ProjectRoot(configPath string) string {
 		return root
 	}
 	return abs
+}
+
+// resolveUp merges the [up] scopes over the built-in defaults (both on).
+// Project values beat user values.
+func resolveUp(project, user upFile) Up {
+	up := Up{AutoGroom: true, Unattended: true}
+	if user.AutoGroom != nil {
+		up.AutoGroom = *user.AutoGroom
+	}
+	if user.Unattended != nil {
+		up.Unattended = *user.Unattended
+	}
+	if project.AutoGroom != nil {
+		up.AutoGroom = *project.AutoGroom
+	}
+	if project.Unattended != nil {
+		up.Unattended = *project.Unattended
+	}
+	return up
+}
+
+// applyUpEnv overlays the FACTOTUM_UP_* environment on the [up] table, so the
+// daemon can be configured per-run without editing a file.
+func applyUpEnv(up *Up, getenv func(string) string) {
+	if value := getenv("FACTOTUM_UP_AUTO_GROOM"); value != "" {
+		up.AutoGroom = truthy(value)
+	}
+	if value := getenv("FACTOTUM_UP_UNATTENDED"); value != "" {
+		up.Unattended = truthy(value)
+	}
 }
 
 func (c Config) Validate() error {

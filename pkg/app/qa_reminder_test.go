@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
@@ -59,33 +60,63 @@ func TestReminderFiresWhenLastTaskResolvesCaptureWithoutQA(t *testing.T) {
 	}
 }
 
-func TestNoReminderWhenCaptureAlreadyPassedQA(t *testing.T) {
-	h := newHarness(t)
+func TestNoReminderForCaptureThatAlreadyPassedQA(t *testing.T) {
+	h := newHarnessWithClock(t, &stepClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+	clock := h.clock.(*stepClock)
 	project := h.newProject(t)
 	agent := newAgent(t, h, "claude")
 	idea := newIdea(t, h, project, "a feature")
-	first := promoteTask(t, h, idea, agent)
-	second := promoteTask(t, h, idea, agent)
+	task := promoteTask(t, h, idea, agent)
+
+	clock.t = clock.t.Add(time.Minute)
+	if _, err := h.tasks.SetStatus(chiefCtx(), task.ID, core.StatusDone); err != nil {
+		t.Fatalf("SetStatus(done) error = %v", err)
+	}
+	// A pass recorded after the work resolved covers the capture.
+	clock.t = clock.t.Add(time.Minute)
+	if _, err := h.qa.Record(chiefCtx(), idea.ID, QAPass, "green"); err != nil {
+		t.Fatalf("Record(pass) error = %v", err)
+	}
+	msg, err := h.qa.RemindResolvedCapture(chiefCtx(), task)
+	if err != nil {
+		t.Fatalf("RemindResolvedCapture error = %v", err)
+	}
+	if msg != nil {
+		t.Fatalf("reminder for a capture with a passing QA = %v, want none", msg)
+	}
+}
+
+// TestReminderRepeatsWhenAReopenedTaskInvalidatesThePass pins the production
+// behavior a fixed clock hides: redoing a task after a pass makes the pass stale
+// (its verdict predates the task's new update), so the capture needs re-QA and
+// the reminder fires again.
+func TestReminderRepeatsWhenAReopenedTaskInvalidatesThePass(t *testing.T) {
+	h := newHarnessWithClock(t, &stepClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+	clock := h.clock.(*stepClock)
+	project := h.newProject(t)
+	agent := newAgent(t, h, "claude")
+	idea := newIdea(t, h, project, "a feature")
+	task := promoteTask(t, h, idea, agent)
 	ctx := chiefCtx()
 
-	if _, err := h.tasks.SetStatus(ctx, first.ID, core.StatusDone); err != nil {
-		t.Fatalf("SetStatus(first) error = %v", err)
+	clock.t = clock.t.Add(time.Minute)
+	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusDone); err != nil {
+		t.Fatalf("SetStatus(done) error = %v", err)
 	}
-	if _, err := h.tasks.SetStatus(ctx, second.ID, core.StatusDone); err != nil {
-		t.Fatalf("SetStatus(second) error = %v", err)
-	}
+	clock.t = clock.t.Add(time.Minute)
 	if _, err := h.qa.Record(ctx, idea.ID, QAPass, "green"); err != nil {
 		t.Fatalf("Record(pass) error = %v", err)
 	}
-	// The capture completes again, but a passing QA already covers it.
-	if _, err := h.tasks.SetStatus(ctx, first.ID, core.StatusTodo); err != nil {
+	clock.t = clock.t.Add(time.Minute)
+	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusTodo); err != nil {
 		t.Fatalf("reopen error = %v", err)
 	}
-	if _, err := h.tasks.SetStatus(ctx, first.ID, core.StatusDone); err != nil {
+	clock.t = clock.t.Add(time.Minute)
+	if _, err := h.tasks.SetStatus(ctx, task.ID, core.StatusDone); err != nil {
 		t.Fatalf("re-done error = %v", err)
 	}
-	if msgs := remindersTo(t, h, project, "chief"); len(msgs) != 1 {
-		t.Fatalf("reminders = %d, want 1 (only the first completion)", len(msgs))
+	if msgs := remindersTo(t, h, project, "chief"); len(msgs) != 2 {
+		t.Fatalf("reminders = %d, want 2 (the redone work re-gates QA)", len(msgs))
 	}
 }
 

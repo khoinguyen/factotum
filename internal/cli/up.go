@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/internal/groom"
 	"github.com/khoinguyen/factotum/internal/serve"
 	"github.com/khoinguyen/factotum/internal/up"
@@ -42,11 +44,15 @@ func newUpCommand(deps *Deps) *cobra.Command {
 			"capture into a feature in flight. A capture stored through /api/capture starts a\n" +
 			"pipeline automatically (config `up.auto_groom`, default on; disable with\n" +
 			"--no-auto-groom). The controller runs each phase as a stage, stops at every human\n" +
-			"gate, and reflects each transition into the store. Groom runs headless by default\n" +
-			"(config `up.unattended`, default on), deferring product questions to the advisory\n" +
-			"groom_questions gate; on a terminal with `up.unattended=false` it attaches you to\n" +
-			"the live groom session so you can answer the grill. It is project-scoped: one\n" +
-			"project per process. `ft serve` is unchanged; `ft up` is additive.",
+			"gate, and reflects each transition into the store. After grooming it runs the\n" +
+			"architecture review (a needs-rework verdict holds the pipeline at the design_rework\n" +
+			"gate), then drives the produced tasks through build (a task awaiting merge holds at\n" +
+			"the merge_approval gate) and QA; rollout is a no-op until its mechanics land. Groom\n" +
+			"runs headless by default (config `up.unattended`, default on), deferring product\n" +
+			"questions to the advisory groom_questions gate; on a terminal with\n" +
+			"`up.unattended=false` it attaches you to the live groom session so you can answer\n" +
+			"the grill. It is project-scoped: one project per process. `ft serve` is unchanged;\n" +
+			"`ft up` is additive.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return deps.runUp(cmd, opts)
 		},
@@ -91,11 +97,12 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 	// than waiting on a PO who is not there (design §3/§8/§11).
 	interactive := d.runInteractive(cmd, unattended)
 
-	// A groom session needs a harness and sandbox. With them configured, resolve
-	// the selection once so a bad name fails the daemon immediately. Without
-	// them the daemon still serves and captures; the first groom parks the
-	// pipeline failed with a clear message instead of prompting on a goroutine.
-	session, err := d.upGroomSessionFor(cmd, target, interactive)
+	// The agent stages (groom, review, QA) need a harness and sandbox. With them
+	// configured, resolve the selection once so a bad name fails the daemon
+	// immediately. Without them the daemon still serves and captures; the first
+	// agent stage parks the pipeline failed with a clear message instead of
+	// prompting on a goroutine.
+	sel, err := d.upRunSelection(cmd)
 	if err != nil {
 		return err
 	}
@@ -104,9 +111,7 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 		Clock:   d.Clock,
 		IDs:     d.IDs,
 		Project: projectID,
-		Stages: map[core.PipelineState]up.StageRunner{
-			core.PipelineGrooming: &up.GroomRunner{DataDir: target.dataDir, IDs: d.IDs, Session: session},
-		},
+		Stages:  d.upStages(cmd, target, sel, interactive),
 		Logf: func(format string, args ...any) {
 			_, _ = fmt.Fprintf(d.Err, "ft up: "+format+"\n", args...)
 		},
@@ -166,22 +171,30 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 	return nil
 }
 
-// upGroomSessionFor resolves the groom stage's session function. It requires a
-// configured [run] harness and sandbox, because a groom session is a real agent
-// run; without them it returns a session function that fails the stage with a
-// clear message, so the daemon can still serve and capture. interactive attaches
-// the PO to the session; it is false in unattended mode or off a terminal.
-func (d *Deps) upGroomSessionFor(cmd *cobra.Command, target groomTarget, interactive bool) (up.SessionFunc, error) {
+// upRunSelection resolves the run selection the daemon's agent stages share, or
+// nil when no [run] harness and sandbox are configured. A nil selection is not
+// fatal: the daemon still serves and captures, and each agent stage parks its
+// pipeline failed with a clear message rather than prompting on a goroutine.
+func (d *Deps) upRunSelection(cmd *cobra.Command) (*runSelection, error) {
 	if d.Config.Run.Sandbox == "" || d.Config.Run.Harness == "" {
-		return func(context.Context, *core.Pipeline, string) (up.SessionResult, error) {
-			return up.SessionResult{}, errors.New("up: run.sandbox and run.harness are required to groom a capture; set them in the [run] config table")
-		}, nil
+		return nil, nil
 	}
-	sel, err := d.prepareRun(cmd, runOptions{})
-	if err != nil {
-		return nil, err
+	return d.prepareRun(cmd, runOptions{})
+}
+
+// upStages builds the daemon's stage runners: the agent stages (groom, review,
+// QA) share one resolved run selection, the build stage drives the produced
+// tasks through the run loop, and rollout is a no-op until its mechanics land
+// (design §8/§9).
+func (d *Deps) upStages(cmd *cobra.Command, target groomTarget, sel *runSelection, interactive bool) map[core.PipelineState]up.StageRunner {
+	projectRoot := config.ProjectRoot(d.ProjectConfigPath)
+	return map[core.PipelineState]up.StageRunner{
+		core.PipelineGrooming: &up.GroomRunner{DataDir: target.dataDir, IDs: d.IDs, Session: d.upGroomSession(cmd, target, sel, interactive)},
+		core.PipelineReview:   &up.ReviewRunner{DataDir: target.dataDir, Review: d.upReviewFunc(target, projectRoot, sel, interactive)},
+		core.PipelineBuilding: &up.BuildRunner{Backend: target.backend, Build: d.upBuildFunc(target, sel)},
+		core.PipelineQA:       &up.QARunner{Backend: target.backend, QA: d.upQAFunc(target, projectRoot, sel, interactive)},
+		core.PipelineRollout:  up.RolloutRunner{},
 	}
-	return d.upGroomSession(cmd, target, sel, interactive), nil
 }
 
 // upGroomSession builds the groom stage's session function: it scopes a groom
@@ -191,6 +204,9 @@ func (d *Deps) upGroomSessionFor(cmd *cobra.Command, target groomTarget, interac
 // PO it runs unattended, deferring every product question.
 func (d *Deps) upGroomSession(cmd *cobra.Command, target groomTarget, sel *runSelection, interactive bool) up.SessionFunc {
 	return func(ctx context.Context, p *core.Pipeline, sessionID string) (up.SessionResult, error) {
+		if sel == nil {
+			return up.SessionResult{}, errUpNoRunConfig
+		}
 		project, err := target.projects.Get(ctx, p.ProjectID)
 		if err != nil {
 			return up.SessionResult{}, err
@@ -242,6 +258,152 @@ func producedTicketIDs(ids []string) []core.TicketID {
 		out = append(out, core.TicketID(id))
 	}
 	return out
+}
+
+// errUpNoRunConfig is the failure an agent stage reports when the daemon has no
+// [run] harness and sandbox, so the operator knows exactly what to configure.
+var errUpNoRunConfig = errors.New("up: run.sandbox and run.harness are required to run an agent stage; set them in the [run] config table")
+
+// upAgentRunProject runs one project-scoped agent prompt through the run
+// service, sharing the groom path's store env and workspace resolution so the
+// dispatched agent reads and writes the same store. It is the shared dispatch
+// for the review and QA stages; the build stage drives the run loop instead.
+func (d *Deps) upAgentRunProject(ctx context.Context, target groomTarget, projectID core.ProjectID, sel *runSelection, prompt string, interactive bool) error {
+	if sel == nil {
+		return errUpNoRunConfig
+	}
+	_, runErr := app.NewRunService(target.backend, target.tasks, d.Clock, d.IDs).RunProject(ctx, app.ProjectRunInput{
+		ProjectID:        projectID,
+		Backend:          sel.backend,
+		Harness:          sel.harness,
+		WorkspaceRoot:    sel.workspace,
+		RepoBase:         sel.repoBase,
+		WorkspaceRefresh: sel.refresh,
+		Model:            sel.model,
+		Args:             sel.args,
+		Prompt:           prompt,
+		StoreEnv:         d.storeEnvFor(target.store),
+		Interactive:      interactive,
+		OnResolve:        d.warnLocalPlan,
+	})
+	return runErr
+}
+
+// upSkillPrompt reads a role skill's instructions from the project's skill tree
+// (.agents/skills/<name>/SKILL.md), which the daemon dispatches as its agent
+// prompt. It errors clearly when the skill is absent, so a missing reviewer is
+// never dispatched as a no-op.
+func upSkillPrompt(projectRoot, name string) (string, error) {
+	if projectRoot == "" {
+		return "", fmt.Errorf("up: cannot locate the project root to read the %s skill; run from the project or pass -c <project config>", name)
+	}
+	path := filepath.Join(projectRoot, ".agents", "skills", name, "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s skill %s: %w", name, path, err)
+	}
+	return string(data), nil
+}
+
+// upReviewFunc builds the review stage's dispatch: it runs the
+// architecture-reviewer over the session's documents through the agent harness;
+// the reviewer records its verdict with `ft groom review`, which the runner then
+// reads back and maps to the gate. The runner is idempotent, so a restart does
+// not re-review.
+func (d *Deps) upReviewFunc(target groomTarget, projectRoot string, sel *runSelection, interactive bool) up.ReviewFunc {
+	return func(ctx context.Context, p *core.Pipeline, sessionID string) (up.ReviewOutcome, error) {
+		skill, err := upSkillPrompt(projectRoot, "architecture-reviewer")
+		if err != nil {
+			return up.ReviewOutcome{}, err
+		}
+		prompt := skill + "\n\n" + reviewKickoff(target.dataDir, sessionID)
+		if err := d.upAgentRunProject(ctx, target, p.ProjectID, sel, prompt, interactive); err != nil {
+			return up.ReviewOutcome{}, err
+		}
+		record, err := groom.ReadSession(target.dataDir, sessionID)
+		if err != nil {
+			return up.ReviewOutcome{}, err
+		}
+		return up.ReviewOutcome{
+			Verdict: groom.ReviewVerdict(record.ReviewVerdict),
+			Detail:  "architecture review of session " + sessionID,
+		}, nil
+	}
+}
+
+// reviewKickoff names the session, its documents, and the verdict-recording
+// command, so the dispatched reviewer knows what to read and how to record its
+// one verdict (which the runner reads from the session manifest).
+func reviewKickoff(dataDir, sessionID string) string {
+	return fmt.Sprintf("## Review kickoff\n\nSession: %s\n\nRead the feature documents for this session:\n- %s\n- %s\n- %s\n- %s\n\nRecord exactly one tech-design verdict (approve|approve-with-changes|needs-rework) once you have reviewed them:\n\nft groom review %s --verdict <verdict> -f <review-file>\n",
+		sessionID,
+		groom.SpecPath(dataDir, sessionID),
+		groom.PlanPath(dataDir, sessionID),
+		groom.TechDesignPath(dataDir, sessionID),
+		groom.ReportPath(dataDir, sessionID),
+		sessionID,
+	)
+}
+
+// upQAFunc builds the QA stage's dispatch: it runs the single-task-qa agent over
+// the pipeline's capture; the agent records its verdict with `ft qa record`,
+// which the runner then reads back.
+func (d *Deps) upQAFunc(target groomTarget, projectRoot string, sel *runSelection, interactive bool) up.QAFunc {
+	return func(ctx context.Context, p *core.Pipeline) (up.QAOutcome, error) {
+		skill, err := upSkillPrompt(projectRoot, "single-task-qa")
+		if err != nil {
+			return up.QAOutcome{}, err
+		}
+		prompt := skill + "\n\n" + qaKickoff(p.CaptureID)
+		if err := d.upAgentRunProject(ctx, target, p.ProjectID, sel, prompt, interactive); err != nil {
+			return up.QAOutcome{}, err
+		}
+		return up.QAOutcome{Detail: fmt.Sprintf("feature %s QA dispatched", p.CaptureID)}, nil
+	}
+}
+
+// qaKickoff names the capture and the verdict-recording command, so the
+// dispatched QA agent knows what to verify and how to record its verdict.
+func qaKickoff(capture core.TicketID) string {
+	return fmt.Sprintf("## QA kickoff\n\nVerify the feature captured as %s end to end, then record one verdict:\n\nft qa record %s --verdict pass|fail -f <findings-file>\n", capture, capture)
+}
+
+// upBuildFunc builds the build stage's dispatch: it drives every task the
+// capture produced to done through the run loop, which sets each built task
+// ready_for_review for a human to merge. The BuildRunner then reads the durable
+// task state back and preserves the merge gate.
+func (d *Deps) upBuildFunc(target groomTarget, sel *runSelection) up.BuildFunc {
+	return func(ctx context.Context, p *core.Pipeline) (up.BuildOutcome, error) {
+		if sel == nil {
+			return up.BuildOutcome{}, errUpNoRunConfig
+		}
+		ranker, err := d.Rankers.MustLookup("composite")
+		if err != nil {
+			return up.BuildOutcome{}, err
+		}
+		svc := app.NewRunService(target.backend, target.tasks, d.Clock, d.IDs)
+		runner := func(ctx context.Context, taskID core.TicketID) (*app.RunOutcome, error) {
+			return svc.Run(ctx, app.RunInput{
+				TicketID:         taskID,
+				Backend:          sel.backend,
+				Harness:          sel.harness,
+				WorkspaceRoot:    sel.workspace,
+				RepoBase:         sel.repoBase,
+				WorkspaceRefresh: sel.refresh,
+				Model:            sel.model,
+				Args:             sel.args,
+				MsgURL:           d.Config.Serve.URL,
+				ServeToken:       d.Config.Serve.Token,
+				StoreEnv:         d.storeEnvFor(target.store),
+				OnResolve:        d.warnLocalPlan,
+			})
+		}
+		outcome, runErr := app.NewRunLoopService(target.backend, ranker, d.Clock).Run(ctx, app.LoopInput{GoalID: p.CaptureID, Runner: runner})
+		if outcome != nil {
+			return up.BuildOutcome{Detail: fmt.Sprintf("build loop stopped: %s", outcome.Stop)}, runErr
+		}
+		return up.BuildOutcome{}, runErr
+	}
 }
 
 // upPipelineDoc is the lossless structured shape of a pipeline row.

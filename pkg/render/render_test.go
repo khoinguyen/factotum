@@ -315,19 +315,28 @@ func scaleView(tb testing.TB, n int) View {
 // multiple of the @10k budget so an order-of-magnitude regression (such as the
 // superlinear graph traversal this test was added for, t-lvlqecjqgm) fails while
 // ordinary CI noise does not.
+//
+// The timed section measures process CPU time, not wall time. `mise run ci` fans
+// out `test` and `cover` in parallel, and on a loaded machine that contention can
+// inflate wall-clock render past the ceiling while the work itself is unchanged
+// (t-vofx7ijled). CPU time is the invariant under load and still catches a
+// constant-factor regression.
 func TestAgentRenderBudgetSmoke(t *testing.T) {
 	const (
 		heavyBudget   = 250 * time.Millisecond
 		smokeHeadroom = 5
 	)
 	view := scaleView(t, 10000)
-	start := time.Now()
-	if err := (Agent{}).Render(context.Background(), io.Discard, view); err != nil {
-		t.Fatalf("Render() error = %v", err)
+	var renderErr error
+	elapsed := measureCPU(func() {
+		renderErr = (Agent{}).Render(context.Background(), io.Discard, view)
+	})
+	if renderErr != nil {
+		t.Fatalf("Render() error = %v", renderErr)
 	}
 	ceiling := smokeHeadroom * heavyBudget
-	if elapsed := time.Since(start); elapsed > ceiling {
-		t.Fatalf("agent render at 10000 took %v, over the %v ceiling (budget %v)", elapsed, ceiling, heavyBudget)
+	if elapsed > ceiling {
+		t.Fatalf("agent render at 10000 used %v of CPU, over the %v ceiling (budget %v)", elapsed, ceiling, heavyBudget)
 	}
 }
 

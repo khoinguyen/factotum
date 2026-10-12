@@ -175,9 +175,10 @@ The chief owns the release decision; a subagent reports, it never merges on its 
 ## Operate and observe
 
 `ft up` is `ft serve` plus the factory controller: a capture stored through the dashboard starts a
-pipeline automatically and the daemon drives it to the first human gate (the dashboard, the
-token-gated capture write side, and the message transport are the same). Watch the pipelines and
-enqueue one by hand:
+pipeline automatically and the daemon drives it through its stages — groom, architecture review,
+build, QA, rollout — stopping at every human gate (a needs-rework design, a merge). The review and QA
+stages dispatch the `architecture-reviewer` and `single-task-qa` skills; build runs the task loop.
+Watch the pipelines and enqueue one by hand:
 
 ```sh
 ft up -p <project>                                             # the factory daemon (capture auto-groom)

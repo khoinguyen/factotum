@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -300,6 +301,88 @@ func TestSSEPushesUpdateOnStatusChange(t *testing.T) {
 		t.Fatalf("SetStatus() error = %v", err)
 	}
 	expectEvent(t, events, "update", 2*time.Second)
+}
+
+// TestSSEFixesBaselineBeforeHello guards the connect-time ordering behind the
+// SSE flake. The broker baseline must be established before hello reaches the
+// client: if hello were written first, a client that mutates as soon as it sees
+// hello could commit before the handler subscribed, folding that mutation into
+// the baseline so it is never broadcast. hello must not appear on the wire while
+// the baseline read is still in flight.
+func TestSSEFixesBaselineBeforeHello(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	f.addTask(t, project.ID, "Fix the widget")
+	ranker, err := rank.Default()
+	if err != nil {
+		t.Fatalf("rank.Default() error = %v", err)
+	}
+	server, err := New(Options{
+		Backend: f.backend, Clock: f.clock, Project: project.ID,
+		Assets: testAssets(), Ranker: ranker,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	latest := func(context.Context) (string, error) {
+		once.Do(func() { close(entered); <-release })
+		return "", nil
+	}
+	server.broker = newEventBroker(10*time.Millisecond, latest)
+
+	w := &syncRecorder{}
+	req := httptest.NewRequest(http.MethodGet, "/events", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.handleEvents(w, req.WithContext(ctx))
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("broker baseline was never read while serving the stream")
+	}
+	if got := w.String(); strings.Contains(got, "hello") {
+		t.Fatalf("hello sent before the broker baseline was fixed: %q", got)
+	}
+
+	cancel()
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleEvents did not return after the request was cancelled")
+	}
+}
+
+// syncRecorder is an http.ResponseWriter that serializes reads of the buffered
+// output with the handler goroutine's writes, so a test can inspect the stream
+// under -race without data races.
+type syncRecorder struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (r *syncRecorder) Header() http.Header { return http.Header{} }
+func (r *syncRecorder) WriteHeader(int)     {}
+func (r *syncRecorder) Flush()              {}
+func (r *syncRecorder) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.buf.Write(p)
+}
+func (r *syncRecorder) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.buf.String()
 }
 
 // TestSSEFansOutToManyClients proves the shared broker delivers one mutation to

@@ -32,6 +32,9 @@ func newEventBroker(poll time.Duration, latest func(context.Context) (string, er
 // subscribe registers a client and returns the channel that receives each new
 // event id, plus a cancel func that unregisters it. The first subscriber starts
 // the poll goroutine; the last cancel stops it and returns once it has exited.
+// The baseline is captured before subscribe returns (not lazily in the poll
+// goroutine), so a mutation committed once a client is subscribed is always
+// broadcast rather than folded into the baseline.
 func (b *eventBroker) subscribe() (<-chan string, func()) {
 	ch := make(chan string, 1)
 
@@ -39,12 +42,13 @@ func (b *eventBroker) subscribe() (<-chan string, func()) {
 	b.subs[ch] = struct{}{}
 	if b.cancel == nil {
 		ctx, cancel := context.WithCancel(context.Background())
+		last, _ := b.latest(ctx)
 		done := make(chan struct{})
 		b.cancel = cancel
 		b.done = done
 		go func() {
 			defer close(done)
-			b.run(ctx)
+			b.run(ctx, last)
 		}()
 	}
 	b.mu.Unlock()
@@ -71,13 +75,12 @@ func (b *eventBroker) unsubscribe(ch chan string) {
 	<-done
 }
 
-// run polls the event log and broadcasts each changed id. last lives only here,
-// so subscribers never race on it.
-func (b *eventBroker) run(ctx context.Context) {
+// run polls the event log and broadcasts each changed id. last is seeded by
+// subscribe and owned solely by this goroutine, so subscribers never race on it.
+func (b *eventBroker) run(ctx context.Context, last string) {
 	ticker := time.NewTicker(b.poll)
 	defer ticker.Stop()
 
-	last, _ := b.latest(ctx)
 	for {
 		select {
 		case <-ctx.Done():

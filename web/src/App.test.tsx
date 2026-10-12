@@ -362,7 +362,7 @@ test("the dashboard capture link opens the capture page", async () => {
     "/api/capture": { enabled: true, project: "acme" },
   })
   renderAt("/")
-  const link = await screen.findByText("Capture an idea →")
+  const link = await screen.findByText("Capture an idea or bug →")
   fireEvent.click(link)
   expect(await screen.findByLabelText(/what is it/i)).toBeTruthy()
   expect(window.location.pathname).toBe("/capture")
@@ -386,7 +386,7 @@ for (const { path, route, doc } of drillDownCapture) {
   test(`offers capture from the drill-down at ${path}`, async () => {
     stubFetch({ [route]: doc, "/api/capture": { enabled: true, project: "acme" } })
     renderAt(path)
-    const link = await screen.findByText("Capture an idea →")
+    const link = await screen.findByText("Capture an idea or bug →")
     fireEvent.click(link)
     expect(await screen.findByLabelText(/what is it/i)).toBeTruthy()
     expect(window.location.pathname).toBe("/capture")

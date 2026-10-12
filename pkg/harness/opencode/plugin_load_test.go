@@ -30,7 +30,20 @@ func TestPluginLoadsOnInstalledOpenCode(t *testing.T) {
 		t.Skipf("opencode is not on PATH: %v", err)
 	}
 
-	dir := t.TempDir()
+	// Do not use t.TempDir: OpenCode bootstraps a project runtime by forking a
+	// detached `@opencode-ai/plugin` install into .opencode/ (thousands of
+	// files), which can outlive `opencode run` and race the framework's
+	// RemoveAll cleanup with "directory not empty". A self-managed dir with
+	// best-effort cleanup keeps that incidental write from failing the guard.
+	dir, err := os.MkdirTemp("", "factotum-opencode-plugin-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := removeAllEventually(dir); err != nil {
+			t.Logf("scratch dir %s not fully removed (OpenCode's detached install may still be writing): %v", dir, err)
+		}
+	})
 	pluginDir := filepath.Join(dir, ".opencode", "plugin")
 	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -107,6 +120,55 @@ func TestPluginLoadFailedDetector(t *testing.T) {
 	other := []byte(`timestamp=... level=ERROR message="failed to load plugin" path=file:///home/u/.config/opencode/plugins/cmux-feed.js error="Plugin ... must default export an object with server()"`)
 	if pluginLoadFailed(other) {
 		t.Fatal("pluginLoadFailed() = true for an unrelated global plugin failure")
+	}
+}
+
+// removeAllEventually removes dir, retrying while it is transiently
+// non-removable. OpenCode forks a detached `@opencode-ai/plugin` install into
+// .opencode/ (its config loader calls install(...).forkDetach), so it can still
+// be writing files when `opencode run` returns; a single RemoveAll then fails
+// with "directory not empty". Retrying waits the detached writer out. A caller
+// that cannot tolerate leftovers should treat a returned error as best-effort.
+func removeAllEventually(dir string) error {
+	var err error
+	for attempt := 0; attempt < 50; attempt++ {
+		if err = os.RemoveAll(dir); err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return err
+}
+
+// TestRemoveAllEventuallyRetriesPastTransientFailure pins the cleanup helper's
+// retry contract: a scratch directory that cannot be removed on the first
+// attempt is still removed once the transient condition clears. This is the
+// cleanup half of the OpenCode load guard's flake — OpenCode forks a detached
+// `@opencode-ai/plugin` install into .opencode/ that keeps writing after
+// `opencode run` exits, so a single RemoveAll intermittently fails with
+// "directory not empty".
+func TestRemoveAllEventuallyRetriesPastTransientFailure(t *testing.T) {
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "keep"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		_ = os.Chmod(locked, 0o755)
+	}()
+
+	if err := removeAllEventually(dir); err != nil {
+		t.Fatalf("removeAllEventually() = %v; want nil after the transient failure cleared", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("dir still present after removeAllEventually: stat err = %v", err)
 	}
 }
 

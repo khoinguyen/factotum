@@ -47,7 +47,7 @@ export function PageShell({
               href="/capture"
               className="text-sm text-muted-foreground hover:underline"
             >
-              Capture an idea →
+              Capture an idea or bug →
             </AppLink>
           ) : null}
           {state ? <LiveBadge state={state} /> : null}

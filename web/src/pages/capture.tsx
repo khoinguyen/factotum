@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react"
 
-import { AppLink } from "@/components/app-link"
 import { PageShell } from "@/components/page-shell"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -148,13 +147,6 @@ export function Capture() {
           </p>
         </form>
       )}
-
-      <AppLink
-        href="/"
-        className="text-sm text-muted-foreground hover:underline"
-      >
-        ← Back to dashboard
-      </AppLink>
     </PageShell>
   )
 }

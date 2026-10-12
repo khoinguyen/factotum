@@ -65,6 +65,13 @@ test("renders the capture form when capture is enabled", async () => {
   expect(screen.getByRole("button", { name: /^capture$/i })).toBeTruthy()
 })
 
+test("shows a single back link to the dashboard", async () => {
+  stubCapture({ enabled: true, project: "acme" })
+  renderAt("/capture")
+  await screen.findByLabelText(/what is it/i)
+  expect(screen.getAllByRole("link", { name: /dashboard/i })).toHaveLength(1)
+})
+
 test("shows the not-configured message when capture is disabled", async () => {
   stubCapture({ enabled: false })
   renderAt("/capture")

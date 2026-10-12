@@ -40,6 +40,7 @@ const columns: KanbanColumn[] = [
         idea_id: "t-d2tmr544nk",
         idea_title: "Grouped idea with a fairly long title of its own",
         idea_state: "active",
+        idea_kind: "idea",
         tasks: [grouped],
       },
     ],
@@ -60,6 +61,12 @@ function lineCount(el: Element): number {
   return range.getClientRects().length
 }
 
+function chipLabels(el: Element): string[] {
+  return Array.from(el.querySelectorAll('[data-slot="badge"]')).map(
+    (node) => node.textContent ?? "",
+  )
+}
+
 const VIEWPORTS = [390, 640, 1024, 1280]
 
 for (const width of VIEWPORTS) {
@@ -78,6 +85,10 @@ for (const width of VIEWPORTS) {
     // Task id (and the group header's idea id) stay on one line.
     expect(lineCount(id)).toBe(1)
     expect(lineCount(headerId)).toBe(1)
+
+    // The group parent row names its origin capture's kind, so the kind chip is
+    // laid out for real (not only in jsdom). It sits alongside the state chip.
+    expect(chipLabels(headerRow)).toContain("Idea")
 
     // Grouped children are nested: indented and ruled, and to the right of the
     // group header above them.

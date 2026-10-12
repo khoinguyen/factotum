@@ -3,6 +3,7 @@ import { ArtifactDetail } from "@/pages/artifact-detail"
 import { Capture } from "@/pages/capture"
 import { Dashboard } from "@/pages/dashboard"
 import { IdeaDetail } from "@/pages/idea-detail"
+import { Sessions } from "@/pages/sessions"
 import { TaskDetail } from "@/pages/task-detail"
 import { resolveRoute, usePath } from "@/lib/router"
 
@@ -13,6 +14,8 @@ export default function App() {
   switch (route.kind) {
     case "capture":
       return <Capture />
+    case "sessions":
+      return <Sessions />
     case "idea":
       return <IdeaDetail id={route.id} />
     case "task":

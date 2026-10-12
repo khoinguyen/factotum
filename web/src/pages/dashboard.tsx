@@ -1,3 +1,4 @@
+import { AppLink } from "@/components/app-link"
 import { IdeaBoard } from "@/components/idea-board"
 import { Kanban } from "@/components/kanban"
 import { PageShell } from "@/components/page-shell"
@@ -33,6 +34,10 @@ export function Dashboard() {
       <p className="text-xs text-muted-foreground">
         updated {snapshot.snapshot}
       </p>
+
+      <AppLink href="/sessions" className="text-sm text-muted-foreground hover:underline">
+        Chief sessions →
+      </AppLink>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
         <Stat label="Captures" value={snapshot.stats.ideas} />

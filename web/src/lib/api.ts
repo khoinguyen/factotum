@@ -109,6 +109,45 @@ export type Snapshot = {
   flags: string[]
 }
 
+// SessionTask is one task a chief session drove to done.
+export type SessionTask = {
+  id: string
+  title: string
+  url: string
+}
+
+// SessionPR is one pull request recorded on a task the session delivered.
+export type SessionPR = {
+  url: string
+  title?: string
+}
+
+// SessionDelivered is the work one session drove, read from its events.
+export type SessionDelivered = {
+  tasks_done: number
+  prs_merged: number
+  captures_advanced: number
+  tasks: SessionTask[]
+  prs: SessionPR[]
+}
+
+// SessionView is one chief session: its lifecycle and the work it delivered.
+export type SessionView = {
+  id: string
+  state: string
+  started_at?: string
+  stopped_at?: string
+  duration_seconds: number
+  reason?: string
+  successor?: string
+  delivered: SessionDelivered
+}
+
+// SessionsDoc is the /api/sessions document.
+export type SessionsDoc = {
+  sessions: SessionView[]
+}
+
 export type TaskDetail = TaskLink & {
   kind: string
   repo?: string
@@ -263,5 +302,23 @@ export function normalizeSnapshot(s: Snapshot): Snapshot {
       finished: s.ideas?.finished ?? [],
       captured: s.ideas?.captured ?? [],
     },
+  }
+}
+
+// normalizeSessions coerces every list to an array: the server sends [] for
+// empty lanes, but JSON across a network boundary is untrusted and a null would
+// blank the page via .length/.map.
+export function normalizeSessions(doc: SessionsDoc): SessionsDoc {
+  return {
+    sessions: (doc.sessions ?? []).map((session) => ({
+      ...session,
+      delivered: {
+        tasks_done: session.delivered?.tasks_done ?? 0,
+        prs_merged: session.delivered?.prs_merged ?? 0,
+        captures_advanced: session.delivered?.captures_advanced ?? 0,
+        tasks: session.delivered?.tasks ?? [],
+        prs: session.delivered?.prs ?? [],
+      },
+    })),
   }
 }

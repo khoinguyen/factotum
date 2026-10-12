@@ -15,6 +15,7 @@ import type {
   IdeaView,
   Snapshot,
   TaskDetail,
+  SessionsDoc,
 } from "@/lib/api"
 
 const emptySnapshot: Snapshot = {
@@ -180,10 +181,45 @@ const memoryDoc: ArtifactDetail = {
   },
 }
 
+// One retired session (with delivered work) and one alive successor, the shape
+// /api/sessions returns.
+const sessionsDoc: SessionsDoc = {
+  sessions: [
+    {
+      id: "s-new",
+      state: "alive",
+      started_at: "2026-01-01T11:00:00Z",
+      duration_seconds: 3600,
+      delivered: {
+        tasks_done: 0,
+        prs_merged: 0,
+        captures_advanced: 0,
+        tasks: [],
+        prs: [],
+      },
+    },
+    {
+      id: "s-old",
+      state: "retired",
+      started_at: "2026-01-01T09:00:00Z",
+      stopped_at: "2026-01-01T11:00:00Z",
+      duration_seconds: 7200,
+      reason: "retired for s-new",
+      successor: "s-new",
+      delivered: {
+        tasks_done: 1,
+        prs_merged: 1,
+        captures_advanced: 1,
+        tasks: [{ id: "t-1", title: "Ship it", url: "/task/t-1" }],
+        prs: [{ url: "https://example.com/pr/1", title: "PR one" }],
+      },
+    },
+  ],
+}
+
 // The exact payload the old server sent: every empty list marshaled to null.
 // Mounting the real component exercises the render path that used to crash.
-const nullListsSnapshot = {
-  ...emptySnapshot,
+const nullListsSnapshot = {  ...emptySnapshot,
   next_agent: null,
   next_human: null,
   in_flight: null,
@@ -563,3 +599,34 @@ test("keeps the last good task and shows a stale banner when a refresh fails", a
   expect(banner.textContent).toMatch(/database is locked/)
   expect(screen.getByText("Promoted task")).toBeTruthy()
 })
+
+// Khoi 2026-10-09: the sessions page shows each chief session and how much work
+// it delivered. It must render both an alive and a retired session, the stop
+// reason, and the delivered tasks and pull requests.
+test("renders the sessions page with alive and retired sessions", async () => {
+  stubFetch({ "/api/sessions": sessionsDoc })
+  renderAt("/sessions")
+  expect(await screen.findByText("s-old")).toBeTruthy()
+  expect(screen.getByText("s-new")).toBeTruthy()
+  expect(screen.getByText(/retired for s-new/)).toBeTruthy()
+  expect(screen.getByText("2h 0m")).toBeTruthy()
+  expect(screen.getByText("1h 0m")).toBeTruthy()
+  expect(screen.getByText("Ship it")).toBeTruthy()
+  expect(screen.getByText("PR one")).toBeTruthy()
+})
+
+test("renders an empty sessions page", async () => {
+  stubFetch({ "/api/sessions": { sessions: [] } })
+  renderAt("/sessions")
+  expect(await screen.findByText("No sessions recorded yet.")).toBeTruthy()
+})
+
+test("the dashboard links to the sessions page", async () => {
+  stubFetch({ "/api/snapshot": emptySnapshot, "/api/sessions": sessionsDoc })
+  renderAt("/")
+  const link = await screen.findByText("Chief sessions →")
+  fireEvent.click(link)
+  expect(await screen.findByText("s-old")).toBeTruthy()
+  expect(window.location.pathname).toBe("/sessions")
+})
+

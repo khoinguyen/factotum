@@ -617,6 +617,50 @@ func TestArtifactDetailPages(t *testing.T) {
 	}
 }
 
+// Khoi 2026-10-12: artifactURL links every non-memory artifact at /doc/<id>,
+// including a QA verdict. The doc route must therefore serve a QA artifact
+// instead of 404ing with "No such doc". A derived check cache still has no page.
+func TestDocRouteServesQAVerdict(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	idea := f.addIdea(t, project.ID, "Feature", "")
+	qa := f.addArtifact(t, project.ID, &idea.ID, core.ArtifactQA, "QA pass", "all good")
+	check := f.addArtifact(t, project.ID, &idea.ID, core.ArtifactTaskCheck, "check: tests", "cache")
+	ts := newTestServer(t, f, Options{Project: project.ID})
+
+	// The idea rollup links the QA artifact at /doc/<id>; that link must resolve.
+	var ideaDoc ideaView
+	getDoc(t, ts.URL+"/api/idea/"+string(idea.ID), &ideaDoc)
+	url := ""
+	for _, artifact := range ideaDoc.Artifacts {
+		if artifact.ID == qa.ID {
+			url = artifact.URL
+		}
+	}
+	if url != "/doc/"+string(qa.ID) {
+		t.Fatalf("qa artifact url = %q, want /doc/%s", url, qa.ID)
+	}
+
+	// The page fetches the API route for that link: /api + /doc/<id>.
+	var got artifactPageJSON
+	getDoc(t, ts.URL+"/api"+url, &got)
+	if got.Kind != string(core.ArtifactQA) || got.Body != "all good" {
+		t.Fatalf("qa doc = %+v, want kind %q body %q", got, core.ArtifactQA, "all good")
+	}
+	if got.AttachedTo == nil || got.AttachedTo.ID != idea.ID {
+		t.Fatalf("qa attached_to = %+v, want idea %s", got.AttachedTo, idea.ID)
+	}
+
+	resp, err := http.Get(ts.URL + "/api/doc/" + string(check.ID))
+	if err != nil {
+		t.Fatalf("Get(check) error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("Get(/api/doc/<task_check>) status = %d, want 404", resp.StatusCode)
+	}
+}
+
 func TestDetailPagesRejectUnknownIDs(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")

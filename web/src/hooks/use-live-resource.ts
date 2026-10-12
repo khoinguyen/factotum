@@ -11,10 +11,12 @@ export type LiveResource<T> = {
 
 // useLiveResource fetches a read-side JSON document once, then refetches it
 // whenever /events reports a mutation. The event stream carries no payload, so
-// the document stays the single source of truth and cannot drift. status holds
-// the last HTTP status so a caller can tell a missing document (404) from a
-// transient error. error carries the last failure so a caller can keep the last
-// good data and show a banner instead of blanking the page.
+// the document stays the single source of truth and cannot drift. state tracks
+// the SSE stream itself — live while it is open, reconnecting when it drops —
+// so the badge never lies about the connection because a read failed. status
+// holds the last HTTP status so a caller can tell a missing document (404) from
+// a transient error. error carries the last failure so a caller can keep the
+// last good data and show a banner instead of blanking the page.
 export function useLiveResource<T>(path: string): LiveResource<T> {
   const [data, setData] = useState<T | null>(null)
   const [state, setState] = useState<LiveState>("connecting")
@@ -24,6 +26,9 @@ export function useLiveResource<T>(path: string): LiveResource<T> {
   useEffect(() => {
     let cancelled = false
 
+    // refresh reads the document. It never touches state: the live badge is
+    // about the stream, so a failed read shows as status/error, not as a
+    // connection that is down.
     async function refresh() {
       try {
         const res = await fetch(path, { cache: "no-store" })
@@ -31,18 +36,15 @@ export function useLiveResource<T>(path: string): LiveResource<T> {
         setStatus(res.status)
         if (!res.ok) {
           setError(await errorText(res))
-          setState("reconnecting")
           return
         }
         const next = (await res.json()) as T
         if (cancelled) return
         setData(next)
         setError(null)
-        setState("live")
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "network error")
-          setState("reconnecting")
         }
       }
     }
@@ -56,7 +58,10 @@ export function useLiveResource<T>(path: string): LiveResource<T> {
     }
 
     const source = new EventSource("/events")
-    source.addEventListener("open", () => void refresh())
+    source.addEventListener("open", () => {
+      setState("live")
+      void refresh()
+    })
     source.addEventListener("update", () => void refresh())
     source.addEventListener("error", () => setState("reconnecting"))
     void refresh()

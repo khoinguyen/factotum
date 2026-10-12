@@ -147,7 +147,8 @@ download, and not the full `mise run ci` (the browser and pnpm-backed checks sta
 semantic merge conflict that lands non-compiling code fails the compile gate here.
 
 The workflow contract is guarded hermetically by `scripts/ci-workflow_test.sh` (triggers, runner,
-both commands, and the absence of sudo/browser/full-CI), which runs under `mise run test:scripts`.
+both commands, and the absence of sudo/browser/full-CI). It runs both under `mise run test:scripts`
+and inside the CI job itself, so a workflow edit that breaks the contract turns the job red.
 
 ## Architecture
 

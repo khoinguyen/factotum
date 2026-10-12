@@ -71,9 +71,8 @@ type Config struct {
 	// (the user file) so a committed project file never carries the secret.
 	Serve Serve
 	// Up configures the `ft up` factory daemon: whether a capture auto-starts a
-	// pipeline (the opt-out), whether groom/agents run headless, and the
-	// in-flight cap. auto_groom and unattended may be committed project intent;
-	// the rest are machine-scoped.
+	// pipeline (the opt-out), and whether groom/agents run headless. Both may be
+	// committed project intent over the machine default.
 	Up Up
 }
 

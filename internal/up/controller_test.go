@@ -110,6 +110,25 @@ func (f *fixture) capture(t *testing.T, kind core.TicketKind, labels ...string) 
 	return ticket
 }
 
+// seedPipeline creates a pipeline directly in state, so a test can drive a
+// phase that the groom-only controller does not otherwise reach.
+func (f *fixture) seedPipeline(t *testing.T, state core.PipelineState) *core.Pipeline {
+	t.Helper()
+	now := f.clock.Now()
+	pipeline := &core.Pipeline{
+		ID:        core.PipelineID(f.ids.NewID("pl")),
+		ProjectID: f.project.ID,
+		CaptureID: core.TicketID(f.ids.NewID("i")),
+		State:     state,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := f.backend.Pipelines().Create(context.Background(), pipeline); err != nil {
+		t.Fatalf("Create(%s) error = %v", state, err)
+	}
+	return pipeline
+}
+
 func (f *fixture) pipeline(t *testing.T, id core.PipelineID) *core.Pipeline {
 	t.Helper()
 	pipeline, err := f.backend.Pipelines().Get(context.Background(), id)
@@ -264,6 +283,130 @@ func TestStepReattachesLiveExternalRun(t *testing.T) {
 	if got := f.pipeline(t, pipeline.ID); got.State != core.PipelineReview {
 		t.Fatalf("pipeline state after re-run = %q, want review", got.State)
 	}
+}
+
+// TestStepHoldsPhaseOnBlockingGate proves a blocking gate holds the phase: a
+// stage that finished with a blocking gate leaves the pipeline in its phase
+// (design §5), so clearing the gate resumes the same stage rather than the next
+// one.
+func TestStepHoldsPhaseOnBlockingGate(t *testing.T) {
+	runner := &stubRunner{result: StageResult{Done: true, Gate: core.GateDesignRework}}
+	f := newFixture(t, map[core.PipelineState]StageRunner{core.PipelineReview: runner})
+	ctx := context.Background()
+
+	pipeline := f.seedPipeline(t, core.PipelineReview)
+	if err := f.controller.Step(ctx); err != nil {
+		t.Fatalf("Step() error = %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+	got := f.pipeline(t, pipeline.ID)
+	if got.State != core.PipelineReview {
+		t.Fatalf("state with a blocking gate = %q, want review (held, not advanced)", got.State)
+	}
+	if got.Gate != core.GateDesignRework {
+		t.Fatalf("gate = %q, want design_rework", got.Gate)
+	}
+}
+
+// TestStepAdvancesPastAdvisoryGate proves an advisory gate does not hold the
+// phase: the pipeline advances while the question is surfaced.
+func TestStepAdvancesPastAdvisoryGate(t *testing.T) {
+	runner := &stubRunner{result: StageResult{
+		Done:    true,
+		Gate:    core.GateGroomQuestions,
+		Session: "groom-1",
+	}}
+	f := newFixture(t, map[core.PipelineState]StageRunner{core.PipelineGrooming: runner})
+	ctx := context.Background()
+
+	capture := f.capture(t, core.KindIdea)
+	pipeline, err := f.controller.Enqueue(ctx, capture)
+	if err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	if err := f.controller.Step(ctx); err != nil {
+		t.Fatalf("Step() error = %v", err)
+	}
+	got := f.pipeline(t, pipeline.ID)
+	if got.State != core.PipelineReview {
+		t.Fatalf("state with an advisory gate = %q, want review (advanced)", got.State)
+	}
+	if got.Gate != core.GateGroomQuestions {
+		t.Fatalf("gate = %q, want groom_questions", got.Gate)
+	}
+}
+
+// TestStepRecordsExternalRunHandoff covers the !Done hand-off: the stage hands
+// its work to an external agent run, which the controller records and leaves the
+// pipeline in place for. A later pass re-runs the stage because no such run is
+// live.
+func TestStepRecordsExternalRunHandoff(t *testing.T) {
+	runner := &stubRunner{result: StageResult{Done: false, RunID: "run-ext"}}
+	f := newFixture(t, map[core.PipelineState]StageRunner{core.PipelineGrooming: runner})
+	ctx := context.Background()
+
+	capture := f.capture(t, core.KindIdea)
+	pipeline, err := f.controller.Enqueue(ctx, capture)
+	if err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	if err := f.controller.Step(ctx); err != nil {
+		t.Fatalf("Step() error = %v", err)
+	}
+	got := f.pipeline(t, pipeline.ID)
+	if got.State != core.PipelineGrooming || got.RunID != "run-ext" {
+		t.Fatalf("after hand-off = %+v, want grooming with run-ext recorded", got)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+
+	// No run-ext is live, so the next pass re-runs the stage.
+	if err := f.controller.Step(ctx); err != nil {
+		t.Fatalf("Step() error = %v", err)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("runner calls after a dead hand-off = %d, want 2 (re-run)", runner.calls)
+	}
+}
+
+// TestStepLeavesInterruptedStageInFlight proves a stage interrupted by context
+// cancellation is not parked failed: the pipeline stays in its in-flight phase
+// so a restart re-owns it (design §3/§5). Parking it failed would strand it,
+// since failed is not auto-resumed.
+func TestStepLeavesInterruptedStageInFlight(t *testing.T) {
+	runner := &ctxRunner{}
+	f := newFixture(t, map[core.PipelineState]StageRunner{core.PipelineGrooming: runner})
+	ctx := context.Background()
+
+	capture := f.capture(t, core.KindIdea)
+	pipeline, err := f.controller.Enqueue(ctx, capture)
+	if err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	_ = f.controller.Step(canceled) // the interrupted stage returns ctx.Err()
+
+	got := f.pipeline(t, pipeline.ID)
+	if got.State == core.PipelineFailed {
+		t.Fatal("an interrupted stage must not park the pipeline failed")
+	}
+	if got.State != core.PipelineGrooming {
+		t.Fatalf("state after interruption = %q, want grooming (re-ownable)", got.State)
+	}
+}
+
+// ctxRunner is a StageRunner that reports the context's error, so a test can
+// simulate a stage interrupted by shutdown.
+type ctxRunner struct{ calls int }
+
+func (r *ctxRunner) Run(ctx context.Context, _ *core.Pipeline) (StageResult, error) {
+	r.calls++
+	return StageResult{}, ctx.Err()
 }
 
 // TestStepParksFailedStage proves a stage error parks the pipeline as failed

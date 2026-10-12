@@ -86,7 +86,10 @@ func (s *Server) sessions(ctx context.Context) ([]sessionView, error) {
 	if err != nil {
 		return nil, err
 	}
-	vs := s.buildViews(ctx, snapshot, nil)
+	vs, err := s.buildViews(ctx, snapshot, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	byID := make(map[string]*sessionAcc)
 	order := make([]string, 0)

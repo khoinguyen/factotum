@@ -602,7 +602,10 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		return nil, err
 	}
 
-	vs := s.buildViews(ctx, snapshot, artifacts)
+	vs, err := s.buildViews(ctx, snapshot, artifacts)
+	if err != nil {
+		return nil, err
+	}
 	page := &pageData{
 		Title:    s.title(snapshot),
 		Project:  s.projectLabel(snapshot),
@@ -725,7 +728,7 @@ type viewSet struct {
 
 // buildViews projects a snapshot into the ids, readiness-annotated task views,
 // origin edges, and task-attached artifacts the pages render.
-func (s *Server) buildViews(ctx context.Context, snapshot *app.Snapshot, artifacts []*core.Artifact) viewSet {
+func (s *Server) buildViews(ctx context.Context, snapshot *app.Snapshot, artifacts []*core.Artifact) (viewSet, error) {
 	ids := snapshot.Graph.IDs()
 	byID := make(map[core.TicketID]core.Ticket, len(snapshot.Tasks))
 	for _, task := range snapshot.Tasks {
@@ -763,7 +766,11 @@ func (s *Server) buildViews(ctx context.Context, snapshot *app.Snapshot, artifac
 		if byID[id].Kind.CapturedByHuman() {
 			continue
 		}
-		if o, ok := s.originTicket(ctx, byID[id], byID); ok {
+		o, ok, err := s.originTicket(ctx, byID[id], byID)
+		if err != nil {
+			return viewSet{}, err
+		}
+		if ok {
 			vs.origin[id] = o
 		}
 	}
@@ -801,7 +808,7 @@ func (s *Server) buildViews(ctx context.Context, snapshot *app.Snapshot, artifac
 		}
 		vs.artifactsByTask[*artifact.TicketID] = append(vs.artifactsByTask[*artifact.TicketID], artifactViewOf(artifact))
 	}
-	return vs
+	return vs, nil
 }
 
 // rollupIdea builds the idea card from the tasks promoted from it and the
@@ -875,25 +882,29 @@ func ideaRollup(idea ideaView) (state, chip string) {
 // originTicket resolves a task's origin: the first dependency that is a human
 // capture (idea or bug). It matches pkg/app's Origin rule so every surface agrees
 // - a capture resolves whether or not the loaded snapshot carries it, and only a
-// dangling dependency is skipped. The scoped snapshot omits other projects'
-// captures, so fetching on a miss keeps the edge scope-independent.
-func (s *Server) originTicket(ctx context.Context, task core.Ticket, byID map[core.TicketID]core.Ticket) (core.Ticket, bool) {
+// dangling dependency (ErrNotFound) is skipped. The scoped snapshot omits other
+// projects' captures, so fetching on a miss keeps the edge scope-independent;
+// any other store error surfaces rather than silently dropping the origin.
+func (s *Server) originTicket(ctx context.Context, task core.Ticket, byID map[core.TicketID]core.Ticket) (core.Ticket, bool, error) {
 	for _, dep := range task.Deps {
 		if depTask, ok := byID[dep]; ok {
 			if depTask.Kind.CapturedByHuman() {
-				return depTask, true
+				return depTask, true, nil
 			}
 			continue
 		}
 		depTask, err := s.options.Backend.Tickets().Get(ctx, dep)
-		if err != nil {
+		if errors.Is(err, core.ErrNotFound) {
 			continue
 		}
+		if err != nil {
+			return core.Ticket{}, false, err
+		}
 		if depTask.Kind.CapturedByHuman() {
-			return *depTask, true
+			return *depTask, true, nil
 		}
 	}
-	return core.Ticket{}, false
+	return core.Ticket{}, false, nil
 }
 
 // groupByOrigin groups tasks under the idea they were promoted from, with the

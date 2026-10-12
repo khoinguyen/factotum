@@ -222,7 +222,7 @@ func (s *Server) loadViews(r *http.Request, projectID core.ProjectID) (viewSet, 
 	if err != nil {
 		return viewSet{}, err
 	}
-	return s.buildViews(r.Context(), snapshot, artifacts), nil
+	return s.buildViews(r.Context(), snapshot, artifacts)
 }
 
 // taskDetailOf projects one task into its full detail, resolving links through

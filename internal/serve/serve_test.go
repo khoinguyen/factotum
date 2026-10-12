@@ -212,6 +212,29 @@ type errBackend struct{ store.Backend }
 
 func (b errBackend) Actors() store.ActorRepo { return errActors{b.Backend.Actors()} }
 
+// errTicketGet wraps a TicketRepo so Get fails for one id with a chosen error,
+// exercising how a read resolves an origin edge whose dep read fails.
+type errTicketGet struct {
+	store.TicketRepo
+	id  core.TicketID
+	err error
+}
+
+func (r errTicketGet) Get(ctx context.Context, id core.TicketID) (*core.Ticket, error) {
+	if id == r.id {
+		return nil, r.err
+	}
+	return r.TicketRepo.Get(ctx, id)
+}
+
+// errTicketsBackend serves Tickets() from a wrapped repo so one dep read fails.
+type errTicketsBackend struct {
+	store.Backend
+	repo store.TicketRepo
+}
+
+func (b errTicketsBackend) Tickets() store.TicketRepo { return b.repo }
+
 // TestSnapshotFailureIsJSON proves a read failure reaches the SPA as a JSON
 // error document, not a text/plain body, so the app can keep its shell and show
 // a banner instead of the raw error as the page.

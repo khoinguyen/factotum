@@ -105,6 +105,28 @@ func TestChiefSkillLaunchesAgentsWithReceiver(t *testing.T) {
 	}
 }
 
+// TestChiefSkillAnchorsQADispatchToCwd guards the same bug class fixed for
+// pair() in t-sca2nign2h: a bare `cmux new-workspace` inherits the FOCUSED
+// surface's cwd, so a relative loop-agent.sh path can 404 when another repo is
+// focused, leaving a created-but-dead QA workspace. The QA dispatch example must
+// pass an explicit --cwd (or an absolute loop-agent path).
+func TestChiefSkillAnchorsQADispatchToCwd(t *testing.T) {
+	body := strings.Join(strings.Fields(agentSkill(t, ".agents/skills/chief/SKILL.md")), " ")
+	const start = "cmux new-workspace --name qa-<t>"
+	i := strings.Index(body, start)
+	if i < 0 {
+		t.Fatalf("chief skill must document the QA dispatch as %q", start)
+	}
+	rest := body[i:]
+	end := strings.Index(rest, "--command")
+	if end < 0 {
+		t.Fatalf("QA dispatch %q must pass --command", start)
+	}
+	if opts := rest[:end]; !strings.Contains(opts, "--cwd") {
+		t.Errorf("QA dispatch %q must pass an explicit --cwd (a bare new-workspace inherits the focused surface's cwd); got options %q", start, opts)
+	}
+}
+
 // TestChiefSkillReincarnationTearsDownRetiredChief guards the reincarnation
 // teardown: killing only the outgoing chief's PID leaves two orphans — the
 // retired session's ft msg receiver (reparented to PID 1, still long-polling

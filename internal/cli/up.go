@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -132,7 +133,12 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go func() { _ = controller.Start(runCtx) }()
+	var worker sync.WaitGroup
+	worker.Add(1)
+	go func() {
+		defer worker.Done()
+		_ = controller.Start(runCtx)
+	}()
 
 	dashboard := &http.Server{Handler: server.Handler()}
 	_, _ = fmt.Fprintf(d.Err, "factotum factory: http://%s (%s; auto-groom %s; Ctrl-C to stop)\n",
@@ -146,6 +152,9 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 	if err := dashboard.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	// Drain the controller so an interrupted stage leaves the pipeline in its
+	// in-flight state (resumable) before the process exits.
+	worker.Wait()
 	return nil
 }
 
@@ -226,10 +235,13 @@ func producedTicketIDs(ids []string) []core.TicketID {
 
 // upPipelineDoc is the lossless structured shape of a pipeline row.
 type upPipelineDoc struct {
-	Pipeline string   `json:"pipeline" yaml:"pipeline"`
-	Capture  string   `json:"capture" yaml:"capture"`
-	State    string   `json:"state" yaml:"state"`
-	Gate     string   `json:"gate" yaml:"gate"`
+	Pipeline string `json:"pipeline" yaml:"pipeline"`
+	Capture  string `json:"capture" yaml:"capture"`
+	State    string `json:"state" yaml:"state"`
+	Gate     string `json:"gate" yaml:"gate"`
+	// Error is the reason a failed pipeline parked, so a parked pipeline is
+	// diagnosed from the read surface, not only the event log.
+	Error    string   `json:"error,omitempty" yaml:"error,omitempty"`
 	Session  string   `json:"session,omitempty" yaml:"session,omitempty"`
 	Produced []string `json:"produced,omitempty" yaml:"produced,omitempty"`
 	Project  string   `json:"project" yaml:"project"`
@@ -269,16 +281,22 @@ func (d *Deps) runUpStatus(cmd *cobra.Command, projectID string) error {
 			return
 		}
 		for _, doc := range docs {
-			d.printFields(
+			fields := []field{
 				f("pipeline", doc.Pipeline),
 				f("capture", doc.Capture),
 				f("state", doc.State),
 				f("gate", gateValue(doc.Gate)),
 				f("session", doc.Session),
 				f("produced", strings.Join(doc.Produced, ", ")),
+			}
+			if doc.Error != "" {
+				fields = append(fields, f("error", doc.Error))
+			}
+			fields = append(fields,
 				f("project", doc.Project),
 				f("repo", d.repoValue(doc.Repo)),
 			)
+			d.printFields(fields...)
 			d.printf("\n")
 		}
 	})
@@ -398,6 +416,7 @@ func upPipelineDocOf(p *core.Pipeline) upPipelineDoc {
 		Capture:  string(p.CaptureID),
 		State:    string(p.State),
 		Gate:     string(p.Gate),
+		Error:    p.Error,
 		Session:  p.Session,
 		Produced: produced,
 		Project:  string(p.ProjectID),

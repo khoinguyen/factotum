@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/khoinguyen/factotum/pkg/core"
 )
 
 func TestUpStartStatusAndList(t *testing.T) {
@@ -34,6 +36,19 @@ func TestUpStartStatusAndList(t *testing.T) {
 	list := r.run("up", "list", "-p", projectID)
 	if !strings.Contains(list, pipelineID) || !strings.Contains(list, "PIPELINE") {
 		t.Fatalf("up list should table the pipeline:\n%s", list)
+	}
+}
+
+func TestUpPipelineDocCarriesError(t *testing.T) {
+	doc := upPipelineDocOf(&core.Pipeline{
+		ID:        "pl-1",
+		CaptureID: "i-1",
+		ProjectID: "acme",
+		State:     core.PipelineFailed,
+		Error:     "phase executor exploded",
+	})
+	if doc.Error != "phase executor exploded" {
+		t.Fatalf("doc.Error = %q, want the pipeline's failure reason", doc.Error)
 	}
 }
 

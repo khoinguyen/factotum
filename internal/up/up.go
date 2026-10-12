@@ -312,6 +312,13 @@ func (c *Controller) drive(ctx context.Context, pipeline *core.Pipeline) error {
 
 		result, err := runner.Run(ctx, pipeline)
 		if err != nil {
+			// An interrupted stage (shutdown) is not a failure: leave the
+			// pipeline in its in-flight phase so the next start re-owns and
+			// resumes it (design §3/§5). Parking it failed would strand it,
+			// since failed is not auto-resumed.
+			if ctx.Err() != nil {
+				return err
+			}
 			pipeline.State = core.PipelineFailed
 			pipeline.Error = err.Error()
 			pipeline.UpdatedAt = c.clock.Now()
@@ -341,8 +348,23 @@ func (c *Controller) drive(ctx context.Context, pipeline *core.Pipeline) error {
 		pipeline.RunID = ""
 		pipeline.Attempts++
 		pipeline.Gate = result.Gate
-		pipeline.State = nextState(pipeline.State)
 		pipeline.UpdatedAt = c.clock.Now()
+
+		// A blocking gate holds its phase: record it and stop without
+		// advancing, so clearing the gate resumes the same stage (design §5).
+		// Only no gate or an advisory gate lets the phase advance.
+		if result.Gate.Blocking() {
+			if err := c.save(ctx, pipeline); err != nil {
+				return err
+			}
+			c.emit(ctx, pipeline, core.EventPipelineStageFinished, heldDetail(result, pipeline.State),
+				map[string]any{"state": string(pipeline.State), "gate": string(pipeline.Gate)})
+			c.emit(ctx, pipeline, core.EventPipelineGateOpened, string(result.Gate),
+				map[string]any{"gate": string(result.Gate)})
+			return nil
+		}
+
+		pipeline.State = nextState(pipeline.State)
 		if err := c.save(ctx, pipeline); err != nil {
 			return err
 		}
@@ -360,10 +382,16 @@ func (c *Controller) drive(ctx context.Context, pipeline *core.Pipeline) error {
 			c.emit(ctx, pipeline, core.EventPipelineDone, "pipeline done", nil)
 			return nil
 		}
-		if result.Gate.Blocking() {
-			return nil
-		}
 	}
+}
+
+// heldDetail renders a stage's finish detail when a blocking gate holds it in
+// place, so the event names the phase it stays in rather than a next phase.
+func heldDetail(result StageResult, state core.PipelineState) string {
+	if result.Detail != "" {
+		return result.Detail
+	}
+	return fmt.Sprintf("stage finished; held on %s in %s", result.Gate, state)
 }
 
 // nextState advances a pipeline's phase to the phase that follows it.

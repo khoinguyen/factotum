@@ -710,8 +710,12 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		}
 	}
 
-	page.InFlightGroups = groupByOrigin(page.InFlight, ideaStates)
-	page.WaitingGroups = groupByOrigin(page.Waiting, ideaStates)
+	boardRank, err := s.boardRanks(ctx, snapshot, append(append([]taskView{}, page.InFlight...), page.Waiting...))
+	if err != nil {
+		return nil, err
+	}
+	page.InFlightGroups = groupByOrigin(page.InFlight, ideaStates, boardRank)
+	page.WaitingGroups = groupByOrigin(page.Waiting, ideaStates, boardRank)
 
 	pipelines, err := s.pipelineViews(ctx, scope, vs)
 	if err != nil {
@@ -986,13 +990,48 @@ func (s *Server) originTicket(ctx context.Context, task core.Ticket, byID map[co
 	return core.Ticket{}, false, nil
 }
 
+// boardRanks orders the work board's tasks - the in-flight and waiting columns,
+// which are not ready and so absent from the next-task ranking - with the same
+// ranker `ft task next` uses. It returns each task's position in that rank,
+// lower being more worth doing next, so the board can lead with the best-ranked
+// group and task. Ranking the columns together keeps their positions consistent.
+func (s *Server) boardRanks(ctx context.Context, snapshot *app.Snapshot, tasks []taskView) (map[core.TicketID]int, error) {
+	seen := make(map[core.TicketID]bool, len(tasks))
+	candidates := make([]core.TicketID, 0, len(tasks))
+	for _, task := range tasks {
+		if seen[task.ID] {
+			continue
+		}
+		seen[task.ID] = true
+		candidates = append(candidates, task.ID)
+	}
+	scored, err := s.options.Ranker.Rank(ctx, rank.Request{
+		Graph:      snapshot.Graph,
+		Tasks:      snapshot.Tasks,
+		Candidates: candidates,
+	})
+	if err != nil {
+		return nil, err
+	}
+	order := make(map[core.TicketID]int, len(scored))
+	for position, score := range scored {
+		order[score.TicketID] = position
+	}
+	return order, nil
+}
+
 // groupByOrigin groups tasks under the idea they were promoted from, with the
 // ungrouped bucket last. ideaStates carries each origin idea's rollup state for
-// the parent row's status chip. Groups are ordered deterministically by idea id.
-func groupByOrigin(tasks []taskView, ideaStates map[core.TicketID]string) []taskGroup {
+// the parent row's status chip. ranking maps each task to its position in the
+// next-task rank (lower is better), so groups lead with their best-ranked task
+// and tasks within a group follow the rank instead of idea-id order; a task
+// absent from the ranking sorts last, deterministically.
+func groupByOrigin(tasks []taskView, ideaStates map[core.TicketID]string, ranking map[core.TicketID]int) []taskGroup {
 	order := make([]core.TicketID, 0)
+	best := make(map[core.TicketID]int)
 	byIdea := make(map[core.TicketID]*taskGroup)
 	for _, task := range tasks {
+		position := rankPosition(ranking, task.ID)
 		group, ok := byIdea[task.Origin]
 		if !ok {
 			group = &taskGroup{
@@ -1003,8 +1042,17 @@ func groupByOrigin(tasks []taskView, ideaStates map[core.TicketID]string) []task
 			}
 			byIdea[task.Origin] = group
 			order = append(order, task.Origin)
+			best[task.Origin] = position
+		}
+		if position < best[task.Origin] {
+			best[task.Origin] = position
 		}
 		group.Tasks = append(group.Tasks, task)
+	}
+	for _, group := range byIdea {
+		sort.SliceStable(group.Tasks, func(i, j int) bool {
+			return rankPosition(ranking, group.Tasks[i].ID) < rankPosition(ranking, group.Tasks[j].ID)
+		})
 	}
 	sort.Slice(order, func(i, j int) bool {
 		if order[i] == "" {
@@ -1013,6 +1061,9 @@ func groupByOrigin(tasks []taskView, ideaStates map[core.TicketID]string) []task
 		if order[j] == "" {
 			return true
 		}
+		if best[order[i]] != best[order[j]] {
+			return best[order[i]] < best[order[j]]
+		}
 		return order[i] < order[j]
 	})
 	out := make([]taskGroup, 0, len(order))
@@ -1020,6 +1071,15 @@ func groupByOrigin(tasks []taskView, ideaStates map[core.TicketID]string) []task
 		out = append(out, *byIdea[id])
 	}
 	return out
+}
+
+// rankPosition is a task's position in the next-task rank; an unranked task
+// sorts after every ranked one (its fallback is one past the last position).
+func rankPosition(ranking map[core.TicketID]int, id core.TicketID) int {
+	if position, ok := ranking[id]; ok {
+		return position
+	}
+	return len(ranking)
 }
 
 func (s *Server) title(snapshot *app.Snapshot) string {

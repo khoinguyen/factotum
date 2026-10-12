@@ -26,7 +26,7 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
           <span className="text-muted-foreground">of {idea.total}</span>
           <span
             role="tooltip"
-            className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-popover-foreground opacity-0 shadow-md transition-opacity group-hover:opacity-100 group-focus-within/card:opacity-100"
+            className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-popover-foreground shadow-md group-hover:block group-focus-within/card:block"
           >
             {idea.done} done · {idea.active} active · {idea.blocked} blocked
             {artifacts > 0

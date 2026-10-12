@@ -109,12 +109,16 @@ test("the counts carry a hover tooltip spelling them out", () => {
   expect(tooltip.textContent).toContain("0 done")
   expect(tooltip.textContent).toContain("7 active")
   expect(tooltip.textContent).toContain("0 blocked")
-  expect(tooltip.className).toContain("opacity-0")
-  expect(tooltip.className).toContain("group-hover:opacity-100")
+  // The tooltip is removed from layout until shown: an absolutely positioned,
+  // whitespace-nowrap tooltip left only opacity-0 still widened
+  // document.scrollWidth at a 320px viewport. display:none keeps it out of
+  // layout entirely.
+  expect(tooltip.className).toContain("hidden")
+  expect(tooltip.className).toContain("group-hover:block")
 
   // Keyboard focus must reveal the tooltip too. The counts span holds no
   // focusable element, so the focus scope has to be the card link itself.
-  expect(tooltip.className).toContain("group-focus-within/card:opacity-100")
+  expect(tooltip.className).toContain("group-focus-within/card:block")
   expect(card.className).toContain("group/card")
 })
 

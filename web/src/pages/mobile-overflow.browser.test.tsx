@@ -315,6 +315,26 @@ for (const route of routes) {
   }
 }
 
+// 320px is tighter than the supported phone widths (360/390), but the hidden
+// counts tooltip must never contribute to layout: it is absolutely positioned
+// with whitespace-nowrap, so at a narrow viewport an only-opacity-0 tooltip
+// still widens document.scrollWidth. A 320px dashboard with a long tooltip must
+// stay flush.
+test("the dashboard fits 320px with a long counts tooltip", async () => {
+  stubRoutes()
+  await page.viewport(320, 900)
+  render(<Dashboard />)
+  await screen.findByRole("heading", { name: /Factotum dashboard/ })
+  await screen.findByText(/Work board/)
+
+  // Guard the premise: the card really does carry a long counts tooltip, so a
+  // future fixture trim can't quietly turn this into a no-op.
+  const tooltip = document.querySelector('[role="tooltip"]')
+  expect(tooltip?.textContent?.length ?? 0).toBeGreaterThan(30)
+
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(320)
+})
+
 // Desktop must not regress: the widest route stays within a wide viewport.
 test("the dashboard still fits a desktop viewport", async () => {
   stubRoutes()

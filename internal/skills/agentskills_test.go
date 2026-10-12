@@ -92,6 +92,28 @@ func TestLoopSkillsMessageOverFtMsg(t *testing.T) {
 	}
 }
 
+// TestChiefSkillNeverPollsMsgInbox guards the messaging discipline: the chief
+// must not poll `ft msg inbox` in a loop. The ft msg receiver delivers messages
+// to the agent as they arrive; a long blocking inbox poll holds the endpoint and
+// delays that delivery (observed twice), so the chief sends, then stops and
+// waits for the receiver to wake it.
+func TestChiefSkillNeverPollsMsgInbox(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/chief/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"forbid polling the inbox in a loop", "never poll `ft msg inbox` in a loop"},
+		{"say the receiver delivers messages as they arrive", "delivers each message to you as it arrives"},
+		{"state the blocking poll delays delivery", "delays that delivery"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("chief skill must %s (missing %q); polling the inbox stalls receiver delivery otherwise", req.why, req.text)
+		}
+	}
+}
+
 // TestChiefSkillLaunchesAgentsWithReceiver guards the launch contract: loop
 // agents are started through loop-agent.sh, which stages the receiver and
 // exports the role env, so they load the ft msg receiver instead of an

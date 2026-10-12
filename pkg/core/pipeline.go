@@ -86,6 +86,19 @@ func (g GateKind) Valid() bool {
 	}
 }
 
+// Blocking reports whether a gate holds its phase: the pipeline does not advance
+// past a blocking gate until an operator clears it. GateGroomQuestions is
+// advisory - an unattended groom still finishes agent-ready, so the pipeline
+// proceeds while the question is surfaced for a human.
+func (g GateKind) Blocking() bool {
+	switch g {
+	case GateDesignRework, GateMergeApproval, GateRelease, GateRollout:
+		return true
+	default:
+		return false
+	}
+}
+
 // Pipeline is the durable, mutable factory record for one captured idea or bug.
 // It is keyed by the capture it is driving (one pipeline per capture) and moves
 // through the phase state machine with an orthogonal human gate. See
@@ -101,6 +114,10 @@ type Pipeline struct {
 	Gate      GateKind
 	// Session is the groom session id, once grooming has run.
 	Session string
+	// RunID identifies the externally dispatched agent run the current stage is
+	// waiting on, when one was handed off. It lets a restart re-attach to a live
+	// run instead of dispatching a duplicate (docs/up/design.md §5).
+	RunID RunID
 	// Produced are the tasks the groom session created.
 	Produced []TicketID
 	// Error is the last failure reason.

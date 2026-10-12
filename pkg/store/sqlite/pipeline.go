@@ -209,6 +209,42 @@ func (r *pipelineRepo) Claim(ctx context.Context, req store.PipelineClaimRequest
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if req.ID != nil {
+		var data string
+		err := tx.QueryRowContext(ctx, "SELECT data FROM pipelines WHERE id = ?", string(*req.ID)).Scan(&data)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: pipeline %s", core.ErrNotFound, *req.ID)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("select pipeline: %w", err)
+		}
+		pipeline, err := decodePipeline(data)
+		if err != nil {
+			return nil, err
+		}
+		state, err := store.ClaimByID(pipeline, req)
+		if err != nil {
+			return nil, err
+		}
+		if state != pipeline.State {
+			pipeline.State = state
+			pipeline.UpdatedAt = time.Now().UTC()
+			encoded, err := encode(pipeline)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := tx.ExecContext(ctx,
+				"UPDATE pipelines SET state = ?, updated_at = ?, data = ? WHERE id = ?",
+				string(pipeline.State), formatTimeKey(pipeline.UpdatedAt), encoded, string(pipeline.ID)); err != nil {
+				return nil, fmt.Errorf("claim pipeline: %w", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit claim: %w", err)
+		}
+		return pipeline, nil
+	}
+
 	conditions := []string{"state = 'queued'"}
 	args := []any{}
 	if req.ProjectID != "" {

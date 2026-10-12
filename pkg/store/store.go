@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -254,17 +255,23 @@ type PipelineRepo interface {
 	// ErrConflict, as does updating a terminal pipeline.
 	Update(ctx context.Context, pipeline *core.Pipeline) error
 
-	// Claim atomically selects the oldest queued pipeline for the project and
-	// moves it to grooming, marking it in flight so the single controller
-	// worker owns it. It returns ErrNotFound when nothing is queued. Two
-	// concurrent claims never return the same pipeline.
+	// Claim atomically takes ownership of one pipeline for its project. With ID
+	// nil it selects the oldest queued pipeline and moves it to grooming, so the
+	// single controller worker owns new work. With ID set it re-owns that
+	// pipeline in any non-terminal state: a queued one starts (queued ->
+	// grooming), an in-flight one is returned unchanged so the controller
+	// resumes its current stage (docs/up/design.md §5 restart). It returns
+	// ErrNotFound when nothing claimable matches. Two concurrent claims never
+	// return the same queued pipeline.
 	Claim(ctx context.Context, req PipelineClaimRequest) (*core.Pipeline, error)
 }
 
-// PipelineClaimRequest selects the next queued pipeline to claim. ProjectID
-// scopes the claim so a controller never takes another project's work.
+// PipelineClaimRequest selects a pipeline to claim. ProjectID scopes the claim
+// so a controller never takes another project's work. ID, when set, claims that
+// one pipeline (the restart re-own path) instead of the oldest queued one.
 type PipelineClaimRequest struct {
 	ProjectID core.ProjectID
+	ID        *core.PipelineID
 }
 
 type Backend interface {
@@ -372,6 +379,24 @@ func containsPipelineState(states []core.PipelineState, state core.PipelineState
 		}
 	}
 	return false
+}
+
+// ClaimByID validates pipeline against an id-scoped claim request and returns
+// the state the claim leaves it in. A queued pipeline starts (queued ->
+// grooming); an in-flight one keeps its state so the controller resumes the
+// stage it was in. It returns ErrNotFound when the pipeline is in another
+// project or is terminal, so a caller treating "not found" as gone is correct.
+func ClaimByID(pipeline *core.Pipeline, req PipelineClaimRequest) (core.PipelineState, error) {
+	if req.ProjectID != "" && pipeline.ProjectID != req.ProjectID {
+		return "", fmt.Errorf("%w: pipeline %s is not in project %s", core.ErrNotFound, pipeline.ID, req.ProjectID)
+	}
+	if pipeline.State.Terminal() {
+		return "", fmt.Errorf("%w: pipeline %s is %s", core.ErrNotFound, pipeline.ID, pipeline.State)
+	}
+	if pipeline.State == core.PipelineQueued {
+		return core.PipelineGrooming, nil
+	}
+	return pipeline.State, nil
 }
 
 func containsGateKind(gates []core.GateKind, gate core.GateKind) bool {

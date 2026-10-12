@@ -12,6 +12,13 @@ func TestEventKindValid(t *testing.T) {
 		{EventArtifactCreated, true},
 		{EventTaskRunStarted, true},
 		{EventTaskRunFinished, true},
+		{EventPipelineQueued, true},
+		{EventPipelineStageStarted, true},
+		{EventPipelineStageFinished, true},
+		{EventPipelineGateOpened, true},
+		{EventPipelineGateCleared, true},
+		{EventPipelineDone, true},
+		{EventPipelineFailed, true},
 		{"task.exploded", false},
 		{"", false},
 	}

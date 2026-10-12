@@ -26,6 +26,7 @@ func testPipeline(t *testing.T, be store.Backend) {
 	t.Run("identity-immutable", func(t *testing.T) { testPipelineIdentityImmutable(t, repo, ctx) })
 	t.Run("list", func(t *testing.T) { testPipelineList(t, repo, ctx) })
 	t.Run("claim", func(t *testing.T) { testPipelineClaim(t, repo, ctx) })
+	t.Run("claim-by-id", func(t *testing.T) { testPipelineClaimByID(t, repo, ctx) })
 	t.Run("claim-concurrency", func(t *testing.T) { testPipelineClaimConcurrency(t, repo, ctx) })
 	t.Run("terminal-immutability", func(t *testing.T) { testPipelineTerminalImmutability(t, repo, ctx) })
 }
@@ -70,6 +71,7 @@ func testPipelineRoundtrip(t *testing.T, repo store.PipelineRepo, ctx context.Co
 	got.State = core.PipelineBuilding
 	got.Gate = core.GateMergeApproval
 	got.Session = "sess-1"
+	got.RunID = "run-1"
 	got.Produced = []core.TicketID{"t-1", "t-2"}
 	got.Attempts = 2
 	got.UpdatedAt = pipelineBase.Add(time.Minute)
@@ -85,6 +87,9 @@ func testPipelineRoundtrip(t *testing.T, repo store.PipelineRepo, ctx context.Co
 	}
 	if reloaded.Session != "sess-1" || len(reloaded.Produced) != 2 || reloaded.Produced[1] != "t-2" {
 		t.Fatalf("Get() after update = %+v, want session and produced preserved", reloaded)
+	}
+	if reloaded.RunID != "run-1" {
+		t.Fatalf("Get().RunID = %q, want run-1", reloaded.RunID)
 	}
 	if reloaded.Attempts != 2 {
 		t.Fatalf("Get().Attempts = %d, want 2", reloaded.Attempts)
@@ -311,6 +316,70 @@ func testPipelineClaim(t *testing.T, repo store.PipelineRepo, ctx context.Contex
 	}
 	if foreignClaim.ID != "c-foreign" {
 		t.Fatalf("foreign Claim() = %s, want c-foreign", foreignClaim.ID)
+	}
+}
+
+// testPipelineClaimByID covers the restart re-own path (docs/up/design.md §5):
+// a controller claims one named pipeline in any non-terminal state. A queued
+// pipeline starts (queued -> grooming); an in-flight one is claimed without a
+// state change; a terminal pipeline is not claimable. The project scope still
+// applies, and an unknown id is ErrNotFound.
+func testPipelineClaimByID(t *testing.T, repo store.PipelineRepo, ctx context.Context) {
+	t.Helper()
+	const project = core.ProjectID("prj-claim-id")
+	const other = core.ProjectID("prj-claim-id-other")
+
+	records := []*core.Pipeline{
+		pipelineRecord("ci-building", project, "i-building", core.PipelineBuilding, core.GateMergeApproval),
+		pipelineRecord("ci-queued", project, "i-queued", core.PipelineQueued, core.GateNone),
+		pipelineRecord("ci-done", project, "i-done", core.PipelineDone, core.GateNone),
+		pipelineRecord("ci-cancelled", project, "i-cancelled", core.PipelineCancelled, core.GateNone),
+		pipelineRecord("ci-foreign", other, "i-foreign", core.PipelineBuilding, core.GateNone),
+	}
+	for _, pipeline := range records {
+		if err := repo.Create(ctx, pipeline); err != nil {
+			t.Fatalf("Create(%s) error = %v", pipeline.ID, err)
+		}
+	}
+
+	// An in-flight pipeline is re-claimed in place: its phase and gate are
+	// unchanged, because the controller resumes the stage it was in.
+	building := core.PipelineID("ci-building")
+	claimed, err := repo.Claim(ctx, store.PipelineClaimRequest{ProjectID: project, ID: &building})
+	if err != nil {
+		t.Fatalf("Claim(building) error = %v", err)
+	}
+	if claimed.ID != building || claimed.State != core.PipelineBuilding || claimed.Gate != core.GateMergeApproval {
+		t.Fatalf("Claim(building) = %+v, want building/merge_approval unchanged", claimed)
+	}
+
+	// A queued pipeline is started: the claim moves it into its first phase.
+	queued := core.PipelineID("ci-queued")
+	started, err := repo.Claim(ctx, store.PipelineClaimRequest{ProjectID: project, ID: &queued})
+	if err != nil {
+		t.Fatalf("Claim(queued) error = %v", err)
+	}
+	if started.State != core.PipelineGrooming {
+		t.Fatalf("Claim(queued) state = %q, want grooming", started.State)
+	}
+
+	// Terminal pipelines are not claimable: there is nothing to own.
+	for _, id := range []core.PipelineID{"ci-done", "ci-cancelled"} {
+		target := id
+		if _, err := repo.Claim(ctx, store.PipelineClaimRequest{ProjectID: project, ID: &target}); !errors.Is(err, core.ErrNotFound) {
+			t.Fatalf("Claim(%s) error = %v, want ErrNotFound", id, err)
+		}
+	}
+
+	// A pipeline in another project is not claimable when the request scopes a
+	// project, and an unknown id is ErrNotFound.
+	foreign := core.PipelineID("ci-foreign")
+	if _, err := repo.Claim(ctx, store.PipelineClaimRequest{ProjectID: project, ID: &foreign}); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("Claim(foreign) error = %v, want ErrNotFound", err)
+	}
+	missing := core.PipelineID("ci-missing")
+	if _, err := repo.Claim(ctx, store.PipelineClaimRequest{ProjectID: project, ID: &missing}); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("Claim(missing) error = %v, want ErrNotFound", err)
 	}
 }
 

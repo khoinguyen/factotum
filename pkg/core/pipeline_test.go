@@ -55,6 +55,22 @@ func TestGateKindValid(t *testing.T) {
 	}
 }
 
+func TestGateKindBlocking(t *testing.T) {
+	blocking := []GateKind{GateDesignRework, GateMergeApproval, GateRelease, GateRollout}
+	for _, gate := range blocking {
+		if !gate.Blocking() {
+			t.Errorf("GateKind(%q).Blocking() = false, want true", gate)
+		}
+	}
+	// An advisory gate surfaces a question without holding the pipeline, so it
+	// must not report as blocking.
+	for _, gate := range []GateKind{GateNone, GateGroomQuestions} {
+		if gate.Blocking() {
+			t.Errorf("GateKind(%q).Blocking() = true, want false", gate)
+		}
+	}
+}
+
 func TestPipelineValidate(t *testing.T) {
 	capture := TicketID("i-1")
 	valid := Pipeline{

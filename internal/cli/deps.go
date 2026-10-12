@@ -110,6 +110,8 @@ type Deps struct {
 	Sessions  *app.SessionService
 	// TaskChecks runs advisory checks and caches their results.
 	TaskChecks *app.CheckService
+	// QA answers the auto-QA loop: ready features and recorded QA verdicts.
+	QA *app.QAService
 
 	// Judge is the model-backed judgment port. It is Disabled when no API key is
 	// configured, so every judge-backed feature falls back to its deterministic path.
@@ -379,6 +381,7 @@ func (d *Deps) Attach(cfg config.Config, backend store.Backend) {
 		d.Messages = app.NewMessageService(backend, d.Clock, d.IDs)
 		d.Sessions = app.NewSessionService(backend, d.Clock, d.IDs)
 		d.TaskChecks = app.NewCheckService(backend, d.Clock, d.IDs, d.Checks)
+		d.QA = app.NewQAService(backend, d.Clock, d.IDs)
 	}
 	if d.EmbedderOverride != nil {
 		d.Embedder = d.EmbedderOverride

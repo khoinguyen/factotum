@@ -512,6 +512,53 @@ func TestCheckSkipsDanglingOriginDependency(t *testing.T) {
 	}
 }
 
+// errOriginGet wraps a TicketRepo so Get fails for one id, exercising how
+// originTicket treats a store error that is not ErrNotFound.
+type errOriginGet struct {
+	store.TicketRepo
+	id  core.TicketID
+	err error
+}
+
+func (r errOriginGet) Get(ctx context.Context, id core.TicketID) (*core.Ticket, error) {
+	if id == r.id {
+		return nil, r.err
+	}
+	return r.TicketRepo.Get(ctx, id)
+}
+
+type errOriginBackend struct {
+	store.Backend
+	repo store.TicketRepo
+}
+
+func (b errOriginBackend) Tickets() store.TicketRepo { return b.repo }
+
+// TestOriginTicketSurfacesNonNotFoundError pins that originTicket skips only a
+// dangling dependency: a real store failure must propagate, not be silently
+// treated as a missing origin.
+func TestOriginTicketSurfacesNonNotFoundError(t *testing.T) {
+	f := newCheckFixture(t, &stubCheck{name: "stub", version: "1"})
+	ctx := context.Background()
+	idea, err := f.tasks.Add(ctx, TicketInput{ProjectID: f.task.ProjectID, Kind: core.KindIdea, Title: "a spark"})
+	if err != nil {
+		t.Fatalf("Add(idea) error = %v", err)
+	}
+	if _, err := f.tasks.AddDep(ctx, f.task.ID, idea.ID); err != nil {
+		t.Fatalf("AddDep() error = %v", err)
+	}
+	task, err := f.tasks.Get(ctx, f.task.ID)
+	if err != nil {
+		t.Fatalf("Get(task) error = %v", err)
+	}
+
+	boom := errors.New("get ticket: disk I/O error")
+	backend := errOriginBackend{Backend: f.backend, repo: errOriginGet{TicketRepo: f.backend.Tickets(), id: idea.ID, err: boom}}
+	if _, err := originTicket(ctx, backend, task); !errors.Is(err, boom) {
+		t.Fatalf("originTicket() error = %v, want the store error", err)
+	}
+}
+
 func TestCheckOriginChangeInvalidatesCache(t *testing.T) {
 	stub := &stubCheck{name: "stub", version: "1"}
 	f := newCheckFixture(t, stub)

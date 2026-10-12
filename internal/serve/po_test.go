@@ -3,7 +3,9 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -687,6 +689,94 @@ func TestCrossProjectCaptureIsOrigin(t *testing.T) {
 				t.Fatalf("cross-project origin url = %q, want /idea/%s", doc.Origin.URL, foreign.ID)
 			}
 		})
+	}
+}
+
+// TestCrossProjectCaptureGroupsOnDashboard pins the dashboard side of the
+// origin rule: a task whose capture dep belongs to another project is grouped
+// under that capture on the kanban, with the capture's title, even when the
+// scoped snapshot omits the capture. ft task get, /api/task, and the dashboard
+// must agree on the origin.
+func TestCrossProjectCaptureGroupsOnDashboard(t *testing.T) {
+	f := newFixture(t)
+	mine := f.addProject(t, "acme", "Acme")
+	other := f.addProject(t, "other", "Other")
+
+	task := f.addTask(t, mine.ID, "Depends on an out-of-scope idea")
+	f.setStatus(t, task.ID, core.StatusInProgress)
+	foreign := f.addIdea(t, other.ID, "Foreign idea", "")
+	if _, err := f.tasks.AddDep(context.Background(), task.ID, foreign.ID); err != nil {
+		t.Fatalf("AddDep() error = %v", err)
+	}
+
+	cases := []struct {
+		name string
+		opts Options
+	}{
+		{"scoped server", Options{Project: mine.ID}},
+		{"all projects server", Options{All: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := tc.opts
+			opts.Backend = f.backend
+			opts.Clock = f.clock
+			server, err := New(opts)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			page, err := server.page(context.Background())
+			if err != nil {
+				t.Fatalf("page() error = %v", err)
+			}
+			group, ok := findGroup(page.InFlightGroups, foreign.ID)
+			if !ok {
+				t.Fatalf("InFlightGroups = %v, want a group for %s", groupIDs(page.InFlightGroups), foreign.ID)
+			}
+			if group.IdeaTitle != foreign.Title {
+				t.Fatalf("group title = %q, want %q", group.IdeaTitle, foreign.Title)
+			}
+			if !hasTask(group.Tasks, task.ID) {
+				t.Fatalf("group tasks = %v, want %s", taskIDs(group.Tasks), task.ID)
+			}
+		})
+	}
+}
+
+// TestCrossProjectOriginSurfacesStoreError proves the read does not swallow a
+// store failure while resolving an origin edge: only a dangling dep
+// (core.ErrNotFound) is skipped, and any other Get error reaches the handler as
+// a 503 rather than silently dropping the origin.
+func TestCrossProjectOriginSurfacesStoreError(t *testing.T) {
+	f := newFixture(t)
+	mine := f.addProject(t, "acme", "Acme")
+	other := f.addProject(t, "other", "Other")
+
+	task := f.addTask(t, mine.ID, "Depends on an out-of-scope idea")
+	foreign := f.addIdea(t, other.ID, "Foreign idea", "")
+	if _, err := f.tasks.AddDep(context.Background(), task.ID, foreign.ID); err != nil {
+		t.Fatalf("AddDep() error = %v", err)
+	}
+
+	boom := errors.New("get ticket: disk I/O error")
+	backend := errTicketsBackend{
+		Backend: f.backend,
+		repo:    errTicketGet{TicketRepo: f.backend.Tickets(), id: foreign.ID, err: boom},
+	}
+	server, err := New(Options{Backend: backend, Clock: f.clock, Project: mine.ID, Assets: testAssets()})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/api/task/" + string(task.ID))
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 for a non-NotFound store error", resp.StatusCode)
 	}
 }
 

@@ -479,6 +479,87 @@ func TestRunCommandLoopReportsUngroomedTaskNotRun(t *testing.T) {
 	}
 }
 
+// captureLoopContext creates a project with an idea capture and two groomed,
+// agent-assigned tasks that belong to it (a two-task chain), so `ft run <idea>`
+// can be exercised. Both tasks carry the idea as their origin edge.
+func captureLoopContext(t *testing.T, r *runner) (projectID, idea, first, second string) {
+	t.Helper()
+	projectID = firstField(t, r.run("project", "create", "Acme"))
+	r.run("project", "repo", "create", projectID, "web", "--path", t.TempDir())
+	r.run("actor", "create", "--kind", "agent", "claude")
+	idea = firstField(t, r.run("idea", "create", "-p", projectID, "-t", "Feature"))
+	first = firstField(t, r.run("task", "create",
+		"--project", projectID, "--repo", "web", "--title", "First", "--body", "Do the first part.",
+		"--groomed", "--acceptance", "the first part is done", "--dep", idea))
+	r.run("task", "assign", first, "--actor", "claude")
+	second = firstField(t, r.run("task", "create",
+		"--project", projectID, "--repo", "web", "--title", "Second", "--body", "Do the last part.",
+		"--groomed", "--acceptance", "the last part is done", "--dep", idea, "--dep", first))
+	r.run("task", "assign", second, "--actor", "claude")
+	return projectID, idea, first, second
+}
+
+// `ft run <idea>` targets the capture, not a single task: it runs every task
+// that belongs to the idea, in DAG order, and reports the loop outcome.
+func TestRunCommandTargetsCaptureRunsAllTasks(t *testing.T) {
+	r := newRunner(t)
+	_, idea, first, second := captureLoopContext(t, r)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("run", idea, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	for _, want := range []string{"goal: " + idea, "goal_kind: idea", "stop: goal_reached", "iterations: 2", first, second} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("capture run output missing %q:\n%s", want, out)
+		}
+	}
+	if got := backend.Commands(); len(got) != 2 {
+		t.Fatalf("ran %d tasks, want 2", len(got))
+	}
+	for _, id := range []string{first, second} {
+		if shown := r.run("task", "get", id); !strings.Contains(shown, "ready_for_review") {
+			t.Fatalf("task %s not advanced by the capture loop:\n%s", id, shown)
+		}
+	}
+}
+
+// `ft run --goal <idea>` is the same capture loop as the positional form.
+func TestRunCommandGoalFlagTargetsCapture(t *testing.T) {
+	r := newRunner(t)
+	_, idea, _, _ := captureLoopContext(t, r)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("run", "--goal", idea, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !strings.Contains(out, "goal_kind: idea") || !strings.Contains(out, "stop: goal_reached") {
+		t.Fatalf("--goal capture run output unexpected:\n%s", out)
+	}
+}
+
+// A stored prompt applies to a single-task or task-less run; a capture is a
+// loop, so a prompt source is a usage error.
+func TestRunCommandCaptureRejectsPromptSource(t *testing.T) {
+	r := newRunner(t)
+	_, idea, _, _ := captureLoopContext(t, r)
+	r.runBackend = isofake.New("sandbox")
+	r.runHarness = harnessfake.New("opencode")
+	promptFile := filepath.Join(t.TempDir(), "prompt.md")
+	if err := os.WriteFile(promptFile, []byte("do it"), 0o600); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+
+	err := r.runErr("run", idea, "--prompt-file", promptFile, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("capture with a prompt source error = %v, want usage", err)
+	}
+}
+
 func TestRunCommandLoopGoalSelectionIsExclusive(t *testing.T) {
 	r := newRunner(t)
 	r.runHarness = harnessfake.New("opencode")

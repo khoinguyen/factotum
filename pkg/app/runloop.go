@@ -88,7 +88,10 @@ func NewRunLoopService(backend store.Backend, ranker rank.Ranker, clock Clock) *
 }
 
 // Run drives the loop. It returns the outcome on every terminal state; a task
-// run failure is returned as an error alongside the outcome.
+// run failure is returned as an error alongside the outcome. The goal may be a
+// task or milestone (the loop runs the work toward it) or a capture - an idea
+// or bug - in which case the loop runs every task that belongs to it, in DAG
+// order.
 func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, error) {
 	if in.Runner == nil {
 		return nil, fmt.Errorf("%w: no task runner", core.ErrInvalid)
@@ -97,10 +100,12 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 	if err != nil {
 		return nil, err
 	}
+	capture := goal.Kind.CapturedByHuman()
 	// Milestones are executable in the graph, but the loop runs work toward the
-	// gate, never the gate itself.
-	if !goal.Kind.Executable() {
-		return nil, fmt.Errorf("%w: goal %s has kind %q, not task or milestone", core.ErrInvalid, goal.ID, goal.Kind)
+	// gate, never the gate itself. A capture is not executable either, but its
+	// tasks are the goal.
+	if !goal.Kind.Executable() && !capture {
+		return nil, fmt.Errorf("%w: goal %s has kind %q, not task, milestone, idea, or bug", core.ErrInvalid, goal.ID, goal.Kind)
 	}
 
 	outcome := &LoopOutcome{Goal: goal.ID, GoalKind: goal.Kind}
@@ -117,18 +122,27 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 		}
 		outcome.GoalStatus = current.Status
 
-		if current.Resolves(snapshot.Project.Policy) {
-			return s.reachGoal(outcome, snapshot, 0), nil
+		roots, err := loopRoots(snapshot, goal, capture)
+		if err != nil {
+			return outcome, err
 		}
-		if current.IsMilestone() {
+
+		if capture {
+			if doneUnder(snapshot.Graph, roots, snapshot.Project.Policy) {
+				return s.reachGoal(outcome, snapshot, 0), nil
+			}
+		} else if current.Resolves(snapshot.Project.Policy) {
+			return s.reachGoal(outcome, snapshot, 0), nil
+		} else if current.IsMilestone() {
 			if ready, _ := snapshot.Graph.Readiness(goal.ID); ready {
 				return s.reachGoal(outcome, snapshot, 0), nil
 			}
 		}
 
-		candidates := agentReadyOnPath(snapshot, goal.ID)
+		onPath := ancestorsFrom(snapshot.Graph, roots)
+		candidates := agentReadyIn(snapshot, onPath)
 		if len(candidates) == 0 {
-			return s.stall(outcome, snapshot, goal.ID), nil
+			return s.stall(outcome, snapshot, onPath, roots), nil
 		}
 
 		scored, rankErr := s.ranker.Rank(ctx, rank.Request{
@@ -141,14 +155,14 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 			return outcome, rankErr
 		}
 		if len(scored) == 0 {
-			return s.stall(outcome, snapshot, goal.ID), nil
+			return s.stall(outcome, snapshot, onPath, roots), nil
 		}
 		next := scored[0].TicketID
 		nextTask, _ := snapshot.Graph.Ticket(next)
 
 		if in.MaxTasks > 0 && len(outcome.Steps) >= in.MaxTasks {
 			outcome.Stop = StopBudgetExhausted
-			outcome.Remaining = remainingOnPath(snapshot.Graph, goal.ID, snapshot.Project.Policy)
+			outcome.Remaining = remainingIn(snapshot.Graph, roots, snapshot.Project.Policy)
 			return outcome, nil
 		}
 
@@ -164,7 +178,10 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 		if snapshot, err = LoadSnapshot(ctx, s.backend, goal.ProjectID, s.clock.Now()); err != nil {
 			return outcome, err
 		}
-		step.Remaining = remainingOnPath(snapshot.Graph, goal.ID, snapshot.Project.Policy)
+		if roots, err = loopRoots(snapshot, goal, capture); err != nil {
+			return outcome, err
+		}
+		step.Remaining = remainingIn(snapshot.Graph, roots, snapshot.Project.Policy)
 		outcome.Steps = append(outcome.Steps, step)
 		if in.OnStep != nil {
 			in.OnStep(step)
@@ -180,8 +197,47 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 	}
 }
 
+// loopRoots returns the executable tasks whose resolution ends the loop: the
+// goal itself for a task or milestone, or every task belonging to a capture.
+// A capture with no tasks has nothing to run and is rejected.
+func loopRoots(snapshot *Snapshot, goal *core.Ticket, capture bool) (map[core.TicketID]bool, error) {
+	if !capture {
+		return map[core.TicketID]bool{goal.ID: true}, nil
+	}
+	roots := make(map[core.TicketID]bool)
+	for _, task := range snapshot.Tasks {
+		// A capture's tasks are executable tasks; a milestone is a human gate,
+		// not work the loop runs.
+		if task.Kind != core.KindTask {
+			continue
+		}
+		for _, dep := range task.Deps {
+			if dep == goal.ID {
+				roots[task.ID] = true
+				break
+			}
+		}
+	}
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("%w: capture %s has no tasks to run", core.ErrInvalid, goal.ID)
+	}
+	return roots, nil
+}
+
+// doneUnder reports whether every root task resolves under the policy.
+func doneUnder(g *graph.Graph, roots map[core.TicketID]bool, policy core.ResolutionPolicy) bool {
+	for id := range roots {
+		task, ok := g.Ticket(id)
+		if !ok || !task.Resolves(policy) {
+			return false
+		}
+	}
+	return true
+}
+
 // reachGoal finishes with the goal reached: for a milestone goal the gate is
-// now startable for a human, for a task goal it resolved.
+// now startable for a human, for a task goal it resolved, and for a capture
+// every task it owns has resolved.
 func (s *RunLoopService) reachGoal(outcome *LoopOutcome, snapshot *Snapshot, remaining int) *LoopOutcome {
 	outcome.Stop = StopGoalReached
 	outcome.Remaining = remaining
@@ -192,10 +248,10 @@ func (s *RunLoopService) reachGoal(outcome *LoopOutcome, snapshot *Snapshot, rem
 }
 
 // stall finishes when no startable work remains toward the goal.
-func (s *RunLoopService) stall(outcome *LoopOutcome, snapshot *Snapshot, goal core.TicketID) *LoopOutcome {
-	unresolved := unresolvedOnPath(snapshot.Graph, goal, snapshot.Project.Policy)
+func (s *RunLoopService) stall(outcome *LoopOutcome, snapshot *Snapshot, onPath, roots map[core.TicketID]bool) *LoopOutcome {
+	unresolved := unresolvedIn(snapshot.Graph, onPath, roots, snapshot.Project.Policy)
 	outcome.Remaining = len(unresolved)
-	outcome.NotRun = notRunOnPath(snapshot, goal)
+	outcome.NotRun = notRunIn(snapshot, onPath)
 	outcome.Stop = StopNoReadyWork
 	for _, id := range unresolved {
 		if task, ok := snapshot.Graph.Ticket(id); ok && task.Status == core.StatusBlocked {
@@ -206,13 +262,12 @@ func (s *RunLoopService) stall(outcome *LoopOutcome, snapshot *Snapshot, goal co
 	return outcome
 }
 
-// agentReadyOnPath returns the agent-ready (groomed) startable tasks that lie on
-// a path to the goal. A task that is startable but not agent-ready - unassigned,
-// assigned to a human, or ungroomed - is left for a human; the loop never runs
-// it. Milestones are excluded: a milestone is a human gate, so the loop
-// completes its prerequisites and stops rather than running the gate.
-func agentReadyOnPath(snapshot *Snapshot, goal core.TicketID) []core.TicketID {
-	onPath := ancestorsToward(snapshot.Graph, goal)
+// agentReadyIn returns the agent-ready (groomed) startable tasks on the path. A
+// task that is startable but not agent-ready - unassigned, assigned to a human,
+// or ungroomed - is left for a human; the loop never runs it. Milestones are
+// excluded: a milestone is a human gate, so the loop completes its
+// prerequisites and stops rather than running the gate.
+func agentReadyIn(snapshot *Snapshot, onPath map[core.TicketID]bool) []core.TicketID {
 	var out []core.TicketID
 	for _, id := range snapshot.Ready.Agent {
 		if !onPath[id] {
@@ -226,11 +281,10 @@ func agentReadyOnPath(snapshot *Snapshot, goal core.TicketID) []core.TicketID {
 	return out
 }
 
-// notRunOnPath returns the startable on-path tasks the loop declines to run
+// notRunIn returns the startable on-path tasks the loop declines to run
 // because they are not agent-ready. They are the work a human must groom or
 // take on before the loop can make progress.
-func notRunOnPath(snapshot *Snapshot, goal core.TicketID) []core.TicketID {
-	onPath := ancestorsToward(snapshot.Graph, goal)
+func notRunIn(snapshot *Snapshot, onPath map[core.TicketID]bool) []core.TicketID {
 	agentReady := make(map[core.TicketID]bool, len(snapshot.Ready.Agent))
 	for _, id := range snapshot.Ready.Agent {
 		agentReady[id] = true
@@ -248,14 +302,13 @@ func notRunOnPath(snapshot *Snapshot, goal core.TicketID) []core.TicketID {
 	return out
 }
 
-// remainingOnPath counts the unresolved tasks on the path to the goal. A
-// milestone goal is excluded from its own count: reaching it is the goal.
-func remainingOnPath(g *graph.Graph, goal core.TicketID, policy core.ResolutionPolicy) int {
-	return len(unresolvedOnPath(g, goal, policy))
+// remainingIn counts the unresolved tasks on the path from the roots. A
+// milestone root is excluded from its own count: reaching it is the goal.
+func remainingIn(g *graph.Graph, roots map[core.TicketID]bool, policy core.ResolutionPolicy) int {
+	return len(unresolvedIn(g, ancestorsFrom(g, roots), roots, policy))
 }
 
-func unresolvedOnPath(g *graph.Graph, goal core.TicketID, policy core.ResolutionPolicy) []core.TicketID {
-	onPath := ancestorsToward(g, goal)
+func unresolvedIn(g *graph.Graph, onPath, roots map[core.TicketID]bool, policy core.ResolutionPolicy) []core.TicketID {
 	var out []core.TicketID
 	for _, id := range g.IDs() {
 		if !onPath[id] {
@@ -265,7 +318,7 @@ func unresolvedOnPath(g *graph.Graph, goal core.TicketID, policy core.Resolution
 		if !ok || task.Resolves(policy) {
 			continue
 		}
-		if id == goal && task.IsMilestone() {
+		if roots[id] && task.IsMilestone() {
 			continue
 		}
 		out = append(out, id)
@@ -273,12 +326,16 @@ func unresolvedOnPath(g *graph.Graph, goal core.TicketID, policy core.Resolution
 	return out
 }
 
-// ancestorsToward returns the goal and every task that can reach it by
+// ancestorsFrom returns the roots and every task that can reach one by
 // following dependency edges (its upstream prerequisites). A task outside this
-// set is not on the path to the goal and the loop leaves it alone.
-func ancestorsToward(g *graph.Graph, goal core.TicketID) map[core.TicketID]bool {
-	onPath := map[core.TicketID]bool{goal: true}
-	queue := []core.TicketID{goal}
+// set is not on the path and the loop leaves it alone.
+func ancestorsFrom(g *graph.Graph, roots map[core.TicketID]bool) map[core.TicketID]bool {
+	onPath := make(map[core.TicketID]bool, len(roots))
+	queue := make([]core.TicketID, 0, len(roots))
+	for id := range roots {
+		onPath[id] = true
+		queue = append(queue, id)
+	}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]

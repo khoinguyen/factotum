@@ -47,6 +47,44 @@ export function resolveRoute(path: string): Route {
   return { kind: "not-found", path }
 }
 
+// withFrom appends a return target to a client route, so the page it opens can
+// offer a back-link to where it was opened from. The target travels in ?from=.
+export function withFrom(href: string, from: string): string {
+  const separator = href.includes("?") ? "&" : "?"
+  return `${href}${separator}from=${encodeURIComponent(from)}`
+}
+
+// backTarget derives a page's back-link from the ?from= return target, falling
+// back to the dashboard when it is absent or names a route the client router
+// does not own (an external URL, or a protocol-relative path).
+export function backTarget(search: string): { href: string; label: string } {
+  const from = new URLSearchParams(search).get("from")
+  if (!from || !isClientRoute(from)) {
+    return { href: "/", label: "dashboard" }
+  }
+  return { href: from, label: backLabel(from) }
+}
+
+// backLabel names the destination of a back-link so the control reads naturally
+// ("← idea") rather than showing a bare path.
+function backLabel(href: string): string {
+  if (href === "/capture") return "capture"
+  if (href === "/sessions") return "sessions"
+  if (href === "/factory") return "factory"
+  switch (href.split("/")[1]) {
+    case "idea":
+      return "idea"
+    case "task":
+      return "task"
+    case "memory":
+      return "memory"
+    case "doc":
+      return "document"
+    default:
+      return "back"
+  }
+}
+
 // usePath tracks the browser pathname across client-side navigations.
 export function usePath(): string {
   const [path, setPath] = useState(() => window.location.pathname)

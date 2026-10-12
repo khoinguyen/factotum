@@ -216,6 +216,26 @@ const memoryDoc: ArtifactDetail = {
   },
 }
 
+// A doc artifact attached to the idea capture, the shape /api/doc returns for a
+// QA verdict or design note opened from a capture.
+const artifactDoc: ArtifactDetail = {
+  id: "art-1",
+  kind: "doc",
+  title: "Design note",
+  body: "the full document",
+  url: "/doc/art-1",
+  links: [],
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  attached_to: {
+    id: "t-idea",
+    title: "Spark of a plan",
+    class: "capture",
+    chip: "capture",
+    url: "/idea/t-idea",
+  },
+}
+
 // One retired session (with delivered work) and one alive successor, the shape
 // /api/sessions returns.
 const sessionsDoc: SessionsDoc = {
@@ -533,6 +553,48 @@ test("renders a task detail with dependencies and origin", async () => {
   expect(screen.getByText("Spark of a plan")).toBeTruthy()
   expect(screen.getByText("Umbrella idea")).toBeTruthy()
   expect(screen.getByText("Grouped under · 1")).toBeTruthy()
+})
+
+// Khoi 2026-10-12: a doc opened from a capture must offer a back-link to that
+// capture, not the dashboard. The capture detail carries where it was opened
+// from in ?from=, and the doc page reads it back, so the round trip lands on the
+// capture again.
+test("the doc back-link returns to the capture it was opened from", async () => {
+  stubFetch({ "/api/idea/t-idea": ideaDoc, "/api/doc/art-1": artifactDoc })
+  renderAt("/idea/t-idea")
+
+  const artifact = await screen.findByText("Design note")
+  expect(artifact.closest("a")?.getAttribute("href")).toBe(
+    "/doc/art-1?from=%2Fidea%2Ft-idea",
+  )
+
+  fireEvent.click(artifact)
+
+  const back = await screen.findByRole("link", { name: /← idea/ })
+  expect(back.getAttribute("href")).toBe("/idea/t-idea")
+
+  fireEvent.click(back)
+  expect(window.location.pathname).toBe("/idea/t-idea")
+  expect(await screen.findByText("Spark of a plan")).toBeTruthy()
+})
+
+// The task detail carries itself as the return target too, so an artifact opened
+// from a task returns to the task.
+test("a task detail's artifact link carries the task as its return target", async () => {
+  stubFetch({
+    "/api/task/t-promoted": {
+      ...taskDoc,
+      artifacts: [
+        { id: "art-2", kind: "doc", title: "Spec note", url: "/doc/art-2" },
+      ],
+    },
+  })
+  renderAt("/task/t-promoted")
+
+  const artifact = await screen.findByText("Spec note")
+  expect(artifact.closest("a")?.getAttribute("href")).toBe(
+    "/doc/art-2?from=%2Ftask%2Ft-promoted",
+  )
 })
 
 test("renders a memory detail with its body and attached task", async () => {

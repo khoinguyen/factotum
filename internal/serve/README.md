@@ -17,8 +17,10 @@ and the capture write side. Its tests are layered:
 The app (Vite + React + TypeScript + Tailwind) is served from `web/dist`, which
 `web/web.go` embeds with `go:embed`. `mise run build-web` builds it; `mise run
 build` embeds the result. The app shell answers the dashboard root `/` and the
-client routes `/capture`, `/idea`, `/task`, `/memory`, `/doc`; the client router
-reads the id from the path. The data comes from `/api/snapshot` (dashboard) and
+client routes `/capture`, `/sessions`, `/idea`, `/task`, `/memory`, `/doc`; the
+client router reads the id from the path. The data comes from `/api/snapshot`
+(dashboard), `/api/sessions` (the chief-session timeline: each session alive or
+retired, when it started and stopped and why, and the work it delivered), and
 `/api/<kind>/<id>` (drill-downs), and the app refetches on the `/events` SSE
 stream, so a mutation appears live. `/capture` renders the capture form, which
 posts to `/api/capture`.

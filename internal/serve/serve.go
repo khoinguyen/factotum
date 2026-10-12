@@ -93,7 +93,8 @@ type Options struct {
 	// the transport, so a read-only server or an all-projects one omits it.
 	Messages *app.MessageService
 	// Assets is the built shadcn/ui app: it is served under /app and its index
-	// shell answers the read-side client routes (/, /idea, /task, /memory, /doc).
+	// shell answers the read-side client routes (/, /capture, /sessions, /idea,
+	// /task, /memory, /doc).
 	// Nil falls back to the bundle embedded in the binary (web.Dist), which is
 	// what production uses; tests inject a small in-memory tree.
 	Assets fs.FS
@@ -159,11 +160,15 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.getOrHead(s.handleAppIndex)(w, r)
 	case path == "/api/snapshot":
 		s.getOrHead(s.handleSnapshot)(w, r)
+	case path == "/api/sessions":
+		s.getOrHead(s.handleSessions)(w, r)
 	case path == "/events":
 		s.getOnly(s.handleEvents)(w, r)
 	case path == "/app" || strings.HasPrefix(path, "/app/"):
 		s.handleApp(w, r)
 	case path == "/capture":
+		s.getOrHead(s.handleAppIndex)(w, r)
+	case path == "/sessions":
 		s.getOrHead(s.handleAppIndex)(w, r)
 	case path == "/api/capture":
 		s.routeCapture(w, r)

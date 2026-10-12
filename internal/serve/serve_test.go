@@ -38,7 +38,9 @@ type fixture struct {
 	actors    *app.ActorService
 	artifacts *app.ArtifactService
 	messages  *app.MessageService
+	sessions  *app.SessionService
 	clock     fixedClock
+	ids       *seqIDs
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -54,7 +56,9 @@ func newFixture(t *testing.T) *fixture {
 		actors:    app.NewActorService(backend, clock, ids),
 		artifacts: app.NewArtifactService(backend, clock, ids),
 		messages:  app.NewMessageService(backend, clock, ids),
+		sessions:  app.NewSessionService(backend, clock, ids),
 		clock:     clock,
+		ids:       ids,
 	}
 }
 

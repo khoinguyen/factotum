@@ -94,6 +94,52 @@ func TestSessionStartMintsAndRecords(t *testing.T) {
 	}
 }
 
+// TestSessionStartMintsDespiteInheritedSession pins F1: a reincarnated chief is
+// launched from a shell that already carries the outgoing session, so start must
+// mint a fresh id rather than reuse the inherited one.
+func TestSessionStartMintsDespiteInheritedSession(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(key string) string {
+		switch key {
+		case "FACTOTUM_DEFAULT_ACTOR":
+			return "chief"
+		case "FACTOTUM_SESSION":
+			return "oldsess"
+		}
+		return ""
+	}
+	project := firstField(t, r.run("project", "create", "Acme"))
+
+	sid := firstField(t, r.run("session", "start", "-p", project))
+	if sid == "" || sid == "oldsess" {
+		t.Fatalf("session start = %q, want a freshly minted id, not the inherited oldsess", sid)
+	}
+}
+
+func TestSessionStartHonorsExplicitSession(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(string) string { return "" }
+	project := firstField(t, r.run("project", "create", "Acme"))
+
+	sid := firstField(t, r.run("session", "start", "-p", project, "--session", "explicit1"))
+	if sid != "explicit1" {
+		t.Fatalf("session start --session = %q, want explicit1", sid)
+	}
+}
+
+// TestRegisterOmitsEmptySession pins F3: an optional single-result field is
+// omitted from text output when empty, not printed blank.
+func TestRegisterOmitsEmptySession(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(string) string { return "" }
+	project := firstField(t, r.run("project", "create", "Acme"))
+
+	out := r.run("msg", "agent", "register", "--actor", "builder-t-1", "-p", project)
+	if strings.Contains(out, "session:") {
+		t.Fatalf("register output = %q, want no session line when unset", out)
+	}
+}
+
 func TestRegisterRecordsSessionFromEnv(t *testing.T) {
 	r := newRunner(t)
 	r.getenv = func(key string) string {

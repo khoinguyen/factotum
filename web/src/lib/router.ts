@@ -4,6 +4,7 @@ export type Route =
   | { kind: "dashboard" }
   | { kind: "capture" }
   | { kind: "sessions" }
+  | { kind: "factory" }
   | { kind: "idea"; id: string }
   | { kind: "task"; id: string }
   | { kind: "memory"; id: string }
@@ -16,7 +17,7 @@ const clientPrefixes = ["/idea/", "/task/", "/memory/", "/doc/"]
 // else (/app/*, external URLs) must be left to the browser, or the router renders
 // its not-found page over a server-rendered page.
 export function isClientRoute(path: string): boolean {
-  if (path === "/capture" || path === "/sessions") return true
+  if (path === "/capture" || path === "/sessions" || path === "/factory") return true
   return clientPrefixes.some((prefix) => path.startsWith(prefix))
 }
 
@@ -32,6 +33,9 @@ export function resolveRoute(path: string): Route {
   }
   if (trimmed === "/sessions") {
     return { kind: "sessions" }
+  }
+  if (trimmed === "/factory") {
+    return { kind: "factory" }
   }
   const parts = trimmed.split("/").filter(Boolean)
   if (parts.length === 2 && isClientRoute(trimmed)) {

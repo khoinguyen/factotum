@@ -52,6 +52,22 @@ export type IdeaView = {
   artifacts?: ArtifactView[]
 }
 
+// PipelineView is one factory pipeline: its origin capture, phase, open gate,
+// the tasks it produced, and the exact command that clears the gate.
+export type PipelineView = {
+  id: string
+  capture: string
+  capture_title?: string
+  capture_url: string
+  state: string
+  gate?: string
+  command?: string
+  session?: string
+  error?: string
+  produced: TaskLink[]
+  updated_at?: string
+}
+
 export type TaskGroup = {
   idea_id?: string
   idea_title?: string
@@ -105,6 +121,7 @@ export type Snapshot = {
     finished: IdeaView[]
     captured: IdeaView[]
   }
+  pipelines: PipelineView[]
   updates: UpdateView[]
   flags: string[]
 }
@@ -296,6 +313,10 @@ export function normalizeSnapshot(s: Snapshot): Snapshot {
     waiting_groups: s.waiting_groups ?? [],
     updates: s.updates ?? [],
     flags: s.flags ?? [],
+    pipelines: (s.pipelines ?? []).map((pipeline) => ({
+      ...pipeline,
+      produced: pipeline.produced ?? [],
+    })),
     ideas: {
       blocked: s.ideas?.blocked ?? [],
       active: s.ideas?.active ?? [],

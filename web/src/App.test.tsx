@@ -39,6 +39,7 @@ const emptySnapshot: Snapshot = {
   in_flight_groups: [],
   waiting_groups: [],
   ideas: { blocked: [], active: [], finished: [], captured: [] },
+  pipelines: [],
   updates: [],
   flags: [],
 }
@@ -86,6 +87,40 @@ const groupedSnapshot: Snapshot = {
           origin_title: "Grouped idea",
         },
       ],
+    },
+  ],
+}
+
+// A factory view: one pipeline parked on a human gate with its clearing command
+// and a produced task, and one ungated pipeline still advancing.
+const factorySnapshot: Snapshot = {
+  ...emptySnapshot,
+  pipelines: [
+    {
+      id: "pl-1",
+      capture: "t-idea",
+      capture_title: "Spark of a plan",
+      capture_url: "/idea/t-idea",
+      state: "building",
+      gate: "merge_approval",
+      command: "ft up merge pl-1",
+      produced: [
+        {
+          id: "t-promoted",
+          title: "Promoted task",
+          class: "review",
+          chip: "review",
+          url: "/task/t-promoted",
+        },
+      ],
+    },
+    {
+      id: "pl-2",
+      capture: "t-idea-2",
+      capture_title: "Second spark",
+      capture_url: "/idea/t-idea-2",
+      state: "grooming",
+      produced: [],
     },
   ],
 }
@@ -619,6 +654,44 @@ test("renders an empty sessions page", async () => {
   stubFetch({ "/api/sessions": { sessions: [] } })
   renderAt("/sessions")
   expect(await screen.findByText("No sessions recorded yet.")).toBeTruthy()
+})
+
+// The factory view surfaces each pipeline with its origin capture, phase, open
+// gate, produced tasks, and the exact operator command that clears the gate
+// (docs/up/design.md §6/§7).
+test("renders the factory page with each pipeline's phase, gate, and clearing command", async () => {
+  stubFetch({ "/api/snapshot": factorySnapshot })
+  renderAt("/factory")
+  expect(await screen.findByText("Spark of a plan")).toBeTruthy()
+  expect(screen.getByText("building")).toBeTruthy()
+  expect(screen.getByText("merge_approval")).toBeTruthy()
+  expect(screen.getByText("ft up merge pl-1")).toBeTruthy()
+  expect(screen.getByText("Promoted task")).toBeTruthy()
+})
+
+// A pipeline still advancing has no open gate, so it shows its phase but no
+// clearing command.
+test("the factory page shows no clearing command for an ungated pipeline", async () => {
+  stubFetch({ "/api/snapshot": factorySnapshot })
+  renderAt("/factory")
+  expect(await screen.findByText("Second spark")).toBeTruthy()
+  expect(screen.getByText("grooming")).toBeTruthy()
+  expect(screen.getAllByText("Clear the gate")).toHaveLength(1)
+})
+
+test("renders an empty factory page", async () => {
+  stubFetch({ "/api/snapshot": emptySnapshot })
+  renderAt("/factory")
+  expect(await screen.findByText("No pipelines yet.")).toBeTruthy()
+})
+
+test("the dashboard links to the factory page", async () => {
+  stubFetch({ "/api/snapshot": emptySnapshot })
+  renderAt("/")
+  const link = await screen.findByText("Factory →")
+  fireEvent.click(link)
+  expect(await screen.findByText("No pipelines yet.")).toBeTruthy()
+  expect(window.location.pathname).toBe("/factory")
 })
 
 test("the dashboard links to the sessions page", async () => {

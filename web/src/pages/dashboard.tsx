@@ -35,9 +35,14 @@ export function Dashboard() {
         updated {snapshot.snapshot}
       </p>
 
-      <AppLink href="/sessions" className="text-sm text-muted-foreground hover:underline">
-        Chief sessions →
-      </AppLink>
+      <div className="flex gap-4">
+        <AppLink href="/factory" className="text-sm text-muted-foreground hover:underline">
+          Factory →
+        </AppLink>
+        <AppLink href="/sessions" className="text-sm text-muted-foreground hover:underline">
+          Chief sessions →
+        </AppLink>
+      </div>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
         <Stat label="Captures" value={snapshot.stats.ideas} />

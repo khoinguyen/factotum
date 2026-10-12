@@ -815,6 +815,23 @@ func (r *pipelineRepo) Update(_ context.Context, pipeline *core.Pipeline) error 
 func (r *pipelineRepo) Claim(_ context.Context, req store.PipelineClaimRequest) (*core.Pipeline, error) {
 	r.backend.mu.Lock()
 	defer r.backend.mu.Unlock()
+	if req.ID != nil {
+		pipeline, ok := r.backend.pipelines[*req.ID]
+		if !ok {
+			return nil, fmt.Errorf("%w: pipeline %s", core.ErrNotFound, *req.ID)
+		}
+		state, err := store.ClaimByID(&pipeline, req)
+		if err != nil {
+			return nil, err
+		}
+		if state != pipeline.State {
+			pipeline.State = state
+			pipeline.UpdatedAt = time.Now().UTC()
+			r.backend.pipelines[*req.ID] = pipeline
+		}
+		cloned := clone.Pipeline(pipeline)
+		return &cloned, nil
+	}
 	var (
 		best   core.Pipeline
 		bestID core.PipelineID

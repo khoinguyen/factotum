@@ -47,6 +47,17 @@ const (
 	// stop and the reason (reincarnation) are derivable from the log.
 	EventSessionStarted EventKind = "session.started"
 	EventSessionRetired EventKind = "session.retired"
+
+	// Pipeline events trace one factory pipeline (docs/up/design.md §7). They are
+	// appended with TicketID set to the origin capture, so a pipeline also
+	// surfaces on the capture's page and through the existing broker.
+	EventPipelineQueued        EventKind = "pipeline.queued"
+	EventPipelineStageStarted  EventKind = "pipeline.stage_started"
+	EventPipelineStageFinished EventKind = "pipeline.stage_finished"
+	EventPipelineGateOpened    EventKind = "pipeline.gate_opened"
+	EventPipelineGateCleared   EventKind = "pipeline.gate_cleared"
+	EventPipelineDone          EventKind = "pipeline.done"
+	EventPipelineFailed        EventKind = "pipeline.failed"
 )
 
 func (k EventKind) Valid() bool {
@@ -60,7 +71,9 @@ func (k EventKind) Valid() bool {
 		EventActorCreated, EventActorUpdated, EventActorDeleted,
 		EventArtifactCreated, EventArtifactUpdated, EventArtifactDeleted,
 		EventMessageSent, EventMessageClaimed, EventMessageRead, EventMessageFailed,
-		EventSessionStarted, EventSessionRetired:
+		EventSessionStarted, EventSessionRetired,
+		EventPipelineQueued, EventPipelineStageStarted, EventPipelineStageFinished,
+		EventPipelineGateOpened, EventPipelineGateCleared, EventPipelineDone, EventPipelineFailed:
 		return true
 	default:
 		return false

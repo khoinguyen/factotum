@@ -125,23 +125,27 @@ func newUpApproveCommand(deps *Deps) *cobra.Command {
 
 func (d *Deps) runUpApprove(cmd *cobra.Command, projectID, pipelineID string) error {
 	ctx := cmd.Context()
-	return d.withUpController(cmd, projectID, func(controller *up.Controller, target groomTarget, project core.ProjectID) error {
-		pipeline, err := target.backend.Pipelines().Get(ctx, core.PipelineID(pipelineID))
-		if err != nil {
-			return err
-		}
-		if pipeline.ProjectID != project {
-			return fmt.Errorf("%w: pipeline %s is not in project %s", core.ErrNotFound, pipeline.ID, project)
-		}
-		if err := approveGroomSession(ctx, target, pipeline); err != nil {
-			return err
-		}
-		updated, err := controller.Approve(ctx, core.PipelineID(pipelineID))
+	return d.withUpController(cmd, projectID, func(controller *up.Controller, target groomTarget, _ core.ProjectID) error {
+		updated, err := approvePipeline(ctx, controller, target, core.PipelineID(pipelineID))
 		if err != nil {
 			return err
 		}
 		return d.emitUpPipeline(updated)
 	})
+}
+
+// approvePipeline clears a design_rework gate. It validates the gate first, so a
+// wrong-state call is side-effect-free: the review is re-recorded and the task
+// gate released only once the pipeline is known to be parked at design_rework.
+func approvePipeline(ctx context.Context, controller *up.Controller, target groomTarget, id core.PipelineID) (*core.Pipeline, error) {
+	pipeline, err := controller.ValidateGate(ctx, id, core.GateDesignRework)
+	if err != nil {
+		return nil, err
+	}
+	if err := approveGroomSession(ctx, target, pipeline); err != nil {
+		return nil, err
+	}
+	return controller.Approve(ctx, id)
 }
 
 // approveGroomSession re-records an approving tech-design review on a pipeline's
@@ -162,6 +166,9 @@ func approveGroomSession(ctx context.Context, target groomTarget, pipeline *core
 	}
 	session.ReviewVerdict = string(groom.VerdictApprove)
 	session.Blocked = nil
+	// session.Review is deliberately left pointing at the original review
+	// artifact: the operator accepted the design, they did not author a new
+	// review, so `ft groom show` keeps the needs-rework findings visible.
 	return groom.WriteSession(target.dataDir, session)
 }
 

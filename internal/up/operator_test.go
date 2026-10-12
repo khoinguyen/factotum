@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/khoinguyen/factotum/internal/groom"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
 )
@@ -323,6 +324,100 @@ func TestMergeAdvancesParkedPipeline(t *testing.T) {
 	}
 	if got := f.pipeline(t, pipeline.ID); got.State != core.PipelineDone {
 		t.Fatalf("pipeline after merge = %q, want done", got.State)
+	}
+}
+
+// TestApproveAdvancesParkedPipeline proves the approve verb's whole effect: once
+// the operator has re-recorded an approving review (the CLI's side effect), the
+// controller clears the design_rework gate and resumes the review, which now
+// reads approve and drives the pipeline on to done.
+func TestApproveAdvancesParkedPipeline(t *testing.T) {
+	dataDir := t.TempDir()
+	f := newFixture(t, nil)
+	ctx := context.Background()
+	capture := f.capture(t, core.KindIdea)
+	task := f.producedTask(t, capture.ID, core.StatusTodo)
+
+	qa := &QARunner{Backend: f.backend, QA: func(ctx context.Context, p *core.Pipeline) (QAOutcome, error) {
+		if _, err := app.NewQAService(f.backend, f.clock, f.ids).Record(ctx, p.CaptureID, app.QAPass, "findings"); err != nil {
+			return QAOutcome{}, err
+		}
+		return QAOutcome{Detail: "passed"}, nil
+	}}
+	f.controller = mustController(t, f, map[core.PipelineState]StageRunner{
+		core.PipelineReview: &ReviewRunner{DataDir: dataDir},
+		core.PipelineBuilding: &BuildRunner{Backend: f.backend, Build: func(ctx context.Context, p *core.Pipeline) (BuildOutcome, error) {
+			for _, id := range p.Produced {
+				if _, err := f.tasks.SetStatus(ctx, id, core.StatusDone); err != nil {
+					return BuildOutcome{}, err
+				}
+			}
+			return BuildOutcome{Detail: "built"}, nil
+		}},
+		core.PipelineQA:      qa,
+		core.PipelineRollout: RolloutRunner{},
+	})
+
+	// The re-recorded approving review (what `ft up approve` writes first).
+	if err := groom.WriteSession(dataDir, groom.SessionRecord{
+		ID:            "groom-1",
+		Project:       string(f.project.ID),
+		Scope:         []groom.ScopeItem{{ID: string(capture.ID), Kind: string(core.KindIdea), Title: "capture"}},
+		Produced:      []string{string(task.ID)},
+		ReviewVerdict: string(groom.VerdictApprove),
+		CreatedAt:     f.clock.Now(),
+	}); err != nil {
+		t.Fatalf("WriteSession() error = %v", err)
+	}
+
+	pipeline := f.parkedOn(t, capture.ID, core.PipelineReview, core.GateDesignRework, nil, task.ID)
+	pipeline.Session = "groom-1"
+	if err := f.backend.Pipelines().Update(ctx, pipeline); err != nil {
+		t.Fatalf("Update(session) error = %v", err)
+	}
+
+	if _, err := f.controller.Approve(ctx, pipeline.ID); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+	if err := f.controller.Step(ctx); err != nil {
+		t.Fatalf("Step() after approve error = %v", err)
+	}
+	if got := f.pipeline(t, pipeline.ID); got.State != core.PipelineDone {
+		t.Fatalf("pipeline after approve = %q, want done", got.State)
+	}
+}
+
+// TestMergeLeavesUnbuiltProducedTask proves merge marks only the tasks awaiting
+// review: an unbuilt produced task is left open, so the resumed build stalls
+// (parks failed) rather than merging unfinished work.
+func TestMergeLeavesUnbuiltProducedTask(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := context.Background()
+	capture := f.capture(t, core.KindIdea)
+	ready := f.producedTask(t, capture.ID, core.StatusReadyForReview)
+	unbuilt := f.producedTask(t, capture.ID, core.StatusTodo)
+	f.controller = mustController(t, f, map[core.PipelineState]StageRunner{
+		core.PipelineBuilding: &BuildRunner{Backend: f.backend, Build: func(context.Context, *core.Pipeline) (BuildOutcome, error) {
+			return BuildOutcome{Detail: "built"}, nil
+		}},
+	})
+	pipeline := f.parkedOn(t, capture.ID, core.PipelineBuilding, core.GateMergeApproval, nil, ready.ID, unbuilt.ID)
+
+	if _, err := f.controller.Merge(ctx, pipeline.ID); err != nil {
+		t.Fatalf("Merge() error = %v", err)
+	}
+	if status := f.task(t, ready.ID).Status; status != core.StatusDone {
+		t.Fatalf("awaiting-merge task status = %q, want done", status)
+	}
+	if status := f.task(t, unbuilt.ID).Status; status != core.StatusTodo {
+		t.Fatalf("unbuilt task status = %q, want todo (left alone)", status)
+	}
+
+	if err := f.controller.Step(ctx); err != nil {
+		t.Fatalf("Step() after merge error = %v", err)
+	}
+	if got := f.pipeline(t, pipeline.ID); got.State != core.PipelineFailed {
+		t.Fatalf("pipeline with an unbuilt produced task = %q, want failed (build stalled)", got.State)
 	}
 }
 

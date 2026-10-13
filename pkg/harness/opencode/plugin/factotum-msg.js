@@ -9,12 +9,19 @@
 //     cleanup function. V2 has no `server`, and V1 has no `setup`, so each
 //     major ignores the other's half.
 //
-// On load it registers the session with `ft`, waits until OpenCode announces a
-// session, long-polls the message queue, injects each claimed message as a user
-// turn through the OpenCode session API, and acks it. It holds off claiming
-// until it has a session (a claimed message it cannot inject would otherwise be
-// dropped), and nacks rather than fails a message it cannot deliver. The poll
-// loop runs off the agent's turn, so injection never blocks tool execution.
+// On load it registers the session with `ft`, resolves the OpenCode session to
+// inject into (resuming one it persisted on a previous load, else waiting for
+// OpenCode to announce one), long-polls the message queue, injects each claimed
+// message as a user turn through the OpenCode session API, and acks it. It holds
+// off claiming until it has a session (a claimed message it cannot inject would
+// otherwise be dropped), and nacks rather than fails a message it cannot
+// deliver. The poll loop runs off the agent's turn, so injection never blocks
+// tool execution.
+//
+// OpenCode reloads a plugin when its staged file changes, which restarts the
+// receiver with no session. Persisting the session in the V2 context's storage
+// lets the reloaded receiver resume it instead of waiting for an event: an idle
+// agent gets none, so a reload would otherwise strand every queued handoff.
 //
 // It is a thin client of the receiver protocol. With no hub URL it shells out to
 // the `ft msg agent` verbs (the stable local adapter interface); when
@@ -228,6 +235,8 @@ export function createFactotumReceiver({
   config,
   call,
   inject,
+  loadSession,
+  saveSession,
   log = () => {},
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
@@ -284,6 +293,29 @@ export function createFactotumReceiver({
     return sessionID;
   }
 
+  // rememberSession records a session learned from an event so the next load
+  // (a reload starts session-less) can resume it. Saving is best-effort: a
+  // failed save only costs that next reload its resume.
+  function rememberSession(sid) {
+    if (sid === sessionID) return;
+    sessionID = sid;
+    if (typeof saveSession === "function") {
+      void Promise.resolve(saveSession(sid)).catch(() => {});
+    }
+  }
+
+  // restoreSession recovers the session without waiting for an event, so a
+  // receiver reloaded while its agent is idle still has somewhere to inject.
+  async function restoreSession() {
+    if (sessionID || typeof loadSession !== "function") return;
+    try {
+      const sid = await loadSession();
+      if (sid) sessionID = sid;
+    } catch (error) {
+      log(`factotum msg session restore failed: ${error?.message || error}`);
+    }
+  }
+
   async function deliver(message) {
     if (stopped) {
       // Claimed but shutting down: release rather than drop. A nack that fails
@@ -311,9 +343,10 @@ export function createFactotumReceiver({
       if (!sessionID) {
         // With no OpenCode session there is nowhere to inject a claimed
         // message, and releasing it consumes a delivery attempt. So wait for
-        // the session event before claiming: the message stays queued and is
-        // delivered once this receiver learns its session, rather than being
-        // claimed and dropped while the agent idles.
+        // the session before claiming (start() restores a persisted one; else an
+        // event announces it): the message stays queued and is delivered once
+        // this receiver learns its session, rather than being claimed and
+        // dropped while the agent idles.
         await sleep(SESSION_POLL_MS);
         continue;
       }
@@ -336,10 +369,12 @@ export function createFactotumReceiver({
     onEvent(event) {
       // V1 delivers hooks as { properties } and V2 events as { data }.
       const sid = event?.data?.sessionID ?? event?.properties?.sessionID;
-      if (typeof sid === "string" && sid) sessionID = sid;
+      if (typeof sid === "string" && sid) rememberSession(sid);
     },
     async start() {
       await register();
+      if (stopped) return;
+      await restoreSession();
       if (stopped) return;
       heartbeatTimer = setIntervalFn(() => { heartbeat().catch(() => {}); }, Math.max(1000, Math.floor(config.ttlMs / 3)));
       void loop();
@@ -382,6 +417,53 @@ export function makeContextInjector(session) {
 }
 
 /**
+ * msgSessionKey scopes a receiver's persisted session to one running agent: the
+ * project, the actor, and the plugin host's pid. A plugin reload keeps the pid,
+ * so the key survives it; a fresh agent launch has a new pid, so it starts
+ * clean instead of resuming a dead session.
+ */
+export function msgSessionKey(config) {
+  return `session.${config.project}.${config.actor}.${config.pid}`;
+}
+
+/**
+ * msgSessionStore persists the receiver's session in the V2 context's durable
+ * storage. OpenCode reloads a plugin when its file changes; the new receiver
+ * starts session-less, and an idle agent gets no event to announce one, so
+ * without this a reloaded receiver would never claim a queued handoff. load()
+ * validates that the stored session still exists, so a stale id can never
+ * capture a claim and inject it into a dead session.
+ */
+export function msgSessionStore(ctx, config) {
+  const key = msgSessionKey(config);
+  return {
+    async load() {
+      let stored;
+      try {
+        stored = await ctx?.storage?.get(key);
+      } catch (_) {
+        return "";
+      }
+      const sid = typeof stored === "string" ? stored : stored?.sessionID;
+      if (!sid) return "";
+      try {
+        if (!(await ctx?.session?.get({ sessionID: sid }))) return "";
+      } catch (_) {
+        return "";
+      }
+      return sid;
+    },
+    async save(sid) {
+      try {
+        await ctx?.storage?.set(key, sid);
+      } catch (_) {
+        // Best-effort: a failed save only costs the next reload its resume.
+      }
+    },
+  };
+}
+
+/**
  * subscribeContextEvents forwards the V2 public event stream to onEvent in the
  * background, so the claim loop learns the session to inject into without
  * blocking setup. It returns a cleanup that aborts the subscription.
@@ -406,13 +488,16 @@ export function subscribeContextEvents(ctx, onEvent, { controller = new AbortCon
  * The `env`/`call` seams exist only so the protocol is testable without a live
  * OpenCode runtime.
  */
-export function setupV2(ctx, { env = process.env, call } = {}) {
+export function setupV2(ctx, { env = process.env, call, loadSession, saveSession } = {}) {
   const config = configFromEnv(env);
   if (!config) return undefined;
+  const store = msgSessionStore(ctx, config);
   const receiver = createFactotumReceiver({
     config,
     call: call || selectCall(config),
     inject: makeContextInjector(ctx?.session),
+    loadSession: loadSession || store.load,
+    saveSession: saveSession || store.save,
   });
   const stop = subscribeContextEvents(ctx, (event) => receiver.onEvent(event));
   // Registration and the claim loop run off the load path so the plugin never

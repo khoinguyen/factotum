@@ -9,6 +9,8 @@ import plugin, {
   httpCall,
   makeContextInjector,
   makeInjector,
+  msgSessionKey,
+  msgSessionStore,
   normalizeMsgURL,
   parseJSON,
   selectCall,
@@ -60,13 +62,15 @@ async function waitFor(predicate, timeoutMs = 1000) {
   throw new Error("timed out waiting for condition");
 }
 
-function receiverFor(claimResults, injected, { inject } = {}) {
+function receiverFor(claimResults, injected, { inject, loadSession, saveSession } = {}) {
   const { run, calls } = fakeRun(claimResults);
   let intervalCleared = false;
   const receiver = createFactotumReceiver({
     config: BASE_CONFIG,
     call: cliCall(BASE_CONFIG, run),
     inject: inject || (async (sid, text) => { injected.push({ sid, text }); }),
+    loadSession,
+    saveSession,
     setIntervalFn: () => 1,
     clearIntervalFn: () => { intervalCleared = true; },
   });
@@ -296,6 +300,67 @@ test("receiver does not claim without a session, then delivers once one arrives"
   await receiver.dispose();
 });
 
+test("receiver restores its session on start and delivers without an event", async () => {
+  // The reload case: OpenCode reloads the plugin when its file changes, so the
+  // new receiver has no session and, if the agent is idle, no event will ever
+  // announce one. A restored session must let it claim and deliver anyway.
+  const injected = [];
+  const { receiver, calls } = receiverFor(
+    [{ found: true, message: { id: "m-4", from: "act-x", body: "resumed" } }, { found: false }],
+    injected,
+    { loadSession: async () => "ses-restored" },
+  );
+  await receiver.start();
+  await waitFor(() => injected.length === 1);
+  assert.equal(injected[0].sid, "ses-restored");
+  assert.ok(calls.some((c) => c.includes("msg agent ack m-4") && c.includes("--state read")));
+  await receiver.dispose();
+});
+
+test("receiver persists a learned session for the next load", async () => {
+  const saved = [];
+  const { receiver } = receiverFor([{ found: false }], [], { saveSession: async (sid) => saved.push(sid) });
+  receiver.onEvent({ data: { sessionID: "ses-1" } });
+  await waitFor(() => saved.length === 1);
+  assert.deepEqual(saved, ["ses-1"]);
+
+  // A repeated event for the same session is not persisted again.
+  receiver.onEvent({ data: { sessionID: "ses-1" } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(saved, ["ses-1"]);
+  await receiver.dispose();
+});
+
+test("msgSessionStore resumes only the current process's live session", async () => {
+  const store = new Map();
+  const ctx = {
+    storage: {
+      get: async (key) => store.get(key),
+      set: async (key, value) => { store.set(key, value); },
+    },
+    session: {
+      async get({ sessionID }) {
+        if (sessionID === "ses-live") return { id: sessionID };
+        throw new Error("Session.NotFoundError");
+      },
+    },
+  };
+  const glean = msgSessionStore(ctx, BASE_CONFIG);
+  assert.equal(await glean.load(), "", "nothing persisted yet");
+
+  await glean.save("ses-live");
+  assert.equal(await glean.load(), "ses-live");
+
+  // A stale id whose session is gone is never resumed: the receiver would
+  // otherwise claim a message and inject it into a dead session.
+  await glean.save("ses-dead");
+  assert.equal(await glean.load(), "");
+
+  // The key is scoped to the process, so a reload (same pid) resumes but a new
+  // agent launch (a new pid) does not.
+  assert.notEqual(msgSessionKey(BASE_CONFIG), msgSessionKey({ ...BASE_CONFIG, pid: BASE_CONFIG.pid + 1 }));
+});
+
 test("makeInjector prefers promptAsync and falls back to prompt", async () => {
   const asyncCalls = [];
   await makeInjector({ session: { promptAsync: async (options) => asyncCalls.push(options) } })("ses-1", "hi");
@@ -375,4 +440,36 @@ test("setupV2 registers, subscribes, injects a claimed message, and disposes", a
 
   await cleanup();
   assert.ok(calls.some((c) => c.includes("msg agent deregister")));
+});
+
+test("setupV2 resumes the persisted session after a reload and delivers without an event", async () => {
+  const injected = [];
+  const store = new Map();
+  const env = { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1" };
+  const config = configFromEnv(env);
+  const { run, calls } = fakeRun([
+    { found: true, message: { id: "m-1", from: "act-x", body: "after reload" } },
+    { found: false },
+  ]);
+  const ctx = {
+    session: {
+      prompt: async (options) => { injected.push(options); },
+      get: async ({ sessionID }) => ({ id: sessionID }),
+    },
+    storage: {
+      get: async (key) => store.get(key),
+      set: async (key, value) => { store.set(key, value); },
+    },
+    // A reloaded idle agent gets no session event at all.
+    event: { subscribe: async function* () { await new Promise(() => {}); } },
+  };
+  // A previous load persisted the session before the plugin was reloaded.
+  await ctx.storage.set(msgSessionKey(config), "ses-prev");
+
+  const cleanup = setupV2(ctx, { env, call: cliCall(config, run) });
+  await waitFor(() => injected.length === 1);
+  assert.deepEqual(injected[0], { sessionID: "ses-prev", text: "[ft msg from act-x]\nafter reload" });
+  assert.ok(calls.some((c) => c.includes("msg agent ack m-1") && c.includes("--state read")));
+
+  await cleanup();
 });

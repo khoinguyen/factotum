@@ -85,6 +85,29 @@ func ActorAddress(id ActorID) Address { return Address("actor:" + string(id)) }
 func RunAddress(id RunID) Address     { return Address("run:" + string(id)) }
 func TaskAddress(id TicketID) Address { return Address("task:" + string(id)) }
 
+// ParseActorRef normalizes an actor reference: a bare actor id ("chief") and the
+// canonical actor address ("actor:chief") both yield the bare id, so a caller
+// that passes either form addresses the same actor. Anything else — an empty
+// value, a non-actor address kind, or a nested address such as
+// "actor:actor:chief" — is rejected rather than stored verbatim.
+func ParseActorRef(ref string) (ActorID, error) {
+	value := strings.TrimSpace(ref)
+	if value == "" {
+		return "", fmt.Errorf("%w: actor reference is empty", ErrInvalid)
+	}
+	id, ok := strings.CutPrefix(value, "actor:")
+	if !ok {
+		if strings.ContainsRune(value, ':') {
+			return "", fmt.Errorf("%w: actor reference %q must be a bare actor id or actor:<id>", ErrInvalid, value)
+		}
+		return ActorID(value), nil
+	}
+	if id == "" || strings.ContainsRune(id, ':') {
+		return "", fmt.Errorf("%w: actor reference %q must be a bare actor id or actor:<id>", ErrInvalid, value)
+	}
+	return ActorID(id), nil
+}
+
 // ValidateAddress rejects a malformed address or an unknown kind.
 func ValidateAddress(a Address) error {
 	_, _, err := ParseAddress(string(a))

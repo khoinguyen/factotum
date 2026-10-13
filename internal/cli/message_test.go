@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/harness/opencode"
 	"github.com/khoinguyen/factotum/pkg/harness/pi"
@@ -33,12 +35,49 @@ func TestMessageInstallStagesReceiver(t *testing.T) {
 			if got := readFile(t, path); got != string(tc.bytes) {
 				t.Fatalf("staged %s bytes do not match the embedded receiver", tc.harness)
 			}
-			// Idempotent: a second install overwrites in place.
+			// Idempotent: a second install leaves the current receiver in place.
 			r.run("msg", "install", "--harness", tc.harness, "--dir", dir)
 			if got := readFile(t, path); got != string(tc.bytes) {
 				t.Fatalf("re-install changed the staged %s receiver", tc.harness)
 			}
 		})
+	}
+}
+
+// TestMessageInstallSkipsRewriteWhenCurrent pins the no-op: when the staged
+// receiver already matches the embedded source, install must not write it, so
+// OpenCode's plugin file-watcher never sees a change. A rewrite reloads the
+// receiver in every running server and strands an idle agent's claim loop (the
+// bug this task fixes). The mtime is first set to a known past value, so an
+// unchanged mtime proves no write happened without depending on clock
+// granularity.
+func TestMessageInstallSkipsRewriteWhenCurrent(t *testing.T) {
+	r := newRunner(t)
+	dir := t.TempDir()
+	r.run("msg", "install", "--harness", opencode.Name, "--dir", dir)
+	path := filepath.Join(dir, receiverFile)
+
+	stamp := time.Unix(1_600_000_000, 0)
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+	r.run("msg", "install", "--harness", opencode.Name, "--dir", dir)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if !info.ModTime().Equal(stamp) {
+		t.Fatalf("install rewrote a current receiver: mtime = %v, want %v", info.ModTime(), stamp)
+	}
+
+	// A staged file that differs is still replaced, so a stale receiver is
+	// never left in place.
+	if err := os.WriteFile(path, []byte("stale receiver"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	r.run("msg", "install", "--harness", opencode.Name, "--dir", dir)
+	if got := readFile(t, path); got != string(opencode.MsgPluginBytes()) {
+		t.Fatal("install did not replace a stale receiver")
 	}
 }
 

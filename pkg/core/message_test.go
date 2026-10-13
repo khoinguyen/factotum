@@ -56,6 +56,40 @@ func TestAddressHelpers(t *testing.T) {
 	}
 }
 
+func TestParseActorRef(t *testing.T) {
+	tests := []struct {
+		name    string
+		ref     string
+		want    ActorID
+		wantErr bool
+	}{
+		{"bare id", "chief", "chief", false},
+		{"canonical address", "actor:chief", "chief", false},
+		{"bare role", "builder-t-1", "builder-t-1", false},
+		{"canonical role", "actor:builder-t-1", "builder-t-1", false},
+		{"padded", " actor:chief ", "chief", false},
+		{"empty", "", "", true},
+		{"empty id", "actor:", "", true},
+		{"doubled address", "actor:actor:chief", "", true},
+		{"other kind", "run:r-1", "", true},
+		{"bare with colon", "chief:x", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseActorRef(tt.ref)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseActorRef(%q) error = %v, wantErr %v", tt.ref, err, tt.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if got != tt.want {
+				t.Fatalf("ParseActorRef(%q) = %q, want %q", tt.ref, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMessageStateTerminal(t *testing.T) {
 	tests := []struct {
 		state    MessageState

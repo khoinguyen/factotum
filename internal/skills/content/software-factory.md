@@ -60,9 +60,11 @@ notes, splits the work into 1 task = 1 PR, and writes three feature documents â€
 tech design â€” alongside a deterministic report.
 
 ```sh
-ft groom -p <project> --sandbox local --harness opencode --allow-host
-ft groom <item> <item> --unattended --sandbox local --harness opencode --allow-host
+ft groom -p <project> --sandbox local --harness opencode2 --allow-host
+ft groom <item> <item> --unattended --sandbox local --harness opencode2 --allow-host
 ```
+
+`--harness opencode2` is OpenCode V2 (preferred); `--harness opencode` is V1.
 
 A completed session leaves every produced task **groomed** (it carries at least one acceptance
 criterion) and assigned, so it lands in the agent bucket. Read a finished session back, and inspect
@@ -229,7 +231,7 @@ The whole recipe in one block:
 ```sh
 ft idea create -p <project> -t "..." -b "..."                     # capture an idea
 ft bug create -p <project> -t "..." -b "..."                      # capture a defect
-ft groom -p <project> --unattended --sandbox local --harness opencode --allow-host
+ft groom -p <project> --unattended --sandbox local --harness opencode2 --allow-host
 ft groom show <session> -p <project>                              # report, docs, produced tasks
 ft groom review -p <project> <session> --verdict approve -f review.md   # needs-rework blocks the build
 ft graph render -p <project> -f agent                             # the DAG as text

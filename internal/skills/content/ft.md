@@ -247,7 +247,7 @@ ft msg send <address|role|ticket-id> <text> -p <project>; ft msg inbox -p <proje
 ft msg install [--harness opencode|opencode2|pi] [--dir <plugin-dir>]; ft msg agent register|claim|ack|nack|heartbeat|deregister   # receiver staging + protocol
 ```
 
-A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`). A bare **loop role** - `chief`, or `builder-<task>`/`reviewer-<task>`/`qa-<task>` - is sugar for `actor:<role>`, the stable mailbox a loop session registers as; `--from` accepts a role even before an `Actor` record exists, so peers address each other by role with no cmux surface. `ft msg read` is idempotent and `--from` defaults to the configured actor. `ft msg install` stages the receiver plugin where a harness loads it: OpenCode's global plugin dir by default (so a session launched directly, not through `ft run`, still loads it), or the `--dir` you pass; the plugin is inert without `FACTOTUM_PROJECT`/`FACTOTUM_ACTOR`. A receiver registers with `ft msg agent register` (passing the chief session via `--session` or `FACTOTUM_SESSION`), long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode and pi harnesses stage that receiver (per the `FACTOTUM_*` env it sets) when the run has an actor. For a receiver on another host, the same protocol rides `ft serve` at `/api/msg/*` (token-gated by `serve.token`); the shipped receivers take the HTTP transport when `FACTOTUM_MSG_URL` points at a hub (auth via `FACTOTUM_SERVE_TOKEN`) and fall back to the local `ft` binary when it is unset. `ft run` sets both from `serve.url`/`serve.token` (or their `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` env), so a launched remote agent receives over the hub; a URL without a token is a half-configured hub, so a run with an actor warns and drops it rather than launch a receiver that fails every message (a run with no actor launches no receiver and stays quiet). A local `ft msg ...` and a remote HTTP client are two transports over one store.
+A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`). A bare **loop role** - `chief`, or `builder-<task>`/`reviewer-<task>`/`qa-<task>` - is sugar for `actor:<role>`, the stable mailbox a loop session registers as; `--from` accepts a role even before an `Actor` record exists, so peers address each other by role with no cmux surface. `ft msg read` is idempotent and `--from` defaults to the configured actor. `ft msg install` stages the receiver plugin where a harness loads it: OpenCode's global plugin dir by default (so a session launched directly, not through `ft run`, still loads it), or the `--dir` you pass; the plugin is inert without `FACTOTUM_PROJECT`/`FACTOTUM_ACTOR`. The receiver's single default export carries both majors' entrypoints - V1's `server()` and V2's `Plugin.define({ id, setup })` from `@opencode/plugin` - so one staged `factotum-msg.js` loads under either; V2 is selected with `--harness opencode2` and stages into the same global `<config>/opencode/plugins` (both majors also discover the project-local `.opencode/plugin/`). A receiver registers with `ft msg agent register` (passing the chief session via `--session` or `FACTOTUM_SESSION`), long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode and pi harnesses stage that receiver (per the `FACTOTUM_*` env it sets) when the run has an actor. For a receiver on another host, the same protocol rides `ft serve` at `/api/msg/*` (token-gated by `serve.token`); the shipped receivers take the HTTP transport when `FACTOTUM_MSG_URL` points at a hub (auth via `FACTOTUM_SERVE_TOKEN`) and fall back to the local `ft` binary when it is unset. `ft run` sets both from `serve.url`/`serve.token` (or their `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` env), so a launched remote agent receives over the hub; a URL without a token is a half-configured hub, so a run with an actor warns and drops it rather than launch a receiver that fails every message (a run with no actor launches no receiver and stays quiet). A local `ft msg ...` and a remote HTTP client are two transports over one store.
 
 ## Chief sessions
 
@@ -302,12 +302,12 @@ network, and mutate files, so never use it for untrusted work. Isolating backend
 and are the only ones fit for untrusted input.
 
 A harness describes one agent CLI end to end: image, invocation, model flag,
-prompt delivery, completion, and output parsing. Three ship: OpenCode V1
-(`opencode`, image `ghcr.io/anomalyco/opencode:latest`), OpenCode V2
-(`opencode2`, image `ghcr.io/anomalyco/opencode:2.0.27`, no top-level `--model`),
-and pi (`pi`, npm, no image). Each builds a headless invocation passing the
-prompt as the final message and reading stdout; an interactive run attaches the
-agent's TUI instead. Model and credentials come from the configured provider,
+prompt delivery, completion, and output parsing. Prefer OpenCode V2 (`opencode2`,
+image `ghcr.io/anomalyco/opencode:2.0.27`, no top-level `--model`), selected with
+`--harness opencode2`; OpenCode V1 (`opencode`, image `ghcr.io/anomalyco/opencode:latest`)
+and pi (`pi`, npm, no image) also ship. Each builds a headless invocation passing
+the prompt as the final message and reading stdout; an interactive run attaches
+the agent's TUI instead. Model and credentials come from the configured provider,
 never hardcoded (a credential is a backend-resolved provider reference). A local
 run uses the host binary (dev-only); an isolating pi backend needs an explicit
 image. The pi harness trusts project-local files, so its staged receiver loads.
@@ -339,8 +339,8 @@ resolves it next to the active project config (a custom `-c` uses its sibling
 or all the project's repos when none is declared (an exclusive or, never a union); a task that needs another repo must declare it, or the agent clones it manually. A capture (idea or bug) is not run once: it runs the loop below over every task that belongs to it, in DAG order. It runs the harness with the task as its prompt, and reflects progress into the store. A repo registered with a local `Path` (not a `URL`) is used **in place** — it is not copied into the workspace, so a backend on the workdir (`local`, `docker`) can modify the source checkout; `ft run` warns on stderr naming the resolved checkout, and registering a `URL` runs in an isolated copy. `ft groom` resolves the same way and emits the same warning. The launched session inherits the run's project and store (`FACTOTUM_PROJECT`, `FACTOTUM_STORE`, `FACTOTUM_STORE_OPTS`), so the `ft` it runs reads — and writes — the same store, never falling back to a store the checkout's config would resolve (for example your real `~/.factotum` database). `FACTOTUM_STORE_OPTS` is a comma-separated `key=value` list, so a store-opt value cannot itself contain a comma.
 
 ```sh
-ft run t-abc123 --sandbox local --harness opencode --allow-host   # dev-only opt-in
-ft run --prompt-file grooming.md --sandbox local --harness opencode --allow-host  # task-less
+ft run t-abc123 --sandbox local --harness opencode2 --allow-host   # dev-only opt-in
+ft run --prompt-file grooming.md --sandbox local --harness opencode2 --allow-host  # task-less
 ```
 
 - `--prompt-file <path>` or `--prompt-artifact <id>` supplies a stored prompt: with a task it
@@ -373,7 +373,7 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode --allow-host
 `ft run --goal <task|milestone|capture>` drives the graph toward a goal: it repeatedly runs the highest-ranked agent-ready on-path task until the goal is reached, work stalls, or the budget is exhausted. `ft run <capture>` (an idea or bug) is the same loop without the flag.
 
 ```sh
-ft run --goal t-abc123 --sandbox local --harness opencode --allow-host --max-tasks 5
+ft run --goal t-abc123 --sandbox local --harness opencode2 --allow-host --max-tasks 5
 ```
 
 - The goal is a task, a milestone, or a capture. A task resolves; a milestone is a human gate, so

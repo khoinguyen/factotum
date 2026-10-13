@@ -150,15 +150,16 @@ backend**, runs the selected **harness**, captures the output, and reflects prog
 A successful run moves the task to `ready_for_review`.
 
 ```sh
-ft run <task> --sandbox local --harness opencode --allow-host   # dev-only, unsandboxed
-ft run --goal <task|milestone> --sandbox openshell --harness opencode --max-tasks 5
+ft run <task> --sandbox local --harness opencode2 --allow-host   # dev-only, unsandboxed
+ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tasks 5
 ```
 
 - `--sandbox` and `--harness` resolve flag > `FACTOTUM_RUN_*` > committed project `[run]` > machine
   `[run]`. On a terminal an unset one prompts once and saves the answer; non-interactively, an
   unset one is an error. The `local` backend is unsandboxed and must be opted in explicitly
   (`--allow-host` or `run.allow_host`).
-- Sandboxes: `local` (dev only), `openshell`, and `docker`. Harness: `opencode`. An isolating
+- Sandboxes: `local` (dev only), `openshell`, and `docker`. Harnesses: `opencode2` (OpenCode V2,
+  preferred) and `opencode` (OpenCode V1). An isolating
   backend runs the harness's image as a non-root user under its policy; a configured credential is
   attached as a provider placeholder, never placed in the sandbox.
 - `--goal` repeatedly runs the highest-ranked **agent-ready, groomed, on-path** task until the goal
@@ -183,6 +184,16 @@ Only `sandbox` and `harness` are read from a committed project `[run]` (project 
 settings (`workspace`, `allow_host`, credentials) are read from the machine file only, so a committed
 file never carries a host path or opts into the unsandboxed backend.
 
+OpenCode V2 (`opencode2`) drives the same run: it reads the same config locations as V1 and
+translates V1-shaped config in memory, so `opencode2` is the one to select. Its three breaking
+changes are plugins (a new API), the server API/clients, and TUI config (from the layered
+`tui.json(c)` files to one global `cli.json`, auto migrated). Plugins move from V1's `server()` object
+to `@opencode/plugin`'s `Plugin.define({ id, setup(ctx) })` (one default export may carry both), the
+`opencode.json(c)` key renames `plugin` to `plugins`, and V2 discovers local plugins from both
+`.opencode/plugin/` (V1) and `.opencode/plugins/` (prefer for V2 files). List a loaded plugin's id
+with `opencode2 api get /api/plugin`; `ft msg install --harness opencode2` stages the receiver for
+it. V2 is in beta; V1 stays available with `--harness opencode`.
+
 ## Teach your agent to use ft
 
 `ft` ships the usage skills it expects an agent to follow, embedded in the binary (source:
@@ -201,13 +212,14 @@ ft skill get software-factory   # run a project end to end as a software factory
 <!-- skills:end -->
 
 `ft skill get` prints a skill's markdown to stdout; put it where your harness reads its
-instructions. OpenCode reads an `AGENTS.md` in the project, so append the skill there, or write it
-to a file and list that file under `instructions` in `opencode.json`:
+instructions. OpenCode loads an `AGENTS.md` in the project, so append the skill there. OpenCode V2
+(`opencode2`) recognizes only `AGENTS.md` and does not yet resolve the `opencode.json` `instructions`
+array, so prefer `AGENTS.md`; on V1 (`opencode`) you can instead list the file under `instructions`:
 
 ```sh
-ft skill get ft >> AGENTS.md          # straight into the agent's rules
-ft skill get ft > docs/ft-skill.md    # or a separate file, referenced by the harness:
-# opencode.json: { "instructions": ["docs/ft-skill.md"] }
+ft skill get ft >> AGENTS.md          # straight into the agent's rules (V1 and V2)
+# V1 only: ft skill get ft > docs/ft-skill.md, then opencode.json:
+# { "instructions": ["docs/ft-skill.md"] }
 ```
 
 Regenerate the copy after upgrading `ft`. `ft skill lint` checks the embedded skills against the

@@ -36,6 +36,7 @@ func TestREADMEExplainsOpenCodeV2Migration(t *testing.T) {
 	body := string(data)
 	for _, want := range []string{
 		"opencode2",
+		"harness = \"opencode2\"",
 		"@opencode/plugin",
 		"Plugin.define",
 		"`plugin` to `plugins`",

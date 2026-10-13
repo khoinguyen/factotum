@@ -175,7 +175,7 @@ The machine-scoped `[run]` table holds the launcher settings (`sandbox`, `harnes
 # ~/.factotum/config.toml — machine-scoped.
 [run]
 sandbox = "openshell"       # or docker; local is unsandboxed and needs allow_host
-harness = "opencode"
+harness = "opencode2"       # OpenCode V2; "opencode" is V1
 provider = "openrouter"
 credential_env = "OPENROUTER_API_KEY"
 ```

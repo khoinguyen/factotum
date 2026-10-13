@@ -286,14 +286,26 @@ func (r envCredentialResolver) Resolve(_ context.Context, c isolation.Credential
 	return value, nil
 }
 
-// runHarnesses registers the built-in harnesses. The OpenCode and pi harnesses
-// target the host `opencode`/`pi` binaries, which the dev-only local backend runs
-// in place. The configured provider and credential variable are forwarded so an
-// isolating backend can attach the credential as a provider placeholder.
+// runHarnesses registers the built-in harnesses. The OpenCode (V1 and V2) and pi
+// harnesses target the host `opencode`/`opencode2`/`pi` binaries, which the
+// dev-only local backend runs in place. OpenCode V2 is its own registration
+// (distinct binary, image, and interactive flags) so it selects with
+// `--harness opencode2` without changing V1. The configured provider and
+// credential variable are forwarded so an isolating backend can attach the
+// credential as a provider placeholder.
 func runHarnesses() *registry.Registry[HarnessFactory] {
 	reg := registry.New[HarnessFactory]()
 	registerRunHarness(reg, opencode.Name, func(cfg config.Run) (harness.Harness, error) {
 		return opencode.New(opencode.Options{
+			Model:            cfg.Model,
+			Args:             cfg.Args,
+			Provider:         cfg.Provider,
+			CredentialEnvVar: cfg.CredentialEnvVar,
+		}), nil
+	})
+	registerRunHarness(reg, opencode.NameV2, func(cfg config.Run) (harness.Harness, error) {
+		return opencode.New(opencode.Options{
+			Variant:          opencode.V2,
 			Model:            cfg.Model,
 			Args:             cfg.Args,
 			Provider:         cfg.Provider,

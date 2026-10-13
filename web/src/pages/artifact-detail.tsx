@@ -80,6 +80,24 @@ export function ArtifactDetail({
         </p>
       ) : null}
 
+      {data.captures && data.captures.length > 0 ? (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-lg font-semibold">Captures</h2>
+          <ul className="flex flex-col gap-1 text-sm">
+            {data.captures.map((capture) => (
+              <li key={capture.id} className="min-w-0">
+                <AppLink href={capture.url} className="hover:underline">
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {capture.id}
+                  </span>{" "}
+                  {capture.title}
+                </AppLink>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {data.links.length > 0 ? (
         <section className="flex flex-col gap-2">
           <h2 className="text-lg font-semibold">Links</h2>

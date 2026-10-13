@@ -49,3 +49,34 @@ test("the doc back-link falls back to the dashboard when opened directly", async
   const back = await screen.findByRole("link", { name: /← dashboard/ })
   expect(back.getAttribute("href")).toBe("/")
 })
+
+// The prompt artifact page is the one UI a grooming notification opens, whether
+// grooming produced one capture or many: it lists the captures linked back to
+// the prompt.
+test("the prompt artifact page lists the captures linked back to it", async () => {
+  const prompt: ArtifactDetailDoc = {
+    ...doc,
+    id: "art-prompt",
+    kind: "prompt",
+    title: "Rework onboarding",
+    url: "/doc/art-prompt",
+    captures: [
+      {
+        id: "t-1",
+        title: "Guided first run",
+        class: "capture",
+        chip: "idea",
+        url: "/idea/t-1",
+      },
+    ],
+  }
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({ ok: true, status: 200, json: async () => prompt })),
+  )
+  render(<ArtifactDetail id="art-prompt" kind="doc" />)
+
+  expect(await screen.findByRole("heading", { name: "Captures" })).toBeTruthy()
+  const capture = screen.getByRole("link", { name: /Guided first run/ })
+  expect(capture.getAttribute("href")).toBe("/idea/t-1")
+})

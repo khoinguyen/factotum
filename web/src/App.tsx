@@ -1,4 +1,5 @@
 import { PageShell } from "@/components/page-shell"
+import { Toaster } from "@/components/toaster"
 import { ArtifactDetail } from "@/pages/artifact-detail"
 import { Capture } from "@/pages/capture"
 import { Dashboard } from "@/pages/dashboard"
@@ -6,12 +7,20 @@ import { Factory } from "@/pages/factory"
 import { IdeaDetail } from "@/pages/idea-detail"
 import { Sessions } from "@/pages/sessions"
 import { TaskDetail } from "@/pages/task-detail"
-import { resolveRoute, usePath } from "@/lib/router"
+import { resolveRoute, usePath, type Route } from "@/lib/router"
 
 export default function App() {
   const path = usePath()
   const route = resolveRoute(path)
+  return (
+    <>
+      {renderRoute(route)}
+      <Toaster />
+    </>
+  )
+}
 
+function renderRoute(route: Route) {
   switch (route.kind) {
     case "capture":
       return <Capture />

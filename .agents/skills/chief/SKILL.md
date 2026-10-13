@@ -219,6 +219,23 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    task-named workspace, so the primary workspace stays chief + dashboard; keep its worktrees — never
    delete work handed to Khoi.
 
+## Dispatch the grooming agent on a captured prompt
+
+When a **prompt artifact** lands — the web prompt box stores a free-form prompt as a document
+artifact and ft-msgs you the artifact id — do not groom it yourself: dispatch the **grooming-agent**
+role (the `grooming-agent` skill). It reads the prompt artifact, captures one or more ideas/bugs from
+it, links each produced capture back to the artifact as its origin (`origin_artifact`), and reports
+to you. Give it its own worktree/workspace and a **short** kickoff, exactly like a builder/QA:
+
+```sh
+.agents/skills/chief/scripts/loop-agent.sh grooming-agent-<artifact> <project> - <dir> \
+  "load the grooming-agent skill; you are grooming-agent-<artifact>; groom prompt artifact <artifact>"
+```
+
+Capture is not execution: the produced captures carry the prompt as their origin, so the prompt
+artifact page lists them, and you rank them into the loop rather than running them on sight. The
+grooming agent reports the capture ids back over ft msg; file any follow-ups yourself.
+
 ## After grooming: dispatch the architecture review
 
 A grooming session ends with a feature's spec, plan, and tech design. Before any of the feature is

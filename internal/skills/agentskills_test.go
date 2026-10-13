@@ -312,6 +312,50 @@ func TestArchitectureReviewerSkillWiresTheGroomingGate(t *testing.T) {
 	}
 }
 
+// TestGroomingAgentSkillReadsPromptAndLinksCaptures guards the grooming-agent
+// charter: it reads a prompt doc artifact, captures one or more ideas/bugs from
+// it, links each capture back to the artifact as its origin, and reports back to
+// the chief over ft msg.
+func TestGroomingAgentSkillReadsPromptAndLinksCaptures(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/grooming-agent/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"name itself", "grooming-agent"},
+		{"read the prompt artifact", "ft doc get"},
+		{"capture ideas", "ft idea create"},
+		{"capture bugs", "ft bug create"},
+		{"link the capture back to the artifact", "--origin-artifact"},
+		{"report to the chief over ft msg", "ft msg send chief"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("grooming-agent skill must %s (missing %q)", req.why, req.text)
+		}
+	}
+}
+
+// TestChiefSkillDispatchesGroomingAgent guards the loop wiring: the chief can
+// spawn the grooming-agent role on a captured prompt artifact with a short
+// kickoff, in its own worktree/workspace.
+func TestChiefSkillDispatchesGroomingAgent(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/chief/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"name the grooming-agent role", "grooming-agent"},
+		{"name the prompt artifact it consumes", "prompt artifact"},
+		{"dispatch it through the loop wrapper", "loop-agent.sh grooming-agent"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("chief skill must %s (missing %q)", req.why, req.text)
+		}
+	}
+}
+
 // TestChiefSkillDispatchesArchitectureReviewAfterGroom guards the loop wiring:
 // after a grooming session produces feature docs, the chief dispatches the
 // architecture reviewer on them and a failing verdict blocks the build.

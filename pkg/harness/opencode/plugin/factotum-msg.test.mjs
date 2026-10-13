@@ -7,10 +7,13 @@ import plugin, {
   createFactotumReceiver,
   formatMessage,
   httpCall,
+  makeContextInjector,
   makeInjector,
   normalizeMsgURL,
   parseJSON,
   selectCall,
+  setupV2,
+  subscribeContextEvents,
 } from "./factotum-msg.js";
 
 const BASE_CONFIG = {
@@ -76,9 +79,9 @@ function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) };
 }
 
-test("default export is the server() shape, not setup()", () => {
+test("default export carries both the V1 server() and the V2 id + setup()", () => {
   assert.equal(typeof plugin.server, "function");
-  assert.equal(plugin.setup, undefined);
+  assert.equal(typeof plugin.setup, "function");
   assert.equal(plugin.id, "factotum.msg");
 });
 
@@ -287,4 +290,73 @@ test("makeInjector prefers promptAsync and falls back to prompt", async () => {
   assert.equal(syncCalls[0].path.id, "ses-2");
 
   await assert.rejects(makeInjector({})("ses-3", "hi"), /unavailable/);
+});
+
+test("onEvent captures the sessionID from the V1 and V2 event shapes", () => {
+  const { receiver } = receiverFor([], []);
+  receiver.onEvent({ properties: { sessionID: "ses-v1" } });
+  assert.equal(receiver.sessionID(), "ses-v1");
+  receiver.onEvent({ data: { sessionID: "ses-v2" } });
+  assert.equal(receiver.sessionID(), "ses-v2");
+  receiver.onEvent({ data: {} });
+  assert.equal(receiver.sessionID(), "ses-v2");
+});
+
+test("makeContextInjector prompts the V2 context session with the text", async () => {
+  const calls = [];
+  await makeContextInjector({ prompt: async (options) => calls.push(options) })("ses-1", "hi");
+  assert.deepEqual(calls, [{ sessionID: "ses-1", text: "hi" }]);
+
+  await assert.rejects(makeContextInjector({})("ses-2", "hi"), /unavailable/);
+});
+
+test("subscribeContextEvents forwards events and aborts on cleanup", async () => {
+  const seen = [];
+  let aborted = false;
+  const controller = { signal: "sig", abort: () => { aborted = true; } };
+  const ctx = {
+    event: {
+      async *subscribe({ signal }) {
+        assert.equal(signal, "sig");
+        yield { data: { sessionID: "ses-v2" } };
+        await new Promise(() => {});
+      },
+    },
+  };
+  const stop = subscribeContextEvents(ctx, (event) => seen.push(event), { controller });
+  await waitFor(() => seen.length === 1);
+  stop();
+  assert.equal(aborted, true);
+});
+
+test("setupV2 is inert without a project or actor", () => {
+  assert.equal(setupV2({ session: {}, event: { subscribe: () => {} } }, { env: {} }), undefined);
+});
+
+test("setupV2 registers, subscribes, injects a claimed message, and disposes", async () => {
+  const injected = [];
+  const env = { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1", FACTOTUM_MSG_SESSION_WAIT_MS: "50" };
+  const config = configFromEnv(env);
+  const { run, calls } = fakeRun([
+    { found: true, message: { id: "m-1", from: "act-x", body: "hi v2" } },
+    { found: false },
+  ]);
+  const ctx = {
+    session: { prompt: async (options) => { injected.push(options); } },
+    event: {
+      async *subscribe() {
+        yield { data: { sessionID: "ses-v2" } };
+        await new Promise(() => {});
+      },
+    },
+  };
+
+  const cleanup = setupV2(ctx, { env, call: cliCall(config, run) });
+  await waitFor(() => injected.length === 1);
+  assert.deepEqual(injected[0], { sessionID: "ses-v2", text: "[ft msg from act-x]\nhi v2" });
+  assert.ok(calls.some((c) => c.includes("msg agent register --actor act-1")));
+  assert.ok(calls.some((c) => c.includes("msg agent ack m-1") && c.includes("--state read")));
+
+  await cleanup();
+  assert.ok(calls.some((c) => c.includes("msg agent deregister")));
 });

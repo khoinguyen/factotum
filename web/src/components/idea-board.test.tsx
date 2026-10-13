@@ -15,6 +15,7 @@ const idea: IdeaView = {
   url: "/idea/t-idea",
   total: 7,
   done: 0,
+  todo: 0,
   active: 7,
   blocked: 0,
   artifacts: [{ id: "art-1", kind: "doc", title: "Design note", url: "/doc/art-1" }],
@@ -29,6 +30,7 @@ const bug: IdeaView = {
   url: "/idea/t-bug",
   total: 0,
   done: 0,
+  todo: 0,
   active: 0,
   blocked: 0,
 }
@@ -85,18 +87,50 @@ test("the idea card shows compact color-coded counts, not the long stats line", 
   const card = screen.getByText("Spark of a plan").closest("a")!
   const counts = card.querySelector('[role="tooltip"]')!.parentElement!
   const done = counts.querySelector('[data-count="done"]')!
+  const todo = counts.querySelector('[data-count="todo"]')!
   const active = counts.querySelector('[data-count="active"]')!
   const blocked = counts.querySelector('[data-count="blocked"]')!
 
   expect(done.textContent).toBe("0")
+  expect(todo.textContent).toBe("0")
   expect(active.textContent).toBe("7")
   expect(blocked.textContent).toBe("0")
   expect(done.className).toContain("text-emerald-")
+  expect(todo.className).toContain("text-amber-")
   expect(active.className).toContain("text-sky-")
   expect(blocked.className).toContain("text-red-")
 
   const total = screen.getByText(/of 7/)
   expect(total.className).toContain("text-muted-foreground")
+})
+
+// Khoi 2026-10-14: a capture with a cancelled, a done, and an unstarted task
+// read "3 · 2 done · 0 active · 0 blocked" - the unstarted task was counted
+// nowhere, so the displayed buckets did not sum to the total. Every promoted
+// task belongs to exactly one displayed bucket, including the unstarted one.
+test("the idea card counts unstarted tasks so the buckets sum to the total", () => {
+  const mixed: IdeaView = {
+    ...idea,
+    total: 3,
+    done: 2,
+    todo: 1,
+    active: 0,
+    blocked: 0,
+  }
+  render(<IdeaBoard ideas={{ ...ideas, active: [mixed] }} />)
+
+  const card = screen.getByText("Spark of a plan").closest("a")!
+  const counts = card.querySelector('[role="tooltip"]')!.parentElement!
+  const read = (name: string) =>
+    Number(counts.querySelector(`[data-count="${name}"]`)!.textContent)
+  expect(read("done")).toBe(2)
+  expect(read("todo")).toBe(1)
+  expect(read("active")).toBe(0)
+  expect(read("blocked")).toBe(0)
+  expect(
+    read("done") + read("todo") + read("active") + read("blocked"),
+  ).toBe(mixed.total)
+  expect(screen.getByText(/of 3/)).toBeTruthy()
 })
 
 // Khoi 2026-10-08: hovering the counts spells them out in a floating tooltip,
@@ -107,6 +141,7 @@ test("the counts carry a hover tooltip spelling them out", () => {
   const card = screen.getByText("Spark of a plan").closest("a")!
   const tooltip = card.querySelector('[role="tooltip"]')!
   expect(tooltip.textContent).toContain("0 done")
+  expect(tooltip.textContent).toContain("0 todo")
   expect(tooltip.textContent).toContain("7 active")
   expect(tooltip.textContent).toContain("0 blocked")
   // The tooltip is removed from layout until shown: an absolutely positioned,

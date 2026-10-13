@@ -17,6 +17,9 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
           <span data-count="done" className="font-medium text-emerald-700 dark:text-emerald-300">
             {idea.done}
           </span>
+          <span data-count="todo" className="font-medium text-amber-700 dark:text-amber-300">
+            {idea.todo}
+          </span>
           <span data-count="active" className="font-medium text-sky-700 dark:text-sky-300">
             {idea.active}
           </span>
@@ -28,7 +31,8 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
             role="tooltip"
             className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-popover-foreground shadow-md group-hover:block group-focus-within/card:block"
           >
-            {idea.done} done · {idea.active} active · {idea.blocked} blocked
+            {idea.done} done · {idea.todo} todo · {idea.active} active ·{" "}
+            {idea.blocked} blocked
             {artifacts > 0
               ? ` · ${artifacts} artifact${artifacts === 1 ? "" : "s"}`
               : ""}

@@ -481,6 +481,7 @@ type ideaView struct {
 	URL         string          `json:"url"`
 	Total       int             `json:"total"`
 	Done        int             `json:"done"`
+	Todo        int             `json:"todo"`
 	Active      int             `json:"active"`
 	Blocked     int             `json:"blocked"`
 	Tasks       []taskLink      `json:"tasks,omitempty"`
@@ -946,6 +947,8 @@ func (s *Server) rollupIdea(idea core.Ticket, vs viewSet) ideaView {
 			out.Blocked++
 		case "active":
 			out.Active++
+		default:
+			out.Todo++
 		}
 	}
 	out.Artifacts = append(out.Artifacts, vs.artifactsByTask[idea.ID]...)

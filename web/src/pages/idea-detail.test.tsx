@@ -14,6 +14,7 @@ const idea: IdeaView = {
   url: "/idea/t-idea",
   total: 0,
   done: 0,
+  todo: 0,
   active: 0,
   blocked: 0,
   tasks: [],
@@ -69,6 +70,17 @@ test("the id control copies the capture id", async () => {
   fireEvent.click(await screen.findByRole("button", { name: /copy capture id$/i }))
 
   await waitFor(() => expect(writeText).toHaveBeenCalledWith("t-idea"))
+})
+
+// Khoi 2026-10-14: the detail stats line must show the unstarted count too, so
+// done + todo + active + blocked sums to the total (a cancelled, a done and an
+// unstarted task read "3 · 2 done · 1 todo · 0 active · 0 blocked").
+test("the stats line counts unstarted tasks and sums to the total", async () => {
+  stubClipboard()
+  stubIdea({ ...idea, total: 3, done: 2, todo: 1, active: 0, blocked: 0 })
+  render(<IdeaDetail id="t-idea" />)
+
+  expect(await screen.findByText(/3 · 2 done · 1 todo · 0 active · 0 blocked/)).toBeTruthy()
 })
 
 // The title control copies one payload: the id and the title, "id: title", so a

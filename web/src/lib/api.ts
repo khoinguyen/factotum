@@ -46,6 +46,7 @@ export type IdeaView = {
   url: string
   total: number
   done: number
+  todo: number
   active: number
   blocked: number
   tasks?: TaskLink[]

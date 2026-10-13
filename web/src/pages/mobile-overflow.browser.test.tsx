@@ -73,6 +73,7 @@ const idea: IdeaView = {
   url: "/idea/t-bqqkrvzaqm",
   total: 3,
   done: 1,
+  todo: 0,
   active: 1,
   blocked: 1,
   tasks: [readyTask, blockedTask],

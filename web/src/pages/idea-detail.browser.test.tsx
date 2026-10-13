@@ -19,6 +19,7 @@ const idea: IdeaView = {
   url: "/idea/t-idea",
   total: 0,
   done: 0,
+  todo: 0,
   active: 0,
   blocked: 0,
   tasks: [],

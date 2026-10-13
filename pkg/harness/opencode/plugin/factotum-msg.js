@@ -1,10 +1,18 @@
 // Factotum message receiver for OpenCode.
 //
-// This plugin default-exports an object with `server()` (the shape OpenCode
-// 1.18.35's loader requires), NOT a `setup()` factory. On load it registers the
-// session with `ft`, long-polls the message queue, injects each claimed message
-// as a user turn through the OpenCode session API, and acks it. The poll loop
-// runs off the agent's turn, so injection never blocks tool execution.
+// One default export serves both OpenCode majors from the same file:
+//
+//   - OpenCode 1.x (the V1 object plugin API) finds and calls `server(input)`
+//     and, on unload, its returned `dispose` hook.
+//   - OpenCode 2.x (the `Plugin.define({ id, setup })` API) finds `id` and
+//     `setup(ctx)`; `setup` subscribes to the event stream and returns the
+//     cleanup function. V2 has no `server`, and V1 has no `setup`, so each
+//     major ignores the other's half.
+//
+// On load it registers the session with `ft`, long-polls the message queue,
+// injects each claimed message as a user turn through the OpenCode session API,
+// and acks it. The poll loop runs off the agent's turn, so injection never
+// blocks tool execution.
 //
 // It is a thin client of the receiver protocol. With no hub URL it shells out to
 // the `ft msg agent` verbs (the stable local adapter interface); when
@@ -294,7 +302,8 @@ export function createFactotumReceiver({
     runID: () => runID,
     sessionID: () => sessionID,
     onEvent(event) {
-      const sid = event?.properties?.sessionID;
+      // V1 delivers hooks as { properties } and V2 events as { data }.
+      const sid = event?.data?.sessionID ?? event?.properties?.sessionID;
       if (typeof sid === "string" && sid) sessionID = sid;
     },
     async start() {
@@ -329,8 +338,74 @@ export function makeInjector(client) {
   };
 }
 
+/** makeContextInjector injects a message through the V2 context's session
+ * domain, the successor to the V1 client. */
+export function makeContextInjector(session) {
+  return async (sessionID, text) => {
+    if (typeof session?.prompt !== "function") {
+      throw new Error("opencode session prompt API is unavailable");
+    }
+    await session.prompt({ sessionID, text });
+  };
+}
+
+/**
+ * subscribeContextEvents forwards the V2 public event stream to onEvent in the
+ * background, so the claim loop learns the session to inject into without
+ * blocking setup. It returns a cleanup that aborts the subscription.
+ */
+export function subscribeContextEvents(ctx, onEvent, { controller = new AbortController() } = {}) {
+  void (async () => {
+    try {
+      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+        onEvent(event);
+      }
+    } catch (_) {
+      // An aborted subscription or a dropped stream ends the loop; the receiver
+      // keeps running and re-subscribing is the next load's job.
+    }
+  })();
+  return () => controller.abort();
+}
+
+/**
+ * setupV2 is the V2 entrypoint: it wires the shared receiver to the context's
+ * session and event domains and returns the cleanup OpenCode calls on unload.
+ * The `env`/`call` seams exist only so the protocol is testable without a live
+ * OpenCode runtime.
+ */
+export function setupV2(ctx, { env = process.env, call } = {}) {
+  const config = configFromEnv(env);
+  if (!config) return undefined;
+  const receiver = createFactotumReceiver({
+    config,
+    call: call || selectCall(config),
+    inject: makeContextInjector(ctx?.session),
+  });
+  const stop = subscribeContextEvents(ctx, (event) => receiver.onEvent(event));
+  // Registration and the claim loop run off the load path so the plugin never
+  // blocks OpenCode startup.
+  receiver.start().catch(() => {});
+  return () => {
+    stop();
+    void receiver.dispose();
+  };
+}
+
+// V2 runs `setup`; V1 runs `server`. OpenCode 2 ships the `@opencode/plugin`
+// package, OpenCode 1 does not, so a failing import means V1 and the plain
+// `id`/`setup` fallback keeps the object valid without the define wrapper.
+let v2plugin = null;
+try {
+  const mod = await import("@opencode/plugin");
+  if (mod?.Plugin?.define) v2plugin = mod.Plugin.define({ id: "factotum.msg", setup: setupV2 });
+} catch (_) {
+  v2plugin = null;
+}
+
 export default {
   id: "factotum.msg",
+  setup: setupV2,
   async server(input) {
     const config = configFromEnv(process.env);
     if (!config) return {};
@@ -348,4 +423,5 @@ export default {
     receiver.start().catch(() => {});
     return hooks;
   },
+  ...(v2plugin || {}),
 };

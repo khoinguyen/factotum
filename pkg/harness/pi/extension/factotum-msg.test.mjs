@@ -336,8 +336,16 @@ test("the factory wires session_start to register and session_shutdown to deregi
 
   const handlers = new Map();
   const pi = { on: (name, handler) => handlers.set(name, handler), sendUserMessage: async () => {} };
-  const keys = ["FACTOTUM_PROJECT", "FACTOTUM_ACTOR", "FACTOTUM_BIN", "FACTOTUM_MSG_WAIT_MS", "FACTOTUM_MSG_TTL_MS", "CALLS"];
+  // A live loop env (an agent launched by loop-agent.sh) exports
+  // FACTOTUM_HARNESS=opencode2 and FACTOTUM_TASK_ID/DEFAULT_ACTOR/SESSION; left
+  // in place they leak into this non-hermetic test and the register call below
+  // is made with the wrong harness. Clear them so the pi defaults apply.
+  const keys = ["FACTOTUM_PROJECT", "FACTOTUM_ACTOR", "FACTOTUM_BIN", "FACTOTUM_MSG_WAIT_MS", "FACTOTUM_MSG_TTL_MS", "FACTOTUM_HARNESS", "FACTOTUM_TASK_ID", "FACTOTUM_DEFAULT_ACTOR", "FACTOTUM_SESSION", "CALLS"];
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  delete process.env.FACTOTUM_HARNESS;
+  delete process.env.FACTOTUM_TASK_ID;
+  delete process.env.FACTOTUM_DEFAULT_ACTOR;
+  delete process.env.FACTOTUM_SESSION;
   process.env.FACTOTUM_PROJECT = "prj-1";
   process.env.FACTOTUM_ACTOR = "act-1";
   process.env.FACTOTUM_BIN = stub;

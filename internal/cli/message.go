@@ -250,7 +250,7 @@ func newMessageInstallCommand(deps *Deps) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&harness, "harness", "opencode", "receiver harness (opencode or pi)")
+	cmd.Flags().StringVar(&harness, "harness", opencode.Name, "receiver harness ("+opencode.Name+", "+opencode.NameV2+", or "+pi.Name+")")
 	cmd.Flags().StringVar(&dir, "dir", "", "plugin directory to install into (defaults per harness)")
 	return cmd
 }
@@ -258,21 +258,23 @@ func newMessageInstallCommand(deps *Deps) *cobra.Command {
 // receiverBytes returns the embedded receiver source for a harness.
 func receiverBytes(harness string) ([]byte, error) {
 	switch harness {
-	case "opencode":
+	case opencode.Name, opencode.NameV2:
 		return opencode.MsgPluginBytes(), nil
-	case "pi":
+	case pi.Name:
 		return pi.MsgExtensionBytes(), nil
 	default:
-		return nil, fmt.Errorf("%w: unknown harness %q (want opencode or pi)", core.ErrInvalid, harness)
+		return nil, fmt.Errorf("%w: unknown harness %q (want %s, %s, or %s)", core.ErrInvalid, harness, opencode.Name, opencode.NameV2, pi.Name)
 	}
 }
 
 // receiverDir resolves the default directory a receiver is staged into: the
 // OpenCode global plugin dir (per the XDG config home), or the pi project
-// extension dir under the agent's working directory.
+// extension dir under the agent's working directory. OpenCode V1 and V2 share
+// the config root and both load global plugins from <config>/opencode/plugins,
+// so the V2 harness stages into the same directory.
 func receiverDir(harness string, getenv func(string) string, wd string) (string, error) {
 	switch harness {
-	case "opencode":
+	case opencode.Name, opencode.NameV2:
 		base := getenv("XDG_CONFIG_HOME")
 		if base == "" {
 			home := getenv("HOME")
@@ -282,10 +284,10 @@ func receiverDir(harness string, getenv func(string) string, wd string) (string,
 			base = filepath.Join(home, ".config")
 		}
 		return filepath.Join(base, "opencode", "plugins"), nil
-	case "pi":
+	case pi.Name:
 		return filepath.Join(wd, ".pi", "extensions"), nil
 	default:
-		return "", fmt.Errorf("%w: unknown harness %q (want opencode or pi)", core.ErrInvalid, harness)
+		return "", fmt.Errorf("%w: unknown harness %q (want %s, %s, or %s)", core.ErrInvalid, harness, opencode.Name, opencode.NameV2, pi.Name)
 	}
 }
 

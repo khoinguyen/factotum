@@ -58,7 +58,7 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&opts.run.sandbox, "sandbox", "", "isolation backend name (defaults to run.sandbox; e.g. local, openshell, docker)")
 	cmd.Flags().StringVar(&opts.run.sandbox, "backend", "", "deprecated alias for --sandbox")
 	_ = cmd.Flags().MarkHidden("backend")
-	cmd.Flags().StringVar(&opts.run.harness, "harness", "", "harness name (defaults to run.harness; e.g. opencode)")
+	cmd.Flags().StringVar(&opts.run.harness, "harness", "", "harness name (defaults to run.harness; e.g. opencode, opencode2)")
 	cmd.Flags().StringVar(&opts.run.workspace, "workspace", "", "workspace root directory (default under the config dir)")
 	cmd.Flags().StringVar(&opts.run.model, "model", "", "model override passed to the harness")
 	cmd.Flags().StringArrayVar(&opts.run.args, "arg", nil, "extra argument passed to the harness (repeatable)")

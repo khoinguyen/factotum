@@ -234,6 +234,32 @@ func TestRunHarnessesIncludePi(t *testing.T) {
 	}
 }
 
+// TestRunHarnessesIncludeOpenCodeV2 pins that the OpenCode V2 harness is a
+// registered, selectable `ft run` harness under its own key, so
+// `ft run --harness opencode2` resolves the V2 variant (distinct binary/image)
+// without shadowing the V1 `opencode` harness.
+func TestRunHarnessesIncludeOpenCodeV2(t *testing.T) {
+	reg := runHarnesses()
+	factory, err := reg.MustLookup(opencode.NameV2)
+	if err != nil {
+		t.Fatalf("lookup %q: %v", opencode.NameV2, err)
+	}
+	h, err := factory(config.Run{Model: "opencode-go/deepseek-v4.1-flash"})
+	if err != nil {
+		t.Fatalf("build harness: %v", err)
+	}
+	if h.Name() != opencode.NameV2 {
+		t.Fatalf("harness Name() = %q, want %q", h.Name(), opencode.NameV2)
+	}
+	cmd, err := h.Command(harness.Request{Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Command() error = %v", err)
+	}
+	if cmd.Argv[0] != "opencode2" {
+		t.Fatalf("argv[0] = %q, want the V2 binary opencode2", cmd.Argv[0])
+	}
+}
+
 // TestPrepareRunResolvesProjectPolicyPath pins that a run resolves the committed
 // project policy override from the loaded project config path, so the OpenShell
 // factory gets a real path rather than nothing.

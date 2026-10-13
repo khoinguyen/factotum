@@ -16,6 +16,7 @@ func TestMessageInstallStagesReceiver(t *testing.T) {
 		bytes   []byte
 	}{
 		{"opencode", opencode.MsgPluginBytes()},
+		{"opencode2", opencode.MsgPluginBytes()},
 		{"pi", pi.MsgExtensionBytes()},
 	}
 	for _, tc := range cases {
@@ -88,6 +89,26 @@ func TestMessageInstallDefaultDir(t *testing.T) {
 	}
 	if want := filepath.Join("/work", ".pi", "extensions"); got != want {
 		t.Fatalf("receiverDir(pi) = %q, want %q", got, want)
+	}
+}
+
+// TestMessageInstallVocabAliasesV2Receiver pins that the V2 harness key stages
+// the same OpenCode receiver into the same discovery directory: OpenCode V2
+// loads global plugins from <config>/opencode/plugins (verified against
+// opencode v2.0.27), so no separate staging dir is needed.
+func TestMessageInstallVocabAliasesV2Receiver(t *testing.T) {
+	getenv := func(key string) string {
+		if key == "XDG_CONFIG_HOME" {
+			return "/cfg"
+		}
+		return ""
+	}
+	got, err := receiverDir("opencode2", getenv, "/work")
+	if err != nil {
+		t.Fatalf("receiverDir(opencode2) error = %v", err)
+	}
+	if want := filepath.Join("/cfg", "opencode", "plugins"); got != want {
+		t.Fatalf("receiverDir(opencode2) = %q, want %q", got, want)
 	}
 }
 

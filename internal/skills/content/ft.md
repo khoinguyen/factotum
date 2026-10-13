@@ -244,7 +244,7 @@ by cause and fix, not a generic error, and the failed embed is skipped once know
 
 ```sh
 ft msg send <address|role|ticket-id> <text> -p <project>; ft msg inbox -p <project> [--state <state>]   # ft msg read <id> marks read
-ft msg install [--harness opencode|pi] [--dir <plugin-dir>]; ft msg agent register|claim|ack|nack|heartbeat|deregister   # receiver staging + protocol
+ft msg install [--harness opencode|opencode2|pi] [--dir <plugin-dir>]; ft msg agent register|claim|ack|nack|heartbeat|deregister   # receiver staging + protocol
 ```
 
 A bare ticket id is sugar for `task:<id>` (send resolves it to a live run, else the task's agent assignee, else `task:<id>`). A bare **loop role** - `chief`, or `builder-<task>`/`reviewer-<task>`/`qa-<task>` - is sugar for `actor:<role>`, the stable mailbox a loop session registers as; `--from` accepts a role even before an `Actor` record exists, so peers address each other by role with no cmux surface. `ft msg read` is idempotent and `--from` defaults to the configured actor. `ft msg install` stages the receiver plugin where a harness loads it: OpenCode's global plugin dir by default (so a session launched directly, not through `ft run`, still loads it), or the `--dir` you pass; the plugin is inert without `FACTOTUM_PROJECT`/`FACTOTUM_ACTOR`. A receiver registers with `ft msg agent register` (passing the chief session via `--session` or `FACTOTUM_SESSION`), long-polls `claim`, injects each message as a user turn, and `ack`s it; `ft run`'s OpenCode and pi harnesses stage that receiver (per the `FACTOTUM_*` env it sets) when the run has an actor. For a receiver on another host, the same protocol rides `ft serve` at `/api/msg/*` (token-gated by `serve.token`); the shipped receivers take the HTTP transport when `FACTOTUM_MSG_URL` points at a hub (auth via `FACTOTUM_SERVE_TOKEN`) and fall back to the local `ft` binary when it is unset. `ft run` sets both from `serve.url`/`serve.token` (or their `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` env), so a launched remote agent receives over the hub; a URL without a token is a half-configured hub, so a run with an actor warns and drops it rather than launch a receiver that fails every message (a run with no actor launches no receiver and stays quiet). A local `ft msg ...` and a remote HTTP client are two transports over one store.
@@ -302,15 +302,15 @@ network, and mutate files, so never use it for untrusted work. Isolating backend
 and are the only ones fit for untrusted input.
 
 A harness describes one agent CLI end to end: image, invocation, model flag,
-prompt delivery, completion, and output parsing. Two ship: OpenCode
-(`opencode`, image `ghcr.io/anomalyco/opencode`) and pi (`pi`, an npm package
-with no published image). Each builds a headless invocation that passes the
-prompt as the final message and reads the answer from stdout; an interactive run
-attaches the agent's TUI instead. Model and credentials come from the configured
-provider, never hardcoded (a credential is a provider reference the backend
-resolves). A local run uses the host binary (dev-only); an isolating pi backend
-needs an explicit image. The pi harness trusts project-local files, so its
-staged receiver extension loads.
+prompt delivery, completion, and output parsing. Three ship: OpenCode V1
+(`opencode`, image `ghcr.io/anomalyco/opencode:latest`), OpenCode V2
+(`opencode2`, image `ghcr.io/anomalyco/opencode:2.0.27`, no top-level `--model`),
+and pi (`pi`, npm, no image). Each builds a headless invocation passing the
+prompt as the final message and reading stdout; an interactive run attaches the
+agent's TUI instead. Model and credentials come from the configured provider,
+never hardcoded (a credential is a backend-resolved provider reference). A local
+run uses the host binary (dev-only); an isolating pi backend needs an explicit
+image. The pi harness trusts project-local files, so its staged receiver loads.
 
 An isolating backend imposes a policy on the run. The OpenShell policy
 (`pkg/isolation/openshell`, checked-in template `policy.yaml`) is deny-by-default:

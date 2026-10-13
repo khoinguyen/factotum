@@ -44,11 +44,11 @@ func decodePrompt(t *testing.T, resp *http.Response) promptResult {
 	return result
 }
 
-// docs lists the doc artifacts in a project so a test can assert a prompt stored
-// exactly one, or none.
-func docs(t *testing.T, f *fixture, project core.ProjectID) []*core.Artifact {
+// prompts lists the prompt artifacts in a project so a test can assert a prompt
+// stored exactly one, or none.
+func prompts(t *testing.T, f *fixture, project core.ProjectID) []*core.Artifact {
 	t.Helper()
-	kind := core.ArtifactDoc
+	kind := core.ArtifactPrompt
 	list, err := f.artifacts.List(context.Background(), store.ArtifactFilter{ProjectID: project, Kind: &kind})
 	if err != nil {
 		t.Fatalf("List(docs) error = %v", err)
@@ -79,10 +79,10 @@ func newPromptServer(t *testing.T, f *fixture, project core.ProjectID) *httptest
 	})
 }
 
-// TestPromptStoresDocArtifact proves the trigger surface stores the prompt text
+// TestPromptStoresPromptArtifact proves the trigger surface stores the prompt text
 // as a document artifact: a title derived from the first line and the raw prompt
 // kept as the body, in the scoped project.
-func TestPromptStoresDocArtifact(t *testing.T) {
+func TestPromptStoresPromptArtifact(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
 	ts := newPromptServer(t, f, project.ID)
@@ -101,8 +101,8 @@ func TestPromptStoresDocArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get(doc) error = %v", err)
 	}
-	if artifact.Kind != core.ArtifactDoc {
-		t.Fatalf("artifact kind = %q, want doc", artifact.Kind)
+	if artifact.Kind != core.ArtifactPrompt {
+		t.Fatalf("artifact kind = %q, want prompt", artifact.Kind)
 	}
 	if artifact.ProjectID != project.ID {
 		t.Fatalf("artifact project = %q, want %q", artifact.ProjectID, project.ID)
@@ -113,7 +113,7 @@ func TestPromptStoresDocArtifact(t *testing.T) {
 	if artifact.Body != "Add a dark mode\n\nUsers want it at night." {
 		t.Fatalf("artifact body = %q, want the whole prompt", artifact.Body)
 	}
-	if got := docs(t, f, project.ID); len(got) != 1 {
+	if got := prompts(t, f, project.ID); len(got) != 1 {
 		t.Fatalf("stored %d docs, want 1", len(got))
 	}
 }
@@ -168,7 +168,7 @@ func TestPromptRequiresToken(t *testing.T) {
 			t.Fatalf("token %q status = %d, want 401", token, resp.StatusCode)
 		}
 	}
-	if got := docs(t, f, project.ID); len(got) != 0 {
+	if got := prompts(t, f, project.ID); len(got) != 0 {
 		t.Fatalf("rejected writes created %d docs, want 0", len(got))
 	}
 	if got := inbox(t, f, project.ID); len(got) != 0 {
@@ -194,7 +194,7 @@ func TestPromptRejectsEmptyText(t *testing.T) {
 			t.Fatalf("text %q status = %d, want 400", text, resp.StatusCode)
 		}
 	}
-	if got := docs(t, f, project.ID); len(got) != 0 {
+	if got := prompts(t, f, project.ID); len(got) != 0 {
 		t.Fatalf("empty prompts created %d docs, want 0", len(got))
 	}
 	if got := inbox(t, f, project.ID); len(got) != 0 {
@@ -279,7 +279,7 @@ func TestPromptDisabledForAllProjects(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 in all-projects mode", resp.StatusCode)
 	}
-	if got := docs(t, f, one.ID); len(got) != 0 {
+	if got := prompts(t, f, one.ID); len(got) != 0 {
 		t.Fatalf("all-projects prompt created %d docs, want 0", len(got))
 	}
 }
@@ -327,7 +327,7 @@ func TestPromptArtifactRetrievable(t *testing.T) {
 		Body  string `json:"body"`
 	}
 	getDoc(t, ts.URL+"/api/doc/"+string(result.ID), &doc)
-	if doc.ID != string(result.ID) || doc.Kind != "doc" || doc.Title != "Add a dark mode" || doc.Body != "Add a dark mode" {
+	if doc.ID != string(result.ID) || doc.Kind != "prompt" || doc.Title != "Add a dark mode" || doc.Body != "Add a dark mode" {
 		t.Fatalf("doc = %+v, want the stored prompt", doc)
 	}
 }

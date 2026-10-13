@@ -71,7 +71,7 @@ func (s *Server) handlePromptSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	artifact, err := s.options.Artifacts.Add(r.Context(), app.ArtifactInput{
 		ProjectID: s.options.Project,
-		Kind:      core.ArtifactDoc,
+		Kind:      core.ArtifactPrompt,
 		Title:     title,
 		Body:      body,
 	})

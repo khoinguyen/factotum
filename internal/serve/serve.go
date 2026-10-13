@@ -165,6 +165,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.getOrHead(s.handleSnapshot)(w, r)
 	case path == "/api/sessions":
 		s.getOrHead(s.handleSessions)(w, r)
+	case path == "/api/notifications":
+		s.getOrHead(s.handleNotifications)(w, r)
 	case path == "/events":
 		s.getOnly(s.handleEvents)(w, r)
 	case path == "/app" || strings.HasPrefix(path, "/app/"):

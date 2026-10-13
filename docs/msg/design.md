@@ -420,7 +420,10 @@ Auth and trust:
 - All `/api/msg/*` endpoints require the serve token in the `Authorization: Bearer` header,
   constant-time compared, exactly like capture. This **diverges from the open graph read side on
   purpose**: private agent comms should not be world-readable to anyone who can reach the
-  dashboard. (Open question for Khoi, section 12.)
+  dashboard. (Open question for Khoi, section 12.) `ft serve` resolves that token from `--token`,
+  `FACTOTUM_SERVE_TOKEN`, or `serve.token`, and, when none is set on a scoped serve, mints a random
+  one per start and prints it; a remote hub a launched receiver talks to (`serve.url` +
+  `serve.token`) therefore needs an explicit token, since a rotated one is not known to `ft run`.
 - The token authenticates the *host* to the hub, not the actor; a token holder may send as any
   actor (`from` in the payload). Acceptable for a single-operator hub; documented as the trust
   boundary.

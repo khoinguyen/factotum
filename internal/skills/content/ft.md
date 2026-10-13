@@ -46,11 +46,11 @@ lists each excluded task with its reason, applying the same
 ## Watch the factory
 
 ```sh
-ft serve                        # live dashboard + token-gated capture; also -p <project>, --all, --bind <host:port>
+ft serve                        # live dashboard + token-gated capture; also -p <project>, --all, --bind <host:port>, --token <secret>
 ```
 `ft serve` is an idea-centric live dashboard: ideas roll up promoted tasks, a kanban groups by
 origin idea, idea/task/memory/doc drill down; reads open and SSE-live. The whole app is an embedded
-shadcn/ui SPA served at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` posts a sentence to the token-gated `/api/capture` as an idea or a bug, and its prompt box stores a free-form prompt as a document artifact and ft-msgs the chief at the token-gated `/api/prompt`. The message port rides the same token at `/api/msg/*` (`send`,`inbox`,`get`,`read`,`ack`,`nack`,`register`,`claim`,`heartbeat`,`deregister`) so a receiver on another host can message through the project backend; no token leaves it off.
+shadcn/ui SPA served at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` posts a sentence to the token-gated `/api/capture` as an idea or a bug, and its prompt box stores a free-form prompt as a document artifact and ft-msgs the chief at the token-gated `/api/prompt`. The message port rides the same token at `/api/msg/*` (`send`,`inbox`,`get`,`read`,`ack`,`nack`,`register`,`claim`,`heartbeat`,`deregister`) so a receiver on another host can message through the project backend. Every write side authenticates with `Authorization: Bearer <token>`. The token is resolved from `--token`, then `FACTOTUM_SERVE_TOKEN`, then `serve.token` in the machine config; an explicitly provided token is used as-is and never printed. When none is set on a scoped serve, a fresh random token is minted each start and printed to the console for you to copy; with no token and `--all` (no single capture target), capture is disabled and the read side stays open.
 
 ## Move work through its lifecycle
 

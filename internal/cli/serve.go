@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,7 +23,7 @@ import (
 const defaultServeBind = "127.0.0.1:8484"
 
 func newServeCommand(deps *Deps) *cobra.Command {
-	var bind, projectID string
+	var bind, projectID, token string
 	var all bool
 
 	cmd := &cobra.Command{
@@ -30,11 +32,13 @@ func newServeCommand(deps *Deps) *cobra.Command {
 		Long: "Serve a local dashboard of project and task graph state, with a capture write side.\n" +
 			"The read side reloads itself over Server-Sent Events as tasks change; the read pages\n" +
 			"have no mutating endpoints. The app's /capture page turns a natural-language sentence\n" +
-			"into a stored idea or bug, gated by a shared token (machine config serve.token, or\n" +
-			"FACTOTUM_SERVE_TOKEN). With no token configured, capture is disabled and the read side\n" +
-			"stays open. The message port is exposed at the same token-gated /api/msg/* so a receiver\n" +
-			"on another host can message through the project backend. It binds to localhost by\n" +
-			"default; pass --bind 0.0.0.0:PORT to reach it from another device on the network.",
+			"into a stored idea or bug, gated by a shared token sent as 'Authorization: Bearer <token>'.\n" +
+			"The token is resolved from --token, then FACTOTUM_SERVE_TOKEN, then serve.token in the\n" +
+			"machine config; when none is set, a fresh random token is generated for each start and\n" +
+			"printed to the console for you to copy (the same header authenticates /api/prompt and\n" +
+			"the message port at /api/msg/*). An explicitly provided token is never printed. With no\n" +
+			"token and --all, capture is disabled and the read side stays open. It binds to localhost\n" +
+			"by default; pass --bind 0.0.0.0:PORT to reach it from another device on the network.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			deps.warnIncompleteHub()
 			project := deps.resolveProject(projectID)
@@ -44,6 +48,11 @@ func newServeCommand(deps *Deps) *cobra.Command {
 					return err
 				}
 			}
+			explicit := deps.Config.Serve.Token
+			if cmd.Flags().Changed("token") {
+				explicit = token
+			}
+			serveToken, generated := resolveServeToken(explicit, serveAll, newServeToken)
 			ranker, err := deps.Rankers.MustLookup("composite")
 			if err != nil {
 				return err
@@ -54,7 +63,7 @@ func newServeCommand(deps *Deps) *cobra.Command {
 				Ranker:    ranker,
 				Project:   project,
 				All:       serveAll,
-				Token:     deps.Config.Serve.Token,
+				Token:     serveToken,
 				Tasks:     deps.Tasks,
 				Messages:  deps.Messages,
 				Artifacts: deps.Artifacts,
@@ -70,7 +79,9 @@ func newServeCommand(deps *Deps) *cobra.Command {
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			_, _ = fmt.Fprintf(deps.Err, "factotum dashboard: http://%s (reads live; %s; Ctrl-C to stop)\n", listener.Addr().String(), serveMode(serveAll, deps.Config.Serve.Token))
+			for _, line := range serveAnnouncement(listener.Addr().String(), serveAll, serveToken, generated) {
+				_, _ = fmt.Fprintln(deps.Err, line)
+			}
 
 			go func() {
 				<-ctx.Done()
@@ -87,12 +98,51 @@ func newServeCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&bind, "bind", defaultServeBind, "host:port to bind (loopback only by default)")
 	cmd.Flags().StringVarP(&projectID, "project", "p", "", "project id (defaults to the configured project, else all)")
 	cmd.Flags().BoolVar(&all, "all", false, "serve every registered project")
+	cmd.Flags().StringVar(&token, "token", "", "shared capture token (overrides serve.token and FACTOTUM_SERVE_TOKEN; never printed)")
 	return cmd
 }
 
+// resolveServeToken returns the effective capture token for `ft serve` and
+// whether it was minted for this run. An explicitly configured token - the
+// --token flag, FACTOTUM_SERVE_TOKEN, or serve.token, which the caller folds
+// into explicit - is used as-is and never printed. With none and a scoped
+// project, a fresh random token is generated; serving all projects has no
+// single capture target, so the token stays empty and capture stays off.
+func resolveServeToken(explicit string, all bool, gen func() string) (string, bool) {
+	if strings.TrimSpace(explicit) != "" {
+		return explicit, false
+	}
+	if all {
+		return "", false
+	}
+	return gen(), true
+}
+
+// newServeToken mints a random capture token for one `ft serve` run. It uses
+// crypto/rand, so a token is unpredictable and independent of the process clock.
+func newServeToken() string { return rand.Text() }
+
+// serveAnnouncement returns the startup lines `ft serve` writes: the dashboard
+// line (with the resolved capture mode), plus a second line carrying a
+// generated token so the user can copy it. An explicit token is never echoed,
+// and an all-projects server prints only the dashboard line.
+func serveAnnouncement(addr string, all bool, token string, generated bool) []string {
+	lines := []string{fmt.Sprintf(
+		"factotum dashboard: http://%s (reads live; %s; Ctrl-C to stop)",
+		addr, serveMode(all, token))}
+	if generated {
+		lines = append(lines, fmt.Sprintf(
+			"capture token: %s (generated for this run; pass --token or set serve.token to pin it)",
+			token))
+	}
+	return lines
+}
+
 // serveMode describes the write side in the startup line: capture needs both a
-// scoped project and a configured token, so all-projects serving or a missing
-// token reports capture off rather than implying it is reachable.
+// scoped project and an effective token, so all-projects serving or a missing
+// token reports capture off rather than implying it is reachable. `ft serve`
+// mints a random token when none is configured (scoped), so the empty-token
+// branch is what `ft up` reports when it runs with no token.
 func serveMode(allProjects bool, token string) string {
 	switch {
 	case allProjects:

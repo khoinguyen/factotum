@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -241,8 +242,15 @@ func newMessageInstallCommand(deps *Deps) *cobra.Command {
 				return fmt.Errorf("create receiver dir: %w", err)
 			}
 			path := filepath.Join(target, receiverFile)
-			if err := os.WriteFile(path, content, 0o644); err != nil {
-				return fmt.Errorf("write receiver: %w", err)
+			// Skip the write when the staged receiver already matches: OpenCode's
+			// plugin file-watcher reloads the plugin on a write, and a reload
+			// strands an idle agent's receiver (it learns its session only from an
+			// event, which an idle agent never gets). An unchanged file is left
+			// untouched so the watcher never fires.
+			if current, err := os.ReadFile(path); err != nil || !bytes.Equal(current, content) {
+				if err := os.WriteFile(path, content, 0o644); err != nil {
+					return fmt.Errorf("write receiver: %w", err)
+				}
 			}
 			result := messageInstallResult{Installed: true, Harness: harness, Path: path}
 			return deps.emit(result, func() {

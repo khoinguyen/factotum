@@ -754,6 +754,54 @@ func TestDocRouteServesQAVerdict(t *testing.T) {
 	}
 }
 
+// Khoi 2026-10-12: a rollup links its artifacts at artifact.url and the page
+// fetches /api + url, so every artifact link a rollup surfaces must resolve. A
+// task_check artifact is a derived cache with no page: the doc route rejects it
+// with 404, so linking it from an idea or task rollup is a broken link. The fix
+// keeps the cache out of the rollup artifact list rather than serving a page for
+// it (t-cv2atkeeu6).
+func TestRollupArtifactLinksResolve(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	idea := f.addIdea(t, project.ID, "Feature", "")
+	task := f.promote(t, idea.ID)
+	// A check cache attached to the capture and to the promoted task, plus a real
+	// doc that must keep resolving.
+	f.addArtifact(t, project.ID, &idea.ID, core.ArtifactTaskCheck, "check: idea", "cache")
+	f.addArtifact(t, project.ID, &task.ID, core.ArtifactTaskCheck, "check: task", "cache")
+	doc := f.addArtifact(t, project.ID, &task.ID, core.ArtifactDoc, "Design note", "body")
+	ts := newTestServer(t, f, Options{Project: project.ID})
+
+	var ideaDoc ideaView
+	getDoc(t, ts.URL+"/api/idea/"+string(idea.ID), &ideaDoc)
+	var taskDoc taskPageJSON
+	getDoc(t, ts.URL+"/api/task/"+string(task.ID), &taskDoc)
+
+	rollups := map[string][]artifactView{"idea": ideaDoc.Artifacts, "task": taskDoc.Artifacts}
+	seenDoc := false
+	for name, artifacts := range rollups {
+		for _, artifact := range artifacts {
+			if artifact.Kind == string(core.ArtifactTaskCheck) {
+				t.Fatalf("%s rollup links a task_check artifact at %q, but /doc rejects it", name, artifact.URL)
+			}
+			if artifact.ID == doc.ID {
+				seenDoc = true
+			}
+			resp, err := http.Get(ts.URL + "/api" + artifact.URL)
+			if err != nil {
+				t.Fatalf("Get(/api%s) error = %v", artifact.URL, err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("%s rollup links %q, but Get(/api%s) status = %d, want 200", name, artifact.ID, artifact.URL, resp.StatusCode)
+			}
+		}
+	}
+	if !seenDoc {
+		t.Fatalf("rollups = %v, want the doc artifact %s linked", rollups, doc.ID)
+	}
+}
+
 func TestDetailPagesRejectUnknownIDs(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")

@@ -65,7 +65,7 @@ func (s *Server) completedPromptGroomings(ctx context.Context) ([]notificationVi
 	if err != nil {
 		return nil, err
 	}
-	byPage := capturesByPagePath(tickets)
+	byPage := capturesByPagePath(tickets, prompts)
 	for _, prompt := range prompts {
 		captures := byPage[artifactURL(prompt)]
 		if len(captures) == 0 {
@@ -94,11 +94,16 @@ func (s *Server) completedPromptGroomings(ctx context.Context) ([]notificationVi
 // its page. It reads the artifact's own project, so a scoped and an
 // all-projects server agree for the same prompt.
 func (s *Server) linkedCaptures(ctx context.Context, artifact *core.Artifact) ([]taskLink, error) {
+	kind := core.ArtifactPrompt
+	prompts, err := s.options.Backend.Artifacts().List(ctx, store.ArtifactFilter{ProjectID: artifact.ProjectID, Kind: &kind})
+	if err != nil {
+		return nil, err
+	}
 	tickets, err := s.options.Backend.Tickets().List(ctx, store.TicketFilter{ProjectID: artifact.ProjectID})
 	if err != nil {
 		return nil, err
 	}
-	captures := capturesByPagePath(tickets)[artifactURL(artifact)]
+	captures := capturesByPagePath(tickets, prompts)[artifactURL(artifact)]
 	out := make([]taskLink, 0, len(captures))
 	for _, capture := range captures {
 		out = append(out, taskRefLink(capture))
@@ -107,27 +112,39 @@ func (s *Server) linkedCaptures(ctx context.Context, artifact *core.Artifact) ([
 }
 
 // capturesByPagePath indexes the captures that link back to a prompt artifact by
-// the page path their note links name: a capture links back with a doc link to
-// the artifact's page, the provenance the grooming agent records. Captures under
-// one page are sorted by id for a stable count and page.
-func capturesByPagePath(tickets []*core.Ticket) map[string][]*core.Ticket {
+// the page path they name. A capture links back two ways: canonically through its
+// OriginArtifact, the prompt it was groomed from (the grooming agent records this
+// with --origin-artifact), and for compat through a note doc link to the
+// artifact's page. Only a prompt artifact in prompts qualifies as an origin, so a
+// capture naming some other artifact is not a link-back. Captures under one page
+// are sorted by id for a stable count and page.
+func capturesByPagePath(tickets []*core.Ticket, prompts []*core.Artifact) map[string][]*core.Ticket {
+	promptPages := make(map[core.ArtifactID]string, len(prompts))
+	for _, prompt := range prompts {
+		promptPages[prompt.ID] = artifactURL(prompt)
+	}
 	byPage := make(map[string][]*core.Ticket)
 	for _, ticket := range tickets {
 		if !ticket.Kind.CapturedByHuman() {
 			continue
 		}
 		seen := make(map[string]bool)
+		add := func(page string) {
+			if page == "" || seen[page] {
+				return
+			}
+			seen[page] = true
+			byPage[page] = append(byPage[page], ticket)
+		}
+		if ticket.OriginArtifact != nil {
+			add(promptPages[*ticket.OriginArtifact])
+		}
 		for _, note := range ticket.Notes {
 			for _, link := range note.Links {
 				if link.Kind != core.LinkDoc {
 					continue
 				}
-				page := linkPagePath(link.URL)
-				if page == "" || seen[page] {
-					continue
-				}
-				seen[page] = true
-				byPage[page] = append(byPage[page], ticket)
+				add(linkPagePath(link.URL))
 			}
 		}
 	}

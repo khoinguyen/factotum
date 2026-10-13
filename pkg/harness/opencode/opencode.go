@@ -26,18 +26,79 @@ import (
 	"github.com/khoinguyen/factotum/pkg/isolation"
 )
 
-// Name is the harness's registration key.
+// Name is the V1 harness's registration key.
 const Name = "opencode"
 
+// NameV2 is the OpenCode V2 harness's registration key. V2 ships as its own
+// build with a distinct executable, so it is a separate registration rather than
+// a flag on the V1 harness: `--harness opencode2` selects it and leaves the V1
+// `opencode` harness untouched.
+const NameV2 = "opencode2"
+
+// Variant selects which OpenCode major a harness drives. The majors ship as
+// separate executables and images, and their interactive flags differ, so a
+// harness is bound to one variant. The zero value is V1, so existing callers
+// keep driving V1 unchanged.
+type Variant int
+
 const (
-	// DefaultImage is the OpenCode agent image (Alpine, entrypoint `opencode`).
-	// It declares no USER, so the image runs as root; DefaultUser carries the
-	// non-root identity a backend should request instead.
+	// V1 is the original OpenCode: the `opencode` binary, the rolling
+	// ghcr.io/anomalyco/opencode:latest image, and a TUI that accepts a
+	// top-level --model.
+	V1 Variant = iota
+	// V2 is OpenCode V2. It is selected by a distinct executable:
+	// `opencode2`, the alias the npm @opencode/cli package installs next to
+	// `opencode` (so V1 and V2 coexist). The brew `opencode-v2` formula ships
+	// the same V2 build but links it as `opencode`, conflicting with V1, so a
+	// host-installed V2 resolves as `opencode2` only via npm; a pinned V2
+	// image covers the container path. V2's TUI has no top-level --model
+	// (the flag lives only on `run`/`mini`), so the interactive invocation
+	// omits it.
+	V2
+)
+
+func (v Variant) name() string {
+	if v == V2 {
+		return NameV2
+	}
+	return Name
+}
+
+func (v Variant) binary() string {
+	if v == V2 {
+		return DefaultBinaryV2
+	}
+	return DefaultBinary
+}
+
+func (v Variant) image() string {
+	if v == V2 {
+		return DefaultImageV2
+	}
+	return DefaultImage
+}
+
+// interactiveModel reports whether the variant's TUI accepts a top-level
+// --model flag. V1 does; V2 rejects it (it is a `run`/`mini` flag only), so the
+// interactive invocation omits it and the TUI uses its configured default.
+func (v Variant) interactiveModel() bool { return v != V2 }
+
+const (
+	// DefaultImage is the OpenCode V1 agent image (Alpine, entrypoint
+	// `opencode`). It declares no USER, so the image runs as root; DefaultUser
+	// carries the non-root identity a backend should request instead.
 	DefaultImage = "ghcr.io/anomalyco/opencode:latest"
-	// DefaultBinary is the argv[0] on the host PATH and inside the image.
+	// DefaultImageV2 is the OpenCode V2 agent image. V2 publishes under version
+	// tags while :latest still points at V1, so the V2 harness pins the V2
+	// release it was verified against. Like the V1 image it declares no USER.
+	DefaultImageV2 = "ghcr.io/anomalyco/opencode:2.0.27"
+	// DefaultBinary is the V1 argv[0] on the host PATH and inside the image.
 	DefaultBinary = "opencode"
+	// DefaultBinaryV2 is the V2 argv[0]: the `opencode2` alias the npm
+	// @opencode/cli package installs, keeping it distinct from V1's `opencode`.
+	DefaultBinaryV2 = "opencode2"
 	// DefaultUser is the non-root identity the workload should run as. The
-	// shipped image has no interactive home for this uid, so a backend must
+	// shipped images have no interactive home for this uid, so a backend must
 	// provide a writable HOME (for example /tmp).
 	DefaultUser = "1000:1000"
 )
@@ -49,11 +110,15 @@ var ErrNoPrompt = errors.New("harness/opencode: no prompt")
 // Options configures the harness. The zero value is usable: it targets the
 // default image and the `opencode` binary on PATH.
 type Options struct {
-	// Image overrides the base image reference. Defaults to DefaultImage.
+	// Variant selects the OpenCode major to drive (V1 or V2). The zero value is
+	// V1, so an Options literal that predates V2 keeps driving V1 unchanged.
+	Variant Variant
+	// Image overrides the base image reference. Defaults to the variant's
+	// default image (DefaultImage, or DefaultImageV2 for V2).
 	Image string
 	// Binary is the argv[0] for the invocation: a host path resolved locally,
-	// or the binary name that exists inside Image. Defaults to
-	// DefaultBinary.
+	// or the binary name that exists inside Image. Defaults to the variant's
+	// default binary (DefaultBinary, or DefaultBinaryV2 for V2).
 	Binary string
 	// User is the non-root identity the backend should run as. For the shipped
 	// image it defaults to DefaultUser; with a custom Image it is empty, so the
@@ -79,27 +144,33 @@ type Options struct {
 
 // Harness is the OpenCode implementation of harness.Harness.
 type Harness struct {
-	image    string
-	binary   string
-	user     string
-	model    string
-	provider string
-	credEnv  string
-	sentinel string
-	args     []string
+	name             string
+	image            string
+	binary           string
+	user             string
+	model            string
+	provider         string
+	credEnv          string
+	sentinel         string
+	args             []string
+	interactiveModel bool
 }
 
-// New returns an OpenCode harness with defaults applied.
+// New returns an OpenCode harness for the configured variant with defaults
+// applied.
 func New(opts Options) *Harness {
+	v := opts.Variant
 	h := &Harness{
-		image:    firstNonEmpty(opts.Image, DefaultImage),
-		binary:   firstNonEmpty(opts.Binary, DefaultBinary),
-		user:     opts.User,
-		model:    opts.Model,
-		provider: opts.Provider,
-		credEnv:  opts.CredentialEnvVar,
-		sentinel: opts.Sentinel,
-		args:     append([]string(nil), opts.Args...),
+		name:             v.name(),
+		image:            firstNonEmpty(opts.Image, v.image()),
+		binary:           firstNonEmpty(opts.Binary, v.binary()),
+		user:             opts.User,
+		model:            opts.Model,
+		provider:         opts.Provider,
+		credEnv:          opts.CredentialEnvVar,
+		sentinel:         opts.Sentinel,
+		args:             append([]string(nil), opts.Args...),
+		interactiveModel: v.interactiveModel(),
 	}
 	if opts.User == "" && opts.Image == "" {
 		h.user = DefaultUser
@@ -107,7 +178,7 @@ func New(opts Options) *Harness {
 	return h
 }
 
-func (h *Harness) Name() string { return Name }
+func (h *Harness) Name() string { return h.name }
 
 // Spec returns the environment the run needs: the base image with its non-root
 // identity, the workdir, any extra environment, the run labels, and the
@@ -155,8 +226,12 @@ func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 	if req.Interactive {
 		argv := make([]string, 0, len(h.args)+len(req.Args)+5)
 		argv = append(argv, h.binary)
-		if model := firstNonEmpty(req.Model, h.model); model != "" {
-			argv = append(argv, "--model", model)
+		// V2's TUI has no top-level --model, so only emit it for a variant that
+		// accepts it; V2 falls back to its configured default model.
+		if h.interactiveModel {
+			if model := firstNonEmpty(req.Model, h.model); model != "" {
+				argv = append(argv, "--model", model)
+			}
 		}
 		argv = append(argv, h.args...)
 		argv = append(argv, req.Args...)
@@ -211,7 +286,8 @@ func (h *Harness) Result(out []byte) (harness.Result, error) {
 
 // LocateBinary resolves name on the host PATH. The local launcher uses it to
 // find the dev-only host binary; an image backend does not need it, because the
-// binary is already on PATH inside the image.
+// binary is already on PATH inside the image. Callers pass DefaultBinary (V1) or
+// DefaultBinaryV2 (V2) for the variant they drive.
 func LocateBinary(name string) (string, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {

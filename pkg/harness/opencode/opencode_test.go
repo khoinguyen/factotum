@@ -20,6 +20,18 @@ func TestName(t *testing.T) {
 	}
 }
 
+// TestNameV2 pins that the V2 variant registers under its own key, so
+// `ft run --harness opencode2` selects the distinct V2 executable rather than
+// shadowing the V1 `opencode` harness.
+func TestNameV2(t *testing.T) {
+	if got := opencode.New(opencode.Options{Variant: opencode.V2}).Name(); got != opencode.NameV2 {
+		t.Fatalf("Name() = %q, want %q", got, opencode.NameV2)
+	}
+	if opencode.NameV2 == opencode.Name {
+		t.Fatalf("V2 key %q must differ from the V1 key %q", opencode.NameV2, opencode.Name)
+	}
+}
+
 func TestSpecDeclaresImageAndIdentity(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -47,6 +59,21 @@ func TestSpecDeclaresImageAndIdentity(t *testing.T) {
 			name:         "provider credential is declared without a secret",
 			opts:         opencode.Options{Provider: "openrouter", CredentialEnvVar: "OPENROUTER_API_KEY"},
 			wantImage:    opencode.DefaultImage,
+			wantUser:     opencode.DefaultUser,
+			wantCred:     true,
+			wantProvider: "openrouter",
+			wantEnvVar:   "OPENROUTER_API_KEY",
+		},
+		{
+			name:      "v2 defaults use the V2 image and identity",
+			opts:      opencode.Options{Variant: opencode.V2},
+			wantImage: opencode.DefaultImageV2,
+			wantUser:  opencode.DefaultUser,
+		},
+		{
+			name:         "v2 declares the provider credential the same way",
+			opts:         opencode.Options{Variant: opencode.V2, Provider: "openrouter", CredentialEnvVar: "OPENROUTER_API_KEY"},
+			wantImage:    opencode.DefaultImageV2,
 			wantUser:     opencode.DefaultUser,
 			wantCred:     true,
 			wantProvider: "openrouter",
@@ -255,6 +282,66 @@ func TestCommandBuildsInteractiveInvocation(t *testing.T) {
 				t.Error("TTY = false, want true for an interactive request")
 			}
 		})
+	}
+}
+
+// TestCommandBuildsV2HeadlessInvocation pins V2's one-shot invocation: the
+// `opencode2` binary with the same `run`/`--model`/`--` shape V1 uses. The shape
+// is verified against a real V2 run (opencode v2.0.27); V2's `run` accepts
+// `--model` and the `--` separator exactly as V1 does.
+func TestCommandBuildsV2HeadlessInvocation(t *testing.T) {
+	tests := []struct {
+		name string
+		opts opencode.Options
+		req  harness.Request
+		want []string
+	}{
+		{
+			name: "request model",
+			req:  harness.Request{Prompt: "do the thing", Model: "opencode-go/deepseek-v4.1-flash"},
+			want: []string{"opencode2", "run", "--model", "opencode-go/deepseek-v4.1-flash", "--", "do the thing"},
+		},
+		{
+			name: "configured args pass through and no model flag when unset",
+			opts: opencode.Options{Args: []string{"--agent", "build"}},
+			req:  harness.Request{Prompt: "hi", Args: []string{"--auto"}},
+			want: []string{"opencode2", "run", "--agent", "build", "--auto", "--", "hi"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.opts.Variant = opencode.V2
+			cmd, err := opencode.New(tc.opts).Command(tc.req)
+			if err != nil {
+				t.Fatalf("Command() error = %v", err)
+			}
+			if strings.Join(cmd.Argv, "\x00") != strings.Join(tc.want, "\x00") {
+				t.Errorf("argv = %q, want %q", cmd.Argv, tc.want)
+			}
+			if cmd.TTY {
+				t.Error("TTY = true, want false for a headless request")
+			}
+		})
+	}
+}
+
+// TestCommandBuildsV2InteractiveInvocation pins V2's conversational mode: the
+// `opencode2` TUI with the kickoff on `--prompt`. V2's top-level command has no
+// `--model` flag (it lives only on `run`/`mini`), so the interactive invocation
+// omits it rather than emitting a flag V2 rejects; the TUI then uses its
+// configured default model.
+func TestCommandBuildsV2InteractiveInvocation(t *testing.T) {
+	req := harness.Request{Prompt: "groom these items", Interactive: true, Model: "opencode-go/deepseek-v4.1-flash"}
+	cmd, err := opencode.New(opencode.Options{Variant: opencode.V2, Args: []string{"--auto"}}).Command(req)
+	if err != nil {
+		t.Fatalf("Command() error = %v", err)
+	}
+	want := []string{"opencode2", "--auto", "--prompt", "groom these items"}
+	if strings.Join(cmd.Argv, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("argv = %q, want %q", cmd.Argv, want)
+	}
+	if !cmd.TTY {
+		t.Error("TTY = false, want true for an interactive request")
 	}
 }
 

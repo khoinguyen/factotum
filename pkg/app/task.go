@@ -51,6 +51,9 @@ type TicketInput struct {
 	Milestone          *core.MilestoneMeta
 	Groomed            bool
 	AcceptanceCriteria []string
+	// OriginArtifact is the prompt document a capture is groomed from, when its
+	// provenance is a document rather than another capture.
+	OriginArtifact *core.ArtifactID
 }
 
 func (s *TicketService) Add(ctx context.Context, in TicketInput) (*core.Ticket, error) {
@@ -60,6 +63,11 @@ func (s *TicketService) Add(ctx context.Context, in TicketInput) (*core.Ticket, 
 	}
 	if err := CheckRepo(project, in.Repo); err != nil {
 		return nil, err
+	}
+	if in.OriginArtifact != nil {
+		if err := checkOriginArtifact(ctx, s.backend, project.ID, *in.OriginArtifact); err != nil {
+			return nil, err
+		}
 	}
 	kind := in.Kind
 	if kind == "" {
@@ -85,6 +93,7 @@ func (s *TicketService) Add(ctx context.Context, in TicketInput) (*core.Ticket, 
 		Milestone:          in.Milestone,
 		Groomed:            in.Groomed,
 		AcceptanceCriteria: in.AcceptanceCriteria,
+		OriginArtifact:     in.OriginArtifact,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
@@ -237,6 +246,21 @@ func originTicket(ctx context.Context, backend store.Backend, task *core.Ticket)
 		}
 	}
 	return nil, nil
+}
+
+// checkOriginArtifact validates the prompt document a capture is groomed from:
+// it must exist and belong to the same project, so provenance never dangles or
+// crosses a project boundary.
+func checkOriginArtifact(ctx context.Context, backend store.Backend, projectID core.ProjectID, artifactID core.ArtifactID) error {
+	artifact, err := backend.Artifacts().Get(ctx, artifactID)
+	if err != nil {
+		return fmt.Errorf("origin artifact: %w", err)
+	}
+	if artifact.ProjectID != projectID {
+		return fmt.Errorf("%w: origin artifact %s belongs to project %s, not %s",
+			core.ErrInvalid, artifactID, artifact.ProjectID, projectID)
+	}
+	return nil
 }
 
 type TicketUpdate struct {

@@ -229,10 +229,16 @@ type Ticket struct {
 	Labels      []string
 	Priority    int
 	Deps        []TicketID
-	Notes       []Note
-	Milestone   *MilestoneMeta
-	NotBefore   *time.Time
-	Snooze      *Snooze
+	// OriginArtifact is the document artifact a capture was groomed from, when
+	// its provenance is a prompt rather than another capture (a web-captured
+	// prompt is stored as a doc artifact; a grooming agent reads it and records
+	// each capture it produces against it). It is provenance only: unlike Deps
+	// it never gates the ticket.
+	OriginArtifact *ArtifactID
+	Notes          []Note
+	Milestone      *MilestoneMeta
+	NotBefore      *time.Time
+	Snooze         *Snooze
 	// Groomed marks a task as refined enough for an agent to execute on its
 	// own: scope, approach, and acceptance criteria are decided. It is set
 	// explicitly, never inferred from the "groomed" label or from the presence
@@ -276,6 +282,9 @@ func (t Ticket) Validate() error {
 	}
 	if t.Kind.CapturedByHuman() && t.Groomed {
 		return fmt.Errorf("%w: %s %s is not groomable", ErrInvalid, t.Kind, t.ID)
+	}
+	if t.OriginArtifact != nil && !t.Kind.CapturedByHuman() {
+		return fmt.Errorf("%w: %s %s cannot carry an origin artifact; only captures are groomed from a prompt", ErrInvalid, t.Kind, t.ID)
 	}
 	for _, criterion := range t.AcceptanceCriteria {
 		if strings.TrimSpace(criterion) == "" {

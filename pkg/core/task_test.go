@@ -238,6 +238,9 @@ func TestTaskValidate(t *testing.T) {
 		{"bug in progress", func(t *Ticket) { t.Kind = KindBug; t.Status = StatusInProgress }, true},
 		{"bug assigned", func(t *Ticket) { t.Kind = KindBug; id := ActorID("act-1"); t.AssigneeID = &id }, true},
 		{"groomed bug", func(t *Ticket) { t.Kind = KindBug; t.Groomed = true; t.AcceptanceCriteria = []string{"it works"} }, true},
+		{"task origin artifact", func(t *Ticket) { id := ArtifactID("art-1"); t.OriginArtifact = &id }, true},
+		{"idea origin artifact", func(t *Ticket) { t.Kind = KindIdea; id := ArtifactID("art-1"); t.OriginArtifact = &id }, false},
+		{"bug origin artifact", func(t *Ticket) { t.Kind = KindBug; id := ArtifactID("art-1"); t.OriginArtifact = &id }, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

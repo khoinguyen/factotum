@@ -272,6 +272,24 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 				doc.Origin = &originID
 				doc.OriginTitle = &originTitle
 			}
+			// A capture groomed from a prompt carries the prompt artifact as
+			// its origin; resolve its title for display, tolerating a deleted
+			// artifact rather than failing the read.
+			var originArtifact *core.Artifact
+			if task.OriginArtifact != nil {
+				originArtifactID := string(*task.OriginArtifact)
+				doc.OriginArtifact = &originArtifactID
+				artifact, err := deps.Artifacts.Get(cmd.Context(), *task.OriginArtifact)
+				switch {
+				case err == nil:
+					originArtifact = artifact
+					title := artifact.Title
+					doc.OriginArtifactTitle = &title
+				case errors.Is(err, core.ErrNotFound):
+				default:
+					return err
+				}
+			}
 			blockingIDs := make([]string, 0, len(blockers))
 			for _, blocker := range blockers {
 				blockingIDs = append(blockingIDs, string(blocker.ID))
@@ -356,6 +374,13 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 				}
 				if origin != nil {
 					deps.printf("origin: %s %s\n", origin.ID, origin.Title)
+				}
+				if task.OriginArtifact != nil {
+					title := ""
+					if originArtifact != nil {
+						title = originArtifact.Title
+					}
+					deps.printf("origin_artifact: %s %s\n", *task.OriginArtifact, title)
 				}
 				if len(groupedUnder) > 0 {
 					deps.printf("grouped_under: %s\n", strings.Join(groupedUnder, ", "))

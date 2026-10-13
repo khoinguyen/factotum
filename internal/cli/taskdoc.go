@@ -95,6 +95,11 @@ type taskDoc struct {
 	// ignored on apply.
 	Origin      *string `json:"origin,omitempty" yaml:"origin,omitempty"`
 	OriginTitle *string `json:"origin_title,omitempty" yaml:"origin_title,omitempty"`
+	// OriginArtifact and OriginArtifactTitle are read-only provenance: the
+	// prompt document artifact a capture was groomed from. They are ignored on
+	// apply.
+	OriginArtifact      *string `json:"origin_artifact,omitempty" yaml:"origin_artifact,omitempty"`
+	OriginArtifactTitle *string `json:"origin_artifact_title,omitempty" yaml:"origin_artifact_title,omitempty"`
 	// GroupedUnder is read-only provenance: the capture (idea or bug)
 	// dependencies beyond the origin, the captures this task is grouped under
 	// but not refined from. It is ignored on apply.
@@ -287,7 +292,7 @@ func snoozeDocFrom(snooze core.Snooze) *snoozeDoc {
 var taskDocFieldNames = []string{
 	"id", "project_id", "repo", "kind", "title", "description", "status",
 	"priority", "labels", "groomed", "acceptance_criteria", "assignee", "deps",
-	"dependents", "origin", "origin_title", "grouped_under", "waiting_on", "notes", "checks",
+	"dependents", "origin", "origin_title", "origin_artifact", "origin_artifact_title", "grouped_under", "waiting_on", "notes", "checks",
 	"not_ready", "not_before", "created_at", "updated_at",
 }
 
@@ -342,6 +347,12 @@ func taskDocValues(doc taskDoc) map[string]any {
 	}
 	if doc.OriginTitle != nil {
 		out["origin_title"] = *doc.OriginTitle
+	}
+	if doc.OriginArtifact != nil {
+		out["origin_artifact"] = *doc.OriginArtifact
+	}
+	if doc.OriginArtifactTitle != nil {
+		out["origin_artifact_title"] = *doc.OriginArtifactTitle
 	}
 	if doc.GroupedUnder != nil {
 		out["grouped_under"] = *doc.GroupedUnder

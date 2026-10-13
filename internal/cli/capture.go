@@ -75,7 +75,7 @@ func newCaptureCommand(deps *Deps, s captureSurface) *cobra.Command {
 }
 
 func newCaptureCreateCommand(deps *Deps, s captureSurface) *cobra.Command {
-	var projectID, repo, title, body, bodyFile string
+	var projectID, repo, title, body, bodyFile, originArtifact string
 	var labels []string
 
 	create := &cobra.Command{
@@ -96,14 +96,19 @@ func newCaptureCreateCommand(deps *Deps, s captureSurface) *cobra.Command {
 				}
 				body = string(data)
 			}
-			capture, err := deps.Tasks.Add(cmd.Context(), app.TicketInput{
+			input := app.TicketInput{
 				ProjectID:   project,
 				Repo:        repo,
 				Kind:        s.kind,
 				Title:       title,
 				Description: body,
 				Labels:      labels,
-			})
+			}
+			if originArtifact != "" {
+				id := core.ArtifactID(originArtifact)
+				input.OriginArtifact = &id
+			}
+			capture, err := deps.Tasks.Add(cmd.Context(), input)
 			if err != nil {
 				return err
 			}
@@ -119,6 +124,7 @@ func newCaptureCreateCommand(deps *Deps, s captureSurface) *cobra.Command {
 	create.Flags().StringVarP(&body, "body", "b", "", s.noun+" body (the context to keep)")
 	create.Flags().StringVarP(&bodyFile, "body-file", "f", "", "read the "+s.noun+" body from a file")
 	create.Flags().StringArrayVar(&labels, "label", nil, "label (repeatable)")
+	create.Flags().StringVar(&originArtifact, "origin-artifact", "", "prompt artifact this capture was groomed from (origin/provenance)")
 	return create
 }
 

@@ -135,6 +135,7 @@ const ideaDoc: IdeaView = {
   url: "/idea/t-idea",
   total: 1,
   done: 0,
+  todo: 0,
   active: 1,
   blocked: 0,
   tasks: [

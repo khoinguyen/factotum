@@ -660,6 +660,74 @@ func expectEvent(t *testing.T, events <-chan string, want string, timeout time.D
 	}
 }
 
+// Khoi 2026-10-14: a capture card must count every promoted task in exactly one
+// displayed bucket so the numbers sum to the total. An unstarted (todo) task was
+// counted nowhere: done+active+blocked < total.
+func TestIdeaViewCountsUnstartedTasksInTheirOwnBucket(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	project := f.addProject(t, "acme", "Acme")
+	agent, err := f.actors.Add(ctx, core.ActorAgent, "bot")
+	if err != nil {
+		t.Fatalf("Add(actor) error = %v", err)
+	}
+	idea, err := f.tasks.Add(ctx, app.TicketInput{ProjectID: project.ID, Kind: core.KindIdea, Title: "capture"})
+	if err != nil {
+		t.Fatalf("Add(idea) error = %v", err)
+	}
+	promote := func() *core.Ticket {
+		t.Helper()
+		task, err := f.tasks.Promote(ctx, idea.ID, app.PromoteInput{AssigneeID: &agent.ID, AcceptanceCriteria: []string{"it works"}})
+		if err != nil {
+			t.Fatalf("Promote() error = %v", err)
+		}
+		return task
+	}
+	setStatus := func(id core.TicketID, status core.TicketStatus) {
+		t.Helper()
+		if _, err := f.tasks.SetStatus(ctx, id, status); err != nil {
+			t.Fatalf("SetStatus(%s) error = %v", id, err)
+		}
+	}
+	setStatus(promote().ID, core.StatusDone)
+	setStatus(promote().ID, core.StatusCancelled)
+	promote() // left unstarted (todo)
+
+	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(ctx)
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+	got, ok := findIdeaInPage(page, idea.ID)
+	if !ok {
+		t.Fatalf("idea %s missing from page", idea.ID)
+	}
+	if got.Total != 3 {
+		t.Fatalf("Total = %d, want 3", got.Total)
+	}
+	if got.Done != 2 {
+		t.Fatalf("Done = %d, want 2 (one done, one cancelled)", got.Done)
+	}
+	if got.Todo != 1 {
+		t.Fatalf("Todo = %d, want 1 (the unstarted task)", got.Todo)
+	}
+	if got.Active != 0 || got.Blocked != 0 {
+		t.Fatalf("Active = %d, Blocked = %d, want 0 each", got.Active, got.Blocked)
+	}
+	if sum := got.Done + got.Active + got.Blocked + got.Todo; sum != got.Total {
+		t.Fatalf("done+active+blocked+todo = %d, want total %d", sum, got.Total)
+	}
+}
+
+func findIdeaInPage(page *pageData, id core.TicketID) (ideaView, bool) {
+	all := append(append(append([]ideaView{}, page.BlockedIdeas...), page.FinishedIdeas...), page.ActiveIdeas...)
+	all = append(all, page.CapturedIdeas...)
+	return findIdea(all, id)
+}
+
 func hasTask(tasks []taskView, id core.TicketID) bool {
 	_, ok := findTask(tasks, id)
 	return ok

@@ -62,8 +62,8 @@ export function IdeaDetail({ id }: { id: string }) {
         </dd>
         <dt className="text-muted-foreground">Tasks</dt>
         <dd>
-          {idea.total} · {idea.done} done · {idea.active} active ·{" "}
-          {idea.blocked} blocked
+          {idea.total} · {idea.done} done · {idea.todo} todo ·{" "}
+          {idea.active} active · {idea.blocked} blocked
         </dd>
         {idea.repo ? (
           <>

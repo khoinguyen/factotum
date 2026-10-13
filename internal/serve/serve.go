@@ -908,6 +908,12 @@ func (s *Server) buildViews(ctx context.Context, snapshot *app.Snapshot, artifac
 		if artifact.TicketID == nil {
 			continue
 		}
+		// A task_check artifact is a derived check cache with no page: the doc
+		// route rejects it, so linking it from a rollup would 404. Surface only
+		// artifacts that have a page (t-cv2atkeeu6).
+		if artifact.Kind == core.ArtifactTaskCheck {
+			continue
+		}
 		vs.artifactsByTask[*artifact.TicketID] = append(vs.artifactsByTask[*artifact.TicketID], artifactViewOf(artifact))
 	}
 	return vs, nil

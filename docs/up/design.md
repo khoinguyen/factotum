@@ -43,9 +43,13 @@ Non-goals (out of scope for this milestone).
 
 ## 2. Context: what already exists
 
-- **Capture write path.** `POST /api/capture` authenticates with the shared serve token, derives a
-  title from the first line, stores an idea or bug via `app.TicketService.Add`, and returns the
-  detail URL (`internal/serve/capture.go`). Nothing else happens: the capture is inert history.
+- **Capture write path.** `POST /api/capture` authenticates with the shared serve token sent as
+  `Authorization: Bearer <token>`, derives a title from the first line, stores an idea or bug via
+  `app.TicketService.Add`, and returns the detail URL (`internal/serve/capture.go`). The effective
+  token is `--token`, else `FACTOTUM_SERVE_TOKEN`, else `serve.token`: an explicit token is used
+  as-is and never echoed, while a scoped serve with none mints a fresh random token each start and
+  prints it to the console (`internal/cli/serve.go`), so `ft up` (which reads `serve.token` only)
+  needs a pinned token for a stable hub. Nothing else happens: the capture is inert history.
 - **Grooming.** `ft groom [item...]` runs a task-less `RunProject` session scoped to the named
   items, or by default to the project's open ideas plus open ungroomed executable tasks (a bug's
   refine verb is `triage`, not groom). It writes a durable session manifest

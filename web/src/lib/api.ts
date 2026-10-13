@@ -211,11 +211,13 @@ export type NotificationsDoc = {
 // CaptureKind is a human capture the write side accepts: an idea or a bug.
 export type CaptureKind = "idea" | "bug"
 
-// CaptureConfig is the /api/capture read: whether the form should be shown and
-// the project a capture would be attributed to.
+// CaptureConfig is the /api/capture read: whether the form should be shown, the
+// project a capture would be attributed to, and whether the Bearer token sent
+// with the read (if any) is valid.
 export type CaptureConfig = {
   enabled: boolean
   project?: string
+  authorized?: boolean
 }
 
 // CaptureResult is a stored capture and the detail URL to navigate to.
@@ -286,8 +288,18 @@ export async function fetchArtifact(
   return { ...artifact, links: artifact.links ?? [] }
 }
 
-export async function fetchCaptureConfig(): Promise<CaptureConfig> {
-  return getJSON<CaptureConfig>("/api/capture")
+// fetchCaptureConfig reads the capture config, optionally offering a candidate
+// token so the server reports whether it is valid (authorized). The read itself
+// is open: a rejected token is a 200 with authorized=false, not an error.
+export async function fetchCaptureConfig(token?: string): Promise<CaptureConfig> {
+  const res = await fetch("/api/capture", {
+    cache: "no-store",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  })
+  if (!res.ok) {
+    throw new Error(`/api/capture failed: ${res.status}`)
+  }
+  return (await res.json()) as CaptureConfig
 }
 
 // submitCapture posts a natural-language sentence to the token-gated write

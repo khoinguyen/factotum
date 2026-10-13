@@ -1,9 +1,11 @@
 import type * as React from "react"
 
 import { AppLink } from "@/components/app-link"
+import { CaptureEntry } from "@/components/capture-entry"
 import { LiveBadge } from "@/components/live-badge"
 import { ThemeToggle } from "@/components/theme-toggle"
 import type { LiveState } from "@/hooks/use-live-resource"
+import { cn } from "@/lib/utils"
 
 export function PageShell({
   eyebrow,
@@ -25,7 +27,12 @@ export function PageShell({
   children: React.ReactNode
 }) {
   return (
-    <div className="mx-auto flex min-h-svh max-w-6xl flex-col gap-6 p-6">
+    <div
+      className={cn(
+        "mx-auto flex min-h-svh max-w-6xl flex-col gap-6 p-6",
+        capture && "pb-24 sm:pb-6",
+      )}
+    >
       {back ? (
         <AppLink
           href={back.href}
@@ -47,14 +54,6 @@ export function PageShell({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:shrink-0">
-          {capture ? (
-            <AppLink
-              href="/capture"
-              className="text-sm text-muted-foreground hover:underline"
-            >
-              Capture an idea or bug →
-            </AppLink>
-          ) : null}
           {state ? <LiveBadge state={state} /> : null}
           <ThemeToggle />
         </div>
@@ -63,6 +62,7 @@ export function PageShell({
       <footer className="mt-auto text-xs text-muted-foreground">
         {footer ?? "Read-only · live via SSE"}
       </footer>
+      {capture ? <CaptureEntry /> : null}
     </div>
   )
 }

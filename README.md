@@ -159,9 +159,11 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   unset one is an error. The `local` backend is unsandboxed and must be opted in explicitly
   (`--allow-host` or `run.allow_host`).
 - Sandboxes: `local` (dev only), `openshell`, and `docker`. Harnesses: `opencode2` (OpenCode V2,
-  preferred) and `opencode` (OpenCode V1). An isolating
-  backend runs the harness's image as a non-root user under its policy; a configured credential is
-  attached as a provider placeholder, never placed in the sandbox.
+  preferred) and `opencode` (OpenCode V1), plus `pi`. On the local backend `--harness opencode`
+  probes the installed binary's `--version` and drives V2 automatically after an in-place upgrade;
+  `--harness opencode2` forces V2 (npm alias or pinned V2 image). An isolating backend runs the
+  harness's image as a non-root user under its policy; a configured credential is attached as a
+  provider placeholder, never placed in the sandbox.
 - `--goal` repeatedly runs the highest-ranked **agent-ready, groomed, on-path** task until the goal
   is reached, work stalls, or `--max-tasks` is exhausted. A task goal resolves on its own; a
   milestone is a human gate, so the loop stops `no_ready_work` until a human closes it.

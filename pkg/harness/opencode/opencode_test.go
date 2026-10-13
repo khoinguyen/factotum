@@ -428,6 +428,67 @@ func TestResultParsesOutput(t *testing.T) {
 	}
 }
 
+// TestMajorVersion pins the parser that decides a binary's variant from its
+// `--version` banner. V1 prints a bare semver ("1.19.0"); V2 prefixes it
+// ("opencode v2.0.25"); a banner with no dotted version is unparseable, so the
+// caller falls back to V1 rather than guessing V2.
+func TestMajorVersion(t *testing.T) {
+	tests := []struct {
+		banner    string
+		wantMajor int
+		wantOK    bool
+	}{
+		{"1.19.0\n", 1, true},
+		{"opencode v2.0.25\n", 2, true},
+		{"2.0.27\n", 2, true},
+		{"opencode v2.0.25", 2, true},
+		{"", 0, false},
+		{"opencode\n", 0, false},
+		{"no version here", 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.banner, func(t *testing.T) {
+			major, ok := opencode.MajorVersion(tc.banner)
+			if ok != tc.wantOK || major != tc.wantMajor {
+				t.Fatalf("MajorVersion(%q) = (%d, %v), want (%d, %v)", tc.banner, major, ok, tc.wantMajor, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestVariantForBinary pins the in-place detection: a binary whose `--version`
+// reports major 2 is V2, and a missing, failing, or unparseable binary is V1 so
+// detection can never select V2 by accident.
+func TestVariantForBinary(t *testing.T) {
+	writeBin := func(t *testing.T, body string) string {
+		t.Helper()
+		bin := filepath.Join(t.TempDir(), "opencode")
+		if err := os.WriteFile(bin, []byte(body), 0o755); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		return bin
+	}
+	tests := []struct {
+		name string
+		bin  string
+		want opencode.Variant
+	}{
+		{"v1 banner", writeBin(t, "#!/bin/sh\necho 1.19.0\n"), opencode.V1},
+		{"v2 prefixed banner", writeBin(t, "#!/bin/sh\necho 'opencode v2.0.25'\n"), opencode.V2},
+		{"v2 bare semver", writeBin(t, "#!/bin/sh\necho 2.0.27\n"), opencode.V2},
+		{"nonzero exit", writeBin(t, "#!/bin/sh\nexit 3\n"), opencode.V1},
+		{"unparseable banner", writeBin(t, "#!/bin/sh\necho opencode\n"), opencode.V1},
+		{"missing binary", filepath.Join(t.TempDir(), "does-not-exist"), opencode.V1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := opencode.VariantForBinary(tc.bin); got != tc.want {
+				t.Fatalf("VariantForBinary(%q) = %v, want %v", tc.bin, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLocateBinary(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "opencode")

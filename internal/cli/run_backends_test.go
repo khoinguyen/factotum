@@ -260,6 +260,92 @@ func TestRunHarnessesIncludeOpenCodeV2(t *testing.T) {
 	}
 }
 
+// TestRunHarnessOpenCodeDetectsInPlaceV2 pins the in-place upgrade: `brew
+// install opencode` moves V1 to V2 without renaming the binary, so the local
+// backend must detect the installed `opencode`'s major version and drive V2
+// argv (no top-level --model) under the `opencode` key, while an isolating
+// backend runs the pinned image and is never probed.
+func TestRunHarnessOpenCodeDetectsInPlaceV2(t *testing.T) {
+	writeOpencode := func(t *testing.T, banner string) string {
+		t.Helper()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "opencode")
+		script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo '" + banner + "'; exit 0; fi\nexit 0\n"
+		if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		return dir
+	}
+
+	t.Run("local detects V2 and keeps the in-place binary name", func(t *testing.T) {
+		t.Setenv("PATH", writeOpencode(t, "opencode v2.0.25"))
+		factory, err := runHarnesses().MustLookup(opencode.Name)
+		if err != nil {
+			t.Fatalf("lookup opencode: %v", err)
+		}
+		h, err := factory(config.Run{Sandbox: local.Name})
+		if err != nil {
+			t.Fatalf("build harness: %v", err)
+		}
+		interactive, err := h.Command(harness.Request{Prompt: "groom", Interactive: true, Model: "provider/model"})
+		if err != nil {
+			t.Fatalf("Command() error = %v", err)
+		}
+		wantInteractive := []string{"opencode", "--prompt", "groom"}
+		if strings.Join(interactive.Argv, "\x00") != strings.Join(wantInteractive, "\x00") {
+			t.Fatalf("interactive argv = %q, want %q", interactive.Argv, wantInteractive)
+		}
+		headless, err := h.Command(harness.Request{Prompt: "go", Model: "provider/model"})
+		if err != nil {
+			t.Fatalf("Command() error = %v", err)
+		}
+		wantHeadless := []string{"opencode", "run", "--model", "provider/model", "--", "go"}
+		if strings.Join(headless.Argv, "\x00") != strings.Join(wantHeadless, "\x00") {
+			t.Fatalf("headless argv = %q, want %q", headless.Argv, wantHeadless)
+		}
+	})
+
+	t.Run("local keeps V1 when the binary is V1", func(t *testing.T) {
+		t.Setenv("PATH", writeOpencode(t, "1.19.0"))
+		factory, err := runHarnesses().MustLookup(opencode.Name)
+		if err != nil {
+			t.Fatalf("lookup opencode: %v", err)
+		}
+		h, err := factory(config.Run{Sandbox: local.Name})
+		if err != nil {
+			t.Fatalf("build harness: %v", err)
+		}
+		cmd, err := h.Command(harness.Request{Prompt: "groom", Interactive: true, Model: "provider/model"})
+		if err != nil {
+			t.Fatalf("Command() error = %v", err)
+		}
+		want := []string{"opencode", "--model", "provider/model", "--prompt", "groom"}
+		if strings.Join(cmd.Argv, "\x00") != strings.Join(want, "\x00") {
+			t.Fatalf("interactive argv = %q, want %q", cmd.Argv, want)
+		}
+	})
+
+	t.Run("isolating backend is not probed", func(t *testing.T) {
+		t.Setenv("PATH", writeOpencode(t, "opencode v2.0.25"))
+		factory, err := runHarnesses().MustLookup(opencode.Name)
+		if err != nil {
+			t.Fatalf("lookup opencode: %v", err)
+		}
+		h, err := factory(config.Run{Sandbox: "docker"})
+		if err != nil {
+			t.Fatalf("build harness: %v", err)
+		}
+		cmd, err := h.Command(harness.Request{Prompt: "groom", Interactive: true, Model: "provider/model"})
+		if err != nil {
+			t.Fatalf("Command() error = %v", err)
+		}
+		want := []string{"opencode", "--model", "provider/model", "--prompt", "groom"}
+		if strings.Join(cmd.Argv, "\x00") != strings.Join(want, "\x00") {
+			t.Fatalf("interactive argv = %q, want the pinned V1 shape %q", cmd.Argv, want)
+		}
+	})
+}
+
 // TestPrepareRunResolvesProjectPolicyPath pins that a run resolves the committed
 // project policy override from the loaded project config path, so the OpenShell
 // factory gets a real path rather than nothing.

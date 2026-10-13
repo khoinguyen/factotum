@@ -14,11 +14,13 @@ items, or by default every open idea plus every open ungroomed task), injects a
 project, and captures the five outputs.
 
 ```sh
-ft groom --sandbox local --harness opencode --allow-host
-ft groom <item> <item> --sandbox local --harness opencode --allow-host
-ft groom --unattended --sandbox local --harness opencode --allow-host
-ft groom -p <project> --sandbox local --harness opencode --allow-host
+ft groom --sandbox local --harness opencode2 --allow-host
+ft groom <item> <item> --sandbox local --harness opencode2 --allow-host
+ft groom --unattended --sandbox local --harness opencode2 --allow-host
+ft groom -p <project> --sandbox local --harness opencode2 --allow-host
 ```
+
+These drive OpenCode V2 (`--harness opencode2`); `--harness opencode` selects V1.
 
 `--project` scopes the whole session to the named project's store: the scope is
 read from it, the captured outputs and the session manifest are recorded into it,

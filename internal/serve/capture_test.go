@@ -122,6 +122,57 @@ func TestCaptureConfigReportsState(t *testing.T) {
 	}
 }
 
+// TestCaptureConfigReportsAuthorization proves the config read doubles as a
+// token check: the app validates a candidate token before opening its capture
+// form, without storing anything. The read stays open (200 either way) so the
+// app always learns both whether capture is enabled and whether its token is
+// good: a valid Bearer token reports authorized=true; missing or wrong reports
+// false.
+func TestCaptureConfigReportsAuthorization(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ts := newTestServer(t, f, Options{Project: project.ID, Token: testToken, Tasks: f.tasks})
+
+	cases := []struct {
+		name       string
+		token      string
+		authorized bool
+	}{
+		{"valid token", testToken, true},
+		{"missing token", "", false},
+		{"wrong token", "nope", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/capture", nil)
+			if err != nil {
+				t.Fatalf("NewRequest() error = %v", err)
+			}
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("Do() error = %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			var config captureConfig
+			if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+			if !config.Enabled {
+				t.Fatal("config.enabled = false, want true")
+			}
+			if config.Authorized != tc.authorized {
+				t.Fatalf("config.authorized = %v, want %v", config.Authorized, tc.authorized)
+			}
+		})
+	}
+}
+
 // TestCaptureRequiresToken proves the gate: a write with no token or a wrong
 // token is rejected and stores nothing. The token is the whole auth boundary.
 func TestCaptureRequiresToken(t *testing.T) {

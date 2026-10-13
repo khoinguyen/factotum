@@ -123,13 +123,28 @@ func NewRoot(deps *Deps) *cobra.Command {
 			// project/user default_actor. FACTOTUM_DEFAULT_ACTOR is already folded
 			// into cfg.DefaultActor; FACTOTUM_CALLER stays separate until it can be
 			// checked against the store's actors (bindCaller, after the store opens).
+			// Each is normalized so the canonical actor:<id> address and the bare id
+			// name the same actor, and an unresolvable reference is rejected here
+			// rather than attributed verbatim.
 			switch {
 			case actorRef != "":
-				deps.ActorRef = actorRef
+				ref, err := core.ParseActorRef(actorRef)
+				if err != nil {
+					return err
+				}
+				deps.ActorRef = string(ref)
 			case cfg.Caller != "":
-				deps.Caller = cfg.Caller
-			case deps.ActorRef == "":
-				deps.ActorRef = cfg.DefaultActor
+				ref, err := core.ParseActorRef(cfg.Caller)
+				if err != nil {
+					return err
+				}
+				deps.Caller = string(ref)
+			case deps.ActorRef == "" && cfg.DefaultActor != "":
+				ref, err := core.ParseActorRef(cfg.DefaultActor)
+				if err != nil {
+					return err
+				}
+				deps.ActorRef = string(ref)
 			}
 			// FACTOTUM_SESSION is exported by loop-agent.sh so every ft call an
 			// agent makes is attributed to the chief session it inherited.
@@ -189,7 +204,7 @@ func NewRoot(deps *Deps) *cobra.Command {
 	root.PersistentFlags().StringVar(&userConfigPath, "user-config", "", "machine config file (default $HOME/.factotum/config.toml)")
 	root.PersistentFlags().StringVar(&storeBackend, "store", "", "storage backend (overrides config)")
 	root.PersistentFlags().StringArrayVar(&storeOpts, "store-opt", nil, "backend option key=value (repeatable)")
-	root.PersistentFlags().StringVar(&actorRef, "actor", "", "actor attributed to mutations (id or name)")
+	root.PersistentFlags().StringVar(&actorRef, "actor", "", "actor attributed to mutations (id, actor:<id>, or name)")
 	root.PersistentFlags().StringVarP(&output, "output", "o", "text", "output format: text, json, or yaml")
 	root.PersistentFlags().BoolVar(&noHints, "no-hints", false, "suppress next-step command suggestions")
 	root.PersistentFlags().BoolVar(&full, "full", false, "print full output, even when it is large")

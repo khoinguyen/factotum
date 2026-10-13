@@ -43,6 +43,27 @@ func TestResolvingLastTaskRemindsTheChiefToPlanQA(t *testing.T) {
 	}
 }
 
+// TestReminderAttributionAcceptsCanonicalActorAddress pins the auto-QA
+// reminder to attribute the transition to the canonical actor:chief when the
+// caller passes `--actor actor:chief`: the reminder must address actor:chief,
+// never the doubled actor:actor:chief.
+func TestReminderAttributionAcceptsCanonicalActorAddress(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "a feature"))
+	r.run("actor", "create", "claude", "-k", "agent")
+	task := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+
+	r.run("task", "done", task, "--actor", "actor:chief")
+	entries := inboxEntries(t, r, projectID, "chief")
+	if len(entries) != 1 || entries[0].To != "actor:chief" {
+		t.Fatalf("inbox for chief = %+v, want exactly one reminder to actor:chief", entries)
+	}
+	if all := r.run("msg", "inbox", "-p", projectID, "-o", "json"); strings.Contains(all, "actor:actor:chief") {
+		t.Fatalf("a doubled actor:actor:chief address was stored:\n%s", all)
+	}
+}
+
 // completedFeature creates a project with one idea whose single task is done,
 // leaving the feature ready for QA.
 func completedFeature(t *testing.T) (*runner, string, string, string) {

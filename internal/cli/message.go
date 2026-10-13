@@ -106,7 +106,7 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	send.Flags().StringVarP(&sendProject, "project", "p", "", "project id (required)")
-	send.Flags().StringVar(&sendFrom, "from", "", "sender actor (id or name; defaults to the configured actor)")
+	send.Flags().StringVar(&sendFrom, "from", "", "sender actor (id, actor:<id>, or name; defaults to the configured actor)")
 	send.Flags().StringVarP(&sendBody, "body", "b", "", "message body (use - to read stdin)")
 	send.Flags().StringArrayVar(&sendLinks, "link", nil, "attach a link as kind=url (repeatable)")
 	send.Flags().StringVar(&sendReplyTo, "reply-to", "", "message id this message replies to")
@@ -132,7 +132,10 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 				query.To = &address
 			}
 			if inboxActor != "" {
-				actor := core.ActorID(inboxActor)
+				actor, err := core.ParseActorRef(inboxActor)
+				if err != nil {
+					return err
+				}
 				query.Actor = &actor
 			}
 			if inboxRun != "" {
@@ -159,7 +162,7 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 	inbox.Flags().StringVarP(&inboxProject, "project", "p", "", "filter by project id")
 	inbox.Flags().StringArrayVar(&inboxStates, "state", nil, "filter by state (queued, delivered, read, failed; repeatable)")
 	inbox.Flags().StringVar(&inboxAddress, "address", "", "exact stored address to match")
-	inbox.Flags().StringVar(&inboxActor, "for", "", "messages claimable by this actor")
+	inbox.Flags().StringVar(&inboxActor, "for", "", "messages claimable by this actor (id or actor:<id>)")
 	inbox.Flags().StringVar(&inboxRun, "run", "", "messages claimable by this run")
 	inbox.Flags().IntVar(&inboxLimit, "limit", 0, "maximum number of messages")
 
@@ -364,13 +367,17 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 			if regActor == "" {
 				return usageError(cmd, "--actor is required")
 			}
+			actorID, err := core.ParseActorRef(regActor)
+			if err != nil {
+				return usageError(cmd, "%v", err)
+			}
 			session := regSession
 			if session == "" {
 				session = deps.Session
 			}
 			in := app.RegisterRunInput{
 				ProjectID: projectID,
-				ActorID:   core.ActorID(regActor),
+				ActorID:   actorID,
 				Session:   session,
 				Harness:   regHarness,
 				Host:      regHost,
@@ -428,7 +435,10 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 			}
 			in := app.ClaimInput{ProjectID: projectID, RunID: core.RunID(claimRun), Wait: claimWait, Lease: claimLease}
 			if claimActor != "" {
-				actor := core.ActorID(claimActor)
+				actor, err := core.ParseActorRef(claimActor)
+				if err != nil {
+					return usageError(cmd, "%v", err)
+				}
 				in.ActorID = &actor
 			}
 			if claimTask != "" {
@@ -449,7 +459,7 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	claim.Flags().StringVar(&claimRun, "run", "", "run id (required)")
-	claim.Flags().StringVar(&claimActor, "actor", "", "the run's actor address")
+	claim.Flags().StringVar(&claimActor, "actor", "", "the run's actor (id or actor:<id>)")
 	claim.Flags().StringVar(&claimTask, "task", "", "the run's task address")
 	claim.Flags().DurationVar(&claimWait, "wait", 0, "long-poll window (default none)")
 	claim.Flags().DurationVar(&claimLease, "lease", 0, "delivered lease (default 30s)")
@@ -605,10 +615,12 @@ func printMessageBlock(deps *Deps, message *core.Message) {
 }
 
 // resolveMessageFrom resolves the sender actor: the flag when set, else the
-// configured actor. A sender that names a loop role (builder-<t>, reviewer-<t>,
-// qa-<t>, chief) is accepted even when no Actor record exists yet, because a
-// loop session registers its role as a run, not as a store actor. An empty
-// result means a system message.
+// configured actor. The flag accepts a bare id or the canonical actor:<id>
+// address; either way the stored sender is the bare id, so a sender never
+// becomes a doubled actor:actor:<id>. A sender that names a loop role
+// (builder-<t>, reviewer-<t>, qa-<t>, chief) is accepted even when no Actor
+// record exists yet, because a loop session registers its role as a run, not as
+// a store actor. An empty result means a system message.
 func (d *Deps) resolveMessageFrom(ctx context.Context, flag string) (*core.ActorID, error) {
 	ref := flag
 	if ref == "" {
@@ -617,15 +629,18 @@ func (d *Deps) resolveMessageFrom(ctx context.Context, flag string) (*core.Actor
 	if ref == "" {
 		return nil, nil
 	}
-	actor, err := d.Actors.Resolve(ctx, ref)
+	id, err := core.ParseActorRef(ref)
 	if err != nil {
-		if role, ok := app.LoopRole(ref); ok {
+		return nil, fmt.Errorf("sender actor: %w", err)
+	}
+	actor, err := d.Actors.Resolve(ctx, string(id))
+	if err != nil {
+		if role, ok := app.LoopRole(string(id)); ok {
 			return &role, nil
 		}
 		return nil, fmt.Errorf("sender actor: %w", err)
 	}
-	id := actor.ID
-	return &id, nil
+	return &actor.ID, nil
 }
 
 func parseMessageLinks(values []string) ([]core.Link, error) {

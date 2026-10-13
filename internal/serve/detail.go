@@ -53,6 +53,10 @@ type artifactDetail struct {
 type artifactPageJSON struct {
 	artifactDetail
 	AttachedTo *taskLink `json:"attached_to,omitempty"`
+	// Captures are the captures that link back to a prompt artifact: the one UI
+	// the web app opens from a grooming notification, whether grooming produced
+	// one capture or many.
+	Captures []taskLink `json:"captures,omitempty"`
 }
 
 // idFromPath returns the single path segment after prefix, or "" when it is
@@ -142,11 +146,11 @@ func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 	s.handleArtifact(w, r, "/api/memory/", core.ArtifactMemory)
 }
 
-// handleDoc serves a spec, doc, or QA verdict artifact. artifactURL links every
-// non-memory artifact at /doc/<id>, so the doc route resolves each one that has
-// a page; only the derived check cache is excluded.
+// handleDoc serves a spec, doc, prompt, or QA verdict artifact. artifactURL
+// links every non-memory artifact at /doc/<id>, so the doc route resolves each
+// one that has a page; only the derived check cache is excluded.
 func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
-	s.handleArtifact(w, r, "/api/doc/", core.ArtifactSpec, core.ArtifactDoc, core.ArtifactQA)
+	s.handleArtifact(w, r, "/api/doc/", core.ArtifactSpec, core.ArtifactDoc, core.ArtifactPrompt, core.ArtifactQA)
 }
 
 func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request, prefix string, kinds ...core.ArtifactKind) {
@@ -183,6 +187,14 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request, prefix s
 	// Only artifacts with a page (memory, spec/doc, and QA verdict) are served
 	// here; a derived check cache has none.
 	page := artifactPageJSON{artifactDetail: *artifactDetailOf(artifact)}
+	if artifact.Kind == core.ArtifactPrompt {
+		captures, err := s.linkedCaptures(r.Context(), artifact)
+		if err != nil {
+			s.writeError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		page.Captures = captures
+	}
 	if artifact.TicketID != nil {
 		if task, err := s.options.Backend.Tickets().Get(r.Context(), *artifact.TicketID); err == nil {
 			link := taskRefLink(task)

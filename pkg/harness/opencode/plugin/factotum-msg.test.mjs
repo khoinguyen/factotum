@@ -145,6 +145,7 @@ test("httpCall posts each receiver verb to /api/msg/<verb> with the bearer token
   await call({ op: "register", actor: "act-1", harness: "opencode", host: "host-a", pid: 7, ttl: "90000ms", task: "t-1" });
   await call({ op: "claim", run: "run-1", actor: "act-1", wait: "25000ms", task: "t-1" });
   await call({ op: "ack", id: "m-1", run: "run-1", state: "read", error: "" });
+  await call({ op: "nack", id: "m-2", run: "run-1", error: "no session" });
   await call({ op: "heartbeat", run: "run-1", ttl: "90000ms" });
   await call({ op: "deregister", run: "run-1" });
 
@@ -152,6 +153,7 @@ test("httpCall posts each receiver verb to /api/msg/<verb> with the bearer token
     "http://hub:8484/api/msg/register",
     "http://hub:8484/api/msg/claim",
     "http://hub:8484/api/msg/ack",
+    "http://hub:8484/api/msg/nack",
     "http://hub:8484/api/msg/heartbeat",
     "http://hub:8484/api/msg/deregister",
   ]);
@@ -168,6 +170,9 @@ test("httpCall posts each receiver verb to /api/msg/<verb> with the bearer token
   });
   assert.deepEqual(JSON.parse(requests[2].options.body), {
     id: "m-1", run_id: "run-1", state: "read", error: "",
+  });
+  assert.deepEqual(JSON.parse(requests[3].options.body), {
+    id: "m-2", run_id: "run-1", reason: "no session",
   });
 });
 
@@ -269,14 +274,25 @@ test("receiver acks failed when injection throws", async () => {
   await receiver.dispose();
 });
 
-test("receiver acks failed when no session is available", async () => {
+test("receiver does not claim without a session, then delivers once one arrives", async () => {
+  const injected = [];
   const { receiver, calls } = receiverFor(
     [{ found: true, message: { id: "m-3", body: "hi" } }, { found: false }],
-    [],
+    injected,
   );
   await receiver.start();
-  // No session event is fed, so waitForSession gives up and the message fails.
-  await waitFor(() => calls.some((c) => c.includes("msg agent ack m-3") && c.includes("--state failed")), 2000);
+  // No session event is fed: the receiver must not claim, because a claimed
+  // message it cannot inject would have to be dropped or burn an attempt.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(calls.some((c) => c.includes("msg agent claim")), false, "must not claim without a session");
+  assert.equal(calls.some((c) => c.includes("--state failed")), false, "must not fail/consume the message");
+
+  // Once a session is announced, the queued message is claimed, injected, and
+  // acked read - the handoff is delivered, not lost.
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await waitFor(() => injected.length === 1);
+  assert.equal(injected[0].sid, "ses-1");
+  assert.ok(calls.some((c) => c.includes("msg agent ack m-3") && c.includes("--state read")));
   await receiver.dispose();
 });
 

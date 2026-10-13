@@ -89,10 +89,30 @@ func TestMessageSendResolvesRoleAddress(t *testing.T) {
 		}
 	}
 
-	// A bare non-role target keeps the ticket sugar: a missing ticket is not
-	// silently treated as an actor.
+	// A bare ticket-shaped target keeps the ticket sugar: a missing ticket is
+	// not silently treated as an actor.
 	if _, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", Target: "t-missing", Body: "hi"}); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("Send(non-role bare target) error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestMessageSendRejectsUnresolvableBareTarget guards the silent-misroute bug:
+// a bare token that is neither a loop role nor ticket-shaped (e.g. a garbled
+// role like "grooming-agent-art-1", or an actor name missing its actor: prefix)
+// must fail loudly as invalid, not be coerced into ticket sugar and reported as
+// a confusing "task not found".
+func TestMessageSendRejectsUnresolvableBareTarget(t *testing.T) {
+	f := newMessageFixture(t)
+	ctx := context.Background()
+
+	for _, target := range []string{"grooming-agent-art-1", "claude", "nonsense", "t"} {
+		_, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", Target: target, Body: "hi"})
+		if !errors.Is(err, core.ErrInvalid) {
+			t.Fatalf("Send(%q) error = %v, want ErrInvalid (an unresolvable bare target is not ticket sugar)", target, err)
+		}
+		if !strings.Contains(err.Error(), target) {
+			t.Fatalf("Send(%q) error = %v, want the offending target named", target, err)
+		}
 	}
 }
 

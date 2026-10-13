@@ -30,9 +30,10 @@ Message peers over **`ft msg`**, not cmux targets. The chief launched this sessi
 `FACTOTUM_PROJECT`/`FACTOTUM_ACTOR=builder-<task-id>`/`FACTOTUM_TASK_ID`, so you are addressable as
 `actor:builder-<task-id>` and the receiver injects messages into this session.
 
-- Message the reviewer: `ft msg send reviewer-<task-id> -b "<text>"`. The bare role is sugar for
-  `actor:reviewer-<task-id>`. Message the chief: `ft msg send chief -b "<text>"`. `--from` defaults to
-  your role.
+- Address the reviewer at `ft msg send actor:reviewer-<task-id> -b "<text>"` and the chief at
+  `ft msg send actor:chief -b "<text>"`. Always use the canonical `actor:<role>` address: a bare role
+  is accepted as sugar but resolves less predictably, and a handoff silently lost to a misroute is
+  exactly the failure this addresses. `--from` defaults to your role.
 - Prefix the body with `From builder-<task-id>: ...`; the reviewer replies
   `From reviewer-<task-id>, regarding PR #N: ...`.
 - **After sending, stop and wait.** The receiver long-polls and wakes the peer; do not poll for the
@@ -74,8 +75,9 @@ From builder-<task-id>: Please review PR #<n> (task <t>, branch <b>) - <title>. 
 CI green; Exercise in the PR body. Focus: <the 1-3 riskiest things>.
 ```
 
-Send it with `ft msg send reviewer-<task-id> -b "<the line above>"` (or the cmux-msg.sh fallback
-above), then `ft task review <t>` and a note linking the PR.
+Send it with `ft msg send actor:reviewer-<task-id> -b "<the line above>"` (or the cmux-msg.sh
+fallback above), then `ft task review <t>` and a note linking the PR. Confirm the handoff landed with
+`ft msg get <id>` (state advances past `queued`); an intact handoff is one the reviewer can act on.
 
 ## Triage
 
@@ -96,7 +98,7 @@ is the chief's call.
 
 When the reviewer approves — or you and he cannot agree — report the outcome to the chief: task id,
 PR number, verdict, and anything unresolved. Message the chief with
-`ft msg send chief -b "From builder-<task-id>: <report>"` (or the cmux-msg.sh fallback). Then stop;
+`ft msg send actor:chief -b "From builder-<task-id>: <report>"` (or the cmux-msg.sh fallback). Then stop;
 the chief decides what happens next.
 - **Escalation:** if after three rounds you and the reviewer cannot align, tell the chief and leave
   the PR open for Khoi.

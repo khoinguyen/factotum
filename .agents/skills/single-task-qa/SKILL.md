@@ -51,7 +51,7 @@ End with a one-screen summary (PASS/FAIL/not-available per item, plus the findin
 ids). Message the chief over ft msg:
 
 ```sh
-ft msg send chief -b "From qa-<task-id>: <summary>"
+ft msg send actor:chief -b "From qa-<task-id>: <summary>"
 ```
 
 Fall back to the cmux wrapper only if ft msg is not delivering for you:

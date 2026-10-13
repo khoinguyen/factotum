@@ -62,7 +62,7 @@ End with a one-screen summary: the prompt artifact, and one line per capture (id
 it over `ft msg`:
 
 ```sh
-ft msg send chief -b "From grooming-agent-<artifact>: groomed <artifact> (<prompt title>) into <n> \
+ft msg send actor:chief -b "From grooming-agent-<artifact>: groomed <artifact> (<prompt title>) into <n> \
 captures: <capture-id> (<kind>) <title>; ..."
 ```
 

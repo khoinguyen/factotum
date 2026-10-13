@@ -25,8 +25,9 @@ func NewMessageService(backend store.Backend, clock Clock, ids IDGen) *MessageSe
 type SendMessageInput struct {
 	ProjectID core.ProjectID
 	From      *core.ActorID
-	// Target is a canonical address ("actor:", "run:", "task:") or a bare
-	// ticket id, which is sugar for task:<id>.
+	// Target is a canonical address ("actor:", "run:", "task:"), a bare loop
+	// role (chief, builder-<task>, reviewer-<task>, qa-<task>), or a bare
+	// ticket-shaped id, which is sugar for task:<id>.
 	Target  string
 	Body    string
 	Links   []core.Link
@@ -92,13 +93,26 @@ func LoopRole(ref string) (core.ActorID, bool) {
 	return "", false
 }
 
+// ticketSugar reports whether ref is a bare ticket reference (the "t-..." shape
+// every generated task/idea/bug id has), the only bare token besides a loop role
+// that `ft msg send` accepts. Anything else bare is a mistake - a garbled role
+// or an actor name missing its actor: prefix - and must be rejected loudly
+// rather than coerced into ticket sugar and misreported as a missing task.
+func ticketSugar(ref string) bool {
+	return strings.HasPrefix(ref, "t-") && len(ref) > len("t-")
+}
+
 // resolveTarget turns a send target into the stored address and, for task
 // targets, the originating task id (section 4 resolution). A bare loop role is
-// sugar for its actor address; any other bare token is ticket sugar.
+// sugar for its actor address; a bare ticket-shaped token is ticket sugar; any
+// other bare token is rejected as unresolvable.
 func (s *MessageService) resolveTarget(ctx context.Context, project core.ProjectID, target string) (core.Address, *core.TicketID, error) {
 	if !strings.ContainsRune(target, ':') {
 		if actor, ok := LoopRole(target); ok {
 			return core.ActorAddress(actor), nil, nil
+		}
+		if !ticketSugar(target) {
+			return "", nil, fmt.Errorf("%w: unresolvable target %q: name a role (chief, builder-<task>, reviewer-<task>, qa-<task>), a canonical address (actor:<id>, run:<id>, task:<id>), or a ticket id", core.ErrInvalid, target)
 		}
 		return s.resolveTask(ctx, project, core.TicketID(target))
 	}

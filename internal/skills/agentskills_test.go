@@ -63,30 +63,32 @@ func TestChiefSkillNamesBuilderAsHandoffSource(t *testing.T) {
 	}
 }
 
-// TestLoopSkillsMessageOverFtMsg guards the channel migration: the builder,
-// reviewer, and chief message each other over ft msg by role, and keep the cmux
-// wrapper only as a documented rollout fallback. A regression to hand-crafted
-// cmux targets is exactly the failure this task exists to fix.
+// TestLoopSkillsMessageOverFtMsg guards the channel migration and the robust
+// addressing form: the builder, reviewer, and chief message each other over
+// ft msg using the canonical actor:<role> address (a bare role resolves
+// fuzzily across actor/run/task and can misroute or drop, t-fpd56yebqt), and
+// keep the cmux wrapper only as a documented rollout fallback. A regression to
+// hand-crafted cmux targets, or to a bare role address, is a failure.
 func TestLoopSkillsMessageOverFtMsg(t *testing.T) {
 	cases := []struct {
 		skill string
 		texts []string
 	}{
 		{".agents/skills/single-task-builder/SKILL.md", []string{
-			"ft msg send reviewer-", "ft msg send chief", "actor:builder-<task-id>", "cmux-msg.sh",
+			"ft msg send actor:reviewer-<task-id>", "ft msg send actor:chief", "actor:builder-<task-id>", "cmux-msg.sh",
 		}},
 		{".agents/skills/single-task-reviewer/SKILL.md", []string{
-			"ft msg send builder-", "ft msg send chief", "actor:reviewer-<task-id>", "cmux-msg.sh",
+			"ft msg send actor:builder-<task-id>", "ft msg send actor:chief", "actor:reviewer-<task-id>", "cmux-msg.sh",
 		}},
 		{".agents/skills/chief/SKILL.md", []string{
-			"ft msg send builder-", "ft msg send reviewer-", "loop-agent.sh", "cmux-msg.sh",
+			"ft msg send actor:builder-", "ft msg send actor:reviewer-", "loop-agent.sh", "cmux-msg.sh",
 		}},
 	}
 	for _, tc := range cases {
 		body := agentSkill(t, tc.skill)
 		for _, text := range tc.texts {
 			if !strings.Contains(body, text) {
-				t.Errorf("%s must reference %q (loop agents talk over ft msg, cmux only as fallback)", tc.skill, text)
+				t.Errorf("%s must reference %q (loop agents talk over ft msg addressed actor:<role>, cmux only as fallback)", tc.skill, text)
 			}
 		}
 	}
@@ -332,7 +334,7 @@ func TestGroomingAgentSkillReadsPromptAndLinksCaptures(t *testing.T) {
 		{"name origin_artifact as the canonical link-back", "canonical link-back"},
 		{"name the read surface the origin drives", "/api/notifications"},
 		{"forbid a note doc-link substitute", "not a substitute"},
-		{"report to the chief over ft msg", "ft msg send chief"},
+		{"report to the chief over ft msg", "ft msg send actor:chief"},
 	}
 	for _, req := range required {
 		if !strings.Contains(body, req.text) {

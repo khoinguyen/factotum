@@ -44,7 +44,9 @@ that generated token; an explicit token is never printed. The token travels in t
 ignored - so it cannot leak through logs or a Referer header. A missing token
 disables capture (writes return 403), and `--all` mode has no single target so it
 disables capture too. Comparison is constant-time. `GET /api/capture` tells the
-app whether to show the form; `POST /api/capture` stores a JSON
+app whether to show the form and, from the request's `Authorization: Bearer`
+header, whether a candidate token is valid (`authorized`), so the app can gate
+its form before it writes anything; `POST /api/capture` stores a JSON
 `{kind, text}` as an idea (default) or a bug, returning the stored capture's
 detail URL. It stores the first line as the title and the rest as the body, so
 the raw sentence survives; enrichment is the later grooming step, not part of the

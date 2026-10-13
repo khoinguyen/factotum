@@ -23,10 +23,14 @@ const (
 )
 
 // captureConfig is the /api/capture config document: whether the app should
-// show the capture form, and the project a capture would be attributed to.
+// show the capture form, the project a capture would be attributed to, and
+// whether the Bearer token on the request is valid. Authorized lets the app
+// validate a candidate token before it opens its capture form; the read itself
+// stays open, so a wrong token is false rather than a 401.
 type captureConfig struct {
-	Enabled bool   `json:"enabled"`
-	Project string `json:"project,omitempty"`
+	Enabled    bool   `json:"enabled"`
+	Project    string `json:"project,omitempty"`
+	Authorized bool   `json:"authorized"`
 }
 
 // captureRequest is the JSON body of a capture write. Kind defaults to an idea
@@ -70,15 +74,21 @@ func (s *Server) captureEnabled() bool {
 	return s.options.Tasks != nil && s.options.Token != "" && !s.options.All && s.options.Project != ""
 }
 
-// handleCaptureConfig tells the app whether to show the form and which project
-// it would write to. Reads are open, like the rest of the read side.
-func (s *Server) handleCaptureConfig(w http.ResponseWriter, _ *http.Request) {
+// handleCaptureConfig tells the app whether to show the form, which project it
+// would write to, and whether the request's Bearer token is valid. Reads are
+// open, like the rest of the read side; a wrong token just reports
+// authorized=false, so the app can gate its form without a rejected request.
+func (s *Server) handleCaptureConfig(w http.ResponseWriter, r *http.Request) {
 	enabled := s.captureEnabled()
 	project := ""
 	if enabled {
 		project = string(s.options.Project)
 	}
-	writeCaptureJSON(w, http.StatusOK, captureConfig{Enabled: enabled, Project: project})
+	writeCaptureJSON(w, http.StatusOK, captureConfig{
+		Enabled:    enabled,
+		Project:    project,
+		Authorized: s.tokenOK(captureToken(r)),
+	})
 }
 
 // handleCaptureSubmit stores one natural-language capture. It authenticates with

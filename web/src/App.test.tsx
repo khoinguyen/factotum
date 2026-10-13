@@ -354,6 +354,7 @@ afterEach(() => {
   FakeEventSource.instances = []
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  window.localStorage.clear()
   window.history.pushState({}, "", "/")
 })
 
@@ -374,18 +375,18 @@ test("AppLink client-routes a route the client router owns", () => {
   expect(push).toHaveBeenCalledWith(null, "", "/idea/t-1")
 })
 
-// Regression: the dashboard's capture entry must open the capture page in the
-// SPA, not the retired server-rendered page or the not-found route.
-test("the dashboard capture link opens the capture page", async () => {
+// Regression: the dashboard's capture entry must open the capture modal in the
+// SPA (the token-gated prompt box), not navigate to the /capture page.
+test("the dashboard capture entry opens the capture modal", async () => {
   stubFetch({
     "/api/snapshot": emptySnapshot,
     "/api/capture": { enabled: true, project: "acme" },
   })
   renderAt("/")
-  const link = await screen.findByText("Capture an idea or bug →")
-  fireEvent.click(link)
-  expect(await screen.findByLabelText(/what is it/i)).toBeTruthy()
-  expect(window.location.pathname).toBe("/capture")
+  const entry = await screen.findByRole("button", { name: /capture an idea or bug/i })
+  fireEvent.click(entry)
+  expect(await screen.findByRole("dialog")).toBeTruthy()
+  expect(window.location.pathname).toBe("/")
 })
 
 // Khoi 2026-10-09: after capturing an idea the app lands on a drill-down, which
@@ -406,10 +407,10 @@ for (const { path, route, doc } of drillDownCapture) {
   test(`offers capture from the drill-down at ${path}`, async () => {
     stubFetch({ [route]: doc, "/api/capture": { enabled: true, project: "acme" } })
     renderAt(path)
-    const link = await screen.findByText("Capture an idea or bug →")
-    fireEvent.click(link)
-    expect(await screen.findByLabelText(/what is it/i)).toBeTruthy()
-    expect(window.location.pathname).toBe("/capture")
+    const entry = await screen.findByRole("button", { name: /capture an idea or bug/i })
+    fireEvent.click(entry)
+    expect(await screen.findByRole("dialog")).toBeTruthy()
+    expect(window.location.pathname).toBe(path)
   })
 }
 

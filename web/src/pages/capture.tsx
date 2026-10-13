@@ -5,28 +5,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { fetchCaptureConfig, submitCapture, submitPrompt, type CaptureKind } from "@/lib/api"
+import { loadCaptureToken, saveCaptureToken } from "@/lib/capture-token"
 import { navigate } from "@/lib/router"
 import { cn } from "@/lib/utils"
-
-// tokenKey is where the browser remembers the shared capture token, so a phone
-// captures without retyping it. It mirrors the retired server-rendered page.
-const tokenKey = "factotum.capture.token"
-
-function loadToken(): string {
-  try {
-    return window.localStorage.getItem(tokenKey) ?? ""
-  } catch {
-    return ""
-  }
-}
-
-function saveToken(token: string): void {
-  try {
-    window.localStorage.setItem(tokenKey, token)
-  } catch {
-    // a private-mode browser may refuse storage; the write still works.
-  }
-}
 
 // Capture is the write side of the app: a natural-language sentence posted to
 // the token-gated /api/capture endpoint. The raw sentence is stored immediately
@@ -35,7 +16,7 @@ export function Capture() {
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [kind, setKind] = useState<CaptureKind>("idea")
   const [text, setText] = useState("")
-  const [token, setToken] = useState(loadToken)
+  const [token, setToken] = useState(loadCaptureToken)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [prompt, setPrompt] = useState("")
@@ -65,7 +46,7 @@ export function Capture() {
     }
     setBusy(true)
     setError("")
-    saveToken(token)
+    saveCaptureToken(token)
     try {
       const result = await submitCapture(text, kind, token)
       navigate(result.url)
@@ -84,7 +65,7 @@ export function Capture() {
     }
     setPromptBusy(true)
     setPromptError("")
-    saveToken(token)
+    saveCaptureToken(token)
     try {
       const result = await submitPrompt(prompt, token)
       navigate(result.url)

@@ -17,10 +17,10 @@ function lineCount(el: Element): number {
   return range.getClientRects().length
 }
 
-// The header row (capture link + live badge + theme toggle) once crowded the
-// title into a single character per line at phone widths. jsdom cannot lay text
-// out, so the only way to prove the title stays readable and the controls stay
-// on screen is to measure the rendered boxes in a real browser.
+// The header row (live badge + theme toggle) once crowded the title into a
+// single character per line at phone widths. jsdom cannot lay text out, so the
+// only way to prove the title stays readable and the controls stay on screen is
+// to measure the rendered boxes in a real browser.
 const PHONE_WIDTHS = [360, 390]
 
 for (const width of PHONE_WIDTHS) {
@@ -40,9 +40,10 @@ for (const width of PHONE_WIDTHS) {
     // The title stays readable instead of wrapping one character per line.
     expect(lineCount(title)).toBeLessThanOrEqual(2)
 
-    // Every control stays inside the viewport (usable, not clipped).
+    // Every control stays inside the viewport (usable, not clipped). The
+    // capture entry is now a fixed FAB/sticky bar, so it is checked separately
+    // in capture-entry.browser.test.tsx.
     const controls = [
-      screen.getByRole("link", { name: /capture an idea or bug/i }),
       screen.getByText("live"),
       screen.getByRole("group", { name: "Theme" }),
     ]

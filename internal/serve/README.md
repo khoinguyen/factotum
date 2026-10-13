@@ -36,8 +36,10 @@ new task in `/api/snapshot`.
 
 ## Capture auth
 
-Writes need a shared token from the machine config (`[serve] token`) or
-`FACTOTUM_SERVE_TOKEN`; the read side is never gated. The token travels in the
+Writes need a shared token from the `--token` flag, `FACTOTUM_SERVE_TOKEN`, or the machine config
+(`[serve] token`), in that order; the read side is never gated. When none is provided on a scoped
+serve, `ft serve` mints a random token each start and prints it, so the running server is gated by
+that generated token; an explicit token is never printed. The token travels in the
 `Authorization: Bearer` header only - a token in the query string or body is
 ignored - so it cannot leak through logs or a Referer header. A missing token
 disables capture (writes return 403), and `--all` mode has no single target so it
@@ -59,7 +61,8 @@ ack|nack|register|claim|heartbeat|deregister`. An item (`inbox` under
 `id/from/to/task_id/body/reply_to/state/created_at/project` - a superset of the
 `ft msg inbox -o json` list entry, which adds `body`/`reply_to` so a remote
 reader need not fetch again. Sends and reads both require the
-shared serve token (`[serve] token` or `FACTOTUM_SERVE_TOKEN`) in the
+shared serve token (`--token`, `FACTOTUM_SERVE_TOKEN`, or `[serve] token`; minted and printed by
+`ft serve` when none is provided) in the
 `Authorization: Bearer` header - private agent comms are not world-readable -
 and the transport is off when no token or no scoped project is configured
 (403), so an unauthenticated request never reaches the store. The claim

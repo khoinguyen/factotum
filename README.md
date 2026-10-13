@@ -244,8 +244,11 @@ ft serve --all                    # every registered project
 ft serve --bind 0.0.0.0:8484      # reachable from another device
 ```
 
-Capture is enabled by the machine-scoped `serve.token` (or `FACTOTUM_SERVE_TOKEN`); with no token it
-is disabled and the read side stays open. `serve.url` (or `FACTOTUM_MSG_URL`) names a hub's base URL:
+Capture is gated by a shared token sent as `Authorization: Bearer <token>`, resolved from
+`--token`, then `FACTOTUM_SERVE_TOKEN`, then the machine-scoped `serve.token`; an explicit token is
+used as-is and never printed. A scoped `ft serve` with none set mints a fresh random token each
+start and prints it to copy; `--all` has no single capture target, so capture stays off and the read
+side stays open. `serve.url` (or `FACTOTUM_MSG_URL`) names a hub's base URL:
 `ft run` hands it and `serve.token` to a launched receiver, so a remote agent reaches the message
 transport over `/api/msg/*` instead of the local store. The app is embedded at `/` — `mise run
 build-web` rebuilds it into `web/dist`.

@@ -188,6 +188,24 @@ export type ArtifactDetail = ArtifactView & {
   created_at: string
   updated_at: string
   attached_to?: TaskLink
+  // Captures are the captures that link back to a prompt artifact, the one list
+  // its page shows whether grooming produced one or many.
+  captures?: TaskLink[]
+}
+
+// NotificationView is one completed prompt grooming: the prompt artifact to
+// open and how many captures linked back to it.
+export type NotificationView = {
+  id: string
+  title: string
+  url: string
+  captures: number
+  completed_at?: string
+}
+
+// NotificationsDoc is the /api/notifications document.
+export type NotificationsDoc = {
+  notifications: NotificationView[]
 }
 
 // CaptureKind is a human capture the write side accepts: an idea or a bug.
@@ -349,6 +367,13 @@ export function normalizeSnapshot(s: Snapshot): Snapshot {
       captured: s.ideas?.captured ?? [],
     },
   }
+}
+
+// normalizeNotifications coerces the feed to an array: the server sends [] for
+// an empty feed, but JSON across a network boundary is untrusted and a null
+// would blank the toaster via .filter.
+export function normalizeNotifications(doc: NotificationsDoc): NotificationsDoc {
+  return { notifications: doc.notifications ?? [] }
 }
 
 // normalizeSessions coerces every list to an array: the server sends [] for

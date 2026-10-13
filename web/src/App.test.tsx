@@ -463,7 +463,13 @@ test("refetches the snapshot when SSE reports an update", async () => {
   let calls = 0
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => {
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+      const path = new URL(url, "http://localhost").pathname
+      if (path !== "/api/snapshot") {
+        return { ok: false, status: 404, json: async () => ({}) }
+      }
       calls++
       return { ok: true, status: 200, json: async () => emptySnapshot }
     }),

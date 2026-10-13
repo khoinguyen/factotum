@@ -194,7 +194,10 @@ to `@opencode/plugin`'s `Plugin.define({ id, setup(ctx) })` (one default export 
 `opencode.json(c)` key renames `plugin` to `plugins`, and V2 discovers local plugins from both
 `.opencode/plugin/` (V1) and `.opencode/plugins/` (prefer for V2 files). List a loaded plugin's id
 with `opencode2 api get /api/plugin`; `ft msg install --harness opencode2` stages the receiver for
-it. V2 is in beta; V1 stays available with `--harness opencode`.
+it. Install skips the write when the staged file already matches, so a relaunch never makes the
+plugin watcher reload a running agent; and a reloaded V2 receiver resumes the session it persisted,
+so an idle agent still receives a queued handoff. V2 is in beta; V1 stays available with
+`--harness opencode`.
 
 ## Teach your agent to use ft
 

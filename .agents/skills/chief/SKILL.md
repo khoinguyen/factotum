@@ -82,8 +82,10 @@ resolve your own refs once and pass them explicitly.
   `cmux workspace-group list --json` (the group whose `member_workspace_refs` include your workspace
   ref).
 - **Messaging agents is over `ft msg`, not cmux targets.** Send with
-  `ft msg send <role> -b "<text>"` (e.g. `ft msg send builder-<t>`, `ft msg send reviewer-<t>`,
-  `ft msg send chief`); the bare role is sugar for `actor:<role>`. The receiver long-polls and wakes
+  `ft msg send actor:<role> -b "<text>"` (e.g. `ft msg send actor:builder-<t>`,
+  `ft msg send actor:reviewer-<t>`, `ft msg send actor:chief`). Always use the canonical
+  `actor:<role>` address; a bare role is accepted as sugar but resolves less predictably, and a
+  handoff silently misrouted is exactly the failure this avoids. The receiver long-polls and wakes
   an idle agent, so a subagent "reporting to the chief" is it messaging `actor:chief`. **Launch
   yourself through `loop-agent.sh chief <project> - <dir> "<kickoff>"`** so you load the receiver and
   are addressable as `actor:chief`; confirm with `ft msg runs`. **Fallback (rollout):** only when a
@@ -171,8 +173,9 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    - `loop-agent.sh` stages the receiver where OpenCode loads it and registers the session as the
      role, so each agent is addressable as `actor:<role>` without a cmux target. It runs OpenCode
      with `--prompt` (its positional arg is a project path) and `--auto`.
-4. **Wire them** over `ft msg`: `ft msg send builder-<t> -b "<kickoff>"` and
-   `ft msg send reviewer-<t> -b "<kickoff>"` (the bare role is sugar for `actor:<role>`). Tell each
+4. **Wire them** over `ft msg`: `ft msg send actor:builder-<t> -b "<kickoff>"` and
+   `ft msg send actor:reviewer-<t> -b "<kickoff>"`. Always use the canonical `actor:<role>` address
+   (a bare role is accepted as sugar but resolves less predictably). Tell each
    the other's role, the task, and that the chief is `actor:chief`.
    - to the builder: the task id, the branch `ft/<t>-<short-brief>`, that `reviewer-<t>` will review
      the PR, and that the chief is `actor:chief`.
@@ -184,8 +187,8 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
 5. **Wait.** They run the build → hand-off → triage → verdict loop between themselves. Do not read
    their diffs. Wait for the builder (or reviewer) to report back to you. They run unattended and must
    never block on an interactive prompt; if one stalls on a question, nudge it with `ft msg send
-   <role> -b "proceed without asking: decide and document, or report the blocker to the chief and
-   stop"` (cmux-msg.sh as the fallback), and file a skill-bug task if it repeats.
+   actor:<role> -b "proceed without asking: decide and document, or report the blocker to the chief
+   and stop"` (cmux-msg.sh as the fallback), and file a skill-bug task if it repeats.
 6. **Briefly check.** Confirm: PR approved, the project's verification command green
    (`ft config get verify`; when the project records none, discover it from its own docs), task
    status. That is the whole

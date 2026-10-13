@@ -16,7 +16,7 @@ the fixes, and report the verdict to the chief. Khoi, the human owner, may also 
 
 ## Wait for the builder's handoff
 
-Your handoff is the builder's own `ft msg` message (`ft msg send reviewer-<task-id> -b "From
+Your handoff is the builder's own `ft msg` message (`ft msg send actor:reviewer-<task-id> -b "From
 builder-<task-id>: Please review PR #<n> ..."`).
 
 The chief's kickoff only wires you in; it is not the handoff.
@@ -41,9 +41,9 @@ evidence" below, which you file yourself.
   `.agents/skills/chief/scripts/loop-agent.sh`, which loaded the ft msg receiver and set
   `FACTOTUM_PROJECT`/`FACTOTUM_ACTOR=reviewer-<task-id>`/`FACTOTUM_TASK_ID`, so you are addressable as
   `actor:reviewer-<task-id>` and the receiver injects messages into this session.
-- Message the builder: `ft msg send builder-<task-id> -b "<text>"` (the bare role is sugar for
-  `actor:builder-<task-id>`); the chief: `ft msg send chief -b "<text>"`. `--from` defaults to your
-  role.
+- Address the builder at `ft msg send actor:builder-<task-id> -b "<text>"` and the chief at
+  `ft msg send actor:chief -b "<text>"`. Always use the canonical `actor:<role>` address: a bare role
+  is accepted as sugar but resolves less predictably. `--from` defaults to your role.
 - Prefix every message with `From reviewer-<task-id>, regarding PR #N: ...`. The builder writes
   `From builder-<task-id>: ...`.
 - **After sending, stop and wait.** The receiver long-polls and wakes the peer; do not poll for a
@@ -113,7 +113,7 @@ exists to prevent.
 
 Report to the chief: task id, PR number, the commit you reviewed, approved or not, and residual
 watch items (include the PR comment link). Message the chief with
-`ft msg send chief -b "From reviewer-<task-id>: <report>"` (or the cmux-msg.sh fallback). Then stop
+`ft msg send actor:chief -b "From reviewer-<task-id>: <report>"` (or the cmux-msg.sh fallback). Then stop
 and wait.
 - **Escalation:** if after three rounds you and the builder cannot align, tell the chief, post your
   verdict and the builder's disagreement on the PR, and leave it open for Khoi.

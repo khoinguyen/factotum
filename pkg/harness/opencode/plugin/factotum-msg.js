@@ -9,10 +9,12 @@
 //     cleanup function. V2 has no `server`, and V1 has no `setup`, so each
 //     major ignores the other's half.
 //
-// On load it registers the session with `ft`, long-polls the message queue,
-// injects each claimed message as a user turn through the OpenCode session API,
-// and acks it. The poll loop runs off the agent's turn, so injection never
-// blocks tool execution.
+// On load it registers the session with `ft`, waits until OpenCode announces a
+// session, long-polls the message queue, injects each claimed message as a user
+// turn through the OpenCode session API, and acks it. It holds off claiming
+// until it has a session (a claimed message it cannot inject would otherwise be
+// dropped), and nacks rather than fails a message it cannot deliver. The poll
+// loop runs off the agent's turn, so injection never blocks tool execution.
 //
 // It is a thin client of the receiver protocol. With no hub URL it shells out to
 // the `ft msg agent` verbs (the stable local adapter interface); when
@@ -140,6 +142,11 @@ function cliArgs(project, op) {
       if (op.error) args.push("-e", op.error);
       return args;
     }
+    case "nack": {
+      const args = ["msg", "agent", "nack", op.id, "--run", op.run, "--project", project];
+      if (op.error) args.push("-e", op.error);
+      return args;
+    }
     case "heartbeat":
       return ["msg", "agent", "heartbeat", "--run", op.run, "--project", project, "--ttl", op.ttl];
     case "deregister":
@@ -171,6 +178,8 @@ function httpPayload(op) {
       return { run_id: op.run, actor: op.actor, task: op.task, wait: op.wait };
     case "ack":
       return { id: op.id, run_id: op.run, state: op.state, error: op.error || "" };
+    case "nack":
+      return { id: op.id, run_id: op.run, reason: op.error || "" };
     case "heartbeat":
       return { run_id: op.run, ttl: op.ttl };
     case "deregister":
@@ -252,6 +261,13 @@ export function createFactotumReceiver({
     await call({ op: "ack", id, run: runID, state, error: error || "" });
   }
 
+  // nack releases a claimed message back to the queue (or parks it failed once
+  // the attempt cap is reached). It is the safe outcome for a message this
+  // receiver cannot inject: never silently lost.
+  async function nack(id, reason) {
+    await call({ op: "nack", id, run: runID, error: reason || "" });
+  }
+
   async function heartbeat() {
     await call({ op: "heartbeat", run: runID, ttl: `${config.ttlMs}ms` });
   }
@@ -269,10 +285,17 @@ export function createFactotumReceiver({
   }
 
   async function deliver(message) {
+    if (stopped) {
+      // Claimed but shutting down: release rather than drop. A nack that fails
+      // (the run is already gone) is best-effort; the lease sweep recovers it.
+      await nack(message.id, "receiver stopped before delivery").catch(() => {});
+      return;
+    }
     const sid = await waitForSession();
-    if (stopped) return;
     if (!sid) {
-      await ack(message.id, "failed", "no opencode session available to inject into").catch(() => {});
+      // Defensive: the loop only claims once it has a session, but a message we
+      // cannot inject is always released, never acked failed-and-dropped.
+      await nack(message.id, "no opencode session available to inject into").catch(() => {});
       return;
     }
     try {
@@ -285,6 +308,15 @@ export function createFactotumReceiver({
 
   async function loop() {
     while (!stopped) {
+      if (!sessionID) {
+        // With no OpenCode session there is nowhere to inject a claimed
+        // message, and releasing it consumes a delivery attempt. So wait for
+        // the session event before claiming: the message stays queued and is
+        // delivered once this receiver learns its session, rather than being
+        // claimed and dropped while the agent idles.
+        await sleep(SESSION_POLL_MS);
+        continue;
+      }
       let message;
       try {
         message = await claim();

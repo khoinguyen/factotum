@@ -85,27 +85,33 @@ func ActorAddress(id ActorID) Address { return Address("actor:" + string(id)) }
 func RunAddress(id RunID) Address     { return Address("run:" + string(id)) }
 func TaskAddress(id TicketID) Address { return Address("task:" + string(id)) }
 
-// ParseActorRef normalizes an actor reference: a bare actor id ("chief") and the
-// canonical actor address ("actor:chief") both yield the bare id, so a caller
-// that passes either form addresses the same actor. Anything else — an empty
-// value, a non-actor address kind, or a nested address such as
-// "actor:actor:chief" — is rejected rather than stored verbatim.
+// ParseActorRef normalizes an actor reference. A bare actor id or name is
+// returned unchanged — including a name that contains a colon, so a name such
+// as "team:alice" still reaches the store — while the canonical actor address
+// "actor:<id>" yields the bare id, so a caller that passes either form
+// addresses the same actor. A non-actor address kind ("run:", "task:") and a
+// malformed or nested actor address such as "actor:" or "actor:actor:chief" are
+// rejected rather than stored verbatim.
 func ParseActorRef(ref string) (ActorID, error) {
 	value := strings.TrimSpace(ref)
 	if value == "" {
 		return "", fmt.Errorf("%w: actor reference is empty", ErrInvalid)
 	}
-	id, ok := strings.CutPrefix(value, "actor:")
+	kind, id, ok := strings.Cut(value, ":")
 	if !ok {
-		if strings.ContainsRune(value, ':') {
-			return "", fmt.Errorf("%w: actor reference %q must be a bare actor id or actor:<id>", ErrInvalid, value)
-		}
 		return ActorID(value), nil
 	}
-	if id == "" || strings.ContainsRune(id, ':') {
-		return "", fmt.Errorf("%w: actor reference %q must be a bare actor id or actor:<id>", ErrInvalid, value)
+	switch AddressKind(kind) {
+	case AddressActor:
+		if id == "" || strings.ContainsRune(id, ':') {
+			return "", fmt.Errorf("%w: actor reference %q must be a bare actor id or actor:<id>", ErrInvalid, value)
+		}
+		return ActorID(id), nil
+	case AddressRun, AddressTask:
+		return "", fmt.Errorf("%w: actor reference %q is a %s address, want a bare actor id or actor:<id>", ErrInvalid, value, kind)
+	default:
+		return ActorID(value), nil
 	}
-	return ActorID(id), nil
 }
 
 // ValidateAddress rejects a malformed address or an unknown kind.

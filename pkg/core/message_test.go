@@ -67,12 +67,14 @@ func TestParseActorRef(t *testing.T) {
 		{"canonical address", "actor:chief", "chief", false},
 		{"bare role", "builder-t-1", "builder-t-1", false},
 		{"canonical role", "actor:builder-t-1", "builder-t-1", false},
+		{"colon-bearing name", "team:alice", "team:alice", false},
+		{"unknown kind name", "chief:x", "chief:x", false},
 		{"padded", " actor:chief ", "chief", false},
 		{"empty", "", "", true},
 		{"empty id", "actor:", "", true},
 		{"doubled address", "actor:actor:chief", "", true},
-		{"other kind", "run:r-1", "", true},
-		{"bare with colon", "chief:x", "", true},
+		{"run address", "run:r-1", "", true},
+		{"task address", "task:t-1", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

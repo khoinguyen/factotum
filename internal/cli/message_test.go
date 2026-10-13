@@ -174,6 +174,42 @@ func TestMessageSendRoleTargetAndFrom(t *testing.T) {
 	}
 }
 
+// TestMessageSendFromAcceptsBareAndCanonicalActorRefs pins --from to accept a
+// bare actor id and the canonical actor:<id> address as the same sender, and to
+// reject a reference it cannot resolve rather than store it verbatim.
+func TestMessageSendFromAcceptsBareAndCanonicalActorRefs(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+
+	for _, ref := range []string{"builder-t-1", "actor:builder-t-1"} {
+		sent := r.run("msg", "send", "actor:claude", "please review", "--project", projectID, "--from", ref)
+		messageID := firstField(t, sent)
+		if got := r.run("msg", "get", messageID); !strings.Contains(got, "from: builder-t-1") {
+			t.Fatalf("--from %q stored sender:\n%s\nwant from: builder-t-1", ref, got)
+		}
+	}
+
+	for _, ref := range []string{"actor:actor:chief", "run:r-1", "actor:"} {
+		if err := r.runErr("msg", "send", "actor:claude", "hi", "--project", projectID, "--from", ref); err == nil || !strings.Contains(err.Error(), "sender actor") {
+			t.Fatalf("--from %q error = %v, want a sender actor error", ref, err)
+		}
+	}
+}
+
+// TestMessageInboxForAcceptsCanonicalActorAddress pins --for to the same rule:
+// a bare id and its canonical address filter the same mailbox.
+func TestMessageInboxForAcceptsCanonicalActorAddress(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("msg", "send", "actor:chief", "hello", "--project", projectID)
+
+	for _, ref := range []string{"chief", "actor:chief"} {
+		if out := r.run("msg", "inbox", "--project", projectID, "--for", ref); !strings.Contains(out, "actor:chief") {
+			t.Fatalf("inbox --for %q:\n%s\nwant it to list the message to actor:chief", ref, out)
+		}
+	}
+}
+
 func TestMessageSendInboxRead(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

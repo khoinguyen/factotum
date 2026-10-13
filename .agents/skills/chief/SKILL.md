@@ -172,7 +172,8 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    - The script names the tabs `builder-<t>`/`reviewer-<t>` and places the workspace in the group.
    - `loop-agent.sh` stages the receiver where OpenCode loads it and registers the session as the
      role, so each agent is addressable as `actor:<role>` without a cmux target. It runs OpenCode
-     with `--prompt` (its positional arg is a project path) and `--auto`.
+     on a private `--standalone` server (so the receiver's `FACTOTUM_*` env is not lost to V2's
+     shared background service) with `--prompt` (its positional arg is a project path) and `--auto`.
 4. **Wire them** over `ft msg`: `ft msg send actor:builder-<t> -b "<kickoff>"` and
    `ft msg send actor:reviewer-<t> -b "<kickoff>"`. Always use the canonical `actor:<role>` address
    (a bare role is accepted as sugar but resolves less predictably). Tell each

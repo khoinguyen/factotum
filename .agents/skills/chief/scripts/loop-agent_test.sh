@@ -12,6 +12,13 @@ script="$here/loop-agent.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# Hermetic: a real loop agent's env carries FACTOTUM_HARNESS and, as the very
+# bug this tests, may set OPENCODE_BIN to a --standalone wrapper. Either would
+# mask a regression, so clear them; the script must supply both itself. FT_BIN
+# and the FACTOTUM_* identity vars are cleared for the same reason.
+unset FT_BIN OPENCODE_BIN FACTOTUM_HARNESS FACTOTUM_SESSION \
+  FACTOTUM_PROJECT FACTOTUM_ACTOR FACTOTUM_TASK_ID FACTOTUM_DEFAULT_ACTOR
+
 export FT_STUB_LOG="$tmp/ft.log"
 export OPENCODE_STUB_LOG="$tmp/opencode.log"
 : >"$FT_STUB_LOG"
@@ -30,8 +37,8 @@ cat >"$tmp/bin/opencode" <<'STUB'
 #!/usr/bin/env bash
 {
   printf 'cwd=%s\n' "$PWD"
-  printf 'project=%s actor=%s task=%s default=%s session=%s\n' \
-    "${FACTOTUM_PROJECT:-}" "${FACTOTUM_ACTOR:-}" "${FACTOTUM_TASK_ID:-}" "${FACTOTUM_DEFAULT_ACTOR:-}" "${FACTOTUM_SESSION:-}"
+  printf 'project=%s actor=%s task=%s default=%s session=%s harness=%s\n' \
+    "${FACTOTUM_PROJECT:-}" "${FACTOTUM_ACTOR:-}" "${FACTOTUM_TASK_ID:-}" "${FACTOTUM_DEFAULT_ACTOR:-}" "${FACTOTUM_SESSION:-}" "${FACTOTUM_HARNESS:-}"
   printf 'argv=%s\n' "$*"
 } >>"$OPENCODE_STUB_LOG"
 exit 0
@@ -46,12 +53,22 @@ pass=0
 # worktree, and forwards the prompt.
 : >"$FT_STUB_LOG"; : >"$OPENCODE_STUB_LOG"
 "$script" builder-t-1 factotum t-1 "$tmp/worktree" "you are builder-t-1" >/dev/null
-if grep -q "msg install --harness opencode" "$FT_STUB_LOG"; then pass=$((pass+1)); else
-  echo "FAIL builder: did not install the receiver: $(cat "$FT_STUB_LOG")"; fail=$((fail+1)); fi
+if grep -q "msg install --harness opencode2" "$FT_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL builder: did not install the V2 receiver: $(cat "$FT_STUB_LOG")"; fail=$((fail+1)); fi
 if grep -q "cwd=$tmp/worktree" "$OPENCODE_STUB_LOG" \
   && grep -q "project=factotum actor=builder-t-1 task=t-1 default=builder-t-1" "$OPENCODE_STUB_LOG" \
-  && grep -q "argv=--prompt you are builder-t-1 --auto" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
+  && grep -q "argv=--standalone --prompt you are builder-t-1 --auto" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
   echo "FAIL builder: wrong agent launch: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
+
+# OpenCode V2 runs a shared background service that owns plugin loading; its
+# process env carries no FACTOTUM_*, so a plugin loaded there is inert for every
+# agent. Each agent must instead run on a PRIVATE server (--standalone) that
+# inherits its env, and register as the opencode2 harness so the claim metadata
+# is right.
+if grep -q "harness=opencode2" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL builder: FACTOTUM_HARNESS should be opencode2: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
+if grep -q -- "--standalone" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL builder: launch must use a private server (--standalone): $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
 
 # The chief has no task: FACTOTUM_TASK_ID must not leak in. A chief launch also
 # mints a session id, records its start, and exports FACTOTUM_SESSION.

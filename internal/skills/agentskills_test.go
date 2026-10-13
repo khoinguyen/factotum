@@ -315,7 +315,9 @@ func TestArchitectureReviewerSkillWiresTheGroomingGate(t *testing.T) {
 // TestGroomingAgentSkillReadsPromptAndLinksCaptures guards the grooming-agent
 // charter: it reads a prompt doc artifact, captures one or more ideas/bugs from
 // it, links each capture back to the artifact as its origin, and reports back to
-// the chief over ft msg.
+// the chief over ft msg. It also pins the link-back contract: origin_artifact is
+// canonical and is what the web prompt page and toast read, so the skill must
+// never fall back to a note doc-link.
 func TestGroomingAgentSkillReadsPromptAndLinksCaptures(t *testing.T) {
 	body := agentSkill(t, ".agents/skills/grooming-agent/SKILL.md")
 	required := []struct {
@@ -327,6 +329,9 @@ func TestGroomingAgentSkillReadsPromptAndLinksCaptures(t *testing.T) {
 		{"capture ideas", "ft idea create"},
 		{"capture bugs", "ft bug create"},
 		{"link the capture back to the artifact", "--origin-artifact"},
+		{"name origin_artifact as the canonical link-back", "canonical link-back"},
+		{"name the read surface the origin drives", "/api/notifications"},
+		{"forbid a note doc-link substitute", "not a substitute"},
 		{"report to the chief over ft msg", "ft msg send chief"},
 	}
 	for _, req := range required {

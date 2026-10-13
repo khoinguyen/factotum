@@ -10,9 +10,10 @@
 #
 # An agent launched this way is a first-class ft msg peer: the receiver is
 # staged where OpenCode loads it, the FACTOTUM_* env tells it which actor to
-# register as, and the TUI is exec'd. A peer then reaches it with
-# `ft msg send actor:<actor>` (or the bare-role sugar `ft msg send <actor>`),
-# with no cmux surface target. Set FT_BIN / OPENCODE_BIN to override the tools.
+# register as, and the TUI is exec'd on a private server. A peer then reaches it
+# with `ft msg send actor:<actor>` (or the bare-role sugar `ft msg send
+# <actor>`), with no cmux surface target. Set FT_BIN / OPENCODE_BIN to override
+# the tools.
 #
 # Why this exists: a loop agent is launched directly (`opencode --prompt ...`),
 # not through `ft run`, so `ft run`'s per-run receiver staging never happens.
@@ -20,6 +21,13 @@
 # plugin reads, so every loop agent loads the receiver and is addressable by
 # its role. `cmux-msg.sh` stays the fallback until a peer is verified reachable
 # over ft msg.
+#
+# Why --standalone: OpenCode V2 runs a shared background service that owns
+# plugin loading, and that service's process env has no FACTOTUM_*, so a plugin
+# it loads is inert for every agent. --standalone gives each agent a private
+# server that inherits this launch's env, so its receiver registers and claims
+# messages. FACTOTUM_HARNESS=opencode2 makes the claim metadata match the V2
+# harness. Without both, the agent is unreachable over ft msg.
 set -euo pipefail
 
 usage() { echo "usage: loop-agent.sh <actor> <project> <task|-> <worktree> <prompt...>" >&2; exit 2; }
@@ -35,16 +43,19 @@ prompt="$*"
 ft_bin="${FT_BIN:-ft}"
 opencode_bin="${OPENCODE_BIN:-opencode}"
 
-# Stage the receiver where OpenCode loads plugins. Idempotent; safe to run on
-# every launch. Without it, a globally-loaded plugin never exists and the agent
-# is unreachable over ft msg.
-"$ft_bin" msg install --harness opencode >/dev/null
+# Stage the receiver where OpenCode V2 loads plugins. Idempotent; safe to run
+# on every launch. Without it, a globally-loaded plugin never exists and the
+# agent is unreachable over ft msg.
+"$ft_bin" msg install --harness opencode2 >/dev/null
 
 export FACTOTUM_PROJECT="$project"
 export FACTOTUM_ACTOR="$actor"
 # The agent's `ft msg send` defaults --from to the configured actor, so a peer's
 # shell sends as the role without an explicit --from.
 export FACTOTUM_DEFAULT_ACTOR="$actor"
+# The receiver registers as the opencode2 harness so its claim metadata matches
+# the V2 build it is actually running under.
+export FACTOTUM_HARNESS=opencode2
 if [ "$task" != "-" ]; then
   export FACTOTUM_TASK_ID="$task"
 else
@@ -65,4 +76,4 @@ if [ "$role" = "chief" ]; then
 fi
 
 cd "$worktree"
-exec "$opencode_bin" --prompt "$prompt" --auto
+exec "$opencode_bin" --standalone --prompt "$prompt" --auto

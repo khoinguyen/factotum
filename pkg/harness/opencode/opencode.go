@@ -17,10 +17,14 @@
 package opencode
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/isolation"
@@ -82,6 +86,51 @@ func (v Variant) image() string {
 // --model flag. V1 does; V2 rejects it (it is a `run`/`mini` flag only), so the
 // interactive invocation omits it and the TUI uses its configured default.
 func (v Variant) interactiveModel() bool { return v != V2 }
+
+// versionPattern is the first dotted version in an `opencode --version` banner,
+// which is either bare ("1.19.0") or prefixed ("opencode v2.0.25").
+var versionPattern = regexp.MustCompile(`[0-9]+\.[0-9]+`)
+
+// MajorVersion extracts the major version number from an `opencode --version`
+// banner. ok is false when the banner carries no dotted version, so a caller
+// treats an unparseable banner the same as an unknown binary rather than
+// guessing a major.
+func MajorVersion(banner string) (major int, ok bool) {
+	match := versionPattern.FindString(banner)
+	if match == "" {
+		return 0, false
+	}
+	head, _, _ := strings.Cut(match, ".")
+	n, err := strconv.Atoi(head)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// versionProbeTimeout bounds the `--version` probe so a hung binary cannot stall
+// run selection.
+const versionProbeTimeout = 5 * time.Second
+
+// VariantForBinary returns the OpenCode variant the named binary drives,
+// detected from its `--version` output: a major version of 2 or later is V2.
+// Everything else — a V1 banner, a missing binary, a nonzero exit, or an
+// unparseable banner — is V1, so detection never selects V2 by accident. This
+// lets `--harness opencode` follow an in-place upgrade (brew installs V2 under
+// the same `opencode` name) without a config change.
+func VariantForBinary(binary string) Variant {
+	ctx, cancel := context.WithTimeout(context.Background(), versionProbeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, binary, "--version").Output()
+	if err != nil {
+		return V1
+	}
+	major, ok := MajorVersion(string(out))
+	if !ok || major < 2 {
+		return V1
+	}
+	return V2
+}
 
 const (
 	// DefaultImage is the OpenCode V1 agent image (Alpine, entrypoint

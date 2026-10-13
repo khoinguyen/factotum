@@ -296,12 +296,24 @@ func (r envCredentialResolver) Resolve(_ context.Context, c isolation.Credential
 func runHarnesses() *registry.Registry[HarnessFactory] {
 	reg := registry.New[HarnessFactory]()
 	registerRunHarness(reg, opencode.Name, func(cfg config.Run) (harness.Harness, error) {
-		return opencode.New(opencode.Options{
+		opts := opencode.Options{
 			Model:            cfg.Model,
 			Args:             cfg.Args,
 			Provider:         cfg.Provider,
 			CredentialEnvVar: cfg.CredentialEnvVar,
-		}), nil
+		}
+		// The local backend runs the host `opencode` binary in place, so its
+		// major version decides the argv shape: an in-place V2 (brew upgrades
+		// the formula without renaming the binary) must drop V1's top-level
+		// --model. The binary keeps its probed name (`opencode`), since the
+		// whole point is that V2 is installed under that name. An isolating
+		// backend runs the pinned image instead, whose variant is the harness
+		// key, so it is never probed.
+		if cfg.Sandbox == local.Name && opencode.VariantForBinary(opencode.DefaultBinary) == opencode.V2 {
+			opts.Variant = opencode.V2
+			opts.Binary = opencode.DefaultBinary
+		}
+		return opencode.New(opts), nil
 	})
 	registerRunHarness(reg, opencode.NameV2, func(cfg config.Run) (harness.Harness, error) {
 		return opencode.New(opencode.Options{

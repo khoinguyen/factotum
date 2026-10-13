@@ -160,9 +160,9 @@ func findGroup(groups []taskGroup, id core.TicketID) (taskGroup, bool) {
 
 // TestIdeaRollupStates proves the ideas board classifies each idea by the state
 // of the work promoted from it: finished when all promoted tasks are done,
-// blocked when any is blocked, in-progress otherwise, and captured when nothing
-// has been promoted yet. Ideas are the primary unit, so this is the core read
-// of the dashboard.
+// blocked when any is blocked, in-progress once any promoted task has started,
+// and captured when nothing has been promoted or nothing has started yet. Ideas
+// are the primary unit, so this is the core read of the dashboard.
 func TestIdeaRollupStates(t *testing.T) {
 	f := newFixture(t)
 	project := f.addProject(t, "acme", "Acme")
@@ -181,6 +181,11 @@ func TestIdeaRollupStates(t *testing.T) {
 
 	captured := f.addIdea(t, project.ID, "Raw idea", "not refined yet")
 
+	// Grooming promotes tasks but is not work: with every promoted task still
+	// todo the capture belongs in the backlog, not the in-progress lane.
+	groomed := f.addIdea(t, project.ID, "Groomed idea", "promoted but not started")
+	f.promote(t, groomed.ID)
+
 	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -191,14 +196,16 @@ func TestIdeaRollupStates(t *testing.T) {
 	}
 
 	cases := []struct {
-		name string
-		id   core.TicketID
-		from []ideaView
+		name  string
+		id    core.TicketID
+		state string
+		from  []ideaView
 	}{
-		{"finished", finished.ID, page.FinishedIdeas},
-		{"active", active.ID, page.ActiveIdeas},
-		{"blocked", blocked.ID, page.BlockedIdeas},
-		{"captured", captured.ID, page.CapturedIdeas},
+		{"finished", finished.ID, "finished", page.FinishedIdeas},
+		{"active", active.ID, "active", page.ActiveIdeas},
+		{"blocked", blocked.ID, "blocked", page.BlockedIdeas},
+		{"captured", captured.ID, "captured", page.CapturedIdeas},
+		{"groomed", groomed.ID, "captured", page.CapturedIdeas},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -206,10 +213,16 @@ func TestIdeaRollupStates(t *testing.T) {
 			if !ok {
 				t.Fatalf("idea %s not in %s lane", tc.id, tc.name)
 			}
-			if idea.State != tc.name {
-				t.Fatalf("idea %s state = %q, want %q", tc.id, idea.State, tc.name)
+			if idea.State != tc.state {
+				t.Fatalf("idea %s state = %q, want %q", tc.id, idea.State, tc.state)
 			}
 		})
+	}
+
+	// A merely-groomed capture must stay out of the active lane even though it
+	// has promoted work; only a started (or finished) task makes a capture active.
+	if _, ok := findIdea(page.ActiveIdeas, groomed.ID); ok {
+		t.Fatalf("groomed capture %s in the active lane, want backlog", groomed.ID)
 	}
 
 	// The block is a needs-unblock signal: it outranks a sibling still being built.

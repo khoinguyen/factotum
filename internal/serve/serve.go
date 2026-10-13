@@ -938,7 +938,7 @@ func (s *Server) rollupIdea(idea core.Ticket, vs viewSet) ideaView {
 			out.Done++
 		case "blocked":
 			out.Blocked++
-		default:
+		case "active":
 			out.Active++
 		}
 	}
@@ -950,7 +950,8 @@ func (s *Server) rollupIdea(idea core.Ticket, vs viewSet) ideaView {
 
 // taskState reduces one promoted task to its rollup contribution. A task is
 // finished once it resolves, blocked when it is explicitly blocked or waiting on
-// an unresolved condition, and active otherwise.
+// an unresolved condition, active once it has started, and todo while it has not.
+// Grooming alone (a promoted but unstarted task) is not work.
 func taskState(task core.Ticket, view taskView) string {
 	switch {
 	case task.Status == core.StatusDone || task.Status == core.StatusCancelled:
@@ -959,15 +960,18 @@ func taskState(task core.Ticket, view taskView) string {
 		return "blocked"
 	case view.Reason != "":
 		return "blocked"
-	default:
+	case task.Status == core.StatusInProgress || task.Status == core.StatusReadyForReview:
 		return "active"
+	default:
+		return "todo"
 	}
 }
 
 // ideaRollup classifies an idea from the state of its promoted tasks. An idea
 // with no promoted work is captured; all done is finished; any blocked task
-// makes it blocked (a needs-unblock signal outranks work still moving);
-// otherwise it is active.
+// makes it blocked (a needs-unblock signal outranks work still moving); an idea
+// with a started or finished task is active; an idea whose tasks are all still
+// todo is captured too - grooming is not work, so it belongs in the backlog.
 func ideaRollup(idea ideaView) (state, chip string) {
 	switch {
 	case idea.Total == 0:
@@ -976,8 +980,10 @@ func ideaRollup(idea ideaView) (state, chip string) {
 		return "finished", "done"
 	case idea.Blocked > 0:
 		return "blocked", "blocked"
-	default:
+	case idea.Done > 0 || idea.Active > 0:
 		return "active", "ready-agent"
+	default:
+		return "captured", "capture"
 	}
 }
 

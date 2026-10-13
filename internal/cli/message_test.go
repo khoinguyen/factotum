@@ -189,6 +189,17 @@ func TestMessageSendFromAcceptsBareAndCanonicalActorRefs(t *testing.T) {
 		}
 	}
 
+	// A colon-bearing actor name is not an address: it still resolves by name,
+	// so narrowing the rejection must not break it.
+	actorID := firstField(t, r.run("actor", "create", "team:alice", "--kind", "agent"))
+	if actorID != "team-alice" {
+		t.Fatalf("actor id = %q, want team-alice", actorID)
+	}
+	sent := r.run("msg", "send", "actor:claude", "hi", "--project", projectID, "--from", "team:alice")
+	if got := r.run("msg", "get", firstField(t, sent)); !strings.Contains(got, "from: team-alice") {
+		t.Fatalf("--from with a colon-bearing name:\n%s\nwant from: team-alice", got)
+	}
+
 	for _, ref := range []string{"actor:actor:chief", "run:r-1", "actor:"} {
 		if err := r.runErr("msg", "send", "actor:claude", "hi", "--project", projectID, "--from", ref); err == nil || !strings.Contains(err.Error(), "sender actor") {
 			t.Fatalf("--from %q error = %v, want a sender actor error", ref, err)

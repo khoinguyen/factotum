@@ -108,7 +108,8 @@ func TestRunResolvesSelectionFromConfig(t *testing.T) {
 func TestRunPromptPersistsSelection(t *testing.T) {
 	t.Run("user scope", func(t *testing.T) {
 		r := newRunner(t)
-		_, taskID := runContext(t, r)
+		projectID, taskID := runContext(t, r)
+		mustWrite(t, r.projectPath, "project = \""+projectID+"\"\n")
 		backend := isofake.New("sandbox")
 		backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
 		r.runBackend = backend
@@ -124,11 +125,17 @@ func TestRunPromptPersistsSelection(t *testing.T) {
 		if asked := strings.Join(p.asked, "\n"); !strings.Contains(asked, "fake") {
 			t.Fatalf("prompt did not offer the detected options:\n%s", asked)
 		}
+		if asked := strings.Join(p.asked, "\n"); !strings.Contains(asked, "project/user") {
+			t.Fatalf("a configured project must still offer both scopes:\n%s", asked)
+		}
 		got := readFile(t, r.userPath)
 		for _, want := range []string{"[run]", `sandbox = "fake"`, `harness = "fake"`} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("persisted user config missing %q:\n%s", want, got)
 			}
+		}
+		if got := readFile(t, r.projectPath); strings.Contains(got, "[run]") {
+			t.Fatalf("the user scope wrote the project config:\n%s", got)
 		}
 
 		// The persisted pick resolves the next run with no flag and no prompt.
@@ -148,11 +155,15 @@ func TestRunPromptPersistsSelection(t *testing.T) {
 		r.runBackend = backend
 		r.runHarness = harnessfake.New("opencode")
 		r.isTerminal = terminal
-		r.prompt = &scriptedPrompter{t: t, inputs: []string{"fake", "fake", "project"}}
+		p := &scriptedPrompter{t: t, inputs: []string{"fake", "fake", "project"}}
+		r.prompt = p
 
 		out := r.run("run", taskID, "--workspace", t.TempDir())
 		if !strings.Contains(out, "run: finished") {
 			t.Fatalf("prompted project run did not finish:\n%s", out)
+		}
+		if asked := strings.Join(p.asked, "\n"); !strings.Contains(asked, "project/user") {
+			t.Fatalf("a configured project must still offer both scopes:\n%s", asked)
 		}
 		got := readFile(t, r.projectPath)
 		for _, want := range []string{`project = "` + projectID + `"`, "[run]", `sandbox = "fake"`, `harness = "fake"`} {
@@ -161,6 +172,46 @@ func TestRunPromptPersistsSelection(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestRunPromptOmitsProjectScopeWithoutProject pins that the prompt never
+// offers a scope that cannot succeed: with no configured project a project-
+// scope write is refused, so the pick lands in the machine config and the run
+// says why project scope is unavailable instead of asking and then failing.
+func TestRunPromptOmitsProjectScopeWithoutProject(t *testing.T) {
+	r := newRunner(t)
+	_, taskID := runContext(t, r)
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+	r.isTerminal = terminal
+	// Only the two dimensions are answered: an unexpected scope prompt would
+	// fail the scripted prompter, so this also proves the prompt is skipped.
+	p := &scriptedPrompter{t: t, inputs: []string{"fake", "fake"}}
+	r.prompt = p
+
+	stdout, stderr := r.runSplit("run", taskID, "--workspace", t.TempDir())
+	if !strings.Contains(stdout, "run: finished") {
+		t.Fatalf("prompted run did not finish:\n%s", stdout)
+	}
+	if asked := strings.Join(p.asked, "\n"); strings.Contains(asked, "save run defaults to") {
+		t.Fatalf("the scope prompt asked with no project to save to:\n%s", asked)
+	}
+	for _, want := range []string{"project scope", "machine config"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr does not say why project scope is unavailable (%q):\n%s", want, stderr)
+		}
+	}
+	got := readFile(t, r.userPath)
+	for _, want := range []string{"[run]", `sandbox = "fake"`, `harness = "fake"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("persisted machine config missing %q:\n%s", want, got)
+		}
+	}
+	if _, err := os.Stat(r.projectPath); !os.IsNotExist(err) {
+		t.Fatalf("a no-project pick wrote the project config (err=%v)", err)
+	}
 }
 
 // TestRunPromptOnlyPromptsForMissingDimension pins that a configured dimension
@@ -330,31 +381,30 @@ func TestResolveRunSelectionLocalOptIn(t *testing.T) {
 	}
 }
 
-// TestResolveRunSelectionProjectScopeNeedsProject pins that choosing the project
-// scope when no project is configured fails clearly and writes nothing, rather
-// than leaving a [run] table in a project config with no project pin. It must
-// not quietly fall back to the user config either: the user picked the scope.
-func TestResolveRunSelectionProjectScopeNeedsProject(t *testing.T) {
-	deps := newOptInDeps(t, &scriptedPrompter{t: t, inputs: []string{"docker", "opencode", "project"}})
+// TestPersistRunDefaultsProjectScopeNeedsProject pins the refusal a requested
+// project scope hits when no project is configured: it fails clearly, names the
+// machine (user) config as the way out, and writes nothing, rather than leaving
+// a [run] table in a project config with no project pin. The interactive prompt
+// no longer offers that scope, but the guard still covers any caller that asks
+// for it directly. It must not quietly fall back to the user config either: the
+// caller asked for the project scope.
+func TestPersistRunDefaultsProjectScopeNeedsProject(t *testing.T) {
+	deps := newOptInDeps(t, &scriptedPrompter{t: t})
 	deps.Config.Project = ""
 
-	cmd := &cobra.Command{Use: "run"}
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
-	cfg := config.Run{}
-	err := deps.resolveRunSelection(cmd, &cfg)
+	path, optInPath, err := deps.persistRunDefaults("project", config.RunDefaults{Sandbox: "docker", Harness: "opencode"})
 	if err == nil {
-		t.Fatalf("resolveRunSelection() error = nil, want a refusal")
+		t.Fatalf("persistRunDefaults() error = nil, want a refusal")
 	}
 	if !strings.Contains(err.Error(), "user config") {
 		t.Fatalf("error does not point at the user config as the way out: %v", err)
 	}
-	for _, path := range []string{deps.ProjectConfigPath, deps.UserConfigPath} {
-		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
-			t.Fatalf("a refused project-scope write wrote %s: %v", path, statErr)
-		}
+	if path != "" || optInPath != "" {
+		t.Fatalf("refused write reported paths %q/%q, want none", path, optInPath)
 	}
-	if cfg.Sandbox != "" || cfg.Harness != "" {
-		t.Fatalf("cfg = %+v, want nothing resolved after a refused write", cfg)
+	for _, p := range []string{deps.ProjectConfigPath, deps.UserConfigPath} {
+		if _, statErr := os.Stat(p); !os.IsNotExist(statErr) {
+			t.Fatalf("a refused project-scope write wrote %s: %v", p, statErr)
+		}
 	}
 }

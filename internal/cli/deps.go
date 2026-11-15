@@ -65,6 +65,11 @@ type Deps struct {
 	// default also admits the grooming-agent and architecture-reviewer roles the
 	// loop exports as a default (app.LoopDefaultRole).
 	ActorFlag bool
+	// ActorDropped is the actor reference bindCaller rejected because it named
+	// neither an Actor record nor a role its path trusts. It is kept so a command
+	// that would install a message receiver (ft run) can explain the absence
+	// instead of launching a session nobody can reach.
+	ActorDropped string
 	// Caller is the detected caller from FACTOTUM_CALLER. It is resolved against
 	// the opened store's actors before it becomes the attribution actor, so an
 	// unregistered caller is dropped rather than trusted.

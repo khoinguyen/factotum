@@ -515,8 +515,36 @@ func (d *Deps) warnLocalPlan(plan *workspace.Plan) {
 	}
 }
 
+// runActor resolves the identity the run's message receiver registers as, or
+// says that this run will launch without one. bindCaller has already held a
+// named actor to the registration rule, so a surviving reference only needs the
+// identity rule: a loop role is a mailbox, not a record, and still resolves.
+// A reference that resolves to nothing names no mailbox a receiver could claim,
+// so the session is unreachable over ft msg - say so and name the fix, but keep
+// launching: the work is still worth doing and the actor can be registered while
+// it runs. A reference bindCaller already dropped gets the same warning, because
+// its attribution warning does not say the session cannot be messaged.
+func (d *Deps) runActor(ctx context.Context) *core.ActorID {
+	ref := d.ActorRef
+	if ref == "" {
+		ref = d.ActorDropped
+	}
+	if ref == "" {
+		return nil
+	}
+	actor, err := d.Actors.Identity(ctx, core.ActorID(ref))
+	if err != nil {
+		if !errors.Is(err, core.ErrNotFound) {
+			d.warnf("could not resolve actor %q (%v)", ref, err)
+		}
+		d.warnf("no message receiver will register for actor %q; the run launches unreachable over ft msg (create it with ft actor create %q, or pass a registered actor or loop role)", ref, ref)
+		return nil
+	}
+	return &actor.ID
+}
+
 func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {
-	actor := d.currentActorID(cmd.Context())
+	actor := d.runActor(cmd.Context())
 	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
@@ -576,7 +604,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 // with no task: a task-less prompt run (a grooming session, for example). It
 // materializes every project repo and writes nothing to the task graph.
 func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) error {
-	actor := d.currentActorID(cmd.Context())
+	actor := d.runActor(cmd.Context())
 	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
@@ -629,7 +657,7 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 // runGoal drives the DAG loop toward a goal: a task, a milestone, or a capture
 // (idea/bug), whose tasks the loop runs in DAG order.
 func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error {
-	actor := d.currentActorID(cmd.Context())
+	actor := d.runActor(cmd.Context())
 	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {

@@ -28,9 +28,12 @@ check() {
 
 # probe_source_guard <script> sources <script> in a subshell and reports whether
 # it stopped at its own source guard. The subshell matters: a guard that `exit`s
-# fails only the probe instead of ending this suite before it can say why.
+# fails only the probe instead of ending this suite before it can say why. The
+# endpoint is stripped because the probe is about the guard, not about how a
+# guard-less body would run: an exported endpoint is the documented real-run
+# path and would send that body to `go test` instead of the docker stub.
 probe_source_guard() {
-  ( . "$1" ) >/dev/null 2>&1
+  ( export FACTOTUM_EMBED_TEST_ENDPOINT=; . "$1" ) >/dev/null 2>&1
 }
 
 # guard_label <script> names a source-guard regression, so the run reads as a
@@ -140,6 +143,19 @@ if grep -q '^docker ' "$STUB_LOG"; then
   ok
 else
   bad "the guard-less probe reached no stub: $(tr '\n' ';' <"$STUB_LOG")"
+fi
+
+# An exported endpoint is the documented way to run the real embed test, so a
+# developer's shell may carry one. It must not divert the guard-less probe to
+# `go test` and turn this suite red, so the probe strips it.
+: >"$STUB_LOG"
+if FACTOTUM_EMBED_TEST_ENDPOINT=http://127.0.0.1:1 probe_source_guard "$unguarded"; then
+  bad "a guard-less script with an endpoint exported was accepted as guarded"
+fi
+if grep -q '^docker ' "$STUB_LOG"; then
+  ok
+else
+  bad "an exported endpoint diverted the guard-less probe to: $(tr '\n' ';' <"$STUB_LOG")"
 fi
 
 # A default container name is per-run: it carries a pid and stays clear of the

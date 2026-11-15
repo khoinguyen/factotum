@@ -295,9 +295,9 @@ fails, so a script can gate on it.
 
 `ft run <target>` drives one task end-to-end: it materializes the task's **declared** repo
 (`task -r`), or all the project's repos when none is declared — an exclusive or, never a union.
-A task that needs another repo must declare it; `ft run` runs the harness with the task as its
-prompt. A capture (idea or bug) runs the goal loop below over every task that belongs to it, in
-DAG order.
+A task that needs another repo must declare it, or the agent clones it manually; `ft run` runs
+the harness with the task as its prompt. A capture (idea or bug) runs the goal loop below over
+every task that belongs to it, in DAG order.
 A repo registered with a local `Path` (not a `URL`) is used **in place** — it is not
 copied into the workspace, so a backend on the workdir (`local`, `docker`) can modify
 that checkout; `ft run` warns on stderr naming it, and registering a `URL` runs in an

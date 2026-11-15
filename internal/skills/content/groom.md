@@ -170,10 +170,11 @@ Every PO answer resolves to exactly one of:
 
 A completed session leaves **agent-ready** tasks: every task it produces is
 `groomed` (it carries at least one acceptance criterion) **and** assigned to an
-agent, so it lands in the agent bucket (`ft task next --for <agent>`). Promoting
-an idea creates a linked task that is groomed and assigned in the same step; it is
-idempotent (a re-run returns the same task) and a failed promote leaves the idea
-untouched.
+agent - a registered agent actor or a loop-role identity such as
+`builder-<task>` - so it lands in the agent bucket (`ft task next --for <agent>`).
+Promoting an idea creates a linked task that is groomed and assigned in the same
+step; it is idempotent (a re-run returns the same task) and a failed promote leaves
+the idea untouched.
 Work that is groomed but unassigned, assigned but ungroomed, or assigned to a
 human still counts as human-next, so an unattended run fails when a task it
 produced is left that way or merely named in the deferred-questions file. A

@@ -771,12 +771,14 @@ func itemHandled(ctx context.Context, tasks *app.TicketService, actors *app.Acto
 	return false, nil
 }
 
-// agentReady is the agent-bucket rule: groomed and assigned to an agent actor.
+// agentReady is the agent-bucket rule: groomed and assigned to an agent
+// identity. Identity resolves a loop role that was never registered, so a role's
+// claimed task is agent-ready; an unregistered non-role assignee still errors.
 func agentReady(ctx context.Context, actors *app.ActorService, task *core.Ticket) (bool, error) {
 	if !task.Groomed || task.AssigneeID == nil {
 		return false, nil
 	}
-	actor, err := actors.Get(ctx, *task.AssigneeID)
+	actor, err := actors.Identity(ctx, *task.AssigneeID)
 	if err != nil {
 		return false, err
 	}

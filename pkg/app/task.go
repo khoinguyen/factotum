@@ -532,16 +532,10 @@ func (s *TicketService) Claim(ctx context.Context, id core.TicketID, actorID cor
 	if task.Kind.CapturedByHuman() {
 		return nil, fmt.Errorf("%w: %s %s is not assignable", core.ErrInvalid, task.Kind, id)
 	}
-	if _, err := s.backend.Actors().Get(ctx, actorID); err != nil {
-		if !errors.Is(err, core.ErrNotFound) {
-			return nil, fmt.Errorf("assignee: %w", err)
-		}
-		// A loop role is a mailbox a session registers as a run, not an Actor
-		// record, so it is a valid claimant under the same grammar that trusts
-		// it as a configured default actor.
-		if _, ok := LoopDefaultRole(string(actorID)); !ok {
-			return nil, fmt.Errorf("assignee: %w", err)
-		}
+	// Identity accepts a loop role as well as a record: a role is a mailbox a
+	// session registers as a run, so it needs no Actor record to hold work.
+	if _, err := actorIdentity(ctx, s.backend.Actors(), actorID); err != nil {
+		return nil, fmt.Errorf("assignee: %w", err)
 	}
 	if task.AssigneeID != nil && *task.AssigneeID != actorID {
 		return nil, fmt.Errorf("%w: task %s is already assigned to %s", core.ErrConflict, id, *task.AssigneeID)

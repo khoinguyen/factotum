@@ -960,7 +960,8 @@ func (d *Deps) resolveClaimActor(ctx context.Context, ref string, fromDefault bo
 		return nil, parseErr
 	}
 	if role, ok := app.LoopDefaultRole(string(id)); ok {
-		return &core.Actor{ID: role, Kind: core.ActorAgent, Name: string(role), Active: true}, nil
+		synthetic := app.RoleActor(role)
+		return &synthetic, nil
 	}
 	return nil, err
 }

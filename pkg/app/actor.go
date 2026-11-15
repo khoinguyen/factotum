@@ -61,6 +61,34 @@ func (s *ActorService) Get(ctx context.Context, id core.ActorID) (*core.Actor, e
 	return s.backend.Actors().Get(ctx, id)
 }
 
+// Identity resolves an actor id to the identity it acts as: the registered record
+// when there is one, otherwise a loop-role default as an active agent. A loop role
+// is the mailbox a session registers as a run, not a stored Actor record, so it
+// needs no registration; any other unregistered id stays ErrNotFound. Readiness,
+// grooming, and claim share this resolution, so a role-assigned task counts as
+// agent work on every surface that judges it.
+func (s *ActorService) Identity(ctx context.Context, id core.ActorID) (*core.Actor, error) {
+	return actorIdentity(ctx, s.backend.Actors(), id)
+}
+
+func actorIdentity(ctx context.Context, actors store.ActorRepo, id core.ActorID) (*core.Actor, error) {
+	actor, err := actors.Get(ctx, id)
+	if err == nil || !errors.Is(err, core.ErrNotFound) {
+		return actor, err
+	}
+	if role, ok := LoopDefaultRole(string(id)); ok {
+		synthetic := RoleActor(role)
+		return &synthetic, nil
+	}
+	return nil, err
+}
+
+// RoleActor is the identity a loop role acts as: an active agent named by its
+// role id. It is synthesized, never stored - the role is a mailbox, not a record.
+func RoleActor(role core.ActorID) core.Actor {
+	return core.Actor{ID: role, Kind: core.ActorAgent, Name: string(role), Active: true}
+}
+
 func (s *ActorService) List(ctx context.Context) ([]*core.Actor, error) {
 	return s.backend.Actors().List(ctx)
 }

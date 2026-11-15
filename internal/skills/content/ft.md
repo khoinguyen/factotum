@@ -147,6 +147,8 @@ ft task create -p <project> -t "Short imperative title" -r <repo> \
   --body "Context and acceptance criteria." --dep <blocking-task>
 ```
 
+A note's `author` is the caller the invocation is attributed to - the same actor that stamps its event (see *Chief sessions*) - so a note a loop role wrote carries that role, and authorship is what keeps `ft task note backfill` from reading an agent's note as machine text.
+
 A bug, TODO, missing test, or follow-up spotted while working is a task: create
 it and link it (a note, or `--dep`). Update the graph in the same session as the
 code.

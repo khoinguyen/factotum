@@ -18,9 +18,12 @@ import (
 type Snapshot struct {
 	Project *core.Project
 	Tasks   []*core.Ticket
-	Actors  map[core.ActorID]core.Actor
-	Graph   *graph.Graph
-	Ready   graph.ReadyBucket
+	// Actors is the identity map readiness classifies against: the registered
+	// Actor records plus a synthesized agent identity for a role-shaped assignee
+	// that has no record.
+	Actors map[core.ActorID]core.Actor
+	Graph  *graph.Graph
+	Ready  graph.ReadyBucket
 }
 
 // LoadSnapshot loads a project's state and evaluates readiness at now, so
@@ -38,10 +41,7 @@ func LoadSnapshot(ctx context.Context, backend store.Backend, projectID core.Pro
 	if err != nil {
 		return nil, err
 	}
-	actorMap := make(map[core.ActorID]core.Actor, len(actors))
-	for _, actor := range actors {
-		actorMap[actor.ID] = *actor
-	}
+	actorMap := actorIdentities(actors, tasks)
 
 	copied := make([]core.Ticket, 0, len(tasks))
 	for _, task := range tasks {
@@ -77,10 +77,7 @@ func LoadAllSnapshot(ctx context.Context, backend store.Backend, now time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	actorMap := make(map[core.ActorID]core.Actor, len(actors))
-	for _, actor := range actors {
-		actorMap[actor.ID] = *actor
-	}
+	actorMap := actorIdentities(actors, tasks)
 
 	copied := make([]core.Ticket, 0, len(tasks))
 	for _, task := range tasks {
@@ -97,6 +94,32 @@ func LoadAllSnapshot(ctx context.Context, backend store.Backend, now time.Time) 
 		Graph:  built,
 		Ready:  built.ReadyByActor(actorMap),
 	}, nil
+}
+
+// actorIdentities is the actor map readiness classifies against: the registered
+// records, plus the loop-role identity of any assignee that has no record. A role
+// is a mailbox a session registers as a run, so a role-assigned task is agent
+// work even though the role was never registered. The synthetic entry carries the
+// role id as its name, so actor display is unchanged; a registered record always
+// wins over the role grammar.
+func actorIdentities(actors []*core.Actor, tasks []*core.Ticket) map[core.ActorID]core.Actor {
+	out := make(map[core.ActorID]core.Actor, len(actors))
+	for _, actor := range actors {
+		out[actor.ID] = *actor
+	}
+	for _, task := range tasks {
+		if task.AssigneeID == nil {
+			continue
+		}
+		id := *task.AssigneeID
+		if _, ok := out[id]; ok {
+			continue
+		}
+		if role, ok := LoopDefaultRole(string(id)); ok {
+			out[role] = RoleActor(role)
+		}
+	}
+	return out
 }
 
 // externalCaptureDeps returns the dependency ids a task set references but does

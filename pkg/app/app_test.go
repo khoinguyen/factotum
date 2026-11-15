@@ -232,6 +232,77 @@ func TestAssignAndReadyByActor(t *testing.T) {
 	}
 }
 
+// TestReadyByActorResolvesLoopRoles pins the readiness half of the actor rule
+// claim already follows: a loop role is a mailbox a session registers as a run,
+// not an Actor record, so a groomed task it claimed is agent work with no
+// registration. A registered human and an unregistered non-role id stay in the
+// human bucket, exactly as before.
+func TestReadyByActorResolvesLoopRoles(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+
+	human, err := h.actors.Add(ctx, core.ActorHuman, "Khoi")
+	if err != nil {
+		t.Fatalf("Add(human) error = %v", err)
+	}
+	agent, err := h.actors.Add(ctx, core.ActorAgent, "claude")
+	if err != nil {
+		t.Fatalf("Add(agent) error = %v", err)
+	}
+
+	groomed := func(title string) *core.Ticket {
+		task, err := h.tasks.Add(ctx, TicketInput{
+			ProjectID:          project.ID,
+			Title:              title,
+			Groomed:            true,
+			AcceptanceCriteria: []string{"done"},
+		})
+		if err != nil {
+			t.Fatalf("Add(%q) error = %v", title, err)
+		}
+		return task
+	}
+
+	roleTask := groomed("claimed by a loop role")
+	if _, err := h.tasks.Claim(ctx, roleTask.ID, core.ActorID("builder-t-1"), false); err != nil {
+		t.Fatalf("Claim(loop role) error = %v", err)
+	}
+	registeredAgentTask := groomed("registered agent")
+	if _, err := h.tasks.Assign(ctx, registeredAgentTask.ID, &agent.ID); err != nil {
+		t.Fatalf("Assign(agent) error = %v", err)
+	}
+	humanTask := groomed("human")
+	if _, err := h.tasks.Assign(ctx, humanTask.ID, &human.ID); err != nil {
+		t.Fatalf("Assign(human) error = %v", err)
+	}
+
+	unregistered := func(title, assignee string) *core.Ticket {
+		id := core.ActorID(assignee)
+		task, err := h.tasks.Add(ctx, TicketInput{
+			ProjectID:          project.ID,
+			Title:              title,
+			Groomed:            true,
+			AcceptanceCriteria: []string{"done"},
+			AssigneeID:         &id,
+		})
+		if err != nil {
+			t.Fatalf("Add(%q) error = %v", title, err)
+		}
+		return task
+	}
+	typoTask := unregistered("typo'd role", "builer-t-1")
+	lookalikeTask := unregistered("role lookalike", "builder-gpt-4")
+
+	snapshot := mustSnapshot(t, h, project.ID)
+	if !equalIDs(snapshot.Ready.Agent, []core.TicketID{roleTask.ID, registeredAgentTask.ID}) {
+		t.Fatalf("Ready.Agent = %v, want [%s %s]", snapshot.Ready.Agent, roleTask.ID, registeredAgentTask.ID)
+	}
+	if !equalIDs(snapshot.Ready.Human, []core.TicketID{humanTask.ID, typoTask.ID, lookalikeTask.ID}) {
+		t.Fatalf("Ready.Human = %v, want [%s %s %s]", snapshot.Ready.Human, humanTask.ID, typoTask.ID, lookalikeTask.ID)
+	}
+}
+
 func TestLoadAllSnapshotMergesProjects(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

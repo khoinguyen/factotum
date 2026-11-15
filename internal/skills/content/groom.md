@@ -168,7 +168,9 @@ Every PO answer resolves to exactly one of:
 A completed session leaves **agent-ready** tasks: every task it produces is
 `groomed` (it carries at least one acceptance criterion) **and** assigned to an
 agent, so it lands in the agent bucket (`ft task next --for <agent>`). Promoting
-an idea creates a linked task that is groomed and assigned in the same step.
+an idea creates a linked task that is groomed and assigned in the same step; it is
+idempotent (a re-run returns the same task) and a failed promote leaves the idea
+untouched.
 Work that is groomed but unassigned, or assigned but ungroomed, still counts as
 human-next. Genuinely human items (product decisions, human testing and review)
 stay human on purpose and are named in the report.

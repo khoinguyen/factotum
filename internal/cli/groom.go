@@ -211,6 +211,7 @@ func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groo
 		return groom.SessionRecord{}, err
 	}
 	if runErr != nil {
+		d.printHarnessStderr(outcome)
 		return groom.SessionRecord{}, runErr
 	}
 
@@ -299,6 +300,21 @@ func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groo
 		return groom.SessionRecord{}, err
 	}
 	return record, nil
+}
+
+// printHarnessStderr reports a failed session's harness stderr tail as the same
+// `stderr:` block `ft run` prints, so a groom failure names why instead of only
+// its exit code. The run service already bounded the tail; structured output
+// stays clean so the machine-readable error envelope is not polluted with text.
+func (d *Deps) printHarnessStderr(outcome *app.ProjectRunOutcome) {
+	if outcome == nil || d.structured() {
+		return
+	}
+	stderr := strings.TrimSpace(outcome.Stderr)
+	if stderr == "" {
+		return
+	}
+	_, _ = fmt.Fprintf(d.Err, "stderr:\n%s\n", stderr)
 }
 
 // groomMode names a session's mode for its manifest and output. A session is

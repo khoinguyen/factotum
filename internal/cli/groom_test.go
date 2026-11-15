@@ -419,6 +419,99 @@ func TestGroomCommandFailsWhenOutputsMissing(t *testing.T) {
 	}
 }
 
+// TestGroomCommandPrintsHarnessStderrOnFailure proves a session the harness
+// killed reports why: the harness's stderr tail is printed as the same
+// `stderr:` block `ft run` emits, so the failure names the cause instead of only
+// the exit code.
+func TestGroomCommandPrintsHarnessStderrOnFailure(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("task", "create", "-p", projectID, "-t", "Add widget")
+
+	promptPath := filepath.Join(t.TempDir(), "prompt.md")
+	mustWrite(t, promptPath, "# Grooming session prompt\n")
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{
+		Stderr:   []byte("agent said: no API key configured\n"),
+		ExitCode: 3,
+	})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	_, stderrOut, err := r.runSplitErr("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, app.ErrRunFailed) {
+		t.Fatalf("groom error = %v, want ErrRunFailed", err)
+	}
+	if want := "stderr:\nagent said: no API key configured"; !strings.Contains(stderrOut, want) {
+		t.Fatalf("groom stderr missing the harness's stderr block %q:\n%s", want, stderrOut)
+	}
+}
+
+// TestGroomCommandBoundsHarnessStderr pins that the reported block carries the
+// bounded tail, not the whole stream: a chatty harness cannot flood the
+// terminal, and the reason it failed last is still there.
+func TestGroomCommandBoundsHarnessStderr(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("task", "create", "-p", projectID, "-t", "Add widget")
+
+	promptPath := filepath.Join(t.TempDir(), "prompt.md")
+	mustWrite(t, promptPath, "# Grooming session prompt\n")
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{
+		Stderr:   []byte("start-of-stream\n" + strings.Repeat("x", 6000) + "\nfatal: no API key\n"),
+		ExitCode: 3,
+	})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	_, stderrOut, err := r.runSplitErr("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, app.ErrRunFailed) {
+		t.Fatalf("groom error = %v, want ErrRunFailed", err)
+	}
+	for _, want := range []string{"stderr:", "... [truncated]", "fatal: no API key"} {
+		if !strings.Contains(stderrOut, want) {
+			t.Fatalf("groom stderr missing %q:\n%s", want, stderrOut)
+		}
+	}
+	if strings.Contains(stderrOut, "start-of-stream") {
+		t.Fatalf("groom stderr carried the head of an unbounded stream:\n%s", stderrOut)
+	}
+}
+
+// TestGroomCommandStructuredOutputOmitsStderrBlock keeps json/yaml failures
+// machine-readable: the harness's error stream is a text block only, so a
+// structured caller reads the error envelope without interleaved prose.
+func TestGroomCommandStructuredOutputOmitsStderrBlock(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("task", "create", "-p", projectID, "-t", "Add widget")
+
+	promptPath := filepath.Join(t.TempDir(), "prompt.md")
+	mustWrite(t, promptPath, "# Grooming session prompt\n")
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{
+		Stderr:   []byte("agent said: no API key configured\n"),
+		ExitCode: 3,
+	})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	_, stderrOut, err := r.runSplitErr("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
+		"-o", "json", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, app.ErrRunFailed) {
+		t.Fatalf("groom error = %v, want ErrRunFailed", err)
+	}
+	if strings.Contains(stderrOut, "agent said: no API key configured") {
+		t.Fatalf("structured groom output carried the text stderr block:\n%s", stderrOut)
+	}
+}
+
 // runGroomCapture executes the groom command and returns stdout plus the error
 // without failing the test, so a table can drive both clean and rejected runs.
 func runGroomCapture(r *runner, args ...string) (string, error) {

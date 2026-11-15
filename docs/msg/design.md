@@ -117,12 +117,13 @@ stored on the entity, so `core` stays pure.
 - `queued`: at rest; the only state a claim may pick up.
 - `delivered`: leased to exactly one run; `LeaseUntil` bounds ownership. Not terminal.
 - `read`: the success terminal ack; redelivery stops.
-- `failed`: terminal. Reached by an explicit `ft msg agent ack --state failed -e <reason>`, or by
-  lease expiry once `Attempts` reaches `MaxAttempts`. An operator can requeue it with the retry
-  verb (proposed, not built — section 11).
+- `failed`: terminal. Reached by an explicit `ft msg agent ack <message> --run <run> --state failed
+  -e <reason>`, or by lease expiry once `Attempts` reaches `MaxAttempts`. An operator can requeue it
+  with the retry verb (proposed, not built — section 11).
 
-`read` is idempotent: a repeat `ft msg agent ack --state read` on an already-`read` message is a
-no-op success, so a receiver that crashes after injecting but before acking can safely retry.
+`read` is idempotent: a repeat `ft msg agent ack <message> --run <run> --state read` on an
+already-`read` message is a no-op success, so a receiver that crashes after injecting but before
+acking can safely retry.
 
 ## 4. Addressing
 

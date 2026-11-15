@@ -449,60 +449,94 @@ func ftCommandLines(snippets []string) []string {
 // block line and every inline code span. It is the raw material both the
 // invocation parser and the drift guard's blind-spot check read.
 func skillCodeSnippets(body string) []string {
-	return codeSnippets(body, nil)
+	snippets, _ := scanCode(body, nil)
+	return snippets
 }
 
-// codeSnippets returns the code a document presents as shell. skipFence, when
-// set, receives each fence's info string and drops that block's lines when it
-// reports true. The exemption needs the doc to close the block: a fence still
-// open at the end of the file keeps its lines, so a missing close fence can never
-// hide the rest of the file from the check. Indented and `~~~` fences are not
-// read, as in the skills checker; no doc in the repo uses either.
-func codeSnippets(body string, skipFence func(info string) bool) []string {
-	var out []string
-	inFence := false
+// scanCode returns the code a document presents as shell — every fenced block
+// line, every ft invocation indented as code, and every inline code span — plus
+// whether the document left a fence open. skipFence, when set, receives each
+// fence's info string and drops that block's lines when it reports true. The
+// exemption needs the doc to close the block: a fence still open at the end of the
+// file keeps its lines, so a missing close fence can never hide the rest of the
+// file from the check.
+//
+// Every form markdown renders as code is read, because a form the walk skips is a
+// place a stale command hides and passes. A fence may use ``` or ~~~, be indented
+// (as inside a list), and be longer than three markers; it closes only on its own
+// marker repeated at least as many times, so a shorter fence inside a longer one
+// does not end it early. Four-space indentation is also code, but it is the same
+// indentation markdown gives a list continuation, so only a line that reads as an
+// ft invocation is taken from it — prose that merely mentions ft stays out of the
+// walk, and no ft command can hide in an indented block.
+func scanCode(body string, skipFence func(info string) bool) (snippets []string, unterminated bool) {
+	var out, pending []string
+	var marker byte
+	var run int
 	exempt := false
-	var pending []string
 	for _, raw := range strings.Split(body, "\n") {
 		line := strings.TrimSpace(raw)
-		if strings.HasPrefix(line, "```") {
-			if !inFence {
-				info := strings.TrimSpace(strings.TrimPrefix(line, "```"))
-				exempt = skipFence != nil && skipFence(info)
-				inFence = true
-				pending = nil
+		if marker != 0 {
+			if fenceClose(line, marker, run) {
+				if !exempt {
+					out = append(out, pending...)
+				}
+				marker, run, exempt, pending = 0, 0, false, nil
 				continue
 			}
-			inFence = false
-			if !exempt {
-				out = append(out, pending...)
-			}
-			exempt = false
-			pending = nil
+			pending = append(pending, line)
 			continue
 		}
-		if inFence {
-			pending = append(pending, line)
+		if m, n, info, ok := fenceOpen(line); ok {
+			marker, run = m, n
+			exempt = skipFence != nil && skipFence(info)
+			continue
+		}
+		if strings.HasPrefix(raw, "    ") {
+			if command, ok := asFTCommand(line); ok {
+				out = append(out, command)
+			}
+			out = append(out, inlineCode(line)...)
 			continue
 		}
 		out = append(out, inlineCode(line)...)
 	}
 	// An unterminated design fence is not exempt.
-	out = append(out, pending...)
-	return out
+	if marker != 0 {
+		out = append(out, pending...)
+	}
+	return out, marker != 0
 }
 
-// unterminatedFence reports whether body opens a fenced code block it never
-// closes. Such a doc moves commands in or out of a block silently, so the drift
-// check reports it instead of guessing where the block ended.
-func unterminatedFence(body string) bool {
-	inFence := false
-	for _, raw := range strings.Split(body, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(raw), "```") {
-			inFence = !inFence
-		}
+// fenceOpen reports whether line opens a fenced code block, returning its marker
+// byte, the marker run's length, and the info string. A backtick fence's info
+// string may not hold a backtick, so inline code is not read as a fence.
+func fenceOpen(line string) (marker byte, run int, info string, ok bool) {
+	if line == "" || line[0] != '`' && line[0] != '~' {
+		return 0, 0, "", false
 	}
-	return inFence
+	marker = line[0]
+	for run < len(line) && line[run] == marker {
+		run++
+	}
+	if run < 3 {
+		return 0, 0, "", false
+	}
+	info = strings.TrimSpace(line[run:])
+	if marker == '`' && strings.ContainsRune(info, '`') {
+		return 0, 0, "", false
+	}
+	return marker, run, info, true
+}
+
+// fenceClose reports whether line closes a fence opened by run copies of marker:
+// the same marker, repeated at least run times, with nothing after it.
+func fenceClose(line string, marker byte, run int) bool {
+	n := 0
+	for n < len(line) && line[n] == marker {
+		n++
+	}
+	return n == len(line) && n >= run
 }
 
 func asFTCommand(line string) (string, bool) {

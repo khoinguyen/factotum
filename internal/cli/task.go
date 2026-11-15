@@ -418,7 +418,11 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 						if note.Author != "" {
 							author = actorName(actors, note.Author)
 						}
-						deps.printf("%s (%s)\n\n", author, note.CreatedAt.UTC().Format(time.RFC3339))
+						marker := ""
+						if note.System {
+							marker = " [system]"
+						}
+						deps.printf("%s (%s)%s\n\n", author, note.CreatedAt.UTC().Format(time.RFC3339), marker)
 						body := note.Body
 						for _, link := range note.Links {
 							body += fmt.Sprintf("\n[%s] %s", link.Kind, link.URL)
@@ -639,21 +643,21 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ids := make([]string, 0, len(result.Marked))
+			notes := make([]backfilledNote, 0, len(result.Marked))
 			for _, ref := range result.Marked {
-				ids = append(ids, ref.NoteID)
+				notes = append(notes, backfilledNote{NoteID: ref.NoteID, TaskID: string(ref.TaskID), Body: ref.Body})
 			}
 			out := noteBackfillResult{
 				Scanned: result.Scanned,
 				Marked:  len(result.Marked),
-				Notes:   ids,
+				Notes:   notes,
 				DryRun:  dryRun,
 				Project: string(project),
 			}
 			return deps.emit(out, func() {
 				fields := []field{f("scanned", out.Scanned), f("marked", out.Marked)}
-				if len(out.Notes) > 0 {
-					fields = append(fields, f("notes", strings.Join(out.Notes, ", ")))
+				for _, note := range out.Notes {
+					fields = append(fields, f("note "+note.NoteID, noteSnippet(note.Body)))
 				}
 				if out.DryRun {
 					fields = append(fields, f("dry_run", true))
@@ -663,7 +667,7 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 			})
 		},
 	}
-	backfill.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
+	backfill.Flags().StringVarP(&projectID, "project", "p", "", "project id (default: the configured project)")
 	backfill.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be marked without writing")
 
 	cmd.AddCommand(add, backfill)
@@ -1938,3 +1942,15 @@ func groomedFilter(cmd *cobra.Command, groomed, ungroomed bool) (*bool, error) {
 }
 
 func boolPtr(value bool) *bool { return &value }
+
+// noteSnippet is the one-line preview `task note backfill` prints for a marked
+// note. The author guard is inert on old data, so the body opening is the thing
+// a reviewer actually checks before (or after) the pass.
+func noteSnippet(body string) string {
+	snippet := strings.Join(strings.Fields(body), " ")
+	runes := []rune(snippet)
+	if len(runes) > 60 {
+		snippet = string(runes[:57]) + "..."
+	}
+	return snippet
+}

@@ -537,6 +537,18 @@ func testTaskSearch(t *testing.T, be store.Backend) {
 	}
 	assertTaskSearch(t, repo, ctx, sysPrj, "sysprobe", []core.TicketID{"t-sysnote"})
 
+	// Marking an existing note as system reindexes it too: the backfill path
+	// relies on this direction, not only on insert-with-system.
+	backfilled := &core.Ticket{ID: "t-sysnote", ProjectID: "prj-4", Kind: core.KindTask, Title: "quiet", Description: "nothing here", Status: core.StatusTodo, Notes: []core.Note{
+		{ID: "note-sys", Body: "sysprobe only in the generated note", System: true},
+		{ID: "note-human", Body: "humanprobe in a real note"},
+	}}
+	if err := repo.Update(ctx, backfilled); err != nil {
+		t.Fatalf("Update(t-sysnote backfilled) error = %v", err)
+	}
+	assertTaskSearch(t, repo, ctx, sysPrj, "sysprobe", nil)
+	assertTaskSearch(t, repo, ctx, sysPrj, "humanprobe", []core.TicketID{"t-sysnote"})
+
 	// Empty query returns everything in scope, ordered by title then id.
 	assertTaskSearch(t, repo, ctx, prj, "", []core.TicketID{"t-body", "t-title", "t-note"})
 

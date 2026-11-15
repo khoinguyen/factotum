@@ -795,10 +795,12 @@ func (s *TicketService) AddNote(ctx context.Context, id core.TicketID, in NoteIn
 }
 
 // TriageNoteRef identifies a note a triage-note backfill marked, or would mark
-// in a dry run.
+// in a dry run. Body carries the note text so the command can quote it: with the
+// author guard inert on old data, the body is what a reviewer checks.
 type TriageNoteRef struct {
 	TaskID core.TicketID
 	NoteID string
+	Body   string
 }
 
 // TriageNoteBackfill is the outcome of one backfill pass: the tickets inspected
@@ -826,7 +828,7 @@ func (s *TicketService) BackfillTriageNotes(ctx context.Context, filter store.Ti
 			if !core.IsTriageTemplateNote(task.Notes[i]) {
 				continue
 			}
-			result.Marked = append(result.Marked, TriageNoteRef{TaskID: task.ID, NoteID: task.Notes[i].ID})
+			result.Marked = append(result.Marked, TriageNoteRef{TaskID: task.ID, NoteID: task.Notes[i].ID, Body: task.Notes[i].Body})
 			task.Notes[i].System = true
 			changed = true
 		}

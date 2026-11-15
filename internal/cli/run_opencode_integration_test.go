@@ -31,18 +31,31 @@ import (
 // opt-in.
 const realRunGate = "FACTOTUM_RUN_SMOKE_MODEL"
 
+// runSmokeArtifactCheck is the guard the real-run smoke applies to the artifact
+// the prompt asked the agent to write. It is a variable so a test can replace it
+// with a recorder and prove the smoke consults it; the real smokes leave it at
+// runArtifactError.
+var runSmokeArtifactCheck = runArtifactError
+
 func TestRealRunSmoke(t *testing.T) {
-	realRunSmoke(t, opencode.Name, opencode.DefaultBinary, "DONE.md")
+	realRunSmoke(t, newRunner(t), opencode.DefaultBinary, "DONE.md",
+		"--sandbox", "local", "--harness", opencode.Name, "--allow-host")
 }
 
 // TestRealRunSmokeV2 pins that the V2 harness (`--harness opencode2`) drives a
 // real OpenCode V2 binary end to end: headless `run`, the `--model` flag, and
 // completion, against a live model.
 func TestRealRunSmokeV2(t *testing.T) {
-	realRunSmoke(t, opencode.NameV2, opencode.DefaultBinaryV2, "DONE2.md")
+	realRunSmoke(t, newRunner(t), opencode.DefaultBinaryV2, "DONE2.md",
+		"--sandbox", "local", "--harness", opencode.NameV2, "--allow-host")
 }
 
-func realRunSmoke(t *testing.T, harnessName, binary, doneFile string) {
+// realRunSmoke drives one `ft run` and asserts it finished, reached
+// ready_for_review, and delivered the artifact the prompt asked for. The runner
+// and the harness selection are parameters so the hermetic hookup test can drive
+// this exact function through fake adapters, watching the artifact check without
+// a model or a network.
+func realRunSmoke(t *testing.T, r *runner, binary, doneFile string, selection ...string) {
 	t.Helper()
 	model := os.Getenv(realRunGate)
 	if model == "" {
@@ -51,8 +64,6 @@ func realRunSmoke(t *testing.T, harnessName, binary, doneFile string) {
 	if _, err := exec.LookPath(binary); err != nil {
 		t.Skipf("%s is not on PATH: %v", binary, err)
 	}
-
-	r := newRunner(t)
 	r.getenv = hermeticGetenv
 
 	// A local checkout the launcher resolves in place (no clone, no network),
@@ -65,14 +76,12 @@ func realRunSmoke(t *testing.T, harnessName, binary, doneFile string) {
 		"-b", "Create a file named "+doneFile+" in the working directory containing exactly the line: done"))
 
 	workspace := t.TempDir()
-	out := r.run("--full", "run", taskID,
-		"--sandbox", "local",
-		"--harness", harnessName,
-		"--allow-host",
+	out := r.run(append([]string{
+		"--full", "run", taskID,
 		"--model", model,
 		"--workspace", workspace,
 		"--arg=--auto",
-	)
+	}, selection...)...)
 	t.Logf("ft run output:\n%s", out)
 
 	if !strings.Contains(out, "run: finished") {
@@ -86,7 +95,7 @@ func realRunSmoke(t *testing.T, harnessName, binary, doneFile string) {
 	}
 	// A clean exit and a reviewed task are not proof the agent worked: a no-op
 	// harness reaches both. The artifact it was asked to write is.
-	if err := runArtifactError(checkout, doneFile, "done"); err != nil {
+	if err := runSmokeArtifactCheck(checkout, doneFile, "done"); err != nil {
 		t.Errorf("run did not deliver the agent's work: %v", err)
 	}
 }

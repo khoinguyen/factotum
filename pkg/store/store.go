@@ -267,8 +267,10 @@ type MessageRepo interface {
 	// moved. It is the crash-recovery sweep.
 	RequeueExpired(ctx context.Context, now time.Time, maxAttempts int) (int, error)
 
-	// Prune removes terminal messages in states older than before and returns
-	// how many were removed.
+	// Prune removes terminal messages in states whose UpdatedAt — the time the
+	// message reached its terminal state, not its creation — is before the
+	// cutoff and returns how many were removed. A non-terminal state in states
+	// matches nothing, so a sweep can never delete queued or in-flight work.
 	Prune(ctx context.Context, before time.Time, states []core.MessageState) (int, error)
 }
 

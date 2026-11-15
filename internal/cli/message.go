@@ -54,6 +54,21 @@ type messageRunEntry struct {
 	Project    string `json:"project" yaml:"project"`
 }
 
+// messageDetail is the full-message shape of `ft msg get`: the summary fields
+// plus the content and reply edge, so a machine consumer can read the message
+// the text block prints instead of falling back to the inbox row.
+type messageDetail struct {
+	ID      string `json:"id" yaml:"id"`
+	From    string `json:"from,omitempty" yaml:"from,omitempty"`
+	To      string `json:"to" yaml:"to"`
+	TaskID  string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+	ReplyTo string `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
+	State   string `json:"state" yaml:"state"`
+	Created string `json:"created_at" yaml:"created_at"`
+	Body    string `json:"body" yaml:"body"`
+	Project string `json:"project" yaml:"project"`
+}
+
 // messageEntry is one row of `ft msg inbox`.
 type messageEntry struct {
 	ID      string `json:"id" yaml:"id"`
@@ -192,7 +207,7 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(messageEntryFrom(message), func() { printMessageBlock(deps, message) })
+			return deps.emit(messageDetailFrom(message), func() { printMessageBlock(deps, message) })
 		},
 	}
 
@@ -664,6 +679,27 @@ func messageEntryFrom(message *core.Message) messageEntry {
 		entry.TaskID = string(*message.TaskID)
 	}
 	return entry
+}
+
+func messageDetailFrom(message *core.Message) messageDetail {
+	detail := messageDetail{
+		ID:      string(message.ID),
+		To:      string(message.To),
+		State:   string(message.State),
+		Created: message.CreatedAt.UTC().Format(time.RFC3339),
+		Body:    message.Body,
+		Project: string(message.ProjectID),
+	}
+	if message.From != nil {
+		detail.From = string(*message.From)
+	}
+	if message.TaskID != nil {
+		detail.TaskID = string(*message.TaskID)
+	}
+	if message.ReplyTo != nil {
+		detail.ReplyTo = string(*message.ReplyTo)
+	}
+	return detail
 }
 
 func printMessageBlock(deps *Deps, message *core.Message) {

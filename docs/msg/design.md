@@ -285,8 +285,10 @@ type MessageRepo interface {
     // how many moved. It is the crash-recovery sweep.
     RequeueExpired(ctx context.Context, now time.Time, maxAttempts int) (int, error)
 
-    // Prune removes terminal (read/failed) messages older than cutoff and
-    // returns how many were removed.
+    // Prune removes terminal (read/failed) messages whose UpdatedAt — the
+    // time the message reached its terminal state, not its creation — is
+    // before cutoff, and returns how many were removed. A non-terminal state
+    // in states matches nothing.
     Prune(ctx context.Context, before time.Time, states []core.MessageState) (int, error)
 }
 
@@ -344,8 +346,10 @@ contract. The suite must cover, named for what it asserts:
    `MaxAttempts`.
 9. `RequeueExpired`: a `delivered` message past its lease returns to `queued` with `Attempts`
    retained; past `MaxAttempts` it becomes `failed`; a `read` message is untouched.
-10. `Prune`: removes only the requested terminal states before the cutoff; leaves `queued`/
-    `delivered` and younger terminal messages.
+10. `Prune`: removes only the requested terminal states whose `UpdatedAt` (the terminal
+    transition, not `CreatedAt`) is before the cutoff; leaves `queued`/`delivered`, younger
+    terminal messages, and terminal messages whose `CreatedAt` is old but whose ack is recent.
+    A non-terminal state in the request removes nothing.
 11. `Run.Register` upsert: same `(project, actor, host, pid)` returns the same `RunID`; heartbeat
     moves `SeenAt`/`LeaseUntil`; `List` separates live from stale; `Delete` removes.
 

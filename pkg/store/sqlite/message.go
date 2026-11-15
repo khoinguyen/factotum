@@ -372,12 +372,20 @@ func (r *messageRepo) RequeueExpired(ctx context.Context, now time.Time, maxAtte
 }
 
 func (r *messageRepo) Prune(ctx context.Context, before time.Time, states []core.MessageState) (int, error) {
-	if len(states) == 0 {
+	// Only terminal states are prunable; a live state in the request matches
+	// nothing, exactly as the in-memory adapters ignore it.
+	terminal := make([]core.MessageState, 0, len(states))
+	for _, state := range states {
+		if state.Terminal() {
+			terminal = append(terminal, state)
+		}
+	}
+	if len(terminal) == 0 {
 		return 0, nil
 	}
-	placeholdersForStates := placeholders(len(states))
+	placeholdersForStates := placeholders(len(terminal))
 	args := []any{formatTimeKey(before)}
-	for _, state := range states {
+	for _, state := range terminal {
 		args = append(args, string(state))
 	}
 	result, err := r.db.ExecContext(ctx, "DELETE FROM messages WHERE updated_at < ? AND state IN ("+placeholdersForStates+")", args...)

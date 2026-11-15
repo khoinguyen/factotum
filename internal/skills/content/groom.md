@@ -35,7 +35,9 @@ stdin/stdout, runs it **headless** instead. The recorded `mode` reflects this:
 `interactive` (attached, a PO is present), `unattended` (no PO), or `headless`
 (no terminal). Interactive mode needs a backend that can attach a terminal:
 `local` does; `openshell` and `docker` report it unsupported and `ft groom`
-tells you to rerun with `--unattended`.
+tells you to rerun with `--unattended`. An interactive session's terminal output
+is not captured; its record is the five staged documents, captured out of the
+workspace on exit exactly as they are for a headless session.
 
 A **headless** session narrates live progress on stderr, so a long grill is
 visibly alive: `ft: groom session <id> (sandbox=<b> harness=<h>) started`, then a

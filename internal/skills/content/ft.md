@@ -349,12 +349,12 @@ agents" and "Isolation policy" sections carry the rest.
   repository of the configured project (a task-less session such as grooming), writing
   nothing to the graph. They are mutually exclusive; a missing or empty `--prompt-file`
   is an input error (exit 1). On a terminal a single-task or task-less run runs
-  **interactive** (the agent attached) so a human can answer it; `--unattended`, a
-  piped/redirected stdin/stdout, or `--goal` runs **headless**. Interactive needs an
-  attaching backend (`local`; not `openshell`/`docker`, which say to rerun with
-  `--unattended`). A headless run narrates on stderr — `ft: run <task> (sandbox=<b>
-  harness=<h>) started`, then a periodic `still running (Ns)` heartbeat — only when
-  stderr is a terminal and output is text.
+  **interactive** (the agent attached) so a human can answer it, and its run note records
+  the outcome only; `--unattended`, a piped/redirected stdin/stdout, or `--goal` runs
+  **headless**. Interactive needs an attaching backend (`local`; not
+  `openshell`/`docker`, which say to rerun with `--unattended`). A headless run narrates
+  on stderr — `ft: run <task> (sandbox=<b> harness=<h>) started`, then a periodic `still
+  running (Ns)` heartbeat — only when stderr is a terminal and output is text.
 - `ft run --goal <task|milestone|capture>` repeatedly runs the highest-ranked agent-ready
   on-path task until the goal is reached, work stalls, or `--max-tasks N` (0 = no budget)
   is exhausted. Only groomed work assigned to an agent is run; startable but

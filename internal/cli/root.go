@@ -246,7 +246,8 @@ func NewRoot(deps *Deps) *cobra.Command {
 // grammar (app.LoopRole for --actor, app.LoopDefaultRole for a configured
 // default, which the loop also exports for the grooming and architecture roles).
 // A command that opens no caller store cannot check registration, so it stays
-// quiet.
+// quiet. A dropped reference is recorded in ActorDropped, so a command that
+// installs a message receiver (ft run) can say it will launch without one.
 func (d *Deps) bindCaller(cmd *cobra.Command) {
 	if d.Actors != nil {
 		switch {
@@ -257,9 +258,11 @@ func (d *Deps) bindCaller(cmd *cobra.Command) {
 				d.ActorRef = string(actor.ID)
 			case errors.Is(err, core.ErrNotFound):
 				d.warnf("caller %q is not a registered actor; this invocation is unattributed", d.Caller)
+				d.ActorDropped = d.Caller
 				d.ActorRef = ""
 			default:
 				d.warnf("could not resolve caller %q (%v); this invocation is unattributed", d.Caller, err)
+				d.ActorDropped = d.Caller
 				d.ActorRef = ""
 			}
 		case d.ActorRef != "":

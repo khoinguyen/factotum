@@ -2,15 +2,32 @@ package jsonfile
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
 	"github.com/khoinguyen/factotum/pkg/store/conformance"
 )
+
+// storeBase is a fixed instant, so the run and message fixtures sort and live
+// deterministically.
+var storeBase = time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+
+func openAt(t *testing.T, cfg store.Config) store.Backend {
+	t.Helper()
+	backend, err := Open(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	return backend
+}
 
 func TestConformance(t *testing.T) {
 	conformance.Run(t, func(t *testing.T) store.Backend {
@@ -116,5 +133,124 @@ func TestLoadRejectsCorruptFile(t *testing.T) {
 	}
 	if _, err := Open(context.Background(), store.Config{Backend: "jsonfile", Options: map[string]string{"path": path}}); err == nil {
 		t.Fatal("Open() error = nil, want parse error")
+	}
+}
+
+// TestHubAndCLIKeepEveryWrite pins the two-process hub path: an `ft serve` hub
+// and a local `ft` CLI hold their own handle on one jsonfile store, and each
+// must see the other's writes. Before the per-operation file lock, each handle
+// rewrote the whole document from the snapshot it loaded at Open, so the CLI
+// erased the hub's run registration (and the hub could not claim the CLI's
+// message) — the silent loss QA hit with a docker run.
+func TestHubAndCLIKeepEveryWrite(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.json")
+	cfg := store.Config{Backend: "jsonfile", Options: map[string]string{"path": path}}
+
+	hub := openAt(t, cfg)
+	cli := openAt(t, cfg)
+
+	const project = core.ProjectID("prj-1")
+	run := &core.Run{
+		ID:         "run-1",
+		ProjectID:  project,
+		ActorID:    "builder-t-1",
+		Host:       "hub.example",
+		SeenAt:     storeBase,
+		LeaseUntil: storeBase.Add(time.Hour),
+	}
+	if _, err := hub.Runs().Register(ctx, run); err != nil {
+		t.Fatalf("hub Runs().Register() error = %v", err)
+	}
+
+	message := &core.Message{
+		ID:        "msg-1",
+		ProjectID: project,
+		To:        core.RunAddress(run.ID),
+		Body:      "handoff",
+		State:     core.MessageQueued,
+		CreatedAt: storeBase,
+		UpdatedAt: storeBase,
+	}
+	if err := cli.Messages().Create(ctx, message); err != nil {
+		t.Fatalf("cli Messages().Create() error = %v", err)
+	}
+
+	claimed, err := hub.Messages().Claim(ctx, store.ClaimRequest{ProjectID: project, RunID: run.ID})
+	if err != nil {
+		t.Fatalf("hub Messages().Claim() error = %v", err)
+	}
+	if claimed == nil || claimed.ID != message.ID {
+		t.Fatalf("hub Messages().Claim() = %+v, want %s", claimed, message.ID)
+	}
+
+	runs, err := cli.Runs().List(ctx, store.RunFilter{ProjectID: project})
+	if err != nil {
+		t.Fatalf("cli Runs().List() error = %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != run.ID {
+		t.Fatalf("cli Runs().List() = %+v, want run %s", runs, run.ID)
+	}
+
+	fresh := openAt(t, cfg)
+	freshRuns, err := fresh.Runs().List(ctx, store.RunFilter{ProjectID: project})
+	if err != nil {
+		t.Fatalf("fresh Runs().List() error = %v", err)
+	}
+	if len(freshRuns) != 1 {
+		t.Fatalf("fresh Runs().List() = %+v, want the hub's run", freshRuns)
+	}
+	freshMessages, err := fresh.Messages().List(ctx, store.MessageFilter{ProjectID: project})
+	if err != nil {
+		t.Fatalf("fresh Messages().List() error = %v", err)
+	}
+	if len(freshMessages) != 1 || freshMessages[0].ID != message.ID {
+		t.Fatalf("fresh Messages().List() = %+v, want the CLI's message", freshMessages)
+	}
+}
+
+// TestConcurrentWritersLoseNothing writes through several handles at once —
+// one per process — and requires every append to survive. Each write must
+// re-read the document under the file lock instead of persisting the snapshot
+// the handle loaded at Open.
+func TestConcurrentWritersLoseNothing(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.json")
+	cfg := store.Config{Backend: "jsonfile", Options: map[string]string{"path": path}}
+
+	const writers, perWriter = 8, 4
+	backends := make([]store.Backend, writers)
+	for i := range backends {
+		backends[i] = openAt(t, cfg)
+	}
+
+	var wg sync.WaitGroup
+	for w, backend := range backends {
+		wg.Add(1)
+		go func(w int, backend store.Backend) {
+			defer wg.Done()
+			for i := 0; i < perWriter; i++ {
+				event := &core.Event{
+					ID:        core.EventID(fmt.Sprintf("ev-%d-%d", w, i)),
+					ProjectID: "prj-1",
+					Kind:      core.EventKind("task.created"),
+					Summary:   "s",
+					CreatedAt: storeBase,
+				}
+				if err := backend.Events().Append(ctx, event); err != nil {
+					t.Errorf("writer %d Events().Append() error = %v", w, err)
+					return
+				}
+			}
+		}(w, backend)
+	}
+	wg.Wait()
+
+	events, err := openAt(t, cfg).Events().List(ctx, store.EventFilter{})
+	if err != nil {
+		t.Fatalf("Events().List() error = %v", err)
+	}
+	if len(events) != writers*perWriter {
+		t.Fatalf("Events().List() kept %d of %d writes", len(events), writers*perWriter)
 	}
 }

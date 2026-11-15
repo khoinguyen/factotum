@@ -466,13 +466,16 @@ func captureFiles(ctx context.Context, backend isolation.IsolationBackend, h iso
 // names the run's project, so the session's child ft resolves that project
 // rather than whatever project the checkout pins. When the run names an actor it
 // also installs the receiver identity (actor, task) a message plugin registers
-// with; a run with no actor has no receiver, so the plugin is not installed and
-// the session is unmanaged. A nil or task-less run installs no task identity. A
-// complete hub (URL and a non-blank token) makes a launched remote receiver
-// speak the token-gated HTTP transport. A half-configured hub is treated as no
-// hub: the transport always requires the token, so injecting the URL alone or a
-// blank token would only fail-close every message. With no complete hub the
-// receiver falls back to the local ft store, so no hub env is set.
+// with, and the default actor a bare `ft msg send` in the launched session is
+// attributed to - the same pair loop-agent.sh exports, so attribution does not
+// depend on how the session was launched; a run with no actor has no receiver,
+// so the plugin is not installed and the session is unmanaged. A nil or
+// task-less run installs no task identity. A complete hub (URL and a non-blank
+// token) makes a launched remote receiver speak the token-gated HTTP transport.
+// A half-configured hub is treated as no hub: the transport always requires the
+// token, so injecting the URL alone or a blank token would only fail-close every
+// message. With no complete hub the receiver falls back to the local ft store,
+// so no hub env is set.
 func runEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgURL, serveToken string) map[string]string {
 	if project.ID == "" {
 		return nil
@@ -482,6 +485,7 @@ func runEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgUR
 		return env
 	}
 	env[harnesspkg.EnvActor] = string(*actor)
+	env[harnesspkg.EnvDefaultActor] = string(*actor)
 	if task != nil && task.ID != "" {
 		env[harnesspkg.EnvTask] = string(task.ID)
 	}

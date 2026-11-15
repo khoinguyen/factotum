@@ -333,10 +333,11 @@ func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 }
 
 // appendStandalone adds the private-server flag when the variant needs one. A
-// headless launch carries it after the `run` subcommand: V2 2.0.x accepts it
-// only as a run flag, while 2.3.x accepts it there and at top level, so the
-// post-subcommand placement is the one every V2 build takes. The TUI has no
-// subcommand, so there the flag follows the binary directly.
+// headless launch carries it after the `run` subcommand: V2 rejects a global flag
+// placed before a subcommand (`opencode --standalone run` is "Unrecognized flag"
+// on 2.0.27), and the post-subcommand form is the one every V2 build takes. The
+// TUI has no subcommand, so there the flag goes directly after the binary, where
+// both 2.0.x and 2.3.x accept it.
 func (h *Harness) appendStandalone(argv []string) []string {
 	if h.standalone {
 		argv = append(argv, "--standalone")

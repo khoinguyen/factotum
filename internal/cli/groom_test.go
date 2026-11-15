@@ -527,6 +527,17 @@ func TestGroomUnattendedCompletesOrDefers(t *testing.T) {
 			},
 		},
 		{
+			name: "a lazy continuation keeps the list open for the indented continuation",
+			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
+				ready := agentReadyTask(t, r, projectID, "Add widget")
+				open := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Add gadget"))
+				// The column-0 line is a lazy continuation of the item's
+				// paragraph, so the item is still open for the 4-space line.
+				deferred := "# Deferred questions\n\n## Questions\n\n- [ ] Which scope?\nlazy prose\n\n    item: " + open + "\n\n## Resolved\n"
+				return []string{ready, open}, deferred
+			},
+		},
+		{
 			name: "a promoted idea is agent-ready",
 			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
 				ready := agentReadyTask(t, r, projectID, "Add widget")
@@ -1019,6 +1030,26 @@ func TestDeferredIDsWholeTokenMatch(t *testing.T) {
 			name:    "an indented list marker with no enclosing list is code",
 			body:    "## Questions\n\n    - item: t-abc123\n",
 			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "a lazy continuation before the blank line keeps the list open",
+			body: "## Questions\n\n- [ ] Which cache?\nlazy prose\n\n    item: t-abc123\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "a tab in the marker padding counts as columns",
+			body: "## Questions\n\n- \t[ ] Which cache?\n\n       item: t-abc123\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "a tab in ordered marker padding counts as columns",
+			body: "## Questions\n\n1.\tWhich cache?\n\n       item: t-abc123\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "a fenced block after a list closes it, so a later sample is code",
+			body:    "## Questions\n\n- [ ] Which cache?\n\n```\nft task get t-abc123\n```\n\n    ft task get t-def456\n",
+			notWant: []core.TicketID{"t-abc123", "t-def456"},
 		},
 		{
 			name:    "an id in an HTML comment does not count",

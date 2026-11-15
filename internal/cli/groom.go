@@ -729,7 +729,9 @@ func openDeferredQuestions(body string) string {
 	// open item's content column still continue that item, and only four beyond it
 	// start an indented code block. A blank line does not close a list item, so the
 	// open content columns are remembered across blank lines; a heading ends the
-	// paragraph above it, so indented code needs no blank line after one.
+	// paragraph above it, so indented code needs no blank line after one. A lazy
+	// paragraph continuation does not close the item it continues, so an outdent
+	// only pops items when the line starts a new block.
 	var lists []int
 	inParagraph, inCode := false, false
 	for _, line := range strings.Split(htmlCommentPattern.ReplaceAllString(body, ""), "\n") {
@@ -740,19 +742,23 @@ func openDeferredQuestions(body string) string {
 			}
 			continue
 		}
-		if strings.HasPrefix(trimmed, "```") {
-			fence, inParagraph, inCode = "```", false, false
-			continue
-		}
-		if strings.HasPrefix(trimmed, "~~~") {
-			fence, inParagraph, inCode = "~~~", false, false
-			continue
-		}
 		if trimmed == "" {
 			inParagraph = false
 			continue
 		}
 		indent := indentColumns(line)
+		heading := strings.HasPrefix(trimmed, "#")
+		itemCol, isItem := listContentColumn(line)
+		popOutdented := func() {
+			for len(lists) > 0 && indent < lists[len(lists)-1] {
+				lists = lists[:len(lists)-1]
+			}
+		}
+		if isFenceOpen(trimmed) {
+			popOutdented()
+			fence, inParagraph, inCode = trimmed[:3], false, false
+			continue
+		}
 		// An indented code block runs until a non-blank line is no longer indented
 		// as code.
 		if inCode {
@@ -761,8 +767,8 @@ func openDeferredQuestions(body string) string {
 			}
 			inCode = false
 		}
-		for len(lists) > 0 && indent < lists[len(lists)-1] {
-			lists = lists[:len(lists)-1]
+		if !inParagraph || heading || isItem {
+			popOutdented()
 		}
 		// An indented code block cannot interrupt a paragraph, so a continuation
 		// line is prose however far it is indented. Anywhere else, code starts four
@@ -773,10 +779,10 @@ func openDeferredQuestions(body string) string {
 			inCode = true
 			continue
 		}
-		if col, ok := listContentColumn(line); ok {
-			lists = append(lists, col)
+		if isItem {
+			lists = append(lists, itemCol)
 		}
-		inParagraph = !strings.HasPrefix(trimmed, "#")
+		inParagraph = !heading
 		if inResolved {
 			continue
 		}
@@ -788,6 +794,11 @@ func openDeferredQuestions(body string) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// isFenceOpen reports whether trimmed text opens a backtick or tilde fence.
+func isFenceOpen(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")
 }
 
 // codeColumn is the column at which an indented code block starts: four beyond
@@ -802,9 +813,14 @@ func codeColumn(lists []int) int {
 // indentColumns is the width of line's leading whitespace, with a tab advancing
 // to the next multiple of four as markdown renders it.
 func indentColumns(line string) int {
-	col := 0
-	for i := 0; i < len(line); i++ {
-		switch line[i] {
+	return columns(line, 0)
+}
+
+// columns advances col over text's leading whitespace, a tab reaching the next
+// multiple of four as markdown renders it.
+func columns(text string, col int) int {
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
 		case ' ':
 			col++
 		case '\t':
@@ -818,7 +834,9 @@ func indentColumns(line string) int {
 
 // listContentColumn reports the column a list item's content starts at when line
 // opens one, so a line indented up to three columns beyond it reads as that
-// item's prose rather than as an indented code block.
+// item's prose rather than as an indented code block. Markdown measures the
+// padding after a marker in columns, and four columns of it at most: a wider gap
+// leaves the item's code block at one column past the marker.
 func listContentColumn(line string) (int, bool) {
 	col := indentColumns(line)
 	rest := strings.TrimLeft(line, " \t")
@@ -838,14 +856,8 @@ func listContentColumn(line string) (int, bool) {
 		}
 		marker++
 	}
-	pad := 0
-	for _, c := range rest[marker:] {
-		if c != ' ' && c != '\t' {
-			break
-		}
-		pad++
-	}
-	if pad == 0 {
+	pad := columns(rest[marker:], col+marker) - (col + marker)
+	if pad == 0 || pad > 4 {
 		pad = 1
 	}
 	return col + marker + pad, true

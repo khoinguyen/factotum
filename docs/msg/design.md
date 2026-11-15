@@ -219,7 +219,7 @@ type MessageFilter struct {
     ProjectID core.ProjectID
     To        *core.Address   // exact stored To match
     Actor     *core.ActorID   // claimable by this actor: To == actor:<id>
-    Run       *core.RunID     // claimable by this run: To == run:<id>, or To == task:<Run.TaskID>
+    Run       *core.RunID     // exact stored To == run:<id>; never task:<t> (that is the Task filter)
     Task      *core.TicketID  // Message.TaskID == <id> (the originating task, whatever To became)
     States    []core.MessageState
     Since     *time.Time
@@ -288,6 +288,13 @@ Design notes:
   memory uses its mutex, sqlite a transaction, jsonfile its write lock, jsondir its lock file.
   Claimability is the union of the run address, the run's actor address, and the run's task
   address, matching the resolution rules in section 4.
+- **The `Run` filter matches only the run's own address** (`To == run:<id>`), never
+  `To == task:<Run.TaskID>`: a `RunID` alone gives the store no `TaskID` to compare against, and
+  inferring one from a live run would make the filter's meaning depend on registry timing.
+  Task-scoped listing is the `Task` filter, which matches `Message.TaskID` whatever `To` became. A
+  run whose `TaskID` is nil therefore has no task address at all: it matches no stored `task:`
+  message in a list, and because `Claim` takes that address from `ClaimRequest.Recipient` (nil for
+  such a run), it claims no `task:` message either.
 - **Ordering is FIFO** by `CreatedAt` then `ID`, so delivery is deterministic and testable.
 - **`RequeueExpired`** is called by receivers/serve on a timer and on startup, so a crashed
   receiver's in-flight message is not stuck in `delivered` forever. It is also how at-least-once
@@ -303,19 +310,19 @@ contract. The suite must cover, named for what it asserts:
 1. `Create`/`Get`/`List` round-trip; duplicate `Create` → `ErrAlreadyExists`; `Get` missing →
    `ErrNotFound`.
 2. `Validate`: empty id, empty `To`, unknown state, oversize body, empty project are rejected.
-3. `List` filters: by project, exact `To`, state set, `Since`, and `Limit` (and the `Actor`/`Run`/
-   `Task` claimability filters — the `Task` filter matches `Message.TaskID`, so a message
-   resolved to `run:`/`actor:` is still returned); ordering is oldest first; no cross-project
-   leakage.
+3. `List` filters: by project, exact `To`, state set, `Since`, and `Limit`; `Actor` and `Run` are
+   exact stored addresses (`actor:<id>`, `run:<id>`), while `Task` matches `Message.TaskID`
+   whatever `To` became, so a message resolved to `run:`/`actor:` is still returned; ordering is
+   oldest first; no cross-project leakage.
 4. `Claim`: returns the oldest claimable queued message; skips non-claimable addresses; returns
    `ErrNotFound` on empty; sets `State=delivered`, `RunID`, `LeaseUntil`, and increments
    `Attempts`.
 5. `Claim` concurrency: N goroutines claiming one queued message — exactly one wins, the rest get
    `ErrNotFound`, and no message is delivered twice.
 6. `Claim` addressing: `actor:` messages are claimable by any run of that actor; `run:` only by
-   that run; a stored `task:` message only by a run whose `Run.TaskID` matches; and a message
-   resolved to `run:`/`actor:` whose `Message.TaskID` is set is claimable by that run and still
-   matches the `Task` list filter.
+   that run; a stored `task:` message only by a run whose `Run.TaskID` matches (and a run whose
+   `TaskID` is nil matches none); and a message resolved to `run:`/`actor:` whose `Message.TaskID`
+   is set is claimable by that run and still matches the `Task` list filter.
 7. `Ack(read)`: `delivered → read`; repeat is idempotent; ack on a non-delivered message errors.
 8. `Ack(failed)` / `Nack`: records `Error`, ends terminal `failed`; `Nack` requeues when under
    `MaxAttempts`.
@@ -385,8 +392,10 @@ processed-id set to the `RunRepo` and check it before injecting.
   the poll loop delivers. **Correctness never depends on push** — push is just lower latency, and
   the entire milestone works with poll alone.
 
-This settles open question (3) from the task: timer-poll is the baseline, direct injection is an
-optional accelerator for `ft run`-owned sessions.
+This settles open question (3) from the task: timer-poll is the baseline. Direct injection can only
+accelerate a session whose receiver adapter already owns an injection channel; making it serve an
+`ft run`-owned session is exactly the case that needs the new isolation port method above, so that
+acceleration is out of scope for this milestone.
 
 ## 9. Cross-host transport over `ft serve`
 

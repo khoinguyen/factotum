@@ -151,9 +151,17 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    task that carries an open human decision — surface it to Khoi instead of building it. Route by
    kind: a build task goes to a `builder-<t>` + `reviewer-<t>` pair; a **testing/verification task
    goes to a `qa-<t>` agent** (see **Your role**).
-2. **Set up each agent's worktree.** The chief stays in the repo on `main`; **every subagent,
-   including the reviewer, gets its own directory** so branch switches never collide — never start an
-   agent in the main checkout (a shared checkout moves its HEAD when the chief switches branches).
+2. **Set up each agent's worktree.** The chief keeps its own directory (e.g. `/tmp/chief`, a
+   dedicated checkout or worktree) and stays on `main` there; **every subagent, including the
+   reviewer, gets its own directory** so branch switches never collide — never start an agent in
+   the main checkout (a shared checkout moves its HEAD when the chief switches branches).
+   - **Never launch anything — the chief included — in a directory that already hosts an OpenCode
+     TUI.** A second TUI there does not become its own instance: it attaches to the running one as
+     a tab and inherits *that* instance's env, so the new role's `FACTOTUM_*` never reach its
+     receiver, the receiver never registers, and messages to it queue forever — silently, since
+     both TUIs stay alive. `loop-agent.sh` refuses such a launch up front (it asks the shared
+     service which directories it owns) instead of spawning an unreachable agent; if you hit that
+     refusal, give the agent its own directory rather than overriding it.
    Create both worktrees before spawning:
    `git worktree add /tmp/ft-<t> -b ft/<t>-<short-brief> origin/main`
    `git worktree add --detach /tmp/review-<t> origin/main`

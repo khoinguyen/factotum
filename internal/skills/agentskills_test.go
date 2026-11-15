@@ -151,6 +151,31 @@ func TestChiefSkillAnchorsQADispatchToCwd(t *testing.T) {
 	}
 }
 
+// TestChiefSkillRequiresAnOwnDirectoryPerAgent guards the launch-directory rule
+// (t-ezt7hvgtkx): OpenCode attaches a TUI started in a directory that already
+// hosts one as a tab of that instance, inheriting its env, so the new role's
+// FACTOTUM_* never reach the receiver and the agent is silently unreachable.
+// The skill must send every agent — and the chief — to its own directory, and
+// must document that loop-agent.sh refuses a hosted directory instead of
+// launching an unreachable agent.
+func TestChiefSkillRequiresAnOwnDirectoryPerAgent(t *testing.T) {
+	body := strings.Join(strings.Fields(agentSkill(t, ".agents/skills/chief/SKILL.md")), " ")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"give the chief its own directory", "the chief keeps its own directory"},
+		{"state that a launch in a hosted directory attaches as a tab", "attaches to the running one as a tab"},
+		{"name the inherited env as the failure", "inherits *that* instance's env"},
+		{"document that the wrapper refuses such a launch", "refuses such a launch"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("chief skill must %s (missing %q); the agent is otherwise silently unreachable over ft msg", req.why, req.text)
+		}
+	}
+}
+
 // TestChiefSkillReincarnationTearsDownRetiredChief guards the reincarnation
 // teardown: killing only the outgoing chief's PID leaves two orphans — the
 // retired session's ft msg receiver (reparented to PID 1, still long-polling

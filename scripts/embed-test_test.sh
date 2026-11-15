@@ -39,6 +39,18 @@ check() {
   if [ "$2" = "$3" ]; then ok; else bad "$1: got '$3', want '$2'"; fi
 }
 
+# wait_for_text <file> <text> waits up to five seconds for <text> to appear in
+# <file>, so an interrupt test can act on the exact moment the run reaches its
+# wait loop instead of guessing with a fixed sleep.
+wait_for_text() {
+  local deadline=$((SECONDS + 5))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if grep -q -e "$2" "$1" 2>/dev/null; then return 0; fi
+    sleep 0.1
+  done
+  return 1
+}
+
 # probe_source_guard <script> sources <script> in a subshell and reports whether
 # it stopped at its own source guard. The subshell matters: a guard that `exit`s
 # fails only the probe instead of ending this suite before it can say why. The
@@ -141,6 +153,60 @@ serialization_verdict() {
     printf 'OK'
   fi
   rm -rf "$dir"
+}
+
+# interrupt_script <dir> <marker> <signal> starts the real script against
+# <dir>/bin stubs that never become healthy, waits for <marker> to appear on its
+# output, and sends it <signal>. It sets interrupt_rc to the status the run
+# stopped with and interrupt_secs to the seconds between the signal and that
+# exit; the run's output and stub calls are left in <dir>/out and <dir>/stub.log.
+# Both are read by the caller, not printed here, so each assertion is its own
+# labelled check.
+interrupt_script() {
+  local dir="$1" marker="$2" signal="$3"
+  : >"$dir/stub.log"
+  rm -f "$dir/rc" "$dir/secs" "$dir/note"
+  # Job control, and a launcher that runs in the foreground: a background job of
+  # a shell without job control has SIGINT set to ignore, and an ignored-on-entry
+  # signal cannot be trapped at all, so the INT arm would silently never fire.
+  (
+    set -m
+    PATH="$dir/bin:$PATH" TMPDIR="$dir/locks" STUB_LOG="$dir/stub.log" \
+      STUB_LOCK="$(TMPDIR="$dir/locks" embed_lock_file)" \
+      STUB_RUNNING_MARK="$dir/run.mark" STUB_OVERLAP="$dir/overlap" \
+      STUB_CURL_EXIT=1 STUB_INSPECT_RUNNING=true \
+      FACTOTUM_EMBED_TEST_ENDPOINT= FACTOTUM_EMBED_TEST_VOLUME= \
+      FACTOTUM_EMBED_TEST_CONTAINER= \
+      bash "$script" >"$dir/out" 2>&1 &
+    child=$!
+    if ! wait_for_text "$dir/out" "$marker"; then
+      kill -9 "$child" 2>/dev/null || true
+      wait "$child" 2>/dev/null || true
+      printf 'never reached %s\n' "$marker" >"$dir/note"
+      exit 0
+    fi
+    started=$SECONDS
+    kill -s "$signal" "$child" 2>/dev/null || true
+    deadline=$((SECONDS + 10))
+    while kill -0 "$child" 2>/dev/null && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.1; done
+    if kill -0 "$child" 2>/dev/null; then
+      # SIGKILL: the pre-fix handler cleans up and resumes the wait loop, which is
+      # exactly the hang this deadline bounds.
+      kill -9 "$child" 2>/dev/null || true
+      wait "$child" 2>/dev/null || true
+      printf 'still running 10s after %s\n' "$signal" >"$dir/note"
+      exit 0
+    fi
+    if wait "$child"; then printf '0\n' >"$dir/rc"; else printf '%s\n' "$?" >"$dir/rc"; fi
+    printf '%s\n' "$((SECONDS - started))" >"$dir/secs"
+  ) 2>/dev/null
+  if [ -f "$dir/note" ]; then
+    interrupt_rc="$(cat "$dir/note")"
+    return 1
+  fi
+  interrupt_rc="$(cat "$dir/rc")"
+  interrupt_secs="$(cat "$dir/secs")"
+  return 0
 }
 
 tmp="$(mktemp -d)"
@@ -662,6 +728,71 @@ else
   esac
 fi
 if [ -L "$dead_lock" ]; then bad "a failed run kept its download lock: $dead_lock"; else ok; fi
+
+# A CI TERM during the health wait must stop the run, not clean up and carry on.
+# `trap cleanup EXIT INT TERM` ran the handler and then resumed the wait loop, so
+# an interrupted run re-created state cleanup had just removed and only ended at
+# its own 180s timeout - reported as a health timeout, not as the interrupt it
+# was. It must now exit 143 promptly, say it was interrupted, and leave neither
+# its container nor its download lock behind.
+term_dir="$tmp/term"
+write_endpoint_stubs "$term_dir"
+term_lock="$(TMPDIR="$term_dir/locks" embed_lock_file)"
+if interrupt_script "$term_dir" 'waiting for http://' TERM; then
+  check "TERM during the health wait exits 143" 143 "$interrupt_rc"
+  if [ "$interrupt_secs" -le 3 ]; then ok; else bad "a TERM stopped the run only after ${interrupt_secs}s"; fi
+  case "$(cat "$term_dir/out")" in
+    *interrupted*SIGTERM*) ok ;;
+    *) bad "an interrupted run did not name the interruption: $(tr '\n' ';' <"$term_dir/out")" ;;
+  esac
+  case "$(cat "$term_dir/out")" in
+    *'did not become healthy'*) bad "an interrupted run was reported as a health timeout" ;;
+    *) ok ;;
+  esac
+  if grep -q '^docker rm -f ft-embed-test-' "$term_dir/stub.log"; then
+    ok
+  else
+    bad "an interrupted run left its container behind: $(tr '\n' ';' <"$term_dir/stub.log")"
+  fi
+  if [ -L "$term_lock" ]; then bad "an interrupted run left its download lock: $term_lock"; else ok; fi
+  if grep -q '^go ' "$term_dir/stub.log"; then
+    bad "an interrupted run resumed and reached the Go test"
+  else
+    ok
+  fi
+else
+  bad "a TERM during the health wait: $interrupt_rc"
+fi
+
+# A Ctrl-C while the run waits for a peer's download lock must stop it too, and
+# must not touch the lock it was waiting on. Exits 130 (128+INT), the status a
+# shell reports for an interrupt.
+int_dir="$tmp/int"
+write_endpoint_stubs "$int_dir"
+int_lock="$(TMPDIR="$int_dir/locks" embed_lock_file)"
+rm -f "$int_lock" "${int_lock}.reclaim"
+ln -s "$$" "$int_lock"
+if interrupt_script "$int_dir" 'waiting for the download lock' INT; then
+  check "INT during the lock wait exits 130" 130 "$interrupt_rc"
+  if [ "$interrupt_secs" -le 3 ]; then ok; else bad "an INT stopped the lock wait only after ${interrupt_secs}s"; fi
+  case "$(cat "$int_dir/out")" in
+    *interrupted*SIGINT*) ok ;;
+    *) bad "an interrupted lock wait did not name the interruption: $(tr '\n' ';' <"$int_dir/out")" ;;
+  esac
+  if [ "$(readlink "$int_lock" 2>/dev/null)" = "$$" ]; then
+    ok
+  else
+    bad "an interrupted lock wait dropped the lock it was waiting on"
+  fi
+  if grep -q '^docker run ' "$int_dir/stub.log"; then
+    bad "an interrupted lock wait started a container anyway"
+  else
+    ok
+  fi
+else
+  bad "an INT during the lock wait: $interrupt_rc"
+fi
+rm -f "$int_lock"
 
 # The mise task delegates to this script, and its own body carries neither fixed
 # value, so neither can creep back into the task.

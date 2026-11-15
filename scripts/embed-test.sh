@@ -210,7 +210,23 @@ cleanup() {
     embed_lock_release
   fi
 }
-trap cleanup EXIT INT TERM
+# An interrupt must clean up and *stop*. `trap cleanup EXIT INT TERM` runs the
+# handler and then resumes whatever it interrupted, so a Ctrl-C or a CI TERM
+# cleaned up and carried straight on through the wait loop - re-creating state
+# cleanup had just removed - until the run hit its own timeout, which it then
+# reported as a health failure rather than an interrupt. Exit with the shell's
+# conventional 128+signal status, and drop the EXIT trap so the one cleanup
+# already done is not repeated.
+on_signal() {
+  local name="$1" status="$2"
+  echo "embed-test: interrupted by ${name}, cleaning up" >&2
+  cleanup
+  trap - EXIT
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'on_signal SIGINT 130' INT
+trap 'on_signal SIGTERM 143' TERM
 
 if [ -z "$endpoint" ]; then
   if ! command -v docker >/dev/null 2>&1; then

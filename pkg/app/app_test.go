@@ -1223,7 +1223,7 @@ func unionIDs(groups ...[]core.TicketID) []core.TicketID {
 	return out
 }
 
-func TestBackfillTriageNotes(t *testing.T) {
+func TestBackfillGeneratedNotes(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
@@ -1237,7 +1237,12 @@ func TestBackfillTriageNotes(t *testing.T) {
 	}{
 		{task.ID, NoteInput{Body: "Triaged by agent: triageprobe split the work"}},
 		{task.ID, NoteInput{Body: "Reassigned to you."}},
+		{task.ID, NoteInput{Body: "Groomed by agent (auto): groomedprobe closed the gaps"}},
+		{task.ID, NoteInput{Body: "PR opened (base main)."}},
+		{task.ID, NoteInput{Body: "Needs human decision: decisionprobe pick a transport"}},
 		{task.ID, NoteInput{Body: "Triaged by agent: authoredprobe split the work", Author: &author}},
+		{task.ID, NoteInput{Body: "Groomed by agent (auto): authoredgroomprobe closed the gaps", Author: &author}},
+		{task.ID, NoteInput{Body: "Needs human decision: authoreddecisionprobe pick a transport", Author: &author}},
 		{human.ID, NoteInput{Body: "Decision: keep humanprobe"}},
 	}
 	for _, note := range notes {
@@ -1248,24 +1253,24 @@ func TestBackfillTriageNotes(t *testing.T) {
 	filter := store.TicketFilter{ProjectID: project.ID}
 
 	// A dry run reports the candidates and writes nothing.
-	dry, err := h.tasks.BackfillTriageNotes(ctx, filter, true)
+	dry, err := h.tasks.BackfillGeneratedNotes(ctx, filter, true)
 	if err != nil {
-		t.Fatalf("BackfillTriageNotes(dry) error = %v", err)
+		t.Fatalf("BackfillGeneratedNotes(dry) error = %v", err)
 	}
-	if dry.Scanned != 2 || len(dry.Marked) != 2 {
-		t.Fatalf("dry run = scanned %d, marked %v, want 2 scanned and 2 marked", dry.Scanned, dry.Marked)
+	if dry.Scanned != 2 || len(dry.Marked) != 5 {
+		t.Fatalf("dry run = scanned %d, marked %v, want 2 scanned and 5 marked", dry.Scanned, dry.Marked)
 	}
 	if hits, err := h.tasks.Search(ctx, filter, "triageprobe"); err != nil || len(hits) != 1 {
 		t.Fatalf("Search(triageprobe) after dry run = %d hits, %v; want the note still indexed", len(hits), err)
 	}
 
-	// The real pass marks the authorless triage templates and nothing else.
-	got, err := h.tasks.BackfillTriageNotes(ctx, filter, false)
+	// The real pass marks the authorless generated families and nothing else.
+	got, err := h.tasks.BackfillGeneratedNotes(ctx, filter, false)
 	if err != nil {
-		t.Fatalf("BackfillTriageNotes() error = %v", err)
+		t.Fatalf("BackfillGeneratedNotes() error = %v", err)
 	}
-	if got.Scanned != 2 || len(got.Marked) != 2 {
-		t.Fatalf("backfill = scanned %d, marked %v, want 2 scanned and 2 marked", got.Scanned, got.Marked)
+	if got.Scanned != 2 || len(got.Marked) != 5 {
+		t.Fatalf("backfill = scanned %d, marked %v, want 2 scanned and 5 marked", got.Scanned, got.Marked)
 	}
 	for _, ref := range got.Marked {
 		if ref.TaskID != task.ID {
@@ -1281,9 +1286,14 @@ func TestBackfillTriageNotes(t *testing.T) {
 		t.Fatalf("Get() error = %v", err)
 	}
 	wantSystem := map[string]bool{
-		"Triaged by agent: triageprobe split the work":   true,
-		"Reassigned to you.":                             true,
-		"Triaged by agent: authoredprobe split the work": false,
+		"Triaged by agent: triageprobe split the work":                 true,
+		"Reassigned to you.":                                           true,
+		"Groomed by agent (auto): groomedprobe closed the gaps":        true,
+		"PR opened (base main).":                                       true,
+		"Needs human decision: decisionprobe pick a transport":         true,
+		"Triaged by agent: authoredprobe split the work":               false,
+		"Groomed by agent (auto): authoredgroomprobe closed the gaps":  false,
+		"Needs human decision: authoreddecisionprobe pick a transport": false,
 	}
 	for _, note := range stored.Notes {
 		want, ok := wantSystem[note.Body]
@@ -1305,14 +1315,23 @@ func TestBackfillTriageNotes(t *testing.T) {
 	if hits, err := h.tasks.Search(ctx, filter, "authoredprobe"); err != nil || len(hits) != 1 {
 		t.Fatalf("Search(authoredprobe) = %d hits, %v; want the authored note still indexed", len(hits), err)
 	}
+	if hits, err := h.tasks.Search(ctx, filter, "groomedprobe"); err != nil || len(hits) != 0 {
+		t.Fatalf("Search(groomedprobe) = %d hits, %v; want the backfilled note excluded", len(hits), err)
+	}
+	if hits, err := h.tasks.Search(ctx, filter, "decisionprobe"); err != nil || len(hits) != 0 {
+		t.Fatalf("Search(decisionprobe) = %d hits, %v; want the backfilled note excluded", len(hits), err)
+	}
+	if hits, err := h.tasks.Search(ctx, filter, "authoredgroomprobe"); err != nil || len(hits) != 1 {
+		t.Fatalf("Search(authoredgroomprobe) = %d hits, %v; want the authored note still indexed", len(hits), err)
+	}
 	if hits, err := h.tasks.Search(ctx, filter, "humanprobe"); err != nil || len(hits) != 1 {
 		t.Fatalf("Search(humanprobe) = %d hits, %v; want the human note still indexed", len(hits), err)
 	}
 
 	// Idempotent: a second pass has nothing left to mark.
-	again, err := h.tasks.BackfillTriageNotes(ctx, filter, false)
+	again, err := h.tasks.BackfillGeneratedNotes(ctx, filter, false)
 	if err != nil {
-		t.Fatalf("BackfillTriageNotes(second pass) error = %v", err)
+		t.Fatalf("BackfillGeneratedNotes(second pass) error = %v", err)
 	}
 	if again.Scanned != 2 || len(again.Marked) != 0 {
 		t.Fatalf("second pass = scanned %d, marked %v, want 0 marked", again.Scanned, again.Marked)

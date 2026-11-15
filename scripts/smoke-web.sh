@@ -11,6 +11,27 @@
 #      stores an idea and rejects an unauthorised write.
 set -euo pipefail
 
+# smoke_bind is the --bind value for `ft serve`. FACTOTUM_SMOKE_PORT pins the
+# port; otherwise port 0 asks the kernel for a free one, so parallel smoke and QA
+# runs never collide on a shared port.
+smoke_bind() {
+  if [ -n "${FACTOTUM_SMOKE_PORT:-}" ]; then
+    printf '127.0.0.1:%s\n' "$FACTOTUM_SMOKE_PORT"
+    return
+  fi
+  printf '127.0.0.1:0\n'
+}
+
+# smoke_announced_port reads the port back out of ft serve's startup line, which
+# prints the address it actually bound - the only way to learn the port the
+# kernel handed out.
+smoke_announced_port() {
+  sed -n 's#.*dashboard: http://[^:/]*:\([0-9][0-9]*\).*#\1#p' "$1" | head -n 1
+}
+
+# Sourced by scripts/smoke-web_test.sh to exercise the helpers above; stop here.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
@@ -21,8 +42,8 @@ if [ ! -x "$bin" ]; then
 fi
 
 tmp="$(mktemp -d)"
-port="${FACTOTUM_SMOKE_PORT:-18484}"
-base="http://127.0.0.1:${port}"
+bind="$(smoke_bind)"
+base=""
 server_pid=""
 sse_pid=""
 
@@ -42,8 +63,27 @@ ft task create -p acme -t "First smoke task" >/dev/null
 
 FACTOTUM_SERVE_TOKEN="smoketoken" \
   "$bin" --store sqlite --store-opt "path=$db" --no-hints serve -p acme \
-  --bind "127.0.0.1:${port}" >"$tmp/serve.log" 2>&1 &
+  --bind "$bind" >"$tmp/serve.log" 2>&1 &
 server_pid=$!
+
+# Learn the port serve bound before talking to it, so the default port 0 works.
+port=""
+for _ in $(seq 1 100); do
+  port="$(smoke_announced_port "$tmp/serve.log")"
+  if [ -n "$port" ]; then break; fi
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    echo "smoke-web: ft serve exited before it announced an address:" >&2
+    cat "$tmp/serve.log" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+if [ -z "$port" ]; then
+  echo "smoke-web: ft serve never announced a listen address:" >&2
+  cat "$tmp/serve.log" >&2
+  exit 1
+fi
+base="http://127.0.0.1:${port}"
 
 for _ in $(seq 1 100); do
   if curl -fsS "$base/app/" >/dev/null 2>&1; then break; fi

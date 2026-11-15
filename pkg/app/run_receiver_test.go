@@ -6,6 +6,7 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
+	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 )
 
@@ -32,6 +33,29 @@ func TestRunCarriesReceiverEnv(t *testing.T) {
 	}
 	if env[harnesspkg.EnvTask] != string(f.task.ID) {
 		t.Errorf("env task = %q, want %q", env[harnesspkg.EnvTask], f.task.ID)
+	}
+}
+
+// TestRunCarriesSelectedHarnessEnv proves a run names the harness it actually
+// drives, so a launched receiver registers as that harness instead of the
+// plugin's own default. Without it an opencode2 run claimed harness=opencode,
+// and any per-harness behavior keyed on that field picked wrong.
+func TestRunCarriesSelectedHarnessEnv(t *testing.T) {
+	for _, name := range []string{"opencode", "opencode2", "pi"} {
+		t.Run(name, func(t *testing.T) {
+			f := newRunFixture(t)
+			f.backend.Program(isolation.ExecResult{Stdout: []byte("ok\n"), ExitCode: 0})
+			f.harness = harnessfake.New(name)
+
+			actor := core.ActorID("act-agent")
+			if _, err := f.run(t, RunInput{Actor: &actor}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			env := f.backend.Prepared()[0].Env
+			if env[harnesspkg.EnvHarness] != name {
+				t.Errorf("env %s = %q, want the selected harness %q", harnesspkg.EnvHarness, env[harnesspkg.EnvHarness], name)
+			}
+		})
 	}
 }
 

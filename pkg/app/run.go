@@ -147,7 +147,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		model:       in.Model,
 		args:        in.Args,
 		interactive: in.Interactive,
-		env:         mergeEnv(runEnv(project, task, in.Actor, in.MsgURL, in.ServeToken), in.StoreEnv),
+		env:         mergeEnv(runEnv(project, task, in.Actor, in.MsgURL, in.ServeToken), harnessEnv(in.Harness.Name()), in.StoreEnv),
 		labels:      map[string]string{"project": string(project.ID), "task": string(task.ID)},
 		// The run is about to start: record it before Exec so a harness or wait
 		// failure is observable, and abort if the event cannot be written.
@@ -312,7 +312,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		model:       in.Model,
 		args:        in.Args,
 		interactive: in.Interactive,
-		env:         mergeEnv(runEnv(project, nil, in.Actor, in.MsgURL, in.ServeToken), in.StoreEnv, sessionEnv(in.Session)),
+		env:         mergeEnv(runEnv(project, nil, in.Actor, in.MsgURL, in.ServeToken), harnessEnv(in.Harness.Name()), in.StoreEnv, sessionEnv(in.Session)),
 		labels:      map[string]string{"project": string(project.ID)},
 		capture:     in.Capture,
 	})
@@ -345,8 +345,8 @@ type harnessRun struct {
 	prompt  string
 	model   string
 	args    []string
-	// env is the receiver environment (project/actor/task) a harness with a
-	// message plugin reads; nil for a run with no receiver.
+	// env is the receiver environment (project/actor/task/harness) a harness
+	// with a message plugin reads; nil for a run with no receiver.
 	env    map[string]string
 	labels map[string]string
 	// interactive builds the harness's TUI invocation and asks for a terminal.
@@ -482,6 +482,21 @@ func sessionEnv(session string) map[string]string {
 		return nil
 	}
 	return map[string]string{harnesspkg.EnvSession: session}
+}
+
+// harnessEnv names the harness the run actually drives, or nil when the harness
+// is unnamed. A receiver's claim metadata reports this value, so the run must
+// say which harness it is: without it every OpenCode V2 run registered as the
+// receiver plugin's default (`opencode`), and per-harness behavior keyed on the
+// field picked the wrong harness. The value is the harness's own name, not the
+// selected key, because selection may resolve a key to a different variant (a
+// locally installed V2 behind `--harness opencode`), and the metadata must
+// describe what ran. It is the same value loop-agent.sh exports.
+func harnessEnv(name string) map[string]string {
+	if name == "" {
+		return nil
+	}
+	return map[string]string{harnesspkg.EnvHarness: name}
 }
 
 // mergeEnv layers environment maps left to right, later values winning, and

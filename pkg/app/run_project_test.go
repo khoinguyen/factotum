@@ -301,6 +301,24 @@ func TestRunProjectInjectsSession(t *testing.T) {
 	}
 }
 
+// TestRunProjectCarriesSelectedHarnessEnv proves a task-less (grooming) run
+// names its harness in the receiver env too, so its receiver registers as the
+// harness that is actually running rather than the plugin's default.
+func TestRunProjectCarriesSelectedHarnessEnv(t *testing.T) {
+	f := newProjectRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	f.harness = harnessfake.New("opencode2")
+
+	actor := core.ActorID("act-agent")
+	if _, err := f.run(t, ProjectRunInput{Prompt: "groom", Actor: &actor}); err != nil {
+		t.Fatalf("RunProject() error = %v", err)
+	}
+	env := f.backend.Prepared()[0].Env
+	if env[harnesspkg.EnvHarness] != "opencode2" {
+		t.Errorf("env %s = %q, want the selected harness %q", harnesspkg.EnvHarness, env[harnesspkg.EnvHarness], "opencode2")
+	}
+}
+
 // TestRunProjectCarriesHubReceiverEnv proves a task-less run with an actor and a
 // complete hub installs the same receiver identity and hub transport as a task
 // run, so a session launched by a task-less `ft run` can message peers over the

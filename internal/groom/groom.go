@@ -287,6 +287,11 @@ No product owner is present and there is no interactive channel: never ask a que
 answer. Defer every product question to the deferred-questions file above instead of blocking the
 run, and record every engineering decision as a note on the item.
 
+Acknowledge your session first by running ft session ack: it records the session id your environment
+carries, and the run requires the acknowledgement. Without it the run cannot tell a session that
+created nothing from a child ft that attributed nothing to it, so it fails instead of finishing
+silently.
+
 The pre-answer timing guard is suspended: promote, split, and mark every produced task groomed and
 assigned to an agent (or resolve it) so the session still completes agent-ready. A task you create has
 no deferred escape: naming it in the deferred-questions file does not excuse it, so capture work you

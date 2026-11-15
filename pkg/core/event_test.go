@@ -19,6 +19,7 @@ func TestEventKindValid(t *testing.T) {
 		{EventPipelineGateCleared, true},
 		{EventPipelineDone, true},
 		{EventPipelineFailed, true},
+		{EventSessionAcked, true},
 		{"task.exploded", false},
 		{"", false},
 	}

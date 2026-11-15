@@ -47,6 +47,11 @@ const (
 	// stop and the reason (reincarnation) are derivable from the log.
 	EventSessionStarted EventKind = "session.started"
 	EventSessionRetired EventKind = "session.retired"
+	// EventSessionAcked is a session acknowledging the session id its
+	// environment carries. A run that judges a child's work by session
+	// attribution requires it, so a child that never picked up the id fails
+	// loudly instead of looking like it produced nothing.
+	EventSessionAcked EventKind = "session.acked"
 
 	// Pipeline events trace one factory pipeline (docs/up/design.md §7). They are
 	// appended with TicketID set to the origin capture, so a pipeline also
@@ -71,7 +76,7 @@ func (k EventKind) Valid() bool {
 		EventActorCreated, EventActorUpdated, EventActorDeleted,
 		EventArtifactCreated, EventArtifactUpdated, EventArtifactDeleted,
 		EventMessageSent, EventMessageClaimed, EventMessageRead, EventMessageFailed,
-		EventSessionStarted, EventSessionRetired,
+		EventSessionStarted, EventSessionRetired, EventSessionAcked,
 		EventPipelineQueued, EventPipelineStageStarted, EventPipelineStageFinished,
 		EventPipelineGateOpened, EventPipelineGateCleared, EventPipelineDone, EventPipelineFailed:
 		return true

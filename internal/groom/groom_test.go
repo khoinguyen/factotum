@@ -318,15 +318,20 @@ func TestKickoffNamesScopeAndOutputs(t *testing.T) {
 }
 
 // TestKickoffStatesSessionAttribution pins the attribution the completion guard
-// relies on: the kickoff tells the session that the work it creates is stamped
-// with its own session id, so the guard judges only that work and another
-// writer's concurrent task cannot fail the run.
+// relies on: an unattended kickoff tells the session to acknowledge its session
+// id and that the work it creates is stamped with that id, so the guard judges
+// only its own work and fails loudly when the plumbing never reached the child.
 func TestKickoffStatesSessionAttribution(t *testing.T) {
-	kick := Kickoff("factotum", nil, StagedPaths("groom-1"), "groom-1", false)
-	for _, want := range []string{"groom-1", "attributed to"} {
+	kick := Kickoff("factotum", nil, StagedPaths("groom-1"), "groom-1", true)
+	for _, want := range []string{"groom-1", "attributed to", "ft session ack"} {
 		if !strings.Contains(kick, want) {
 			t.Errorf("kickoff does not state the session attribution %q:\n%s", want, kick)
 		}
+	}
+	// A session with a product owner has no completion guard to satisfy, so the
+	// acknowledgement is not demanded of it.
+	if interactive := Kickoff("factotum", nil, StagedPaths("groom-1"), "groom-1", false); strings.Contains(interactive, "ft session ack") {
+		t.Errorf("an attended kickoff demands a session acknowledgement:\n%s", interactive)
 	}
 }
 

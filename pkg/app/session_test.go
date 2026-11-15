@@ -85,6 +85,49 @@ func TestSessionNewIDIsDistinct(t *testing.T) {
 	}
 }
 
+// TestSessionAckRecordsCallerSession pins the acknowledgement a run waits on:
+// the event is attributed to the caller's own session (from the environment),
+// not to an id the invocation names, so it proves the session id reached the
+// child rather than that the prompt mentioned it.
+func TestSessionAckRecordsCallerSession(t *testing.T) {
+	h := newHarness(t)
+	ctx := WithCaller(context.Background(), "", "groom-1")
+	project := h.newProject(t)
+	sessions := NewSessionService(h.backend, fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}, &seqIDs{})
+
+	acked, err := sessions.Ack(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("Ack() error = %v", err)
+	}
+	if acked.Kind != core.EventSessionAcked || acked.Session != "groom-1" {
+		t.Fatalf("Ack() event = %+v, want session.acked for groom-1", acked)
+	}
+}
+
+// TestSessionAckWithoutCallerSessionFails pins that the ack cannot be faked: an
+// invocation carrying no session appends nothing and names the missing
+// environment, so a run cannot mistake a hollow ack for a working one.
+func TestSessionAckWithoutCallerSessionFails(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	sessions := NewSessionService(h.backend, fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}, &seqIDs{})
+
+	if _, err := sessions.Ack(ctx, project.ID); err == nil {
+		t.Fatal("Ack() with no caller session error = nil, want it to name the missing session")
+	}
+	events, err := h.backend.Events().List(ctx, store.EventFilter{
+		ProjectID: project.ID,
+		Kinds:     []core.EventKind{core.EventSessionAcked},
+	})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %+v, want no session.acked appended", events)
+	}
+}
+
 func TestSessionStartAndRetire(t *testing.T) {
 	h := newHarness(t)
 	ctx := WithCaller(context.Background(), "chief", "sess-1")

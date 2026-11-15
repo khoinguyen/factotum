@@ -82,6 +82,8 @@ are named in the report.
 When the kickoff carries an "Unattended mode" block there is no PO in the loop and no interactive
 channel: never ask a question or wait for an answer. Instead:
 
+- Acknowledge your session first: `ft session ack`. The run requires it, and without it fails
+  rather than passing over work it cannot attribute to this session.
 - Defer every product question to the deferred-questions file, for stakeholders to answer later.
 - Decide the engineering calls yourself, record each as a note, and move on.
 - Suspend the step 6 timing guard: promote, split, and mark every produced task groomed and assigned

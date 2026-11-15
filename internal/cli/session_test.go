@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/khoinguyen/factotum/pkg/app"
 )
 
 type listedEvent struct {
@@ -125,6 +128,64 @@ func TestSessionStartHonorsExplicitSession(t *testing.T) {
 	if sid != "explicit1" {
 		t.Fatalf("session start --session = %q, want explicit1", sid)
 	}
+}
+
+// TestSessionAckRecordsEnvironmentSession pins the child side of the groom
+// guard's acknowledgement: `ft session ack` records an event attributed to the
+// session its environment carries, so the run that injected the id can see the
+// child picked it up.
+func TestSessionAckRecordsEnvironmentSession(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(key string) string {
+		if key == "FACTOTUM_SESSION" {
+			return "groom-1"
+		}
+		return ""
+	}
+	project := firstField(t, r.run("project", "create", "Acme"))
+
+	out := r.run("session", "ack", "-p", project)
+	if !strings.Contains(out, "acked: true") || !strings.Contains(out, "session_id: groom-1") {
+		t.Fatalf("session ack output missing the acknowledgement:\n%s", out)
+	}
+	acked := findEvent(t, listEvents(t, r), "session.acked")
+	if acked.Session != "groom-1" {
+		t.Fatalf("session.acked Session = %q, want groom-1", acked.Session)
+	}
+}
+
+// TestSessionAckWithoutSessionFails pins that the acknowledgement cannot be
+// conjured: with no session in the environment the command fails and records
+// nothing, so naming a session in a prompt is not enough to satisfy it.
+func TestSessionAckWithoutSessionFails(t *testing.T) {
+	r := newRunner(t)
+	project := firstField(t, r.run("project", "create", "Acme"))
+
+	err := r.runErrWithGetenv(func(string) string { return "" }, "session", "ack", "-p", project)
+	if err == nil {
+		t.Fatal("session ack with no session error = nil, want it to name the missing environment")
+	}
+	if !strings.Contains(err.Error(), "FACTOTUM_SESSION") {
+		t.Fatalf("error = %v, want it to name FACTOTUM_SESSION", err)
+	}
+	if events := r.run("event", "list", "-o", "json"); strings.Contains(events, "session.acked") {
+		t.Fatalf("an unshipped ack still recorded one:\n%s", events)
+	}
+}
+
+// runErrWithGetenv executes one command with the runner's fakes but the given
+// environment getter and returns the error, so a test can drive an invocation
+// whose environment differs from the runner's own.
+func (r *runner) runErrWithGetenv(getenv func(string) string, args ...string) error {
+	r.t.Helper()
+	var out bytes.Buffer
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &out, &out, getenv)
+	base := r.setup(deps)
+	root := NewRoot(deps)
+	root.SetArgs(append(append([]string{}, base...), args...))
+	root.SetOut(&out)
+	root.SetErr(&out)
+	return root.Execute()
 }
 
 // TestRegisterOmitsEmptySession pins F3: an optional single-result field is

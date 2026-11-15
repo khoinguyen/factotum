@@ -840,3 +840,41 @@ func TestPrepareRunForwardsUserFlag(t *testing.T) {
 		t.Fatalf("harness factory got User = %q, want %q", got.User, want)
 	}
 }
+
+// TestPrepareRunResolvesSandboxBeforeHarness pins the ordering prepareRun must
+// keep: the sandbox is resolved before the harness is built. A local run
+// declares no credential (the host binary already carries its own), and that
+// rule lives in the harness factory, so a harness built from a not-yet-resolved
+// config would re-declare a credential no local backend can attach
+// (t-2dqrwegfcc). The assertion is the spec the selected harness builds - what a
+// run would actually prepare - not the call order.
+func TestPrepareRunResolvesSandboxBeforeHarness(t *testing.T) {
+	p := &scriptedPrompter{t: t, inputs: []string{local.Name, "user"}, confirms: []bool{true}}
+	deps := newOptInDeps(t, p)
+	// The real harnesses, so the credential rule they apply is what the run sees.
+	deps.RunHarnesses = runHarnesses()
+	deps.Config.Run = config.Run{
+		Harness:          opencode.NameV2,
+		Model:            "openrouter/x",
+		Provider:         "openrouter",
+		CredentialEnvVar: "OPENROUTER_API_KEY",
+	}
+
+	sel, err := deps.prepareRun(&cobra.Command{Use: "run"}, runOptions{workspace: t.TempDir()})
+	if err != nil {
+		t.Fatalf("prepareRun() error = %v", err)
+	}
+	if got := sel.harness.Name(); got != opencode.NameV2 {
+		t.Fatalf("harness = %q, want the prompted %q", got, opencode.NameV2)
+	}
+	spec, err := sel.harness.Spec(harness.Request{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Spec() error = %v", err)
+	}
+	if len(spec.Credentials) != 0 {
+		t.Fatalf("spec.Credentials = %+v, want none: the local selection must be resolved before the harness is built", spec.Credentials)
+	}
+	if got := sel.backendName; got != local.Name {
+		t.Fatalf("resolved backend = %q, want the prompted %q", got, local.Name)
+	}
+}

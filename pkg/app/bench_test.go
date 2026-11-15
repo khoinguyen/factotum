@@ -32,6 +32,18 @@ import (
 const (
 	hotPathBudget10k = 100 * time.Millisecond
 	smokeHeadroom    = 5
+
+	// jsonfile re-reads and re-parses its whole document on every operation,
+	// so `task next` at 1k measured ~120ms of CPU under -race (~8ms without).
+	// hotPathBudget10k is unreachable for it at any scale, so the tier records
+	// the measured cost instead: smokeHeadroom keeps the ceiling ~4x above the
+	// -race measurement, tight enough to fail on a constant-factor regression
+	// and loose enough not to flake a slower runner.
+	jsonfileBudget1k = 100 * time.Millisecond
+
+	// jsondir keeps its task list index in memory, so it stays cheap: ~11ms of
+	// CPU under -race at 1k.
+	jsondirBudget1k = 20 * time.Millisecond
 )
 
 func openBenchBackend(tb testing.TB, name string) store.Backend {
@@ -195,11 +207,13 @@ func BenchmarkCompositeRank(b *testing.B) {
 }
 
 // TestHotPathBudgetSmoke is the CI tier: it drives the full `task next` path
-// (load + graph + readiness + rank) and fails at smokeHeadroom times the @10k
-// budget. CI runs under -race, which inflates the sqlite driver far more than
-// the in-memory backend, so sqlite is exercised at a smaller scale to keep its
-// absolute time under a ceiling tight enough to catch a constant-factor
-// regression. Seed time is not asserted.
+// (load + graph + readiness + rank) and fails at smokeHeadroom times the
+// backend's budget. CI runs under -race, which inflates the sqlite driver far
+// more than the in-memory backend, so sqlite is exercised at a smaller scale to
+// keep its absolute time under a ceiling tight enough to catch a constant-factor
+// regression. The file backends are covered too: jsonfile re-parses its
+// document on every read, so its tier at 1k records that measured cost rather
+// than pretending it fits hotPathBudget10k. Seed time is not asserted.
 //
 // The timed section measures process CPU time, not wall time. `mise run ci` fans
 // out `test` and `cover` (both `go test -race ./...`) in parallel, and on a
@@ -213,16 +227,19 @@ func TestHotPathBudgetSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rank.Default() error = %v", err)
 	}
-	ceiling := time.Duration(smokeHeadroom) * hotPathBudget10k
 	cases := []struct {
 		backend string
 		tasks   int
+		budget  time.Duration
 	}{
-		{"memory", 10000},
-		{"sqlite", 2000},
+		{"memory", 10000, hotPathBudget10k},
+		{"sqlite", 2000, hotPathBudget10k},
+		{"jsonfile", 1000, jsonfileBudget1k},
+		{"jsondir", 1000, jsondirBudget1k},
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%s/%d", tc.backend, tc.tasks), func(t *testing.T) {
+			ceiling := time.Duration(smokeHeadroom) * tc.budget
 			be := openBenchBackend(t, tc.backend)
 			projectID := seedTasks(t, be, tc.tasks)
 
@@ -246,7 +263,7 @@ func TestHotPathBudgetSmoke(t *testing.T) {
 			}
 			t.Logf("task next path at %d (%s) used %v of CPU (ceiling %v)", tc.tasks, tc.backend, elapsed, ceiling)
 			if elapsed > ceiling {
-				t.Fatalf("task next path at %d (%s) used %v of CPU, over the %v ceiling (budget %v)", tc.tasks, tc.backend, elapsed, ceiling, hotPathBudget10k)
+				t.Fatalf("task next path at %d (%s) used %v of CPU, over the %v ceiling (budget %v)", tc.tasks, tc.backend, elapsed, ceiling, tc.budget)
 			}
 		})
 	}

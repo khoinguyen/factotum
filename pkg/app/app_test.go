@@ -920,6 +920,36 @@ func TestTaskClaimIsExclusive(t *testing.T) {
 	}
 }
 
+// TestTaskClaimAcceptsALoopRoleAssignee pins the domain half of the claim
+// default rule: a loop role is a session identity a wrapper registers as a run,
+// not an Actor record, so Claim may assign to it — while an unregistered id that
+// is not a loop role is still rejected.
+func TestTaskClaimAcceptsALoopRoleAssignee(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	task, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "work"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	claimed, err := h.tasks.Claim(ctx, task.ID, core.ActorID("builder-t-1"), false)
+	if err != nil {
+		t.Fatalf("Claim(loop role) error = %v", err)
+	}
+	if claimed.AssigneeID == nil || *claimed.AssigneeID != "builder-t-1" {
+		t.Fatalf("Claim(loop role).AssigneeID = %v, want builder-t-1", claimed.AssigneeID)
+	}
+
+	other, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "other"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if _, err := h.tasks.Claim(ctx, other.ID, core.ActorID("builer-t-1"), false); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("Claim(unregistered non-role) error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestTaskClaimStartBeginsWork(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

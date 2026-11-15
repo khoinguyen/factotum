@@ -145,11 +145,14 @@ type Address string // "actor:act-x", "run:run-y", "task:t-z"
 - `actor:<actor-id>` — deliver to the actor's mailbox. Any run of that actor may claim it; the
   first claim wins. This is the stable address: it survives a restart and is what a human owner or
   a peer knows.
-- `run:<run-id>` — deliver to exactly one session. Used for replies (`--reply-to` implies `run:`
-  the original sender's run) and for the chief wiring a specific builder/reviewer session. A claim
-  for `run:` targets only the run's own messages. If the run is gone, the message stays `queued`
-  (never silently dropped) and falls back to the actor mailbox at the operator's discretion (the
-  proposed retry verb's re-address, section 11).
+- `run:<run-id>` — deliver to exactly one session: the chief wiring a specific builder/reviewer
+  session, or an operator re-addressing a message after a node restart. A claim for `run:` targets
+  only the run's own messages. A reply is not one of those uses: `--reply-to` records only the
+  threading id (`Message.ReplyTo`) and never rewrites the target, and a message stores the sender's
+  actor, not the sender's run (the receiver injects `[ft msg from <actor>]`), so a reply addresses
+  `actor:<from>` — the stable mailbox, never an inferred run. If the run is gone, the message stays
+  `queued` (never silently dropped) and falls back to the actor mailbox at the operator's
+  discretion (the proposed retry verb's re-address, section 11).
 - `task:<ticket-id>` — sugar, resolved **at enqueue time** by `ft msg send`. In every case the
   message records `Message.TaskID = t`, so the task link survives the rewrite:
   1. if a live run is registered with `Run.TaskID == t`, address `run:<that run>`;

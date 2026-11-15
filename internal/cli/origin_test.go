@@ -26,6 +26,37 @@ func TestTaskGetShowsOriginForIdeaPromotion(t *testing.T) {
 	if !strings.Contains(jsonOut, `"origin_title": "Spark"`) {
 		t.Fatalf("task get -o json should carry the origin title:\n%s", jsonOut)
 	}
+
+	yamlOut := r.run("task", "get", taskID, "-o", "yaml")
+	if !strings.Contains(yamlOut, "origin: "+ideaID) {
+		t.Fatalf("task get -o yaml should carry the origin:\n%s", yamlOut)
+	}
+	if !strings.Contains(yamlOut, "origin_title: Spark") {
+		t.Fatalf("task get -o yaml should carry the origin title:\n%s", yamlOut)
+	}
+}
+
+// TestTaskGetPrintsOriginBeforeDeps pins the text order: provenance reads
+// before the work edges, so a reader learns where the task came from before
+// what it waits on.
+func TestTaskGetPrintsOriginBeforeDeps(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "Spark"))
+	r.run("actor", "create", "claude", "-k", "agent")
+	taskID := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+	blockerID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "blocker"))
+	r.run("task", "dep", "create", taskID, blockerID)
+
+	got := r.run("task", "get", taskID)
+	originAt := strings.Index(got, "origin: "+ideaID)
+	depsAt := strings.Index(got, "deps: "+blockerID)
+	if originAt < 0 || depsAt < 0 {
+		t.Fatalf("task get should print both the origin and its blocking dep:\n%s", got)
+	}
+	if originAt > depsAt {
+		t.Fatalf("origin must print before deps (origin at %d, deps at %d):\n%s", originAt, depsAt, got)
+	}
 }
 
 // TestTaskGetShowsOriginForBugTriage proves triage links a bug as the origin,
@@ -60,6 +91,9 @@ func TestTaskGetOmitsOriginWhenNone(t *testing.T) {
 		t.Fatalf("a task with no capture origin must not print one:\n%s", got)
 	}
 	if got := r.run("task", "get", taskID, "-o", "json"); strings.Contains(got, `"origin"`) {
+		t.Fatalf("a task with no capture origin must not carry one:\n%s", got)
+	}
+	if got := r.run("task", "get", taskID, "-o", "yaml"); strings.Contains(got, "origin:") || strings.Contains(got, "origin_title:") {
 		t.Fatalf("a task with no capture origin must not carry one:\n%s", got)
 	}
 }

@@ -259,6 +259,39 @@ func TestMessageSendRejects(t *testing.T) {
 	}
 }
 
+// TestMessageSendRejectsDoubledAndEmptyActorAddress pins an actor target to the
+// same reference parsing the actor flags use: actor:actor:chief and actor: name
+// no actor, so they must be rejected instead of stored as a mailbox nobody can
+// claim.
+func TestMessageSendRejectsDoubledAndEmptyActorAddress(t *testing.T) {
+	f := newMessageFixture(t)
+	ctx := context.Background()
+
+	for _, target := range []string{"actor:actor:chief", "actor:", "actor:run:r-1"} {
+		if _, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", Target: target, Body: "hi"}); !errors.Is(err, core.ErrInvalid) {
+			t.Fatalf("Send(%q) error = %v, want ErrInvalid", target, err)
+		}
+	}
+	messages, err := f.messages.Inbox(ctx, InboxQuery{ProjectID: "prj-1"})
+	if err != nil {
+		t.Fatalf("Inbox() error = %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("a rejected target was stored: %+v", messages)
+	}
+
+	// The canonical and role-sugar forms still name the same mailbox.
+	for _, target := range []string{"actor:chief", "chief"} {
+		message, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", Target: target, Body: "hi"})
+		if err != nil {
+			t.Fatalf("Send(%q) error = %v", target, err)
+		}
+		if want := core.ActorAddress("chief"); message.To != want {
+			t.Fatalf("Send(%q).To = %q, want %q", target, message.To, want)
+		}
+	}
+}
+
 func TestMessageInboxAndRead(t *testing.T) {
 	f := newMessageFixture(t)
 	ctx := context.Background()

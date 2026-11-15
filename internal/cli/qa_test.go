@@ -64,6 +64,30 @@ func TestReminderAttributionAcceptsCanonicalActorAddress(t *testing.T) {
 	}
 }
 
+// TestUnregisteredActorDoesNotMisrouteTheQAReminder reproduces the reported
+// transcript: finishing a capture's last task as an actor that names no record
+// must warn and leave no reminder addressed to a mailbox nobody claims.
+func TestUnregisteredActorDoesNotMisrouteTheQAReminder(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "a feature"))
+	r.run("actor", "create", "claude", "-k", "agent")
+	task := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+
+	_, stderr := r.runSplit("task", "done", task, "--actor", "ghostrider")
+
+	if !strings.Contains(stderr, `actor "ghostrider" is not a registered actor`) {
+		t.Fatalf("stderr = %q, want an unregistered-actor warning naming ghostrider", stderr)
+	}
+	if all := r.run("msg", "inbox", "-p", projectID, "-o", "json"); strings.Contains(all, "ghostrider") {
+		t.Fatalf("the auto-QA reminder went to a dead mailbox:\n%s", all)
+	}
+	changed := findEvent(t, listEvents(t, r), "task.status_changed")
+	if changed.By != nil {
+		t.Fatalf("task.status_changed By = %v, want none for an unregistered actor", changed.By)
+	}
+}
+
 // completedFeature creates a project with one idea whose single task is done,
 // leaving the feature ready for QA.
 func completedFeature(t *testing.T) (*runner, string, string, string) {

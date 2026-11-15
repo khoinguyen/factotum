@@ -59,6 +59,11 @@ type Deps struct {
 	Err      io.Writer
 	Getenv   func(string) string
 	ActorRef string
+	// ActorFlag reports that ActorRef came from an explicit --actor, not from a
+	// configured default. bindCaller only demands a registered record for the
+	// flag: a configured default is the loop's role-shaped identity (a builder,
+	// reviewer, qa, chief, or grooming-agent role), which has no Actor record.
+	ActorFlag bool
 	// Caller is the detected caller from FACTOTUM_CALLER. It is resolved against
 	// the opened store's actors before it becomes the attribution actor, so an
 	// unregistered caller is dropped rather than trusted.

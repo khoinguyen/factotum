@@ -288,9 +288,12 @@ answer. Defer every product question to the deferred-questions file above instea
 run, and record every engineering decision as a note on the item.
 
 The pre-answer timing guard is suspended: promote, split, and mark every produced task groomed and
-assigned to an agent so the session still completes agent-ready. Any item you cannot complete is a
-human item - name it in the report and in the deferred-questions file. A run that leaves an item
-neither agent-ready nor deferred is incomplete.
+assigned to an agent (or resolve it) so the session still completes agent-ready. A task you create has
+no deferred escape: naming it in the deferred-questions file does not excuse it, so capture work you
+cannot finish agent-ready as an idea, or defer the scoped item it came from. Any scoped item you
+cannot complete is a human item - name it in the report and in the deferred-questions file. A run
+that leaves a scoped item neither agent-ready nor deferred, or a task it produced neither agent-ready
+nor resolved, is incomplete.
 `
 
 // Kickoff returns the block `ft groom` appends to the durable session prompt. It

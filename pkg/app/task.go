@@ -172,9 +172,9 @@ type PromoteInput struct {
 // Promotion is idempotent and safe under concurrency: a capture owns at most one
 // promoted task, and the store guards that with an atomic create
 // (TicketRepo.CreatePromoted) rather than a caller's check-then-write, so N
-// parallel promotes all return the one task and only the winner records the
-// created event and the note. A failed promote deletes the task it created, so
-// it leaves no half-promoted capture or orphan task.
+// parallel promotes in one process all return the one task and only the winner
+// records the created event and the note. A failed promote deletes the task it
+// created, so it leaves no half-promoted capture or orphan task.
 func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in PromoteInput) (*core.Ticket, error) {
 	capture, err := s.backend.Tickets().Get(ctx, captureID)
 	if err != nil {

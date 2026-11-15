@@ -135,8 +135,13 @@ type TicketRepo interface {
 	// CreatePromoted stores task as captureID's promoted task and returns it
 	// with created=true. When the capture already has a promoted task it stores
 	// nothing and returns that task with created=false. The lookup and the
-	// insert are one atomic step in the store, so concurrent promotions of one
-	// capture agree on a single task; the guard is here, not in the caller.
+	// insert are one step under the backend's write lock, so concurrent
+	// promotions of one capture agree on a single task within a backend process;
+	// sqlite also agrees across processes, because its transaction takes the
+	// database write lock. The memory, jsonfile, and jsondir locks are
+	// process-local, so two processes promoting one capture can each create a
+	// task: jsonfile keeps the last writer's whole document, while jsondir can
+	// persist both. The guard is here, not in the caller.
 	CreatePromoted(ctx context.Context, captureID core.TicketID, task *core.Ticket) (promoted *core.Ticket, created bool, err error)
 	// Search returns tasks in filter scope whose title, description, or notes
 	// match the query, ranked by relevance. An empty query matches everything in

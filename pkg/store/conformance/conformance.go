@@ -530,9 +530,12 @@ func testTaskPromotion(t *testing.T, be store.Backend) {
 	}
 }
 
-// testTaskPromotionConcurrent proves the guard is atomic: parallel promotions
-// of one capture all name the same task, exactly one of them creates it, and
-// the store holds exactly one promoted task and one origin edge.
+// testTaskPromotionConcurrent proves the guard is atomic within a backend
+// process: parallel promotions of one capture all name the same task, exactly
+// one of them creates it, and the store holds exactly one promoted task and one
+// origin edge. sqlite is additionally atomic across processes (its transaction
+// takes the database write lock); the file and memory backends serialize on a
+// process-local lock, so this does not cover two processes on one file.
 func testTaskPromotionConcurrent(t *testing.T, be store.Backend) {
 	t.Helper()
 	ctx := context.Background()

@@ -46,9 +46,11 @@ func newBackendHarness(t *testing.T, backend store.Backend) *harness {
 }
 
 // TestPromoteIsAtomicUnderConcurrency proves capture promotion has no
-// check-then-write race: N parallel promotes yield exactly one task, one origin
-// edge, one promotion note, and one created event, and every caller returns the
-// winning task rather than an error.
+// check-then-write race inside the process: N parallel promotes yield exactly
+// one task, one origin edge, one promotion note, and one created event, and
+// every caller returns the winning task rather than an error. The two file
+// backends serialize on a process-local lock, so two processes on one file are
+// outside this guarantee (sqlite's is additionally cross-process).
 func TestPromoteIsAtomicUnderConcurrency(t *testing.T) {
 	backends := map[string]func(t *testing.T) store.Backend{
 		"jsonfile": func(t *testing.T) store.Backend {

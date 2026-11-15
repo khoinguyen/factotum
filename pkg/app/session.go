@@ -25,7 +25,14 @@ func NewSessionService(backend store.Backend, clock Clock, ids IDGen) *SessionSe
 // NewID mints a fresh, short session id. A reincarnation always gets a new one,
 // so no two chief sessions share an id.
 func (s *SessionService) NewID() string {
-	token := strings.TrimPrefix(s.ids.NewID(""), "-")
+	return newSessionID(s.ids)
+}
+
+// newSessionID mints a fresh, short session id from ids. It is shared by the
+// session lifecycle and by a run that has no session to inherit, so a minted run
+// session looks exactly like a launched one.
+func newSessionID(ids IDGen) string {
+	token := strings.TrimPrefix(ids.NewID(""), "-")
 	if len(token) > 5 {
 		token = token[:5]
 	}

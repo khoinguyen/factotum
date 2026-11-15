@@ -97,6 +97,11 @@ func newRunFixture(t *testing.T) *runFixture {
 
 func (f *runFixture) run(t *testing.T, in RunInput) (*RunOutcome, error) {
 	t.Helper()
+	return f.runCtx(t, context.Background(), in)
+}
+
+func (f *runFixture) runCtx(t *testing.T, ctx context.Context, in RunInput) (*RunOutcome, error) {
+	t.Helper()
 	if in.TicketID == "" {
 		in.TicketID = f.task.ID
 	}
@@ -109,7 +114,7 @@ func (f *runFixture) run(t *testing.T, in RunInput) (*RunOutcome, error) {
 	if in.WorkspaceRoot == "" {
 		in.WorkspaceRoot = f.root
 	}
-	return f.svc.Run(context.Background(), in)
+	return f.svc.Run(ctx, in)
 }
 
 func TestRunDeliversPromptAndCompletesTask(t *testing.T) {

@@ -81,6 +81,13 @@ type RunInput struct {
 	// keyed by the harness environment variable names (FACTOTUM_STORE,
 	// FACTOTUM_STORE_OPTS). Empty injects nothing.
 	StoreEnv map[string]string
+	// Session is the session the run - and the agent it launches - is attributed
+	// to. An explicit id wins (a caller that judges the run on its own work names
+	// one); empty inherits the caller's session from the context
+	// (FACTOTUM_SESSION, as loop-agent.sh exports it), and with neither a fresh
+	// run-scoped id is minted, so a run started from a bare shell still lands on a
+	// session timeline instead of escaping it.
+	Session string
 	// OutputLimit caps the agent output stored in the run note; 0 uses the
 	// service default.
 	OutputLimit int
@@ -109,7 +116,10 @@ type RunOutcome struct {
 	// Complete reports whether the run finished successfully, which for a
 	// harness is a zero exit code. It is true exactly when the run does not
 	// return ErrRunFailed, so it never reads as failure next to run:finished.
-	Complete  bool
+	Complete bool
+	// Session is the session the run and its agent were attributed to: the
+	// explicit one, the inherited caller's, or the minted run-scoped id.
+	Session   string
 	Workspace string
 }
 
@@ -123,6 +133,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 	if in.Harness == nil {
 		return nil, errors.New("run: no harness selected")
 	}
+	ctx, session := runSessionContext(ctx, in.Session, s.ids)
 
 	task, err := s.backend.Tickets().Get(ctx, in.TicketID)
 	if err != nil {
@@ -158,7 +169,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		model:       in.Model,
 		args:        in.Args,
 		interactive: in.Interactive,
-		env:         mergeEnv(runEnv(project, task, in.Actor, in.MsgURL, in.ServeToken), harnessEnv(in.Harness.Name()), in.StoreEnv),
+		env:         mergeEnv(runEnv(project, task, in.Actor, in.MsgURL, in.ServeToken), harnessEnv(in.Harness.Name()), in.StoreEnv, sessionEnv(session)),
 		labels:      map[string]string{"project": string(project.ID), "task": string(task.ID)},
 		// The run is about to start: record it before Exec so a harness or wait
 		// failure is observable, and abort if the event cannot be written.
@@ -179,6 +190,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		Stderr:    res.stderr,
 		ExitCode:  res.exitCode,
 		Complete:  res.exitCode == 0,
+		Session:   session,
 		Workspace: plan.Root,
 	}
 
@@ -250,11 +262,13 @@ type ProjectRunInput struct {
 	// keyed by the harness environment variable names (FACTOTUM_STORE,
 	// FACTOTUM_STORE_OPTS). Empty injects nothing.
 	StoreEnv map[string]string
-	// Session is the run's own session id. When set it is injected as
-	// FACTOTUM_SESSION, so the session's child ft attributes the tasks it
-	// creates to this session rather than to the caller's. A caller that must
-	// judge the run on its own work (a groom session's completion guard) names
-	// a fresh id here. Empty injects nothing.
+	// Session is the run's own session id. An explicit id wins; empty inherits
+	// the caller's session from the context (FACTOTUM_SESSION), and with neither
+	// a fresh run-scoped id is minted. Either way it is injected as
+	// FACTOTUM_SESSION, so the session's child ft attributes the tasks it creates
+	// to this session rather than to the caller's. A caller that must judge the
+	// run on its own work (a groom session's completion guard) names a fresh id
+	// here.
 	Session string
 	// OnResolve, when non-nil, is called with the resolved workspace plan after
 	// resolution and before the harness runs, so a caller can observe how the
@@ -274,7 +288,10 @@ type ProjectRunOutcome struct {
 	ExitCode int
 	// Complete reports whether the run finished successfully, which for a
 	// harness is a zero exit code.
-	Complete  bool
+	Complete bool
+	// Session is the session the run and its agent were attributed to: the
+	// explicit one, the inherited caller's, or the minted run-scoped id.
+	Session   string
 	Workspace string
 	// Workdir is the directory the harness ran in: the single checkout's path
 	// when the project has one repo, else the workspace root. A caller that
@@ -298,6 +315,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 	if in.Harness == nil {
 		return nil, errors.New("run: no harness selected")
 	}
+	ctx, session := runSessionContext(ctx, in.Session, s.ids)
 
 	project, err := s.backend.Projects().Get(ctx, in.ProjectID)
 	if err != nil {
@@ -327,7 +345,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		model:       in.Model,
 		args:        in.Args,
 		interactive: in.Interactive,
-		env:         mergeEnv(runEnv(project, nil, in.Actor, in.MsgURL, in.ServeToken), harnessEnv(in.Harness.Name()), in.StoreEnv, sessionEnv(in.Session)),
+		env:         mergeEnv(runEnv(project, nil, in.Actor, in.MsgURL, in.ServeToken), harnessEnv(in.Harness.Name()), in.StoreEnv, sessionEnv(session)),
 		labels:      map[string]string{"project": string(project.ID)},
 		capture:     in.Capture,
 	})
@@ -341,6 +359,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		Stderr:    res.stderr,
 		ExitCode:  res.exitCode,
 		Complete:  res.exitCode == 0,
+		Session:   session,
 		Workspace: plan.Root,
 		Workdir:   runWorkdir(plan),
 		Checkouts: plan.Checkouts,
@@ -498,8 +517,27 @@ func runEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgUR
 	return env
 }
 
-// sessionEnv is the environment a run's own session identity rides in, or nil
-// when the run has none, so an unnamed run does not export an empty session.
+// runSessionContext resolves the session a run is attributed to and records it
+// on ctx, so the run's own events and everything its agent does share one
+// session. An explicit id wins, else the caller's session (FACTOTUM_SESSION) is
+// inherited, else a fresh run-scoped id is minted. The actor already on ctx is
+// kept, so attribution is unchanged.
+func runSessionContext(ctx context.Context, explicit string, ids IDGen) (context.Context, string) {
+	session := explicit
+	if session == "" {
+		if _, inherited, ok := Caller(ctx); ok {
+			session = inherited
+		}
+	}
+	if session == "" {
+		session = newSessionID(ids)
+	}
+	actor, _, _ := Caller(ctx)
+	return WithCaller(ctx, actor, session), session
+}
+
+// sessionEnv is the environment a run's session identity rides in, or nil for an
+// empty id, so a caller can never export a blank session.
 func sessionEnv(session string) map[string]string {
 	if session == "" {
 		return nil

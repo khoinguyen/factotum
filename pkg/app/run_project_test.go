@@ -57,6 +57,11 @@ func newProjectRunFixture(t *testing.T) *projectRunFixture {
 
 func (f *projectRunFixture) run(t *testing.T, in ProjectRunInput) (*ProjectRunOutcome, error) {
 	t.Helper()
+	return f.runCtx(t, context.Background(), in)
+}
+
+func (f *projectRunFixture) runCtx(t *testing.T, ctx context.Context, in ProjectRunInput) (*ProjectRunOutcome, error) {
+	t.Helper()
 	if in.ProjectID == "" {
 		in.ProjectID = f.project.ID
 	}
@@ -69,7 +74,7 @@ func (f *projectRunFixture) run(t *testing.T, in ProjectRunInput) (*ProjectRunOu
 	if in.WorkspaceRoot == "" {
 		in.WorkspaceRoot = f.root
 	}
-	return f.svc.RunProject(context.Background(), in)
+	return f.svc.RunProject(ctx, in)
 }
 
 // TestRunProjectMaterializesAllReposAndDeliversPromptVerbatim proves a task-less
@@ -274,29 +279,47 @@ func TestRunProjectCarriesStoreEnvAndPinsProject(t *testing.T) {
 }
 
 // TestRunProjectInjectsSession proves a task-less run hands the harness the
-// run's own session id, so the session's child ft attributes what it creates to
-// that session rather than to the caller's. The groom completion guard reads
-// those attributions, so a run without them cannot tell its own produced work
-// from another writer's.
+// session it is attributed to: an explicitly named id (the groom completion
+// guard names its own), else the caller's inherited session, else a freshly
+// minted run-scoped one. The session's child ft reads FACTOTUM_SESSION, and the
+// groom guard reads those attributions, so a run without them cannot tell its
+// own produced work from another writer's.
 func TestRunProjectInjectsSession(t *testing.T) {
+	const inherited = "sid-chief"
 	tests := []struct {
 		name    string
 		session string
+		inherit bool
 		want    string
+		minted  bool
 	}{
 		{name: "a named session is injected", session: "groom-abc", want: "groom-abc"},
-		{name: "no session injects nothing", session: "", want: ""},
+		{name: "an explicit id wins over the inherited session", session: "groom-abc", inherit: true, want: "groom-abc"},
+		{name: "the caller's session is inherited", inherit: true, want: inherited},
+		{name: "no session mints a run-scoped one", minted: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newProjectRunFixture(t)
 			f.backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
-			if _, err := f.run(t, ProjectRunInput{Prompt: "groom", Session: tt.session}); err != nil {
+			ctx := context.Background()
+			if tt.inherit {
+				ctx = WithCaller(ctx, "grooming-agent-art-1", inherited)
+			}
+			outcome, err := f.runCtx(t, ctx, ProjectRunInput{Prompt: "groom", Session: tt.session})
+			if err != nil {
 				t.Fatalf("RunProject() error = %v", err)
 			}
-			env := f.backend.Prepared()[0].Env
-			if env[harnesspkg.EnvSession] != tt.want {
-				t.Errorf("env %s = %q, want %q", harnesspkg.EnvSession, env[harnesspkg.EnvSession], tt.want)
+			sid := f.backend.Prepared()[0].Env[harnesspkg.EnvSession]
+			if tt.minted {
+				if sid == "" {
+					t.Fatal("task-less run exported no FACTOTUM_SESSION; want a minted run-scoped id")
+				}
+			} else if sid != tt.want {
+				t.Errorf("env %s = %q, want %q", harnesspkg.EnvSession, sid, tt.want)
+			}
+			if outcome.Session != sid {
+				t.Errorf("outcome session = %q, want the exported %q", outcome.Session, sid)
 			}
 		})
 	}

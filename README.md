@@ -148,12 +148,12 @@ ft idea list && ft bug list
 `ft run <task>` resolves the task's repositories into a workspace, prepares the selected **isolation
 backend**, runs the selected **harness** with the task as its prompt, captures the output, and
 reflects progress into the store. A successful run moves the task to `ready_for_review`, reports
-`run: finished`, `exit_code: 0`, `complete: true`, and records a note with the agent's output plus
-`task.run_started`/`task.run_finished` events; a failed run leaves the status untouched, reports
-`run: failed`/`complete: false`, and records only a failure note. Either run prints the harness's
-stderr (its final 4 KiB) as a `stderr:` block after the output, and `-o json|yaml` carries the same
-tail in a `stderr` field, so a harness that fails with its reason on stderr explains itself instead
-of reporting only an exit code.
+`session: <id>`, `run: finished`, `exit_code: 0`, `complete: true`, and records a note with the
+agent's output plus `task.run_started`/`task.run_finished` events; a failed run leaves the status
+untouched, reports `run: failed`/`complete: false`, and records only a failure note. Either run
+prints the harness's stderr (its final 4 KiB) as a `stderr:` block after the output, and
+`-o json|yaml` carries the same tail in a `stderr` field, so a harness that fails with its reason on
+stderr explains itself instead of reporting only an exit code.
 
 A harness describes one agent CLI end to end (image, invocation, model flag, prompt delivery,
 completion, output parsing); each builds a headless invocation that passes the prompt as the final
@@ -161,7 +161,10 @@ message and reads stdout. The launched session inherits the run's project and st
 (`FACTOTUM_PROJECT`, `FACTOTUM_STORE`, `FACTOTUM_STORE_OPTS`), so the `ft` it runs reads and writes
 that store, never a store the checkout's config would resolve — your real `~/.factotum` database,
 for example. `FACTOTUM_STORE_OPTS` is a comma-separated `key=value` list, so a store-opt value
-cannot itself contain a comma.
+cannot itself contain a comma. It also inherits `FACTOTUM_SESSION`: the caller's session when the
+run inherited one, else a freshly minted run-scoped id, so the work the agent does is attributable
+to a session (`session:` in the run's output, `ft event list --session <id>`) instead of escaping
+the session timeline.
 
 ```sh
 ft run <task> --sandbox local --harness opencode2 --allow-host   # dev-only, unsandboxed

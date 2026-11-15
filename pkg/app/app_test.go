@@ -1333,6 +1333,10 @@ func TestBackfillGeneratedNotes(t *testing.T) {
 	task, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "decide"})
 	human, _ := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Title: "ship"})
 	author := core.ActorID("act-human")
+	// A loop role is a mailbox, never an Actor record, so an author that names
+	// one is still an author: the backfill must not resolve it into "unknown,
+	// therefore machine".
+	roleAuthor := core.ActorID("builder-t-abc123")
 
 	notes := []struct {
 		taskID core.TicketID
@@ -1354,6 +1358,7 @@ func TestBackfillGeneratedNotes(t *testing.T) {
 		{task.ID, NoteInput{Body: "Groomed by agent (auto): authoredgroomprobe closed the gaps", Author: &author}},
 		{task.ID, NoteInput{Body: "Needs human decision: authoreddecisionprobe pick a transport", Author: &author}},
 		{task.ID, NoteInput{Body: "Needs human grooming: authoredgroomingprobe scope the transport", Author: &author}},
+		{task.ID, NoteInput{Body: "Built (PR base main): rolebuiltprobe recorded the note author", Author: &roleAuthor}},
 		{human.ID, NoteInput{Body: "Decision: keep humanprobe"}},
 		{human.ID, NoteInput{Body: "PR opened the door to a redesign"}},
 	}
@@ -1414,6 +1419,7 @@ func TestBackfillGeneratedNotes(t *testing.T) {
 		"Groomed by agent (auto): authoredgroomprobe closed the gaps":             false,
 		"Needs human decision: authoreddecisionprobe pick a transport":            false,
 		"Needs human grooming: authoredgroomingprobe scope the transport":         false,
+		"Built (PR base main): rolebuiltprobe recorded the note author":           false,
 	}
 	for _, note := range stored.Notes {
 		want, ok := wantSystem[note.Body]
@@ -1452,6 +1458,9 @@ func TestBackfillGeneratedNotes(t *testing.T) {
 	}
 	if hits, err := h.tasks.Search(ctx, filter, "authoredgroomingprobe"); err != nil || len(hits) != 1 {
 		t.Fatalf("Search(authoredgroomingprobe) = %d hits, %v; want the authored note still indexed", len(hits), err)
+	}
+	if hits, err := h.tasks.Search(ctx, filter, "rolebuiltprobe"); err != nil || len(hits) != 1 {
+		t.Fatalf("Search(rolebuiltprobe) = %d hits, %v; want the role-authored note still indexed", len(hits), err)
 	}
 	if hits, err := h.tasks.Search(ctx, filter, "humanprobe"); err != nil || len(hits) != 1 {
 		t.Fatalf("Search(humanprobe) = %d hits, %v; want the human note still indexed", len(hits), err)

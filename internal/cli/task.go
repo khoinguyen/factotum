@@ -1893,15 +1893,19 @@ func actorName(actors map[core.ActorID]core.Actor, id core.ActorID) string {
 	return string(id)
 }
 
+// currentActorID reports the actor this invocation is attributed to: the caller
+// bindCaller resolved and recorded on the context, which is also what stamps
+// every event the call appends. A note's author and its task.note_added event
+// therefore cannot disagree. Resolving d.ActorRef again here would re-apply the
+// identity rule against Actor records only, and a loop role is a mailbox, not a
+// record: the note came out authorless while its own event named the role, and
+// the authorless note then read as machine text to ft task note backfill.
 func (d *Deps) currentActorID(ctx context.Context) *core.ActorID {
-	if d.ActorRef == "" {
+	actor, _, ok := app.Caller(ctx)
+	if !ok || actor == "" {
 		return nil
 	}
-	actor, err := d.Actors.Resolve(ctx, d.ActorRef)
-	if err != nil {
-		return nil
-	}
-	return &actor.ID
+	return &actor
 }
 
 func unionIDs(a, b []core.TicketID) []core.TicketID {

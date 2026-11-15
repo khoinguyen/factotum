@@ -298,20 +298,23 @@ func (r envCredentialResolver) Resolve(_ context.Context, c isolation.Credential
 // (distinct binary, image, and interactive flags) so it selects with
 // `--harness opencode2` without changing V1. The configured provider and
 // credential variable are forwarded so an isolating backend can attach the
-// credential as a provider placeholder, and a configured base image overrides
-// the harness's own image (pi, which publishes none, requires one to isolate).
-// A configured user overrides the harness's identity, so a caller-supplied image
-// with a root USER still runs as the uid:gid the host asked for.
+// credential as a provider placeholder; the local backend never is, because it
+// runs the host binary, which already has the host's own credentials, and has no
+// resolver to attach one with. A configured base image overrides the harness's
+// own image (pi, which publishes none, requires one to isolate). A configured
+// user overrides the harness's identity, so a caller-supplied image with a root
+// USER still runs as the uid:gid the host asked for.
 func runHarnesses() *registry.Registry[HarnessFactory] {
 	reg := registry.New[HarnessFactory]()
 	registerRunHarness(reg, opencode.Name, func(cfg config.Run) (harness.Harness, error) {
+		provider, credEnv := harnessCredential(cfg)
 		opts := opencode.Options{
 			Image:            cfg.Image,
 			User:             cfg.User,
 			Model:            cfg.Model,
 			Args:             cfg.Args,
-			Provider:         cfg.Provider,
-			CredentialEnvVar: cfg.CredentialEnvVar,
+			Provider:         provider,
+			CredentialEnvVar: credEnv,
 		}
 		// The local backend runs the host `opencode` binary in place, so its
 		// major version decides the argv shape: an in-place V2 (brew upgrades
@@ -327,14 +330,15 @@ func runHarnesses() *registry.Registry[HarnessFactory] {
 		return opencode.New(opts), nil
 	})
 	registerRunHarness(reg, opencode.NameV2, func(cfg config.Run) (harness.Harness, error) {
+		provider, credEnv := harnessCredential(cfg)
 		return opencode.New(opencode.Options{
 			Variant:          opencode.V2,
 			Image:            cfg.Image,
 			User:             cfg.User,
 			Model:            cfg.Model,
 			Args:             cfg.Args,
-			Provider:         cfg.Provider,
-			CredentialEnvVar: cfg.CredentialEnvVar,
+			Provider:         provider,
+			CredentialEnvVar: credEnv,
 		}), nil
 	})
 	registerRunHarness(reg, pi.Name, func(cfg config.Run) (harness.Harness, error) {
@@ -346,16 +350,29 @@ func runHarnesses() *registry.Registry[HarnessFactory] {
 		if cfg.Sandbox != local.Name && cfg.Image == "" {
 			return nil, fmt.Errorf("harness %q publishes no image: set run.image (or --image, or FACTOTUM_RUN_IMAGE) to a base image with pi on PATH, or run it on the local sandbox", pi.Name)
 		}
+		provider, credEnv := harnessCredential(cfg)
 		return pi.New(pi.Options{
 			Image:            cfg.Image,
 			User:             cfg.User,
 			Model:            cfg.Model,
 			Args:             cfg.Args,
-			Provider:         cfg.Provider,
-			CredentialEnvVar: cfg.CredentialEnvVar,
+			Provider:         provider,
+			CredentialEnvVar: credEnv,
 		}), nil
 	})
 	return reg
+}
+
+// harnessCredential returns the provider and credential variable a harness
+// should declare for cfg. Only an isolating backend gets them: the local backend
+// runs the harness on the host, where the binary authenticates from the host's
+// own configuration, and the backend has no resolver, so a declared credential
+// would fail Prepare with ErrUnsupported instead of adding anything.
+func harnessCredential(cfg config.Run) (provider, envVar string) {
+	if cfg.Sandbox == local.Name {
+		return "", ""
+	}
+	return cfg.Provider, cfg.CredentialEnvVar
 }
 
 func registerRunBackend(reg *registry.Registry[IsolationBackendFactory], name string, factory IsolationBackendFactory) {

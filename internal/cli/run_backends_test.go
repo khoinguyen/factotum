@@ -218,7 +218,7 @@ func TestRunHarnessesIncludePi(t *testing.T) {
 		t.Fatalf("build pi harness = (%v, %v), want name %q", h, err, pi.Name)
 	}
 
-	h, err := factory(config.Run{Sandbox: local.Name, Model: "openrouter/x", Provider: "openrouter", CredentialEnvVar: "OPENROUTER_API_KEY"})
+	h, err := factory(config.Run{Sandbox: openshell.Name, Image: "base-image", Model: "openrouter/x", Provider: "openrouter", CredentialEnvVar: "OPENROUTER_API_KEY"})
 	if err != nil {
 		t.Fatalf("build pi harness: %v", err)
 	}
@@ -231,6 +231,94 @@ func TestRunHarnessesIncludePi(t *testing.T) {
 	}
 	if got := spec.Credentials[0]; got.Provider != "openrouter" || got.EnvVar != "OPENROUTER_API_KEY" {
 		t.Fatalf("credential = %+v, want openrouter/OPENROUTER_API_KEY", got)
+	}
+}
+
+// TestRunHarnessLocalOmitsConfiguredCredential pins that a configured
+// run.provider/run.credential_env is declared only to an isolating backend. The
+// local backend runs the host binary in place, where it authenticates from the
+// host's own configuration, and has no credential resolver to attach one: a
+// declared credential made every local run fail Prepare with "no credential
+// resolver configured" (t-2dqrwegfcc).
+func TestRunHarnessLocalOmitsConfiguredCredential(t *testing.T) {
+	run := config.Run{
+		Model:            "openrouter/x",
+		Image:            "base-image",
+		Provider:         "openrouter",
+		CredentialEnvVar: "OPENROUTER_API_KEY",
+	}
+	tests := []struct {
+		sandbox   string
+		wantCreds int
+	}{
+		{sandbox: local.Name, wantCreds: 0},
+		{sandbox: openshell.Name, wantCreds: 1},
+		{sandbox: docker.Name, wantCreds: 1},
+	}
+	for _, harnessName := range []string{opencode.Name, opencode.NameV2, pi.Name} {
+		factory, err := runHarnesses().MustLookup(harnessName)
+		if err != nil {
+			t.Fatalf("lookup %q: %v", harnessName, err)
+		}
+		for _, tc := range tests {
+			t.Run(harnessName+"/"+tc.sandbox, func(t *testing.T) {
+				cfg := run
+				cfg.Sandbox = tc.sandbox
+				h, err := factory(cfg)
+				if err != nil {
+					t.Fatalf("build harness: %v", err)
+				}
+				spec, err := h.Spec(harness.Request{Workdir: "/w"})
+				if err != nil {
+					t.Fatalf("Spec() error = %v", err)
+				}
+				if len(spec.Credentials) != tc.wantCreds {
+					t.Fatalf("Spec.Credentials = %v, want %d", spec.Credentials, tc.wantCreds)
+				}
+				if tc.wantCreds == 1 {
+					if got := spec.Credentials[0]; got.Provider != "openrouter" || got.EnvVar != "OPENROUTER_API_KEY" {
+						t.Fatalf("credential = %+v, want openrouter/OPENROUTER_API_KEY", got)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestLocalRunPreparesConfiguredCredentialHarness pins the bug end to end at the
+// wiring level: the spec a harness builds for a credential-configured local run
+// must prepare on the local backend rather than fail with "no credential
+// resolver configured" (t-2dqrwegfcc).
+func TestLocalRunPreparesConfiguredCredentialHarness(t *testing.T) {
+	cfg := config.Run{
+		Sandbox:          local.Name,
+		Model:            "openrouter/x",
+		Provider:         "openrouter",
+		CredentialEnvVar: "OPENROUTER_API_KEY",
+	}
+	backend := local.New(local.Options{AllowHost: true, Warn: io.Discard})
+	for _, name := range []string{opencode.Name, opencode.NameV2, pi.Name} {
+		t.Run(name, func(t *testing.T) {
+			factory, err := runHarnesses().MustLookup(name)
+			if err != nil {
+				t.Fatalf("lookup %q: %v", name, err)
+			}
+			h, err := factory(cfg)
+			if err != nil {
+				t.Fatalf("build harness: %v", err)
+			}
+			spec, err := h.Spec(harness.Request{Workdir: t.TempDir()})
+			if err != nil {
+				t.Fatalf("Spec() error = %v", err)
+			}
+			handle, err := backend.Prepare(context.Background(), spec)
+			if err != nil {
+				t.Fatalf("local Prepare() error = %v, want nil (the credential is ignored on the host)", err)
+			}
+			if err := backend.Delete(context.Background(), handle); err != nil {
+				t.Fatalf("Delete() error = %v", err)
+			}
+		})
 	}
 }
 

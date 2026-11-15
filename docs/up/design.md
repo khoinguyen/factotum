@@ -389,8 +389,8 @@ ft up pause|resume|retry|cancel <pipeline>        # operator control
 ```
 
 The design also proposed a `--max-parallel N` flag on the daemon and a pipeline filter on
-`ft up status`; neither is built (concurrency is `up.max_parallel`, one pipeline per process
-today), so the synopsis lists only the flags the commands have.
+`ft up status`; neither is built (one pipeline per process today, and the `up.max_parallel` setting
+is itself still proposed — section 11), so the synopsis lists only the flags the commands have.
 
 - Output follows the repo shapes: single results print `key: value` lines ending `project`, `repo`;
   lists print a table; `-o json|yaml` are the machine interfaces.

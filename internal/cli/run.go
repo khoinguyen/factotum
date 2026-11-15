@@ -685,6 +685,13 @@ func (d *Deps) driveLoop(cmd *cobra.Command, targetID string, opts runOptions, s
 	}
 
 	svc := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs)
+	// One session for the whole loop: the caller's when this invocation inherited
+	// one, else a fresh id, so every task the loop runs lands on one timeline
+	// instead of each run minting its own.
+	session := d.Session
+	if session == "" {
+		session = d.Sessions.NewID()
+	}
 	runner := func(ctx context.Context, taskID core.TicketID) (*app.RunOutcome, error) {
 		progress := d.startRunProgress(runProgressLabel("run "+string(taskID), sel.backendName, sel.harness.Name()), false)
 		defer progress.stop()
@@ -701,6 +708,7 @@ func (d *Deps) driveLoop(cmd *cobra.Command, targetID string, opts runOptions, s
 			MsgURL:           d.Config.Serve.URL,
 			ServeToken:       d.Config.Serve.Token,
 			StoreEnv:         d.storeEnv(),
+			Session:          session,
 			OnResolve:        d.warnLocalPlan,
 		})
 	}
@@ -764,6 +772,7 @@ type runDoc struct {
 	Complete bool   `json:"complete" yaml:"complete"`
 	Output   string `json:"output,omitempty" yaml:"output,omitempty"`
 	Stderr   string `json:"stderr,omitempty" yaml:"stderr,omitempty"`
+	Session  string `json:"session" yaml:"session"`
 	Project  string `json:"project" yaml:"project"`
 	Repo     string `json:"repo" yaml:"repo"`
 }
@@ -781,6 +790,7 @@ func (d *Deps) printRunOutcome(task *core.Ticket, outcome *app.RunOutcome, runEr
 		Complete: outcome.Complete,
 		Output:   outcome.Output,
 		Stderr:   outcome.Stderr,
+		Session:  outcome.Session,
 		Project:  string(task.ProjectID),
 		Repo:     task.Repo,
 	}
@@ -791,6 +801,7 @@ func (d *Deps) printRunOutcome(task *core.Ticket, outcome *app.RunOutcome, runEr
 			f("status", outcome.Status),
 			f("exit_code", outcome.ExitCode),
 			f("complete", outcome.Complete),
+			f("session", outcome.Session),
 			f("project", task.ProjectID),
 			f("repo", d.repoValue(task.Repo)),
 		)
@@ -822,6 +833,7 @@ type runProjectDoc struct {
 	Repos    []string `json:"repos" yaml:"repos"`
 	Output   string   `json:"output,omitempty" yaml:"output,omitempty"`
 	Stderr   string   `json:"stderr,omitempty" yaml:"stderr,omitempty"`
+	Session  string   `json:"session" yaml:"session"`
 	Project  string   `json:"project" yaml:"project"`
 	Repo     string   `json:"repo" yaml:"repo"`
 }
@@ -842,6 +854,7 @@ func (d *Deps) printProjectRunOutcome(project *core.Project, outcome *app.Projec
 		Repos:    repos,
 		Output:   outcome.Output,
 		Stderr:   outcome.Stderr,
+		Session:  outcome.Session,
 		Project:  string(project.ID),
 		Repo:     "",
 	}
@@ -851,6 +864,7 @@ func (d *Deps) printProjectRunOutcome(project *core.Project, outcome *app.Projec
 			f("exit_code", outcome.ExitCode),
 			f("complete", outcome.Complete),
 			f("repos", strings.Join(repos, ", ")),
+			f("session", outcome.Session),
 			f("project", project.ID),
 			f("repo", d.repoValue("")),
 		)

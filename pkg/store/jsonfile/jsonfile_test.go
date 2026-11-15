@@ -2,6 +2,7 @@ package jsonfile
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -209,10 +210,11 @@ func TestHubAndCLIKeepEveryWrite(t *testing.T) {
 	}
 }
 
-// TestConcurrentWritersLoseNothing writes through several handles at once —
-// one per process — and requires every append to survive. Each write must
-// re-read the document under the file lock instead of persisting the snapshot
-// the handle loaded at Open.
+// TestConcurrentWritersLoseNothing writes through several handles at once and
+// requires every append to survive. flock is per open file description, so a
+// handle contends exactly like a separate process. Each write must re-read the
+// document under the file lock instead of persisting the snapshot the handle
+// loaded at Open.
 func TestConcurrentWritersLoseNothing(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "factotum.json")
@@ -252,5 +254,115 @@ func TestConcurrentWritersLoseNothing(t *testing.T) {
 	}
 	if len(events) != writers*perWriter {
 		t.Fatalf("Events().List() kept %d of %d writes", len(events), writers*perWriter)
+	}
+}
+
+// TestLockIsASiblingFileThatOutlivesTheDocument pins the property the fix
+// rests on: writes replace the document by rename, so the lock must live on
+// its own file and keep its inode across a write. Locking the document, or
+// persisting in place, would silently reintroduce the lost-write bug.
+func TestLockIsASiblingFileThatOutlivesTheDocument(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.json")
+	be := openAt(t, store.Config{Backend: "jsonfile", Options: map[string]string{"path": path}})
+
+	project := &core.Project{ID: "prj-1", Name: "Acme"}
+	if err := be.Projects().Create(ctx, project); err != nil {
+		t.Fatalf("Projects().Create() error = %v", err)
+	}
+	lockBefore, err := os.Stat(path + ".lock")
+	if err != nil {
+		t.Fatalf("Stat(lock file) error = %v", err)
+	}
+	documentBefore, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(document) error = %v", err)
+	}
+
+	project.Name = "Acme Renamed"
+	if err := be.Projects().Update(ctx, project); err != nil {
+		t.Fatalf("Projects().Update() error = %v", err)
+	}
+	lockAfter, err := os.Stat(path + ".lock")
+	if err != nil {
+		t.Fatalf("Stat(lock file) after write error = %v", err)
+	}
+	documentAfter, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(document) after write error = %v", err)
+	}
+
+	if os.SameFile(documentBefore, documentAfter) {
+		t.Fatal("a write kept the document inode; the lock file exists because writes rename")
+	}
+	if !os.SameFile(lockBefore, lockAfter) {
+		t.Fatal("the lock file was replaced; a lock on the replaced inode would not exclude the next writer")
+	}
+}
+
+// TestConcurrentClaimersTakeEachMessageOnce pins the claim compare-and-swap
+// across writers: one handle per claimer, and no message is delivered twice.
+func TestConcurrentClaimersTakeEachMessageOnce(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.json")
+	cfg := store.Config{Backend: "jsonfile", Options: map[string]string{"path": path}}
+
+	const project = core.ProjectID("prj-1")
+	actor := core.ActorID("builder-t-1")
+	const messages = 12
+	seed := openAt(t, cfg)
+	for i := 0; i < messages; i++ {
+		at := storeBase.Add(time.Duration(i) * time.Second)
+		message := &core.Message{
+			ID:        core.MessageID(fmt.Sprintf("msg-%02d", i)),
+			ProjectID: project,
+			To:        core.ActorAddress(actor),
+			Body:      "handoff",
+			State:     core.MessageQueued,
+			CreatedAt: at,
+			UpdatedAt: at,
+		}
+		if err := seed.Messages().Create(ctx, message); err != nil {
+			t.Fatalf("Messages().Create() error = %v", err)
+		}
+	}
+
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		taken = map[core.MessageID]int{}
+	)
+	for i := 0; i < messages; i++ {
+		claimer := openAt(t, cfg)
+		runID := core.RunID(fmt.Sprintf("run-%02d", i))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			message, err := claimer.Messages().Claim(ctx, store.ClaimRequest{
+				ProjectID: project,
+				RunID:     runID,
+				Recipient: store.ClaimRecipient{ActorID: &actor},
+			})
+			if errors.Is(err, core.ErrNotFound) {
+				return
+			}
+			if err != nil {
+				t.Errorf("Messages().Claim() error = %v", err)
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			taken[message.ID]++
+		}()
+	}
+	wg.Wait()
+
+	if len(taken) != messages {
+		t.Fatalf("claimers took %d of %d messages", len(taken), messages)
+	}
+	for id, count := range taken {
+		if count != 1 {
+			t.Fatalf("message %s was delivered %d times", id, count)
+		}
 	}
 }

@@ -2,6 +2,11 @@ version: "2"
 
 run:
   timeout: 5m
+  # golangci-lint takes a machine-global lock ($TMPDIR/golangci-lint.lock) on
+  # `run`, so concurrent runs (one per worktree/CI job) fail with "parallel
+  # golangci-lint is running" after 5s. Skip the lock: the shared cache is Go's
+  # own, built for concurrent processes, and analysis is unchanged.
+  allow-parallel-runners: true
 
 linters:
   default: standard

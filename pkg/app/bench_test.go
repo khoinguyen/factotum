@@ -26,23 +26,24 @@ import (
 // The Go benchmarks report mean ns/op; per-run p50/p95 and bytes-of-output
 // reporting (plus the 50k/100k tiers and process-startup-inclusive timing) land
 // in t-perf-scale. TestHotPathBudgetSmoke is the CI tier: it drives the `task
-// next` path (load + graph + readiness + rank) at 10k and fails at smokeHeadroom
-// times the @10k budget, so an order-of-magnitude regression fails while
-// ordinary CI noise does not. Seed time is not asserted.
+// next` path (load + graph + readiness + rank) at each backend's own scale and
+// fails at smokeHeadroom times that backend's budget, so an order-of-magnitude
+// regression fails while ordinary CI noise does not. Seed time is not asserted.
 const (
 	hotPathBudget10k = 100 * time.Millisecond
 	smokeHeadroom    = 5
 
 	// jsonfile re-reads and re-parses its whole document on every operation,
-	// so `task next` at 1k measured ~120ms of CPU under -race (~8ms without).
-	// hotPathBudget10k is unreachable for it at any scale, so the tier records
-	// the measured cost instead: smokeHeadroom keeps the ceiling ~4x above the
-	// -race measurement, tight enough to fail on a constant-factor regression
-	// and loose enough not to flake a slower runner.
+	// so `task next` at 1k measured ~120ms of CPU under -race. That is over
+	// hotPathBudget10k, so the tier records the measured cost instead:
+	// smokeHeadroom puts the ceiling at 500ms, ~4x the measurement - tight
+	// enough to fail on a constant-factor regression and loose enough not to
+	// flake a slower runner.
 	jsonfileBudget1k = 100 * time.Millisecond
 
-	// jsondir keeps its task list index in memory, so it stays cheap: ~11ms of
-	// CPU under -race at 1k.
+	// jsondir keeps its task list index in memory, so it stays cheap: ~7ms of
+	// CPU under -race at 1k. Its 100ms ceiling is deliberately generous; it
+	// guards against an order-of-magnitude regression, not small growth.
 	jsondirBudget1k = 20 * time.Millisecond
 )
 

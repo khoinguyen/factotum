@@ -26,12 +26,15 @@ type View struct {
 	Now     time.Time
 }
 
-// Stats are unambiguous graph counts: Resolved counts tasks that satisfy the
+// Stats are unambiguous graph counts: Captures counts human captures (ideas and
+// bugs), which are input rather than work, so they are excluded from the
+// execution counts below. Resolved counts executable tasks that satisfy the
 // resolution policy (ready_for_review/done/cancelled); Done counts status=done;
 // DepBlocked counts tasks waiting on unresolved dependencies; Blocked counts
 // status=blocked.
 type Stats struct {
 	Scope      int
+	Captures   int
 	Resolved   int
 	Done       int
 	ReadyAgent int
@@ -119,6 +122,12 @@ func (v View) info() *info {
 	}
 	for _, id := range derived.ids {
 		task := derived.tasks[id]
+		// A capture is input, not execution: every capture resolves, so counting
+		// it under resolved (or its status) would blur what the work counts mean.
+		if task.Kind.CapturedByHuman() {
+			derived.stats.Captures++
+			continue
+		}
 		if task.Resolves(v.Project.Policy) {
 			derived.stats.Resolved++
 		}

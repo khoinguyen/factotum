@@ -79,13 +79,24 @@ func (Tree) Format() string { return "tree" }
 func (Tree) Render(_ context.Context, w io.Writer, view View) error {
 	var b strings.Builder
 	model := view.BuildTree()
-	writeTreeNode(&b, model, 0)
+	derived := view.info()
+	writeTreeNode(&b, model, derived)
+	// Captures are input, not execution nodes: they get the same section the
+	// agent snapshot has instead of appearing in the tree.
+	writeCaptureGroup(&b, derived)
 	return writeString(w, b.String())
 }
 
-func writeTreeNode(b *strings.Builder, model *TreeModel, depth int) {
+func writeTreeNode(b *strings.Builder, model *TreeModel, derived *info) {
 	var walk func(node *TreeNode, level int)
 	walk = func(node *TreeNode, level int) {
+		if node.Ticket.Kind.CapturedByHuman() {
+			// Keep a promoted task in the tree at the capture's level.
+			for _, child := range node.Children {
+				walk(child, level)
+			}
+			return
+		}
 		indent := strings.Repeat("  ", level)
 		fmt.Fprintf(b, "%s- %s [%s] %s\n", indent, node.Ticket.ID, node.Class, node.Ticket.Title)
 		for _, ref := range node.Refs {
@@ -96,6 +107,6 @@ func writeTreeNode(b *strings.Builder, model *TreeModel, depth int) {
 		}
 	}
 	for _, root := range model.Roots {
-		walk(root, depth)
+		walk(root, 0)
 	}
 }

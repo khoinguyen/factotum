@@ -102,8 +102,8 @@ func TestAgentRender(t *testing.T) {
 			t.Fatalf("agent output missing %q:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "stats: scope=5 resolved=1 done=1 ready_agent=1 ready_human=2 dep_blocked=1 blocked=0") {
-		t.Fatalf("agent stats should distinguish resolved/done and dep-blocked/blocked:\n%s", out)
+	if !strings.Contains(out, "stats: scope=5 captures=0 resolved=1 done=1 ready_agent=1 ready_human=2 dep_blocked=1 blocked=0") {
+		t.Fatalf("agent stats should distinguish captures/resolved/done and dep-blocked/blocked:\n%s", out)
 	}
 	if out != renderString(t, Agent{}, view) {
 		t.Fatal("agent render is not deterministic")
@@ -146,6 +146,81 @@ func TestAgentRenderCaptureSection(t *testing.T) {
 		if n := strings.Count(out, id); n != 1 {
 			t.Fatalf("capture %s should appear once (capture section), got %d:\n%s", id, n, out)
 		}
+	}
+}
+
+// promotedView is ideaView plus a task promoted from the idea, so a renderer can
+// show how it treats the origin edge between an executable task and its capture.
+func promotedView(t *testing.T) View {
+	t.Helper()
+	view := ideaView(t)
+	promoted := task("p", core.StatusTodo, "i-1")
+	view.Tasks = append(view.Tasks, promoted)
+	values := make([]core.Ticket, 0, len(view.Tasks))
+	for _, pointer := range view.Tasks {
+		values = append(values, *pointer)
+	}
+	built, err := graph.New(values, view.Project.Policy)
+	if err != nil {
+		t.Fatalf("graph.New() error = %v", err)
+	}
+	view.Graph = built
+	view.Ready = built.ReadyByActor(nil)
+	return view
+}
+
+// The default human text format carries the same capture facts as the agent
+// format: captures are listed in their own section, not woven into the
+// execution tree, and a task promoted from a capture stays in the tree.
+func TestTreeRenderCaptureSection(t *testing.T) {
+	view := promotedView(t)
+	out := renderString(t, Tree{}, view)
+	for _, want := range []string{"capture:", "i-1", "a spark", "b-1", "it crashes", "status=todo"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("tree output missing capture fact %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "[capture]") {
+		t.Fatalf("captures belong in the capture section, not repeated in the tree body:\n%s", out)
+	}
+	if !strings.Contains(out, "- p [") {
+		t.Fatalf("a task promoted from a capture must stay in the tree:\n%s", out)
+	}
+}
+
+// Captures are input, not execution, so they get their own count instead of
+// inflating resolved or the status counts.
+func TestCapturesHaveTheirOwnStats(t *testing.T) {
+	view := ideaView(t)
+
+	agent := renderString(t, Agent{}, view)
+	for _, want := range []string{"captures=2", "resolved=0"} {
+		if !strings.Contains(agent, want) {
+			t.Fatalf("agent output missing %q:\n%s", want, agent)
+		}
+	}
+
+	summary := renderString(t, Summary{}, view)
+	if !strings.Contains(summary, "captures=2") {
+		t.Fatalf("summary should count captures separately:\n%s", summary)
+	}
+	// The two captures are todo, but only the executable task counts as work.
+	if !strings.Contains(summary, "todo=1") {
+		t.Fatalf("summary should not count captures as todo work:\n%s", summary)
+	}
+
+	var doc struct {
+		Stats map[string]int `json:"stats"`
+	}
+	if err := json.Unmarshal([]byte(renderString(t, JSON{}, view)), &doc); err != nil {
+		t.Fatalf("json render invalid: %v", err)
+	}
+	if doc.Stats["captures"] != 2 || doc.Stats["resolved"] != 0 {
+		t.Fatalf("json stats = %v, want captures=2 resolved=0", doc.Stats)
+	}
+
+	if html := renderString(t, HTML{}, view); !strings.Contains(html, "<dt>Captures</dt><dd>2</dd>") {
+		t.Fatalf("html report should surface the capture count:\n%s", html)
 	}
 }
 
@@ -305,7 +380,7 @@ func TestSummaryRenderIsCompact(t *testing.T) {
 	if strings.Contains(out, "snapshot") || strings.Contains(out, "2026-") {
 		t.Fatalf("summary must not include a timestamp:\n%s", out)
 	}
-	for _, want := range []string{"scope=5", "todo=4", "done=1", "ready_agent=1", "ready_human=2", "dep_blocked=1", "next:"} {
+	for _, want := range []string{"scope=5", "captures=0", "todo=4", "done=1", "ready_agent=1", "ready_human=2", "dep_blocked=1", "next:"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("summary missing %q:\n%s", want, out)
 		}

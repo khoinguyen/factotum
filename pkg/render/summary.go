@@ -22,6 +22,11 @@ func (Summary) Render(_ context.Context, w io.Writer, view View) error {
 	depBlocked := 0
 	for _, id := range derived.ids {
 		task := derived.tasks[id]
+		// Captures have their own count: counting them under todo/done would
+		// report unrefined input as work.
+		if task.Kind.CapturedByHuman() {
+			continue
+		}
 		counts[task.Status]++
 		if task.Resolves(view.Project.Policy) || derived.readyAgent[id] || derived.readyHuman[id] || derived.cycles[id] {
 			continue
@@ -30,8 +35,9 @@ func (Summary) Render(_ context.Context, w io.Writer, view View) error {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "scope=%d todo=%d in_progress=%d blocked=%d review=%d done=%d cancelled=%d\n",
+	fmt.Fprintf(&b, "scope=%d captures=%d todo=%d in_progress=%d blocked=%d review=%d done=%d cancelled=%d\n",
 		derived.stats.Scope,
+		derived.stats.Captures,
 		counts[core.StatusTodo],
 		counts[core.StatusInProgress],
 		counts[core.StatusBlocked],

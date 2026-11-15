@@ -22,8 +22,8 @@ func (Agent) Render(_ context.Context, w io.Writer, view View) error {
 
 	fmt.Fprintf(&b, "# %s — task graph snapshot %s\n", view.projectName(), view.snapshotTime())
 	stats := derived.stats
-	fmt.Fprintf(&b, "stats: scope=%d resolved=%d done=%d ready_agent=%d ready_human=%d dep_blocked=%d blocked=%d cycles=%d waves=%d\n",
-		stats.Scope, stats.Resolved, stats.Done, stats.ReadyAgent, stats.ReadyHuman, stats.DepBlocked, stats.Blocked, stats.Cycles, stats.Waves)
+	fmt.Fprintf(&b, "stats: scope=%d captures=%d resolved=%d done=%d ready_agent=%d ready_human=%d dep_blocked=%d blocked=%d cycles=%d waves=%d\n",
+		stats.Scope, stats.Captures, stats.Resolved, stats.Done, stats.ReadyAgent, stats.ReadyHuman, stats.DepBlocked, stats.Blocked, stats.Cycles, stats.Waves)
 
 	ranked := view.ranked()
 	writeReadyGroup(&b, "next agent:", ranked, derived.readyAgent, derived, view)
@@ -77,7 +77,8 @@ func writeReadyGroup(b *strings.Builder, header string, ranked []rank.Scored, me
 
 // writeCaptureGroup lists the non-executable captures (ideas and bugs)
 // separately from the execution graph, so a reader can tell unrefined input from
-// ready work.
+// ready work. The agent snapshot and the human tree share it, so both formats
+// report the same capture facts.
 func writeCaptureGroup(b *strings.Builder, derived *info) {
 	var found bool
 	for _, id := range derived.ids {

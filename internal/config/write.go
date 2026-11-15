@@ -238,11 +238,12 @@ type RunDefaults struct {
 
 // WriteRunDefaults persists the resolved harness and sandbox into the [run]
 // table of the config at path, creating the file when missing. project selects
-// the scope: a project config pins projectID (the committable subset only),
-// while a machine config is created from its template. allow_host is
-// host-scoped, so a project-scoped write rejects it rather than committing an
-// opt-in. The rest of the file - comments, tables, and existing keys - is
-// preserved.
+// the scope: a project config is pinned to projectID first (the committable
+// subset only), so the table never lands in a file that does not say which
+// project it configures; it is refused when no project is given, when the file
+// already pins another project, or when the write asks for the host-scoped
+// allow_host opt-in. A machine config is created from its template. The rest of
+// the file - comments, tables, and existing keys - is preserved.
 func WriteRunDefaults(path string, project bool, projectID string, defaults RunDefaults) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("config path is empty")
@@ -250,24 +251,20 @@ func WriteRunDefaults(path string, project bool, projectID string, defaults RunD
 	if project && defaults.AllowHost {
 		return errors.New("allow_host is host-scoped and cannot be written to a project config")
 	}
+	if project && strings.TrimSpace(projectID) == "" {
+		return errors.New("project-scoped run defaults need a project: none is configured for this directory; save them to the user config, or pin a project with `ft init`")
+	}
 	mode := os.FileMode(0o600)
 	if project {
 		mode = 0o644
+		if _, err := WriteProjectConfig(path, projectID); err != nil {
+			return err
+		}
+	} else if _, err := EnsureMachineConfig(path); err != nil {
+		return err
 	}
 	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return fmt.Errorf("create config dir: %w", err)
-		}
-		switch {
-		case project && projectID != "":
-			data = []byte(projectConfigTemplate + fmt.Sprintf("project = %q\n", projectID))
-		case project:
-			data = []byte(projectConfigTemplate)
-		default:
-			data = []byte(machineConfigTemplate)
-		}
-	} else if err != nil {
+	if err != nil {
 		return fmt.Errorf("read config %s: %w", path, err)
 	}
 
@@ -292,7 +289,9 @@ func WriteRunDefaults(path string, project bool, projectID string, defaults RunD
 // document, creating the table at the end when absent. Each value is a literal
 // TOML token (a quoted string or a bare bool), so the caller controls the type.
 // It preserves every other line, so hand-written comments and tables survive.
-// Missing keys are inserted in sorted order so the write is deterministic.
+// Missing keys are inserted in sorted order so the write is deterministic, and
+// they sit flush with the table body: the blank lines a trailing newline leaves
+// behind never turn into a gap when a key is appended.
 func upsertRunKeys(text string, keys map[string]string) string {
 	if len(keys) == 0 {
 		return text
@@ -310,12 +309,17 @@ func upsertRunKeys(text string, keys map[string]string) string {
 		}
 	}
 	if start < 0 {
-		if text != "" && !strings.HasSuffix(text, "\n") {
-			text += "\n"
+		// The split leaves an empty element for a trailing newline; the blank
+		// lines those elements stand for would become a gap before the table.
+		for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+			lines = lines[:len(lines)-1]
 		}
 		var b strings.Builder
-		b.WriteString(text)
-		b.WriteString("\n[run]\n")
+		if len(lines) > 0 {
+			b.WriteString(strings.Join(lines, "\n"))
+			b.WriteString("\n\n")
+		}
+		b.WriteString("[run]\n")
 		for _, key := range sortedKeys(keys) {
 			fmt.Fprintf(&b, "%s = %s\n", key, keys[key])
 		}
@@ -347,7 +351,21 @@ func upsertRunKeys(text string, keys map[string]string) string {
 	for _, key := range missing {
 		add = append(add, fmt.Sprintf("%s = %s", key, keys[key]))
 	}
-	lines = append(lines[:end], append(add, lines[end:]...)...)
+	// The table's own body ends at its last non-blank line; blank lines below it
+	// separate it from the next table (or from the end of the file).
+	at := end
+	for at > start+1 && strings.TrimSpace(lines[at-1]) == "" {
+		at--
+	}
+	if end == len(lines) {
+		lines = append(lines[:at], add...)
+		out := strings.Join(lines, "\n")
+		if strings.HasSuffix(text, "\n") {
+			out += "\n"
+		}
+		return out
+	}
+	lines = append(lines[:at], append(add, lines[at:]...)...)
 	return strings.Join(lines, "\n")
 }
 

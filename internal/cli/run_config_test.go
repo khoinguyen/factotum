@@ -329,3 +329,32 @@ func TestResolveRunSelectionLocalOptIn(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveRunSelectionProjectScopeNeedsProject pins that choosing the project
+// scope when no project is configured fails clearly and writes nothing, rather
+// than leaving a [run] table in a project config with no project pin. It must
+// not quietly fall back to the user config either: the user picked the scope.
+func TestResolveRunSelectionProjectScopeNeedsProject(t *testing.T) {
+	deps := newOptInDeps(t, &scriptedPrompter{t: t, inputs: []string{"docker", "opencode", "project"}})
+	deps.Config.Project = ""
+
+	cmd := &cobra.Command{Use: "run"}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cfg := config.Run{}
+	err := deps.resolveRunSelection(cmd, &cfg)
+	if err == nil {
+		t.Fatalf("resolveRunSelection() error = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "user config") {
+		t.Fatalf("error does not point at the user config as the way out: %v", err)
+	}
+	for _, path := range []string{deps.ProjectConfigPath, deps.UserConfigPath} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("a refused project-scope write wrote %s: %v", path, statErr)
+		}
+	}
+	if cfg.Sandbox != "" || cfg.Harness != "" {
+		t.Fatalf("cfg = %+v, want nothing resolved after a refused write", cfg)
+	}
+}

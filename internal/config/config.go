@@ -124,6 +124,12 @@ type Run struct {
 	// overriding the harness's own default. A harness that publishes no image
 	// (pi ships as an npm package) requires it; a local run ignores it.
 	Image string
+	// User is the container identity an isolating backend runs the harness as
+	// (uid, uid:gid, or a name). Empty keeps the image's own USER, which for a
+	// caller-supplied root image writes root-owned files into the bind-mounted
+	// checkout; set it to the host uid:gid to keep the files yours. A local run
+	// ignores it, and OpenShell refuses a root identity.
+	User string
 	// PolicyPath is the resolved project OpenShell policy override (the
 	// sibling of the loaded project config, for example
 	// <projectRoot>/.factotum/openshell-policy.yaml). The launcher sets it
@@ -228,6 +234,7 @@ type runFile struct {
 	Provider         string   `toml:"provider"`
 	CredentialEnvVar string   `toml:"credential_env"`
 	Image            string   `toml:"image"`
+	User             string   `toml:"user"`
 }
 
 // projectRunFile is the project-scoped [run] subset: the harness and sandbox a
@@ -331,6 +338,7 @@ func Load(in Input) (Config, error) {
 		Provider:         user.Run.Provider,
 		CredentialEnvVar: user.Run.CredentialEnvVar,
 		Image:            user.Run.Image,
+		User:             user.Run.User,
 	}
 	applyRunEnv(&cfg.Run, getenv)
 	cfg.Serve = Serve{Token: user.Serve.Token, URL: user.Serve.URL}
@@ -593,6 +601,9 @@ func applyRunEnv(run *Run, getenv func(string) string) {
 	}
 	if image := getenv("FACTOTUM_RUN_IMAGE"); image != "" {
 		run.Image = image
+	}
+	if user := getenv("FACTOTUM_RUN_USER"); user != "" {
+		run.User = user
 	}
 }
 

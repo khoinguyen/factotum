@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,21 @@ func TestPrepareRejectsImageEntrypoint(t *testing.T) {
 	})
 	if !errors.Is(err, isolation.ErrUnsupported) {
 		t.Fatalf("Prepare(entrypoint) error = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestPrepareIgnoresImageUser pins that the host backend has no identity knob:
+// it runs the harness as the invoking host user, so a spec's requested
+// container user is ignored rather than silently applied (or refused).
+func TestPrepareIgnoresImageUser(t *testing.T) {
+	b, _ := newBackend(t, local.Options{})
+	h := prepare(t, b, isolation.Spec{Image: isolation.Image{Ref: "img", User: "0"}})
+	res := run(t, b, h, isolation.Command{Argv: []string{"sh", "-c", "id -u"}})
+	if res.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want 0", res.ExitCode)
+	}
+	if got, want := strings.TrimSpace(string(res.Stdout)), strconv.Itoa(os.Getuid()); got != want {
+		t.Fatalf("exec ran as uid %s, want the host uid %s (the requested user must be ignored)", got, want)
 	}
 }
 

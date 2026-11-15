@@ -162,13 +162,16 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   preferred), `opencode` (OpenCode V1), and `pi`. On the local backend `--harness opencode`
   probes the installed binary's `--version` and drives V2 automatically after an in-place upgrade;
   `--harness opencode2` forces V2 (npm alias or pinned V2 image). An isolating backend runs the
-  harness's image under its policy: `openshell` runs it as the policy's non-root uid, while
-  `docker` uses the harness identity, so a caller-supplied `--image` runs as that image's own
-  `USER` (set one in the image: ft adds none for `pi`, and OpenCode's default uid is not applied
-  then). A configured credential is attached as a provider placeholder, never placed in the
-  sandbox. Supply or override the image with `--image`, `FACTOTUM_RUN_IMAGE`, or `run.image`; one
-  image applies to whichever harness runs, so it must match (a `pi` image has no `opencode2`, an
-  OpenCode image has no `pi`).
+  harness's image under its policy: `openshell` runs it as the policy's non-root uid (1000:1000 by
+  default, and refuses a root request), while `docker` runs as the identity ft passes it. That
+  identity defaults to **empty**, so the image's own `USER` applies unchanged: a caller-supplied
+  `--image` whose `USER` is root writes root-owned files into the bind-mounted checkout, and ft adds
+  none for `pi` (OpenCode's default uid is not applied to a custom image either). Set `--user`, or
+  `run.user`/`FACTOTUM_RUN_USER`, to `$(id -u):$(id -g)` to run as the host user and keep the
+  checkout's files yours; `local` ignores it. A configured credential is attached as a provider
+  placeholder, never placed in the sandbox. Supply or override the image with `--image`,
+  `FACTOTUM_RUN_IMAGE`, or `run.image`; one image applies to whichever harness runs, so it must
+  match (a `pi` image has no `opencode2`, an OpenCode image has no `pi`).
 - `pi` ships as an npm package rather than a published container image, so it has no image of its
   own: an isolating run needs one named with `--image`/`run.image` (it must have `pi` on PATH, and
   `ft` too when the run carries an actor and no `FACTOTUM_MSG_URL` hub). Without one, `ft run`
@@ -181,7 +184,7 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   repository and writes nothing to the graph.
 
 The machine-scoped `[run]` table holds the launcher settings (`sandbox`, `harness`, `workspace`,
-`model`, `image`, `args`, `refresh`, `allow_host`, `provider`, `credential_env`):
+`model`, `image`, `user`, `args`, `refresh`, `allow_host`, `provider`, `credential_env`):
 
 ```toml
 # ~/.factotum/config.toml — machine-scoped.
@@ -190,13 +193,14 @@ sandbox = "openshell"       # or docker; local is unsandboxed and needs allow_ho
 harness = "opencode2"       # OpenCode V2; "opencode" is V1, "pi" is the pi agent
 # image = "ghcr.io/acme/pi:1"   # one image for the selected harness; required for pi
 #                               # (an OpenCode harness would need an image with opencode2)
+# user = "501:20"             # your $(id -u):$(id -g); default keeps the image's USER
 provider = "openrouter"
 credential_env = "OPENROUTER_API_KEY"
 ```
 
 Only `sandbox` and `harness` are read from a committed project `[run]` (project intent); host-scoped
-settings (`workspace`, `image`, `allow_host`, credentials) are read from the machine file only, so a
-committed file never carries a host path or opts into the unsandboxed backend.
+settings (`workspace`, `image`, `user`, `allow_host`, credentials) are read from the machine file
+only, so a committed file never carries a host path or opts into the unsandboxed backend.
 
 OpenCode V2 (`opencode2`) drives the same run: it reads the same config locations as V1 and
 translates V1-shaped config in memory, so `opencode2` is the one to select. Its three breaking

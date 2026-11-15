@@ -28,6 +28,7 @@ type runOptions struct {
 	workspace      string
 	model          string
 	image          string
+	user           string
 	args           []string
 	allowHost      bool
 	refresh        bool
@@ -96,6 +97,7 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&opts.workspace, "workspace", "", "workspace root directory (default under the config dir)")
 	cmd.Flags().StringVar(&opts.model, "model", "", "model override passed to the harness")
 	cmd.Flags().StringVar(&opts.image, "image", "", "base image an isolating backend runs the harness from (required for pi; defaults to the harness's own image)")
+	cmd.Flags().StringVar(&opts.user, "user", "", "container identity (uid, uid:gid, or name) an isolating backend runs as (defaults to run.user, else the image's USER; local ignores it)")
 	cmd.Flags().StringArrayVar(&opts.args, "arg", nil, "extra argument passed to the harness (repeatable)")
 	cmd.Flags().BoolVar(&opts.allowHost, "allow-host", false, "opt in to the unsandboxed local backend (dev-only)")
 	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "fetch and reset a reused workspace checkout to its upstream before running")
@@ -229,6 +231,9 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 	}
 	if opts.image != "" {
 		cfg.Image = opts.image
+	}
+	if opts.user != "" {
+		cfg.User = opts.user
 	}
 	if len(opts.args) > 0 {
 		cfg.Args = append(append([]string(nil), cfg.Args...), opts.args...)

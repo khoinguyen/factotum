@@ -293,100 +293,81 @@ fails, so a script can gate on it.
 
 ## Agent runs and isolation
 
-Agent runs execute a harness inside a pluggable isolation backend. The `local`
-backend runs the harness directly on the host with no isolation at all: it is
-dev-only, must be explicitly opted in, is never the default, and prints an
-unsandboxed warning when it starts. It can read host credentials, reach the
-network, and mutate files, so never use it for untrusted work. Isolating backends
-(for example OpenShell and docker) are separate registrations of the same port
-and are the only ones fit for untrusted input.
-
-A harness describes one agent CLI end to end: image, invocation, model flag,
-prompt delivery, completion, and output parsing. Prefer OpenCode V2 (`opencode2`,
-image `ghcr.io/anomalyco/opencode:2.0.27`, no top-level `--model`); OpenCode V1
-(`opencode`, image `ghcr.io/anomalyco/opencode:latest`) and pi (`pi`, npm, no
-image) also ship. Each builds a headless invocation passing the prompt as the
-final message and reading stdout; an interactive run attaches the agent's TUI
-instead. Model and credentials come from the configured provider, never hardcoded
-(a backend-resolved provider reference). On local, `--harness opencode` probes the
-binary's major version and `opencode2` forces V2. Isolating pi needs an explicit
-`--image`/`run.image`/`FACTOTUM_RUN_IMAGE` with `pi` on PATH; pi trusts local files.
-
-An isolating backend imposes a policy on the run. The OpenShell policy
-(`pkg/isolation/openshell`, checked-in template `policy.yaml`) is deny-by-default:
-the sandbox reaches no host until a project opts in, except the model provider
-endpoint (`openrouter.ai` for OpenRouter), which the credential provider attaches
-from `run.provider` + `run.credential_env`. OpenCode's phone-home to
-`models.opencode.ai` and `registry.npmjs.org` is optional and stays denied until a
-project opts in. The workload runs non-root with no credential value in the
-sandbox; filesystem and the `manual` advisor are pinned by `policy.yaml`.
-
-A project opts in to extra hosts by committing
-`.factotum/openshell-policy.yaml`:
-
-```yaml
-allow_hosts:
-  - models.opencode.ai
-  - registry.npmjs.org
-```
-
-Only `allow_hosts` is honored. Any other key is rejected, so a project can widen
-egress but never weaken the identity, filesystem, or credential defaults. `ft run`
-resolves it next to the active project config (a custom `-c` uses its sibling
-`openshell-policy.yaml`); with no policy file it warns that egress is deny-all.
-
-`ft run <target>` drives one task end-to-end: it materializes the task's **declared** repo (`task -r`),
-or all the project's repos when none is declared (an exclusive or, never a union); a task that needs another repo must declare it, or the agent clones it manually. A capture (idea or bug) is not run once: it runs the loop below over every task that belongs to it, in DAG order. It runs the harness with the task as its prompt, and reflects progress into the store. A repo registered with a local `Path` (not a `URL`) is used **in place** — it is not copied into the workspace, so a backend on the workdir (`local`, `docker`) can modify the source checkout; `ft run` warns on stderr naming the resolved checkout, and registering a `URL` runs in an isolated copy. `ft groom` resolves the same way and emits the same warning. The launched session inherits the run's project and store (`FACTOTUM_PROJECT`, `FACTOTUM_STORE`, `FACTOTUM_STORE_OPTS`), so the `ft` it runs reads — and writes — the same store, never falling back to a store the checkout's config would resolve (for example your real `~/.factotum` database). `FACTOTUM_STORE_OPTS` is a comma-separated `key=value` list, so a store-opt value cannot itself contain a comma.
+`ft run <target>` drives one task end-to-end: it materializes the task's **declared** repo
+(`task -r`), or all the project's repos when none is declared — an exclusive or, never a union.
+A task that needs another repo must declare it; `ft run` runs the harness with the task as its
+prompt. A capture (idea or bug) runs the goal loop below over every task that belongs to it, in
+DAG order.
+A repo registered with a local `Path` (not a `URL`) is used **in place** — it is not
+copied into the workspace, so a backend on the workdir (`local`, `docker`) can modify
+that checkout; `ft run` warns on stderr naming it, and registering a `URL` runs in an
+isolated copy. `ft groom` resolves the same way and warns the same way. The launched
+session inherits the run's project and store (`FACTOTUM_PROJECT`, `FACTOTUM_STORE`,
+`FACTOTUM_STORE_OPTS`), so the `ft` it runs reads and writes that store, never a store
+the checkout's config would resolve (for example your real `~/.factotum` database);
+`FACTOTUM_STORE_OPTS` is a comma-separated `key=value` list, so a value cannot hold a
+comma.
 
 ```sh
 ft run t-abc123 --sandbox local --harness opencode2 --allow-host   # dev-only opt-in
 ft run --prompt-file grooming.md --sandbox local --harness opencode2 --allow-host  # task-less
-```
-
-- `--prompt-file <path>` or `--prompt-artifact <id>` supplies a stored prompt: with a task it
-  replaces the task prompt, and with no task id it runs the prompt once over every repository
-  of the configured project (a task-less session such as grooming), writing nothing to the task
-  graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error (exit 1). On a terminal a single-task or task-less run runs **interactive** (the agent attached, the OpenCode TUI) so a human can answer it; `--unattended`, a piped/redirected stdin/stdout, or `--goal` runs **headless**. Interactive output stays live and is not captured; it needs a backend that can attach a terminal (`local`; not `openshell`/`docker`, which tell you to rerun with `--unattended`). A **headless** run narrates live progress on stderr so a multi-minute harness is visibly alive: `ft: run <task> (sandbox=<b> harness=<h>) started`, then a periodic `still running (Ns)` heartbeat. Progress is written only when stderr is a terminal and output is text; `-o json|yaml`, a piped/redirected stderr, and an interactive run print none.
-- `--sandbox`/`--harness` are optional: they resolve flag > `FACTOTUM_RUN_*` > committed
-  project `[run]` > machine `[run]`. On a terminal an unset one prompts once and saves to
-  the chosen scope; with no configured project it saves to machine scope and says why (project
-  scope needs a pinned project, so it is not offered; a write to it fails and writes nothing). Choosing `local` there asks to opt in (default no) and records `run.allow_host = true` in the user config. A committed project `[run]` may set only `sandbox`/`harness`; the machine table also holds workspace/model/image/user/args/allow_host/credential_env (`--image` names the isolating base image for the selected harness; pi requires one). `--user`/`run.user`/`FACTOTUM_RUN_USER` sets the container identity (uid, uid:gid, or name) an isolating backend runs as; the default is empty, so the image's own `USER` applies — a root-`USER` image (common with a caller-supplied `--image`) writes root-owned files into the bind-mounted checkout, so set it to your host `$(id -u):$(id -g)`. `openshell` still pins a non-root identity and refuses a root request; `local` ignores it. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
-- `provider` and `credential_env` name the credential a harness may use and the
-  variable it arrives under, e.g. `provider = "openrouter"` with
-  `credential_env = "OPENROUTER_API_KEY"`; the value is read from the host
-  environment and handed to the isolating backend, never placed in the sandbox.
-- The `local` backend is unsandboxed and refuses to run until explicitly opted in
-  with `--allow-host`, `run.allow_host`, or the interactive prompt above; the opt-in
-  is machine-scoped and is ignored from the committed project file.
-- The `openshell` backend runs the harness in a non-root sandbox under the
-  deny-by-default policy above; it needs the CLI and a gateway, attaches the
-  credential as a provider placeholder, and imports a missing provider profile.
-- The `docker` backend runs the harness in a per-task container from the
-  harness's image, mounting only the resolved workspace at its same absolute
-  path. It needs the `docker` CLI and a daemon, refuses a policy it cannot
-  enforce, and injects credentials per-exec so no secret enters argv or metadata. It runs as `run.user`/`--user` when set, else the image's own `USER`.
-- A successful run moves the task to `ready_for_review`, reports `run: finished`,
-  `exit_code: 0`, `complete: true`, and records a note with the agent's output plus
-  `task.run_started`/`task.run_finished` events. A failed run leaves the status
-  untouched, reports `run: failed`/`complete: false`, and records only a failure note.
-
-`ft run --goal <task|milestone|capture>` drives the graph toward a goal: it repeatedly runs the highest-ranked agent-ready on-path task until the goal is reached, work stalls, or the budget is exhausted. `ft run <capture>` (an idea or bug) is the same loop without the flag.
-
-```sh
 ft run --goal t-abc123 --sandbox local --harness opencode2 --allow-host --max-tasks 5
 ```
 
-- The goal is a task, a milestone, or a capture. A task resolves; a milestone is a human gate, so
-  the loop runs its prerequisites and stops `no_ready_work`; a capture (idea/bug) is done when every task carrying it as its origin edge resolves. A capture that owns no runnable task is rejected (`invalid:`, exit 5): an empty one says `no tasks to run`, and one whose only children are milestones names the gates it cannot run, since the loop runs tasks, not gates.
-- Only agent-ready work is run: a task must be assigned to an agent and `groomed`, the
-  bucket `ft task next --for <agent>` offers. Startable but non-agent-ready on-path work
-  (unassigned, human-owned, or ungroomed) is left for a human and named in `not_run:`.
-- Only tasks on a path to the goal are run, ordered by the composite ranker with the
-  goal as the toward preference, so readiness and priority always decide the order.
-- `--max-tasks N` bounds the number of task runs (0 means no budget). The loop stops for
-  a human when a run fails; a failed run leaves the task's status untouched.
-- The stop reason is `stop:` (`goal_reached`, `no_ready_work`, `blocked`,
-  `budget_exhausted`, or `failed`), and each iteration prints a compact `step:` block.
+A run is a harness (one agent CLI end to end: image, invocation, model flag, prompt
+delivery, completion, output parsing) inside an isolation backend. The `local` backend
+runs the harness directly on the host with no isolation: dev-only, never the default, and
+refused until explicitly opted in with `--allow-host` or `run.allow_host` (machine-scoped,
+ignored from the committed project file). It can read host credentials, reach the network,
+and mutate files, so never use it for untrusted input; the isolating backends (`openshell`,
+`docker`) are the only ones fit for that. Prefer OpenCode V2 (`opencode2`); `opencode` (V1)
+and `pi` also ship.
+
+`--sandbox`/`--harness` resolve flag > `FACTOTUM_RUN_*` > committed project `[run]` >
+machine `[run]`; on a terminal an unset one prompts once and saves to the chosen scope,
+while non-interactively it is an error. A committed project `[run]` may set only those
+two; the machine table holds the rest (workspace/model/image/user/args/allow_host/
+credential_env), and `--image` names an isolating backend's base image (`pi` needs one).
+`--user`/`run.user`/`FACTOTUM_RUN_USER` sets the container identity (uid, uid:gid, or
+name); the default is empty, so the image's own `USER` applies — a root-`USER` image
+writes root-owned files into the bind-mounted checkout, so set `$(id -u):$(id -g)`.
+`openshell` still pins a non-root identity and refuses a root request; `local` ignores
+it. `provider` + `credential_env` name the credential a harness may use; the value is
+read from the host environment and handed to the backend, never placed in the sandbox.
+
+An isolating backend imposes a deny-by-default policy: the sandbox reaches no host until
+the project opts in, except the model provider endpoint the credential attaches. A
+project opts in by committing `.factotum/openshell-policy.yaml` with `allow_hosts` and
+nothing else, so it can widen egress but never weaken the identity, filesystem, or
+credential defaults; with no policy file `ft run` warns that egress is deny-all. The
+README's "Run agents" section carries the policy, image, and per-backend detail.
+
+- `--prompt-file <path>` or `--prompt-artifact <id>` supplies a stored prompt: with a task
+  it replaces the task prompt, and with no task id it runs the prompt once over every
+  repository of the configured project (a task-less session such as grooming), writing
+  nothing to the graph. They are mutually exclusive; a missing or empty `--prompt-file`
+  is an input error (exit 1). On a terminal a single-task or task-less run runs
+  **interactive** (the agent attached) so a human can answer it; `--unattended`, a
+  piped/redirected stdin/stdout, or `--goal` runs **headless**. Interactive needs an
+  attaching backend (`local`; not `openshell`/`docker`, which say to rerun with
+  `--unattended`). A headless run narrates on stderr — `ft: run <task> (sandbox=<b>
+  harness=<h>) started`, then a periodic `still running (Ns)` heartbeat — only when
+  stderr is a terminal and output is text.
+- `ft run --goal <task|milestone|capture>` repeatedly runs the highest-ranked agent-ready
+  on-path task until the goal is reached, work stalls, or `--max-tasks N` (0 = no budget)
+  is exhausted. Only groomed work assigned to an agent is run; startable but
+  non-agent-ready on-path work is left for a human and named in `not_run:`. A milestone
+  is a human gate, so the loop runs its prerequisites and stops `no_ready_work`. A
+  capture is done when every task carrying it as its origin edge resolves; one that owns
+  no runnable task is rejected (`invalid:`, exit 5), naming the gates when its only
+  children are milestones.
+- A failed run leaves the task's status untouched and stops the loop for a human. The
+  stop reason is `stop:` (`goal_reached`, `no_ready_work`, `blocked`, `budget_exhausted`,
+  or `failed`), and each iteration prints a compact `step:` block.
+- A successful run moves the task to `ready_for_review`, reports `run: finished`,
+  `exit_code: 0`, `complete: true`, and records a note with the agent's output plus
+  `task.run_started`/`task.run_finished` events; a failed one reports `run: failed`/
+  `complete: false` and records only a failure note.
 
 ## Getting help
 

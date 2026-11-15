@@ -275,9 +275,8 @@ func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groo
 		if err != nil {
 			return groom.SessionRecord{}, err
 		}
-		if len(unresolved) > 0 {
-			return groom.SessionRecord{}, fmt.Errorf("groom: unattended session %s left work neither agent-ready nor deferred: %s (see %s)",
-				sessionID, joinTaskIDs(unresolved), groom.DeferredQuestionsPath(dataDir, sessionID))
+		if len(unresolved.scoped) > 0 || len(unresolved.produced) > 0 {
+			return groom.SessionRecord{}, unattendedIncompleteError(sessionID, unresolved.scoped, unresolved.produced, groom.DeferredQuestionsPath(dataDir, sessionID))
 		}
 	}
 
@@ -652,6 +651,15 @@ type groomDoc struct {
 	Repo       string   `json:"repo" yaml:"repo"`
 }
 
+// unattendedUnresolvedWork is the work an unattended session left unresolved,
+// split by the contract each kind is held to. A scoped item can be deferred to
+// the product owner; a task the session produced cannot, so the run must report
+// them differently rather than name one remedy that only fits the other.
+type unattendedUnresolvedWork struct {
+	scoped   []core.TicketID
+	produced []core.TicketID
+}
+
 // unattendedUnresolved returns the work an unattended session left neither
 // agent-ready nor deferred. A scoped item is handled when it is agent-ready,
 // resolved (the session judged it unnecessary), or named in the
@@ -660,9 +668,9 @@ type groomDoc struct {
 // resolved, because deferring a task it created still strands it. A produced
 // idea is a capture, not work. Anything matching neither means the session
 // stalled or lost work, which unattended mode must never do silently.
-func unattendedUnresolved(ctx context.Context, tasks *app.TicketService, actors *app.ActorService, projectID core.ProjectID, items []*core.Ticket, produced []string, deferredBody string) ([]core.TicketID, error) {
+func unattendedUnresolved(ctx context.Context, tasks *app.TicketService, actors *app.ActorService, projectID core.ProjectID, items []*core.Ticket, produced []string, deferredBody string) (unattendedUnresolvedWork, error) {
+	var unresolved unattendedUnresolvedWork
 	deferred := deferredIDs(deferredBody)
-	var unresolved []core.TicketID
 	var projectTasks []*core.Ticket
 	for _, item := range items {
 		if deferred[item.ID] {
@@ -670,30 +678,46 @@ func unattendedUnresolved(ctx context.Context, tasks *app.TicketService, actors 
 		}
 		task, err := tasks.Get(ctx, item.ID)
 		if err != nil {
-			return nil, err
+			return unresolved, err
 		}
 		handled, err := itemHandled(ctx, tasks, actors, projectID, task, &projectTasks)
 		if err != nil {
-			return nil, err
+			return unresolved, err
 		}
 		if !handled {
-			unresolved = append(unresolved, item.ID)
+			unresolved.scoped = append(unresolved.scoped, item.ID)
 		}
 	}
 	for _, id := range produced {
 		task, err := tasks.Get(ctx, core.TicketID(id))
 		if err != nil {
-			return nil, err
+			return unresolved, err
 		}
 		handled, err := producedHandled(ctx, actors, task)
 		if err != nil {
-			return nil, err
+			return unresolved, err
 		}
 		if !handled {
-			unresolved = append(unresolved, task.ID)
+			unresolved.produced = append(unresolved.produced, task.ID)
 		}
 	}
 	return unresolved, nil
+}
+
+// unattendedIncompleteError explains what an unattended session left behind.
+// A scoped item may be deferred, so its message names that remedy and points at
+// the deferred-questions file; a task the session produced may only be
+// agent-ready or resolved, so its message says that and offers no deferral the
+// run would reject.
+func unattendedIncompleteError(sessionID string, scoped, produced []core.TicketID, deferredPath string) error {
+	var parts []string
+	if len(scoped) > 0 {
+		parts = append(parts, fmt.Sprintf("left work neither agent-ready nor deferred: %s (see %s)", joinTaskIDs(scoped), deferredPath))
+	}
+	if len(produced) > 0 {
+		parts = append(parts, fmt.Sprintf("produced work neither agent-ready nor resolved: %s", joinTaskIDs(produced)))
+	}
+	return fmt.Errorf("groom: unattended session %s %s", sessionID, strings.Join(parts, "; "))
 }
 
 // sessionAcked reports whether the session acknowledged the id the run injected.

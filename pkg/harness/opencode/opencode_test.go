@@ -359,8 +359,8 @@ func TestV2CommandKeepsAPrivateServer(t *testing.T) {
 		name string
 		req  harness.Request
 		// after indexes the argument the flag must follow. A headless launch
-		// carries it after the `run` subcommand (V2 2.0.x accepts it only
-		// there), the TUI directly after the binary.
+		// carries it after the `run` subcommand (V2 rejects a global flag before
+		// a subcommand), the TUI directly after the binary.
 		after int
 	}{
 		{name: "headless", req: harness.Request{Prompt: "do the thing", Model: "p/m"}, after: 1},

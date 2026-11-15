@@ -204,8 +204,16 @@ type Run struct {
 - Registration is upsert-idempotent on `(ProjectID, ActorID, Host, PID)` so a plugin reconnect does
   not create a duplicate run; the returned `RunID` is stable for the session.
 - A run is **live** while `LeaseUntil > now` and **stale** otherwise. `ft msg runs --live` and the
-  dashboard show liveness; a claim addressed to a stale `run:` does not match (the message stays
-  queued for actor fallback).
+  dashboard show liveness. Liveness gates **send resolution**, not claimability: `ft msg send`
+  resolves a task to a live run, else the assignee actor, else `task:` (section 4; `resolveTask` in
+  `pkg/app/message.go`), while `Claim` is a store-local compare-and-swap on the stored address with
+  no liveness check. A run may therefore always drain its own mailbox, including with a lease that
+  lapsed a moment ago, and a claim for a stale `run:` does still match. The cost is the other side: a
+  message addressed to a run that dies before claiming stays `queued` under `run:<id>` — nothing
+  sweeps queued messages — until that session re-registers (registration is upsert on `(project,
+  actor, host, pid)`, so it keeps its run id) or an operator re-addresses it with the proposed `retry`
+  verb (section 11). Gating claim on liveness instead would need the store to read the registry inside
+  the claim, and would strand a live receiver whose lease merely lapsed.
 - Deregister on clean shutdown; staleness is the crash path.
 
 ## 6. Store port and conformance
@@ -218,7 +226,7 @@ tasks. The exact interface:
 type MessageFilter struct {
     ProjectID core.ProjectID
     To        *core.Address   // exact stored To match
-    Actor     *core.ActorID   // claimable by this actor: To == actor:<id>
+    Actor     *core.ActorID   // exact stored To == actor:<id>
     Run       *core.RunID     // exact stored To == run:<id>; never task:<t> (that is the Task filter)
     Task      *core.TicketID  // Message.TaskID == <id> (the originating task, whatever To became)
     States    []core.MessageState

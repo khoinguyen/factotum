@@ -142,8 +142,8 @@ const (
 type MessageFilter struct {
 	ProjectID core.ProjectID
 	To        *core.Address  // exact stored To match
-	Actor     *core.ActorID  // claimable by this actor: To == actor:<id>
-	Run       *core.RunID    // claimable by this run: To == run:<id>
+	Actor     *core.ActorID  // exact stored To == actor:<id>
+	Run       *core.RunID    // exact stored To == run:<id>
 	Task      *core.TicketID // Message.TaskID == <id> (the originating task)
 	States    []core.MessageState
 	Since     *time.Time

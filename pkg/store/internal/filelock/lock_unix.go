@@ -1,6 +1,6 @@
 //go:build unix
 
-package jsonfile
+package filelock
 
 import (
 	"errors"
@@ -10,21 +10,22 @@ import (
 	"syscall"
 )
 
-// lockStore takes the store's cross-process advisory lock and returns its
-// release. The lock lives on a sibling file because persist replaces the
-// document by rename: a lock on the replaced inode would not exclude the next
-// writer. flock belongs to the open file description, so two handles in one
-// process contend exactly like two processes.
-func (b *Backend) lockStore(exclusive bool) (func(), error) {
-	file, err := b.openLockFile(exclusive)
+// Acquire takes the advisory lock beside path — the sibling file <path>.lock —
+// and returns its release. The lock lives on its own file because the store at
+// path may be replaced by rename: a lock on the replaced inode would not exclude
+// the next writer. flock belongs to the open file description, so two handles in
+// one process contend exactly like two processes.
+//
+// A shared (read) lock never fails for want of a lock file: where one cannot be
+// opened, the caller reads unlocked. Writes replace a store atomically and this
+// path never writes, so an unlocked read still sees whole data — at worst a
+// moment stale. Never build a read-modify-write on a shared lock.
+func Acquire(path string, exclusive bool) (func(), error) {
+	file, err := openLockFile(path, exclusive)
 	if err != nil {
 		return nil, err
 	}
 	if file == nil {
-		// No lock was available for this read. Writes replace the document by
-		// rename and this path never writes, so an unlocked read still sees a
-		// whole document — at worst a moment stale. Never build a
-		// read-modify-write on this path.
 		return func() {}, nil
 	}
 	how := syscall.LOCK_SH
@@ -39,7 +40,7 @@ func (b *Backend) lockStore(exclusive bool) (func(), error) {
 	}
 	if err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("lock %s: %w", b.path, err)
+		return nil, fmt.Errorf("lock %s: %w", path, err)
 	}
 	return func() {
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
@@ -50,11 +51,11 @@ func (b *Backend) lockStore(exclusive bool) (func(), error) {
 // openLockFile opens the lock file for the lock mode. A writer needs it
 // writable and creates it; a reader takes it read-only when it exists, so a
 // store another uid wrote (a container hub) or a read-only checkout still
-// serves reads. A nil file means this read runs unlocked (see lockStore).
-func (b *Backend) openLockFile(exclusive bool) (*os.File, error) {
-	lockPath := b.path + ".lock"
+// serves reads. A nil file means this read runs unlocked (see Acquire).
+func openLockFile(path string, exclusive bool) (*os.File, error) {
+	lockPath := path + ".lock"
 	if exclusive {
-		if err := os.MkdirAll(filepath.Dir(b.path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, fmt.Errorf("create state dir: %w", err)
 		}
 		file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)

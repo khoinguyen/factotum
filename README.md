@@ -398,8 +398,8 @@ Every backend passes the shared contract suite in `pkg/store/conformance`.
 | Backend | Select with | Notes |
 | --- | --- | --- |
 | Memory | `--store memory` | Ephemeral; the default. |
-| JSON file | `--store jsonfile --store-opt path=...` | Single document, atomic writes. Every operation re-reads the file under an advisory lock on `<path>.lock`, so concurrent `ft` processes on one host (an `ft serve` hub beside the CLI) share it without losing writes; reads need only read access, writes need the lock file writable. Unix only, and not for a store shared across hosts — use sqlite there. |
-| JSON dir | `--store jsondir --store-opt path=...` | Directory of markdown + YAML frontmatter. |
+| JSON file | `--store jsonfile --store-opt path=...` | Single document, atomic writes by rename. Writes re-read the file under an exclusive advisory lock on `<path>.lock` and replace it atomically, so concurrent `ft` processes on one host (an `ft serve` hub beside the CLI) share it without losing writes; reads take the lock shared, or read unlocked when the lock file cannot be opened, which still sees a whole document at worst a moment stale. Writes need the store's directory and `<path>.lock` writable (each write lands as a temp file beside the document); reads need only read access. Unix only, and single host only — use sqlite for a store shared across hosts. |
+| JSON dir | `--store jsondir --store-opt path=...` | Directory of markdown + YAML frontmatter. Promotion serializes across processes under the advisory lock `<dir>.lock`, so concurrent promotes of one capture agree on a single task. Every other write touches only its own record's file, so two processes editing the same record (or appending to the same event shard) can still lose one. Promotion needs the store's parent directory writable (the lock is its sibling), other writes the store directory. Unix only, and single host only — use sqlite for a store shared across hosts. |
 | SQLite | `--store sqlite --store-opt path=...` | Pure-Go driver; the backend `ft init` registers. |
 
 SQLite versions its schema with `PRAGMA user_version`. A database written by a newer binary is

@@ -1,9 +1,10 @@
 // Package jsonfile is a single-document JSON storage backend with atomic
-// writes. Every operation re-reads the document under a host-local advisory
-// file lock, so concurrent ft processes — an `ft serve` hub beside the local
-// CLI, or a run beside the agent it launches — share one store without either
-// rewriting the other's collections away. A store on a filesystem shared
-// across hosts is not supported: use sqlite for that.
+// writes. Every operation re-reads the document; writes take a host-local
+// advisory file lock and reads take it shared when it is available, so
+// concurrent ft processes — an `ft serve` hub beside the local CLI, or a run
+// beside the agent it launches — share one store without either rewriting the
+// other's collections away. A store on a filesystem shared across hosts is not
+// supported: use sqlite for that.
 package jsonfile
 
 import (
@@ -20,6 +21,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
 	"github.com/khoinguyen/factotum/pkg/store/internal/clone"
+	"github.com/khoinguyen/factotum/pkg/store/internal/filelock"
 )
 
 const defaultPath = ".factotum/factotum.json"
@@ -83,7 +85,7 @@ func (b *Backend) beginWrite() (func(), error) { return b.begin(true) }
 
 func (b *Backend) begin(exclusive bool) (func(), error) {
 	b.mu.Lock()
-	unlock, err := b.lockStore(exclusive)
+	unlock, err := filelock.Acquire(b.path, exclusive)
 	if err != nil {
 		b.mu.Unlock()
 		return nil, err
@@ -396,18 +398,30 @@ func (b *Backend) taskIndex(id core.TicketID) (int, bool) {
 	return 0, false
 }
 
+// Promoted reads the capture's promoted task under the store's lock, so it
+// applies to the document another process wrote rather than this handle's
+// snapshot. Read-only, so it only needs the shared lock.
 func (r *taskRepo) Promoted(_ context.Context, captureID core.TicketID) (*core.Ticket, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return r.backend.promoted(captureID), nil
 }
 
+// CreatePromoted takes the store's write lock around the lookup and the insert,
+// so the guard holds across processes, not only across goroutines in this one.
+// The document was re-read under the lock before either step runs.
 func (r *taskRepo) CreatePromoted(_ context.Context, captureID core.TicketID, task *core.Ticket) (*core.Ticket, bool, error) {
 	if err := store.ValidatePromotion(captureID, task); err != nil {
 		return nil, false, err
 	}
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return nil, false, err
+	}
+	defer release()
 	if existing := r.backend.promoted(captureID); existing != nil {
 		return existing, false, nil
 	}

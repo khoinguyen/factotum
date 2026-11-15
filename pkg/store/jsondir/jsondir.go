@@ -3,6 +3,9 @@
 // sharded JSONL files. Mutations touch only the affected file and are written
 // atomically (temp file + rename), so the directory is git-friendly and safe to
 // edit by hand. List and search are served from an in-memory index built at open.
+// Promotion is the one write that takes a cross-process advisory lock and
+// re-reads the tasks, because its lookup and insert must agree across processes,
+// not only across goroutines.
 package jsondir
 
 import (
@@ -23,6 +26,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
 	"github.com/khoinguyen/factotum/pkg/store/internal/clone"
+	"github.com/khoinguyen/factotum/pkg/store/internal/filelock"
 )
 
 // DefaultPath is the directory used when no path option is configured.
@@ -635,13 +639,45 @@ func (r *taskRepo) Delete(_ context.Context, id core.TicketID) error {
 	return nil
 }
 
+// lockStore takes the store's cross-process advisory lock and returns its
+// release. Promotion is the jsondir path that needs it: its lookup and insert
+// must be one step across processes, which the in-process mutex cannot give.
+func (b *Backend) lockStore(exclusive bool) (func(), error) {
+	return filelock.Acquire(b.root, exclusive)
+}
+
+// reloadTasks re-reads the tasks directory under the cross-process lock, so a
+// caller sees the task files another process wrote since Open. The caller holds
+// mu. Only tasks reload: they are the promotion guard's input, whereas events
+// append (a reload would duplicate them).
+func (b *Backend) reloadTasks() error {
+	previous := b.tasks
+	b.tasks = make(map[core.TicketID]*taskRecord, len(previous))
+	if err := b.loadTasks(); err != nil {
+		b.tasks = previous
+		return err
+	}
+	return nil
+}
+
 func (r *taskRepo) Promoted(_ context.Context, captureID core.TicketID) (*core.Ticket, error) {
 	b := r.backend
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	release, err := b.lockStore(false)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := b.reloadTasks(); err != nil {
+		return nil, err
+	}
 	return b.promoted(captureID), nil
 }
 
+// CreatePromoted takes the cross-process lock around the lookup and the insert
+// and re-reads the tasks under it, so one capture is promoted once across
+// processes, not only across goroutines in this one.
 func (r *taskRepo) CreatePromoted(_ context.Context, captureID core.TicketID, task *core.Ticket) (*core.Ticket, bool, error) {
 	if err := store.ValidatePromotion(captureID, task); err != nil {
 		return nil, false, err
@@ -649,6 +685,14 @@ func (r *taskRepo) CreatePromoted(_ context.Context, captureID core.TicketID, ta
 	b := r.backend
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	release, err := b.lockStore(true)
+	if err != nil {
+		return nil, false, err
+	}
+	defer release()
+	if err := b.reloadTasks(); err != nil {
+		return nil, false, err
+	}
 	if existing := b.promoted(captureID); existing != nil {
 		return existing, false, nil
 	}

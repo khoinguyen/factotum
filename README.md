@@ -394,7 +394,7 @@ Every backend passes the shared contract suite in `pkg/store/conformance`.
 | Backend | Select with | Notes |
 | --- | --- | --- |
 | Memory | `--store memory` | Ephemeral; the default. |
-| JSON file | `--store jsonfile --store-opt path=...` | Single document, atomic writes. Every operation re-reads the file under an advisory lock, so concurrent `ft` processes on one host (an `ft serve` hub beside the CLI) share it without losing writes. Not for a store shared across hosts — use sqlite there. |
+| JSON file | `--store jsonfile --store-opt path=...` | Single document, atomic writes. Every operation re-reads the file under an advisory lock on `<path>.lock`, so concurrent `ft` processes on one host (an `ft serve` hub beside the CLI) share it without losing writes; reads need only read access, writes need the lock file writable. Unix only, and not for a store shared across hosts — use sqlite there. |
 | JSON dir | `--store jsondir --store-opt path=...` | Directory of markdown + YAML frontmatter. |
 | SQLite | `--store sqlite --store-opt path=...` | Pure-Go driver; the backend `ft init` registers. |
 

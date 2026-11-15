@@ -131,7 +131,10 @@ serialization_verdict() {
   elif [ -e "$overlap" ]; then
     printf 'two runs started into the cold cache at the same time'
   elif ! grep -q '^go ' "$dir/a.log" || ! grep -q '^go ' "$dir/b.log"; then
-    printf 'a concurrent run never reached the Go test'
+    # Carry both records: this arm is timing-sensitive, and the logs are the
+    # only evidence of where a run stopped.
+    printf 'a concurrent run never reached the Go test (a: %s; b: %s)' \
+      "$(tr '\n' ';' <"$dir/a.log")" "$(tr '\n' ';' <"$dir/b.log")"
   elif [ -L "$lock" ]; then
     printf 'the download lock outlived its run'
   else
@@ -416,6 +419,40 @@ rmdir "${guard_lock}.reclaim"
 if bash -c '. "$1"; embed_lock_reclaim "$2"' _ "$script" "$guard_lock"; then ok; else bad "the guard holder could not reclaim the stale lock"; fi
 if [ -e "$guard_lock" ] || [ -L "$guard_lock" ]; then bad "the reclaim left the stale lock behind"; else ok; fi
 
+# A reclaim must only drop a lock it read as present: a lock that was absent at
+# the guarded read leaves an empty path, and a peer may publish its own lock into
+# it the next instant, so reading current existence there deletes a live lock.
+# Uninstrumented that window is a few syscalls wide and needs 3+ simultaneous
+# runs to hit, so it is widened with a sleep in a copy of the script.
+window_vol=ft-embed-lock-window
+window_lock="$(FACTOTUM_EMBED_TEST_VOLUME=$window_vol embed_lock_file)"
+rm -f "$window_lock" "${window_lock}.reclaim"
+wide="$tmp/scripts/embed-test-wide-window.sh"
+window_line="$(grep -n '^  owner="$(embed_lock_owner "$lock")"$' "$script" | cut -d: -f1)"
+if [ -z "$window_line" ]; then
+  bad "the widened-window copy found no owner read in embed_lock_reclaim (has it moved?)"
+else
+  ok
+fi
+awk -v n="$window_line" '{ print } NR == n { print "  sleep 0.6" }' "$script" >"$wide"
+if cmp -s "$script" "$wide"; then
+  bad "the widened-window copy is unchanged (did the owner read disappear?)"
+else
+  ok
+fi
+bash -c '. "$1"; embed_lock_reclaim "$2"' _ "$wide" "$window_lock" &
+window_reclaimer=$!
+sleep 0.2
+if ln -s "$$" "$window_lock" 2>/dev/null; then ok; else bad "a peer could not publish its lock into the absent path"; fi
+wait "$window_reclaimer" 2>/dev/null || true
+if [ "$(readlink "$window_lock" 2>/dev/null)" = "$$" ]; then
+  ok
+else
+  bad "a reclaim removed a live lock a peer published into the window it was reading"
+fi
+rm -f "$window_lock"
+rmdir "${window_lock}.reclaim" 2>/dev/null || true
+
 # Reclaiming must never hand two runs the same lock: several processes released
 # at once onto a dead run's lock, each reading back the owner it holds. A reclaim
 # that removes a lock a peer has just taken shows up here as a foreign pid.
@@ -518,6 +555,64 @@ else
   bad "a run that gave up deleted the holder's lock"
 fi
 if wait "$lock_holder"; then ok; else bad "the lock holder failed"; fi
+
+# The wait limit must be a whole number of seconds: a value like "2m" used to
+# reach the `-ge` test every second, error there, and loop forever, so a run
+# waiting on a wedged lock never gave up. It is validated once, up front, and
+# fails the run at once naming the variable and the expected format.
+check "a numeric lock timeout is the wait limit" "5" \
+  "$(FACTOTUM_EMBED_TEST_LOCK_TIMEOUT=5 embed_lock_timeout)"
+check "the default lock timeout is 240s" "240" \
+  "$(unset FACTOTUM_EMBED_TEST_LOCK_TIMEOUT; embed_lock_timeout)"
+if bad_out="$(FACTOTUM_EMBED_TEST_LOCK_TIMEOUT=2m embed_lock_timeout 2>&1)"; then
+  bad "a non-numeric lock timeout was accepted"
+else
+  case "$bad_out" in
+    *FACTOTUM_EMBED_TEST_LOCK_TIMEOUT*seconds*) ok ;;
+    *) bad "a non-numeric lock timeout was not explained: $(tr '\n' ';' <<<"$bad_out")" ;;
+  esac
+fi
+
+# The whole script must fail on that value before it takes the lock or starts a
+# container, and without retrying. The lock is held by this live suite, so the
+# pre-fix loop is exactly the hang the deadline below catches.
+bad_vol=ft-embed-lock-bad-timeout
+bad_lock="$(FACTOTUM_EMBED_TEST_VOLUME=$bad_vol embed_lock_file)"
+rm -f "$bad_lock" "${bad_lock}.reclaim"
+ln -s "$$" "$bad_lock"
+bad_dir="$tmp/bad-timeout"
+write_endpoint_stubs "$bad_dir"
+started=$SECONDS
+PATH="$bad_dir/bin:$PATH" STUB_LOG="$bad_dir/stub.log" \
+  FACTOTUM_EMBED_TEST_LOCK_TIMEOUT=2m FACTOTUM_EMBED_TEST_ENDPOINT= \
+  FACTOTUM_EMBED_TEST_VOLUME="$bad_vol" FACTOTUM_EMBED_TEST_CONTAINER= \
+  bash "$script" >"$bad_dir/out" 2>&1 &
+bad_pid=$!
+deadline=$((SECONDS + 5))
+while kill -0 "$bad_pid" 2>/dev/null && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.1; done
+if kill -0 "$bad_pid" 2>/dev/null; then
+  # SIGKILL: the script traps TERM and resumes its loop after the handler, so a
+  # TERM would leave the hang the deadline is meant to bound.
+  kill -9 "$bad_pid" 2>/dev/null || true
+  wait "$bad_pid" 2>/dev/null || true
+  bad "a non-numeric lock timeout retried forever instead of failing fast"
+else
+  bad_rc=0
+  wait "$bad_pid" || bad_rc=$?
+  if [ "$bad_rc" -ne 0 ]; then ok; else bad "a non-numeric lock timeout exited 0"; fi
+  bad_waited=$((SECONDS - started))
+  if [ "$bad_waited" -le 3 ]; then ok; else bad "a non-numeric lock timeout failed only after ${bad_waited}s"; fi
+  case "$(cat "$bad_dir/out")" in
+    *FACTOTUM_EMBED_TEST_LOCK_TIMEOUT*seconds*) ok ;;
+    *) bad "a non-numeric lock timeout printed no actionable error: $(tr '\n' ';' <"$bad_dir/out")" ;;
+  esac
+  if grep -q '^docker run ' "$bad_dir/stub.log"; then
+    bad "a non-numeric lock timeout still started a container"
+  else
+    ok
+  fi
+fi
+rm -f "$bad_lock"
 
 # The whole point: two concurrent runs on a cold shared cache must both pass,
 # with their startup windows serialized.

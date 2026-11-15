@@ -17,8 +17,9 @@
 # gguf_init_from_reader. The download is serialized instead: a per-volume lock is
 # held from the container start until the server reports healthy, so the next
 # run starts against a warm, consistent cache. A waiting run gives up after
-# FACTOTUM_EMBED_TEST_LOCK_TIMEOUT seconds (default 240) and names the lock it
-# could not take.
+# FACTOTUM_EMBED_TEST_LOCK_TIMEOUT seconds (default 240, validated as a whole
+# number up front so a malformed value fails the run at once) and names the lock
+# it could not take.
 set -euo pipefail
 
 # embed_volume is the named docker volume that keeps the downloaded model,
@@ -64,19 +65,43 @@ embed_lock_reclaim() {
       return 1
     fi
   fi
+  # Presence first: only a lock that exists at this read can be stale, and a
+  # present path cannot be published into. An absent one can be published by a
+  # peer the next instant, so leaving it is what keeps that peer's live lock.
+  if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then
+    rmdir "$guard" 2>/dev/null || true
+    return 1
+  fi
   owner="$(embed_lock_owner "$lock")"
   if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
     rmdir "$guard" 2>/dev/null || true
     return 1
   fi
-  # Only remove what this section saw: with no lock present, a peer publishes one
-  # at any moment, and the `rm` below would delete it. An occupied path cannot be
-  # published into, so the lock read above is still the one removed.
-  if [ -e "$lock" ] || [ -L "$lock" ]; then
-    rm -f "$lock"
+  # Re-read the owner immediately before the `rm`: only the lock read here is
+  # dropped, so a path republished since the check above is left alone.
+  if [ "$(embed_lock_owner "$lock")" != "$owner" ]; then
+    rmdir "$guard" 2>/dev/null || true
+    return 1
   fi
+  rm -f "$lock"
   rmdir "$guard" 2>/dev/null || true
   return 0
+}
+
+# embed_lock_timeout prints the wait limit in seconds.
+# FACTOTUM_EMBED_TEST_LOCK_TIMEOUT must be a whole number of seconds: it is
+# compared with `-ge` every iteration, so a value like "2m" would error there and
+# the wait would never end. Validate it once, up front, so a bad value fails the
+# run before it takes the lock.
+embed_lock_timeout() {
+  local timeout="${FACTOTUM_EMBED_TEST_LOCK_TIMEOUT:-240}"
+  case "$timeout" in
+    *[!0-9]*)
+      echo "embed-test: FACTOTUM_EMBED_TEST_LOCK_TIMEOUT must be a whole number of seconds (e.g. 240), got '${timeout}'" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$timeout"
 }
 
 # embed_lock_acquire takes the volume's download lock, waiting for a concurrent
@@ -88,7 +113,9 @@ embed_lock_reclaim() {
 embed_lock_acquire() {
   local lock owner reclaimed started waited limit
   lock="$(embed_lock_file)"
-  limit="${FACTOTUM_EMBED_TEST_LOCK_TIMEOUT:-240}"
+  if ! limit="$(embed_lock_timeout)"; then
+    return 1
+  fi
   if [ ! -d "$(dirname "$lock")" ] || [ ! -w "$(dirname "$lock")" ]; then
     echo "embed-test: cannot create the download lock ${lock}" >&2
     return 1

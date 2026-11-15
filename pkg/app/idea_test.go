@@ -274,8 +274,8 @@ func TestPromoteRejectsNonAgentAssignee(t *testing.T) {
 // errInjectedFault is the store error a test injects mid-promote.
 var errInjectedFault = errors.New("injected store fault")
 
-// faultyTickets fails Update for the tickets reject selects, so a test can drive
-// a mid-promote store fault without a real backend failure.
+// faultyTickets fails Update and CreatePromoted for the tickets reject selects,
+// so a test can drive a mid-promote store fault without a real backend failure.
 type faultyTickets struct {
 	store.TicketRepo
 	reject func(*core.Ticket) bool
@@ -288,7 +288,14 @@ func (r faultyTickets) Update(ctx context.Context, task *core.Ticket) error {
 	return r.TicketRepo.Update(ctx, task)
 }
 
-// faultyBackend exposes the wrapped backend's repositories with a ticket update
+func (r faultyTickets) CreatePromoted(ctx context.Context, captureID core.TicketID, task *core.Ticket) (*core.Ticket, bool, error) {
+	if r.reject(task) {
+		return nil, false, errInjectedFault
+	}
+	return r.TicketRepo.CreatePromoted(ctx, captureID, task)
+}
+
+// faultyBackend exposes the wrapped backend's repositories with a ticket write
 // fault injected.
 type faultyBackend struct {
 	store.Backend
@@ -325,15 +332,16 @@ func assertNothingPromoted(t *testing.T, h *harness, project *core.Project, capt
 	}
 }
 
-func TestPromoteRollsBackWhenLinkingFails(t *testing.T) {
+// A failure of the atomic promotion create is the first mid-promote store
+// fault: the edge is written with the task now, so there is no separate link
+// step to fail, and a failed create must leave the capture untouched.
+func TestPromoteRollsBackWhenTheCreateFails(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	project := h.newProject(t)
 	idea := newIdea(t, h, project, "a spark")
 	agent := newAgent(t, h, "claude")
 
-	// The task is created and then updated to add the origin edge; failing that
-	// update is the first mid-promote fault.
 	faulty := NewTicketService(faultyBackend{
 		Backend: h.backend,
 		reject:  func(task *core.Ticket) bool { return task.Kind == core.KindTask },

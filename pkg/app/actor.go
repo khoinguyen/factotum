@@ -65,8 +65,8 @@ func (s *ActorService) Get(ctx context.Context, id core.ActorID) (*core.Actor, e
 // when there is one, otherwise a loop-role default as an active agent. A loop role
 // is the mailbox a session registers as a run, not a stored Actor record, so it
 // needs no registration; any other unregistered id stays ErrNotFound. Readiness,
-// grooming, and claim share this resolution, so a role-assigned task counts as
-// agent work on every surface that judges it.
+// grooming, claim, assign, promote, and waiting-on share this resolution, so a
+// role can hold work and counts as agent work on every surface that judges it.
 func (s *ActorService) Identity(ctx context.Context, id core.ActorID) (*core.Actor, error) {
 	return actorIdentity(ctx, s.backend.Actors(), id)
 }

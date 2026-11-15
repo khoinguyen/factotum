@@ -24,16 +24,43 @@ check() {
   if [ "$2" = "$3" ]; then ok; else bad "$1: got '$3', want '$2'"; fi
 }
 
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
 if [ ! -f "$script" ]; then
   echo "FAIL script: $script does not exist"
   echo "passed=$pass failed=$((fail + 1))"
   exit 1
 fi
 
+# Hermeticity lock: every docker/curl/go call is recorded, so sourcing the
+# script must record nothing. If the guard moves below the container start (or
+# goes away), the test fails loudly here instead of starting a real container
+# and running the real embedding test.
+mkdir -p "$tmp/bin"
+for cmd in docker curl go; do
+  cat >"$tmp/bin/$cmd" <<'STUB'
+#!/usr/bin/env bash
+printf '%s %s\n' "$(basename "$0")" "$*" >>"$STUB_LOG"
+exit "${STUB_EXIT:-1}"
+STUB
+  chmod +x "$tmp/bin/$cmd"
+done
+export STUB_LOG="$tmp/stub.log"
+: >"$STUB_LOG"
+export PATH="$tmp/bin:$PATH"
+
 # The helpers are the unit under test. Sourcing stops at the script's source
 # guard, so no container is started and no test runs.
 # shellcheck source=scripts/embed-test.sh
-. "$script"
+if ! . "$script"; then
+  bad "sourcing the script failed (is the source guard missing?)"
+fi
+if [ -s "$STUB_LOG" ]; then
+  bad "sourcing the script ran: $(tr '\n' ';' <"$STUB_LOG")"
+else
+  ok
+fi
 
 # A default container name is per-run: it carries a pid and stays clear of the
 # old fixed name.
@@ -67,19 +94,19 @@ check "a pinned port wins" "127.0.0.1:18999:8080" \
 check "a bound port is read back" "49153" "$(embed_bound_port '127.0.0.1:49153')"
 check "an unbound port yields nothing" "" "$(embed_bound_port '')"
 
-# The mise task delegates to this script, so the fixed values cannot creep back
-# into the task body.
-has() {
-  local name="$1" needle="$2"
-  if grep -qF -- "$needle" "$mise"; then ok; else bad "$name: missing '$needle' in mise.toml"; fi
-}
-lacks() {
-  local name="$1" needle="$2"
-  if grep -qF -- "$needle" "$mise"; then bad "$name: found '$needle' in mise.toml"; else ok; fi
-}
-has "test-embed runs the script" 'run = "bash scripts/embed-test.sh"'
-lacks "test-embed carries no fixed container name" "ft-embed-test"
-lacks "test-embed carries no fixed port" "18080"
+# The mise task delegates to this script, and its own body carries neither fixed
+# value, so neither can creep back into the task.
+block="$(awk '/^\[tasks\.test-embed\]/{found=1;next} /^\[/{found=0} found' "$mise")"
+case "$block" in
+  *'run = "bash scripts/embed-test.sh"'*) ok ;;
+  *) bad "test-embed does not run scripts/embed-test.sh" ;;
+esac
+for stale in ft-embed-test 18080; do
+  case "$block" in
+    *"$stale"*) bad "test-embed still carries the fixed '$stale'" ;;
+    *) ok ;;
+  esac
+done
 
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

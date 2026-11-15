@@ -12,7 +12,9 @@ set -uo pipefail
 # probe_clone_base makes the per-run directory that holds the throwaway wiki
 # checkout, so two concurrent probes do not share one path.
 probe_clone_base() {
-  mktemp -d "${TMPDIR:-/tmp}/ft-spike-wiki-clone.XXXXXX"
+  local tmp_root="${TMPDIR:-/tmp}"
+  tmp_root="${tmp_root%/}"
+  mktemp -d "$tmp_root/ft-spike-wiki-clone.XXXXXX"
 }
 
 # cleanup deletes the throwaway repos and the per-run checkout.

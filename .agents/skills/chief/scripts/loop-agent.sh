@@ -22,11 +22,12 @@
 # its role. `cmux-msg.sh` stays the fallback until a peer is verified reachable
 # over ft msg.
 #
-# It also refuses a worktree that already hosts a running OpenCode instance:
+# It also notes a worktree that already hosts a running OpenCode instance:
 # launching there attaches the new TUI to that instance as a tab, which inherits
-# that instance's env, so the receiver never sees this role's FACTOTUM_* and the
-# agent is silently unreachable. Every agent — the chief included — gets its own
-# directory; FT_LOOP_AGENT_ALLOW_BUSY_DIR=1 overrides the refusal.
+# that instance's env (fatal for a plain launch, which is how the loop lost
+# agents). This script's launch is --standalone and keeps its own env, so the
+# note is information, not a refusal. Every agent — the chief included — still
+# gets its own directory.
 #
 # Why --standalone: OpenCode V2 runs a shared background service that owns
 # plugin loading, and that service's process env has no FACTOTUM_*, so a plugin
@@ -55,20 +56,20 @@ canon_path() {
   printf '%s' "${resolved:-$1}"
 }
 
-# Refuse a directory the shared OpenCode V2 background service already owns.
+# Note a directory the shared OpenCode V2 background service already owns.
 #
-# Launching opencode in a directory that already hosts a running instance does
-# not give you a second instance: the new TUI attaches to the one already there
-# as a tab and inherits *its* env. The FACTOTUM_* exported below for the new role
-# never reach the receiver, so the agent is silently unreachable over ft msg and
-# messages to it queue forever. So ask the service which directories it owns.
+# OpenCode attaches a TUI started in a directory that already hosts one as a tab
+# of that instance, and the tab inherits *that* instance's env — so a plain
+# second launch there never shows the new role's FACTOTUM_* to its receiver and
+# its messages queue forever (reproduced against 2.3.0). This script always
+# launches --standalone, and a standalone TUI keeps its own server and its own
+# env even in such a directory, so it still registers. Report the condition,
+# never block on it: a false refusal would strand the agent, and the service
+# also keeps locations for directories where nothing runs any more.
 #
 # Best-effort on purpose: no service, an `opencode` too old for these commands, a
 # failed probe, or an answer we cannot parse all mean "cannot tell", and the
-# launch must proceed — a false refusal would stall every agent in the loop.
-# Locations are tracked per directory (not per repo or subtree), so the existing
-# instance is an exact directory match; a worktree nested inside an owned parent
-# (e.g. /tmp/x under a loaded /private/tmp) is a location of its own and is fine.
+# launch stays quiet.
 shared_instance_owns() {
   local dir="$1" url listing entry
   url="$("$opencode_bin" service status 2>/dev/null | head -n 1)" || true
@@ -90,16 +91,12 @@ shared_instance_owns() {
 }
 
 launch_dir="$(canon_path "$worktree")"
-if [ "${FT_LOOP_AGENT_ALLOW_BUSY_DIR:-}" != "1" ] && shared_instance_owns "$launch_dir"; then
+if shared_instance_owns "$launch_dir"; then
   cat >&2 <<EOF
-loop-agent: refusing to launch $actor in '$launch_dir': that directory already hosts a running
-OpenCode instance, and a new TUI there attaches to it as a tab and inherits its env instead of
-this launch's. The receiver would never see FACTOTUM_ACTOR/FACTOTUM_PROJECT, so $actor would be
-silently unreachable over ft msg. Launch it in its own directory (a dedicated git worktree), or
-stop the instance in that directory. Override with FT_LOOP_AGENT_ALLOW_BUSY_DIR=1 only when the
-attach is known to keep the receiver env.
+loop-agent: note: '$launch_dir' is a location the shared OpenCode service has loaded — a TUI is
+running there, or one ran there earlier. This launch keeps its own --standalone server and env, so
+it is unaffected; if $actor never registers over ft msg, check this directory first.
 EOF
-  exit 1
 fi
 
 # Stage the receiver where OpenCode V2 loads plugins. Idempotent; safe to run

@@ -15,11 +15,9 @@ trap 'rm -rf "$tmp"' EXIT
 # Hermetic: a real loop agent's env carries FACTOTUM_HARNESS and, as the very
 # bug this tests, may set OPENCODE_BIN to a --standalone wrapper. Either would
 # mask a regression, so clear them; the script must supply both itself. FT_BIN
-# and the FACTOTUM_* identity vars are cleared for the same reason, as is the
-# guard's bypass so a matching test can set it deliberately.
+# and the FACTOTUM_* identity vars are cleared for the same reason.
 unset FT_BIN OPENCODE_BIN FACTOTUM_HARNESS FACTOTUM_SESSION \
-  FACTOTUM_PROJECT FACTOTUM_ACTOR FACTOTUM_TASK_ID FACTOTUM_DEFAULT_ACTOR \
-  FT_LOOP_AGENT_ALLOW_BUSY_DIR
+  FACTOTUM_PROJECT FACTOTUM_ACTOR FACTOTUM_TASK_ID FACTOTUM_DEFAULT_ACTOR
 
 export FT_STUB_LOG="$tmp/ft.log"
 export OPENCODE_STUB_LOG="$tmp/opencode.log"
@@ -122,14 +120,15 @@ elif [ -s "$OPENCODE_STUB_LOG" ]; then
   echo "FAIL bad worktree launched the agent"; fail=$((fail+1));
 else pass=$((pass+1)); fi
 
-# --- Directory guard --------------------------------------------------------
-# Launching OpenCode in a directory that already hosts a running instance
-# attaches the new TUI as a tab of that instance and inherits *that* instance's
-# env: the new role's FACTOTUM_* never reach the receiver, so the agent is
-# silently unreachable. The guard asks the shared service which directories it
-# owns and refuses the launch instead. Every probe is best-effort: when the
-# service is absent or answers badly the launch must go ahead (a false refusal
-# breaks the whole loop).
+# --- Directory note ---------------------------------------------------------
+# OpenCode attaches a TUI started in a directory that already hosts one as a tab
+# of that instance, and the tab inherits that instance's env: a *plain* second
+# launch there leaves its messages queued (reviewer control on 2.3.0). This
+# script always launches --standalone, and a standalone TUI keeps its own server
+# and its own env even in such a directory, so the launch still registers. That
+# makes a hosted directory worth reporting, never worth blocking: a false
+# refusal would stall every agent in the loop, and the service also keeps
+# locations for directories where nothing runs any more.
 
 target="$(cd "$tmp/worktree" && pwd -P)"
 ln -s "$tmp/worktree" "$tmp/link"
@@ -153,63 +152,59 @@ run_guard() {
   set -e
 }
 
-# No instance: the service is not running, so there is nothing to attach to and
-# the launch proceeds without even asking for locations.
+# No instance: the service is not running, so there is nothing to report and the
+# launch goes ahead without even asking for locations.
 run_guard "$tmp/status-stopped" "$tmp/loc-self"
-if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
-  echo "FAIL guard: stopped service should launch (rc=$rc): $out"; fail=$((fail+1)); fi
+if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ] && [ -z "$out" ]; then pass=$((pass+1)); else
+  echo "FAIL note: stopped service should launch quietly (rc=$rc): $out"; fail=$((fail+1)); fi
 if grep -q "debug.location.list" "$OPENCODE_PROBE_LOG"; then
-  echo "FAIL guard: should not list locations when the service is stopped: $(cat "$OPENCODE_PROBE_LOG")"; fail=$((fail+1));
+  echo "FAIL note: should not list locations when the service is stopped: $(cat "$OPENCODE_PROBE_LOG")"; fail=$((fail+1));
 else pass=$((pass+1)); fi
 
 # A live service that owns *other* directories is the normal loop case: launch,
-# and keep staging the receiver first.
+# stage the receiver, and say nothing.
 run_guard "$tmp/status-live" "$tmp/loc-other"
-if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
-  echo "FAIL guard: another directory's instance must not block the launch (rc=$rc): $out"; fail=$((fail+1)); fi
+if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ] && [ -z "$out" ]; then pass=$((pass+1)); else
+  echo "FAIL note: another directory's instance must not block or warn (rc=$rc): $out"; fail=$((fail+1)); fi
 if grep -q "msg install --harness opencode2" "$FT_STUB_LOG"; then pass=$((pass+1)); else
-  echo "FAIL guard: receiver not staged before launch: $(cat "$FT_STUB_LOG")"; fail=$((fail+1)); fi
+  echo "FAIL note: receiver not staged before launch: $(cat "$FT_STUB_LOG")"; fail=$((fail+1)); fi
 # The probe only runs once the service reports itself up (a bare `opencode api`
 # would otherwise start a background service of its own).
 if grep -q "api debug.location.list" "$OPENCODE_PROBE_LOG"; then pass=$((pass+1)); else
-  echo "FAIL guard: probe should list the service's locations: $(cat "$OPENCODE_PROBE_LOG")"; fail=$((fail+1)); fi
+  echo "FAIL note: probe should list the service's locations: $(cat "$OPENCODE_PROBE_LOG")"; fail=$((fail+1)); fi
 
-# The bug itself: the target directory already hosts an instance. Refuse loudly,
-# name the directory, and leave no side effects (no receiver install, no TUI).
+# The reported bug's setting: the target directory hosts (or hosted) an instance.
+# Report it, name the directory and the standalone launch that keeps it working,
+# and still launch — the agent would otherwise be needlessly lost.
 run_guard "$tmp/status-live" "$tmp/loc-self"
-if [ "$rc" -ne 0 ]; then pass=$((pass+1)); else
-  echo "FAIL guard: should refuse a directory that already hosts an instance: $out"; fail=$((fail+1)); fi
-if [ -s "$OPENCODE_STUB_LOG" ]; then
-  echo "FAIL guard: refused launch still started a TUI: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1));
-else pass=$((pass+1)); fi
-if grep -q "msg install" "$FT_STUB_LOG"; then
-  echo "FAIL guard: refusal should happen before staging the receiver: $(cat "$FT_STUB_LOG")"; fail=$((fail+1));
-else pass=$((pass+1)); fi
-if printf '%s' "$out" | grep -q "already hosts" && printf '%s' "$out" | grep -q -- "$target"; then pass=$((pass+1)); else
-  echo "FAIL guard: refusal should name the directory and the reason: $out"; fail=$((fail+1)); fi
+if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
+  echo "FAIL note: a hosted directory must not block the launch (rc=$rc): $out"; fail=$((fail+1)); fi
+if grep -q "msg install --harness opencode2" "$FT_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL note: receiver not staged before launch: $(cat "$FT_STUB_LOG")"; fail=$((fail+1)); fi
+if printf '%s' "$out" | grep -q "note:" \
+  && printf '%s' "$out" | grep -q -- "$target" \
+  && printf '%s' "$out" | grep -q -- "--standalone"; then pass=$((pass+1)); else
+  echo "FAIL note: should name the directory and the standalone launch: $out"; fail=$((fail+1)); fi
 
 # A directory recorded under a different spelling (a symlinked worktree) is the
-# same location: compare canonical paths, or the guard is trivially bypassed.
+# same location, or the note would be trivially bypassed.
 run_guard "$tmp/status-live" "$tmp/loc-symlinked"
-if [ "$rc" -ne 0 ] && [ ! -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
-  echo "FAIL guard: symlinked location should still refuse (rc=$rc): $out"; fail=$((fail+1)); fi
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "note:"; then pass=$((pass+1)); else
+  echo "FAIL note: symlinked location should still be reported (rc=$rc): $out"; fail=$((fail+1)); fi
 
-# The escape hatch: a known-harmless attach must not block the loop.
-run_guard "$tmp/status-live" "$tmp/loc-self" FT_LOOP_AGENT_ALLOW_BUSY_DIR=1
-if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
-  echo "FAIL guard: FT_LOOP_AGENT_ALLOW_BUSY_DIR=1 should launch (rc=$rc): $out"; fail=$((fail+1)); fi
-
-# Fail open. A service that misreports itself, an API that errors, and an
-# unparseable answer must all leave the launch untouched rather than wedge the
-# loop on a probe.
+# Fail open and stay quiet. A service that misreports itself, an API that errors,
+# and an unparseable answer must neither block the launch nor cry wolf.
 for probe in broken-service failing-api garbled-answer; do
   case "$probe" in
     broken-service) run_guard "$tmp/status-broken" "$tmp/loc-self" ;;
     failing-api) run_guard "$tmp/status-live" "$tmp/loc-self" API_EXIT=2 ;;
     garbled-answer) run_guard "$tmp/status-live" "$tmp/loc-garbage" ;;
   esac
-  if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
-    echo "FAIL guard/$probe: probe trouble must not block the launch (rc=$rc): $out"; fail=$((fail+1)); fi
+  if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ] && ! printf '%s' "$out" | grep -q "note:"; then
+    pass=$((pass+1))
+  else
+    echo "FAIL note/$probe: probe trouble must launch quietly (rc=$rc): $out"; fail=$((fail+1))
+  fi
 done
 
 echo "passed=$pass failed=$fail"

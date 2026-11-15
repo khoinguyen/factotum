@@ -156,12 +156,14 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    reviewer, gets its own directory** so branch switches never collide — never start an agent in
    the main checkout (a shared checkout moves its HEAD when the chief switches branches).
    - **Never launch anything — the chief included — in a directory that already hosts an OpenCode
-     TUI.** A second TUI there does not become its own instance: it attaches to the running one as
-     a tab and inherits *that* instance's env, so the new role's `FACTOTUM_*` never reach its
-     receiver, the receiver never registers, and messages to it queue forever — silently, since
-     both TUIs stay alive. `loop-agent.sh` refuses such a launch up front (it asks the shared
-     service which directories it owns) instead of spawning an unreachable agent; if you hit that
-     refusal, give the agent its own directory rather than overriding it.
+     TUI.** A second TUI there attaches to the running one as a tab and inherits *that* instance's
+     env, so the new role's `FACTOTUM_*` never reach its receiver and messages to it queue forever
+     — silently, since both TUIs stay alive. `loop-agent.sh` launches `--standalone`, which keeps
+     its own server and env even in such a directory, and prints a note when the directory is one
+     the shared OpenCode service has loaded. The note is information, not a block (the service also
+     keeps locations where nothing runs any more, so refusing would strand a working agent) — but
+     take it as the first thing to check if a role never answers, and give the agent its own
+     directory anyway.
    Create both worktrees before spawning:
    `git worktree add /tmp/ft-<t> -b ft/<t>-<short-brief> origin/main`
    `git worktree add --detach /tmp/review-<t> origin/main`

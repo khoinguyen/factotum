@@ -159,11 +159,17 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   unset one is an error. The `local` backend is unsandboxed and must be opted in explicitly
   (`--allow-host` or `run.allow_host`).
 - Sandboxes: `local` (dev only), `openshell`, and `docker`. Harnesses: `opencode2` (OpenCode V2,
-  preferred) and `opencode` (OpenCode V1), plus `pi`. On the local backend `--harness opencode`
+  preferred), `opencode` (OpenCode V1), and `pi`. On the local backend `--harness opencode`
   probes the installed binary's `--version` and drives V2 automatically after an in-place upgrade;
   `--harness opencode2` forces V2 (npm alias or pinned V2 image). An isolating backend runs the
   harness's image as a non-root user under its policy; a configured credential is attached as a
-  provider placeholder, never placed in the sandbox.
+  provider placeholder, never placed in the sandbox. Supply or override that image with
+  `--image`, `FACTOTUM_RUN_IMAGE`, or `run.image`.
+- `pi` ships as an npm package rather than a published container image, so it has no image of its
+  own: an isolating run needs one named with `--image`/`run.image` (it must have `pi` on PATH, and
+  `ft` too when the run carries an actor and no `FACTOTUM_MSG_URL` hub). Without one, `ft run`
+  fails at selection and names the knob instead of launching the backend's default image. On
+  `local` it drives the host `pi`.
 - `--goal` repeatedly runs the highest-ranked **agent-ready, groomed, on-path** task until the goal
   is reached, work stalls, or `--max-tasks` is exhausted. A task goal resolves on its own; a
   milestone is a human gate, so the loop stops `no_ready_work` until a human closes it.
@@ -171,20 +177,21 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   repository and writes nothing to the graph.
 
 The machine-scoped `[run]` table holds the launcher settings (`sandbox`, `harness`, `workspace`,
-`model`, `args`, `refresh`, `allow_host`, `provider`, `credential_env`):
+`model`, `image`, `args`, `refresh`, `allow_host`, `provider`, `credential_env`):
 
 ```toml
 # ~/.factotum/config.toml — machine-scoped.
 [run]
 sandbox = "openshell"       # or docker; local is unsandboxed and needs allow_host
-harness = "opencode2"       # OpenCode V2; "opencode" is V1
+harness = "opencode2"       # OpenCode V2; "opencode" is V1, "pi" is the pi agent
+image = "ghcr.io/acme/pi:1" # optional override; required for pi, which publishes no image
 provider = "openrouter"
 credential_env = "OPENROUTER_API_KEY"
 ```
 
 Only `sandbox` and `harness` are read from a committed project `[run]` (project intent); host-scoped
-settings (`workspace`, `allow_host`, credentials) are read from the machine file only, so a committed
-file never carries a host path or opts into the unsandboxed backend.
+settings (`workspace`, `image`, `allow_host`, credentials) are read from the machine file only, so a
+committed file never carries a host path or opts into the unsandboxed backend.
 
 OpenCode V2 (`opencode2`) drives the same run: it reads the same config locations as V1 and
 translates V1-shaped config in memory, so `opencode2` is the one to select. Its three breaking

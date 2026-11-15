@@ -214,11 +214,11 @@ func TestRunHarnessesIncludePi(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup %q: %v", pi.Name, err)
 	}
-	if h, err := factory(config.Run{Model: "openai/gpt-5"}); err != nil || h.Name() != pi.Name {
+	if h, err := factory(config.Run{Sandbox: local.Name, Model: "openai/gpt-5"}); err != nil || h.Name() != pi.Name {
 		t.Fatalf("build pi harness = (%v, %v), want name %q", h, err, pi.Name)
 	}
 
-	h, err := factory(config.Run{Model: "openrouter/x", Provider: "openrouter", CredentialEnvVar: "OPENROUTER_API_KEY"})
+	h, err := factory(config.Run{Sandbox: local.Name, Model: "openrouter/x", Provider: "openrouter", CredentialEnvVar: "OPENROUTER_API_KEY"})
 	if err != nil {
 		t.Fatalf("build pi harness: %v", err)
 	}
@@ -482,5 +482,120 @@ func TestOpenShellFactorySilentWhenProjectPolicyExists(t *testing.T) {
 	}
 	if errBuf.Len() != 0 {
 		t.Fatalf("unexpected warning: %q", errBuf.String())
+	}
+}
+
+// TestRunHarnessPiNeedsAnImageToIsolate pins the pi image rule: pi ships as an
+// npm package, not a published image, so an isolating backend must be told which
+// base image carries it (run.image, --image, or FACTOTUM_RUN_IMAGE), while a
+// local run drives the host binary and needs none. An isolating run that names
+// no image fails at selection with a message naming the knob, instead of
+// launching a backend default image that has no pi on PATH.
+func TestRunHarnessPiNeedsAnImageToIsolate(t *testing.T) {
+	factory, err := runHarnesses().MustLookup(pi.Name)
+	if err != nil {
+		t.Fatalf("lookup %q: %v", pi.Name, err)
+	}
+
+	t.Run("local runs the host binary", func(t *testing.T) {
+		h, err := factory(config.Run{Sandbox: local.Name})
+		if err != nil {
+			t.Fatalf("build pi harness on local = %v, want no image required", err)
+		}
+		spec, err := h.Spec(harness.Request{Workdir: "/w"})
+		if err != nil {
+			t.Fatalf("Spec() error = %v", err)
+		}
+		if spec.Image.Ref != "" {
+			t.Fatalf("local Spec.Image.Ref = %q, want empty (host binary)", spec.Image.Ref)
+		}
+	})
+
+	t.Run("isolating without an image is rejected", func(t *testing.T) {
+		for _, sandbox := range []string{openshell.Name, docker.Name} {
+			_, err := factory(config.Run{Sandbox: sandbox})
+			if err == nil {
+				t.Fatalf("build pi harness on %s = nil error, want a missing-image error", sandbox)
+			}
+			for _, want := range []string{"pi", "run.image", "--image"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not name %q", err, want)
+				}
+			}
+		}
+	})
+
+	t.Run("isolating carries the configured image", func(t *testing.T) {
+		h, err := factory(config.Run{Sandbox: openshell.Name, Image: "ghcr.io/acme/pi:1"})
+		if err != nil {
+			t.Fatalf("build pi harness with an image: %v", err)
+		}
+		spec, err := h.Spec(harness.Request{Workdir: "/w"})
+		if err != nil {
+			t.Fatalf("Spec() error = %v", err)
+		}
+		if want := "ghcr.io/acme/pi:1"; spec.Image.Ref != want {
+			t.Fatalf("Spec.Image.Ref = %q, want %q", spec.Image.Ref, want)
+		}
+	})
+}
+
+// TestRunHarnessesForwardConfiguredImage pins that a configured base image
+// reaches every harness, not only pi: run.image overrides the harness's own
+// default, and OpenCode stops forcing the shipped image's uid so a
+// caller-supplied image keeps its own identity.
+func TestRunHarnessesForwardConfiguredImage(t *testing.T) {
+	const image = "ghcr.io/acme/agent:1"
+	for _, name := range []string{opencode.Name, opencode.NameV2, pi.Name} {
+		t.Run(name, func(t *testing.T) {
+			factory, err := runHarnesses().MustLookup(name)
+			if err != nil {
+				t.Fatalf("lookup %q: %v", name, err)
+			}
+			h, err := factory(config.Run{Sandbox: docker.Name, Image: image})
+			if err != nil {
+				t.Fatalf("build harness: %v", err)
+			}
+			spec, err := h.Spec(harness.Request{})
+			if err != nil {
+				t.Fatalf("Spec() error = %v", err)
+			}
+			if spec.Image.Ref != image {
+				t.Fatalf("Spec.Image.Ref = %q, want the configured %q", spec.Image.Ref, image)
+			}
+			if spec.Image.User != "" {
+				t.Fatalf("Spec.Image.User = %q, want empty so the supplied image's own user applies", spec.Image.User)
+			}
+		})
+	}
+}
+
+// TestPrepareRunForwardsImageFlag pins that --image reaches the harness factory
+// as run.image, so a per-run base image needs no config edit.
+func TestPrepareRunForwardsImageFlag(t *testing.T) {
+	var got config.Run
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, io.Discard, io.Discard, func(string) string { return "" })
+	if err := deps.RunBackends.Register("capture", func(cfg config.Run, _ io.Writer) (isolation.IsolationBackend, error) {
+		return isofake.New("capture"), nil
+	}); err != nil {
+		t.Fatalf("register backend: %v", err)
+	}
+	if err := deps.RunHarnesses.Register("fake", func(cfg config.Run) (harness.Harness, error) {
+		got = cfg
+		return harnessfake.New("fake"), nil
+	}); err != nil {
+		t.Fatalf("register harness: %v", err)
+	}
+
+	if _, err := deps.prepareRun(&cobra.Command{Use: "run"}, runOptions{
+		sandbox:   "capture",
+		harness:   "fake",
+		image:     "ghcr.io/acme/pi:1",
+		workspace: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("prepareRun() error = %v", err)
+	}
+	if want := "ghcr.io/acme/pi:1"; got.Image != want {
+		t.Fatalf("harness factory got Image = %q, want %q", got.Image, want)
 	}
 }

@@ -304,13 +304,13 @@ and are the only ones fit for untrusted input.
 A harness describes one agent CLI end to end: image, invocation, model flag,
 prompt delivery, completion, and output parsing. Prefer OpenCode V2 (`opencode2`,
 image `ghcr.io/anomalyco/opencode:2.0.27`, no top-level `--model`); OpenCode V1
-(`opencode`, image `ghcr.io/anomalyco/opencode:latest`) and pi (`pi`, npm, no image)
-also ship. Each builds a headless invocation passing the prompt as the final
-message and reading stdout; an interactive run attaches the agent's TUI instead.
-Model and credentials come from the configured provider, never hardcoded (a
-backend-resolved provider reference). On local, `--harness opencode` probes the
-binary's major version (in-place V2 keeps the name) and `opencode2` forces V2; an
-isolating pi backend needs an explicit image and trusts project-local files.
+(`opencode`, image `ghcr.io/anomalyco/opencode:latest`) and pi (`pi`, npm, no
+image) also ship. Each builds a headless invocation passing the prompt as the
+final message and reading stdout; an interactive run attaches the agent's TUI
+instead. Model and credentials come from the configured provider, never hardcoded
+(a backend-resolved provider reference). On local, `--harness opencode` probes the
+binary's major version and `opencode2` forces V2. Isolating pi needs an explicit
+`--image`/`run.image`/`FACTOTUM_RUN_IMAGE` with `pi` on PATH; pi trusts local files.
 
 An isolating backend imposes a policy on the run. The OpenShell policy
 (`pkg/isolation/openshell`, checked-in template `policy.yaml`) is deny-by-default:
@@ -350,7 +350,7 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode2 --allow-hos
 - `--sandbox`/`--harness` are optional: they resolve flag > `FACTOTUM_RUN_*` > committed
   project `[run]` > machine `[run]`. On a terminal an unset one prompts once and saves to
   the chosen config; choosing `local` there asks to opt in (default no) and records
-  `run.allow_host = true` in the user config; the project scope needs a configured project, else it fails clearly and writes nothing (rerun and choose `user`, or pin one first). A committed project `[run]` may set only `sandbox`/`harness`; the machine table also holds workspace/model/args/allow_host/credential_env. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
+  `run.allow_host = true` in the user config; the project scope needs a configured project, else it fails clearly and writes nothing (rerun and choose `user`, or pin one first). A committed project `[run]` may set only `sandbox`/`harness`; the machine table also holds workspace/model/image/args/allow_host/credential_env (`--image` names the isolating base image for the selected harness; pi requires one). `--refresh` hard-resets a reused checkout; a changed origin URL fails.
 - `provider` and `credential_env` name the credential a harness may use and the
   variable it arrives under, e.g. `provider = "openrouter"` with
   `credential_env = "OPENROUTER_API_KEY"`; the value is read from the host

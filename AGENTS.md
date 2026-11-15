@@ -108,10 +108,11 @@ Never claim a unit is done because the code "looks right". Run the tests.
   (`internal/skills/content/*.md`, served by `ft skill`) were updated to match. Review them with
   `ft skill list` and `ft skill get <name>`; a deterministic CI drift check is planned
   (t-skill-drift).
-- Every `ft ...` command a doc in `docs/` names exists. `TestDocsReferenceRealCommands` holds docs
-  to the same command tree the skills are checked against. A verb the design considered but the CLI
-  does not implement belongs in a fence marked `design` (` ```design `), which is the only exemption
-  and covers that block alone; prose is always checked.
+- Every `ft ...` command the repository markdown names exists: every file under `docs/` and the
+  top-level `*.md` files (`README.md`, `AGENTS.md`). `TestRepoDocsReferenceRealCommands` holds that
+  markdown to the same command tree the skills are checked against. A verb the design considered but
+  the CLI does not implement belongs in a fence marked `design` (` ```design `), which is the only
+  exemption and covers that block alone; prose is always checked.
 - The work is refactored for clarity and simplicity after it is green.
 
 ## Commands (mise)

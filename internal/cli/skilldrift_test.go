@@ -6,7 +6,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -138,46 +140,193 @@ func TestAgentSkillsReferenceRealCommandsAndFlags(t *testing.T) {
 	}
 }
 
-// TestDocsReferenceRealCommands extends the drift guard from the skill entry
-// points to docs/. A design doc is what the implementation is reviewed against,
-// so a command it advertises that does not exist sends readers and agents at a
-// verb that fails, and nothing else catches it: the skills checker only walks
-// .agents/skills. The walk is the same cobra check; a fenced block marked
-// `design` is exempt because it records verbs that were considered but not
-// built, and only that block is exempt.
-func TestDocsReferenceRealCommands(t *testing.T) {
+// TestRepoDocsReferenceRealCommands extends the drift guard from the skill entry
+// points to the repository's own markdown: every file under docs/ and the
+// top-level *.md files. A design doc is what the implementation is reviewed
+// against, and the README now carries the run/agent/isolation detail the ft
+// skill used to, so a command either advertises that does not exist sends readers
+// and agents at a verb that fails, and nothing else catches it: the skills
+// checker only walks .agents/skills. The walk is the same cobra check; a fenced
+// block marked `design` is exempt because it records verbs that were considered
+// but not built, and only that block is exempt.
+func TestRepoDocsReferenceRealCommands(t *testing.T) {
 	root := skillDriftRoot(t)
-	dir := filepath.Join(repoRoot(t), "docs")
-	findings, parsed, err := docsFindings(root, dir)
+	repo := repoRoot(t)
+	files, err := repoDocFiles(repo)
 	if err != nil {
-		t.Fatalf("docsFindings(%s) error = %v", dir, err)
+		t.Fatalf("repoDocFiles(%s) error = %v", repo, err)
+	}
+	// The top level is the reason the walk widened: if README.md drops out of the
+	// target list, the guard would still pass on docs/ alone and the README detail
+	// would drift silently again.
+	for _, name := range []string{"README.md", "AGENTS.md"} {
+		if !containsPath(files, filepath.Join(repo, name)) {
+			t.Errorf("repoDocFiles() = %v, want %s in the walk", files, name)
+		}
+	}
+	findings, parsed, err := repoDocFindings(root, repo)
+	if err != nil {
+		t.Fatalf("repoDocFindings(%s) error = %v", repo, err)
 	}
 	if parsed < 50 {
 		// The docs carry well over a hundred invocations today; a collapse means
 		// the walk or the parser broke and the check would pass on nothing.
-		t.Fatalf("docs parsed only %d ft invocations; the checker is not seeing the docs", parsed)
+		t.Fatalf("repo markdown parsed only %d ft invocations; the checker is not seeing it", parsed)
 	}
 	for _, finding := range findings {
 		t.Error(finding)
 	}
+	// The README must carry real invocations of its own: a green walk over a
+	// README the parser cannot read would say nothing about the file this guard
+	// was widened for.
+	if _, readmeParsed := docFindings(root, "README.md", readFile(t, filepath.Join(repo, "README.md"))); readmeParsed == 0 {
+		t.Error("README.md parsed no ft invocations; the walk sees the file but not its commands")
+	}
 }
 
-// TestDocsFindingsFailsOnUnknownCommand plants a doc that advertises a verb the
+// TestRepoDocFilesCoversDocsAndTopLevelMarkdown pins the walk's target list: every
+// markdown file under docs/ and the top-level *.md files. Other markdown below the
+// top level is out of scope, so the walk stays about the docs a reader lands on.
+func TestRepoDocFilesCoversDocsAndTopLevelMarkdown(t *testing.T) {
+	repo := t.TempDir()
+	for _, rel := range []string{
+		"README.md",
+		"AGENTS.md",
+		"SECURITY.md",
+		filepath.Join("docs", "a.md"),
+		filepath.Join("docs", "msg", "b.md"),
+		filepath.Join("web", "README.md"),
+	} {
+		writeDocUnder(t, repo, rel, "nothing to see\n")
+	}
+	files, err := repoDocFiles(repo)
+	if err != nil {
+		t.Fatalf("repoDocFiles() error = %v", err)
+	}
+	got := make([]string, 0, len(files))
+	for _, path := range files {
+		rel, err := filepath.Rel(repo, path)
+		if err != nil {
+			t.Fatalf("rel path %s: %v", path, err)
+		}
+		got = append(got, rel)
+	}
+	want := []string{
+		"AGENTS.md",
+		"README.md",
+		"SECURITY.md",
+		filepath.Join("docs", "a.md"),
+		filepath.Join("docs", "msg", "b.md"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("repoDocFiles() = %v, want %v", got, want)
+	}
+}
+
+// TestRepoDocFindingsChecksTopLevelMarkdown plants drift in the top-level markdown
+// and requires the walk to report it: the same rules hold there as under docs/, so
+// a bogus verb in a fence or an inline span turns the guard red, the `design`
+// exemption covers only its own block, and code that names ft without an
+// invocation stays a blind spot.
+func TestRepoDocFindingsChecksTopLevelMarkdown(t *testing.T) {
+	root := skillDriftRoot(t)
+	cases := []struct {
+		name string
+		rel  string
+		body string
+		want []string
+	}{
+		{
+			name: "readme fence",
+			rel:  "README.md",
+			body: "```sh\nft msg retry t-1\n```\n",
+			want: []string{`unknown command "retry"`},
+		},
+		{
+			name: "readme inline span",
+			rel:  "README.md",
+			body: "Run `ft msg retry t-1` on a stuck message.\n",
+			want: []string{`unknown command "retry"`},
+		},
+		{
+			name: "agents indented block",
+			rel:  "AGENTS.md",
+			body: "    ft task frobnicate t-1\n",
+			want: []string{`unknown command "frobnicate"`},
+		},
+		{
+			name: "readme stale flag",
+			rel:  "README.md",
+			body: "```sh\nft task next --bogus\n```\n",
+			want: []string{`unknown flag "--bogus"`},
+		},
+		{
+			name: "readme design fence is exempt",
+			rel:  "README.md",
+			body: "```design\nft msg retry t-1\n```\n",
+		},
+		{
+			name: "readme design fence exempts only its own block",
+			rel:  "README.md",
+			body: "```design\nft msg retry t-1\n```\n\n```sh\nft msg prune\n```\n",
+			want: []string{`unknown command "prune"`},
+		},
+		{
+			name: "readme code naming ft without an invocation is a blind spot",
+			rel:  "README.md",
+			body: "```sh\ntool ft task next\n```\n",
+			want: []string{"parsed none"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			// A repo always has docs/; the walk treats a missing one as a wrong
+			// root rather than silently narrowing to the top level.
+			writeDocUnder(t, filepath.Join(repo, "docs"), "index.md", "No commands here.\n")
+			writeDocUnder(t, repo, tc.rel, tc.body)
+			findings, _, err := repoDocFindings(root, repo)
+			if err != nil {
+				t.Fatalf("repoDocFindings() error = %v", err)
+			}
+			joined := strings.Join(findings, "\n")
+			if len(tc.want) == 0 {
+				if len(findings) != 0 {
+					t.Fatalf("findings = %v, want none", findings)
+				}
+				return
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("findings = %v, want %q", findings, want)
+				}
+			}
+			if len(findings) != len(tc.want) {
+				t.Fatalf("findings = %v, want exactly %v", findings, tc.want)
+			}
+			if !strings.Contains(joined, tc.rel) {
+				t.Fatalf("findings = %v, want the top-level path %q named", findings, tc.rel)
+			}
+		})
+	}
+}
+
+// TestRepoDocFindingsFailsOnUnknownCommand plants a doc that advertises a verb the
 // command tree does not have and requires the docs check to report it. The guard
 // is only worth having if a bogus command turns it red.
-func TestDocsFindingsFailsOnUnknownCommand(t *testing.T) {
+func TestRepoDocFindingsFailsOnUnknownCommand(t *testing.T) {
 	root := skillDriftRoot(t)
-	dir := filepath.Join(t.TempDir(), "docs")
-	writeDocUnder(t, dir, filepath.Join("msg", "bogus.md"), "```sh\n$ ft msg retry t-1\n```\n")
-	findings, parsed, err := docsFindings(root, dir)
+	repo := t.TempDir()
+	writeDocUnder(t, filepath.Join(repo, "docs"), filepath.Join("msg", "bogus.md"), "```sh\n$ ft msg retry t-1\n```\n")
+	findings, parsed, err := repoDocFindings(root, repo)
 	if err != nil {
-		t.Fatalf("docsFindings() error = %v", err)
+		t.Fatalf("repoDocFindings() error = %v", err)
 	}
 	if parsed != 1 {
 		t.Fatalf("parsed = %d, want the planted invocation", parsed)
 	}
 	joined := strings.Join(findings, "\n")
-	if !strings.Contains(joined, "docs/msg/bogus.md") || !strings.Contains(joined, `unknown command "retry"`) {
+	if !strings.Contains(joined, filepath.Join("docs", "msg", "bogus.md")) || !strings.Contains(joined, `unknown command "retry"`) {
 		t.Fatalf("findings = %v, want the planted unknown command under its doc path", findings)
 	}
 }
@@ -201,13 +350,13 @@ func TestDocFindingsChecksEveryFenceForm(t *testing.T) {
 		{name: "second command on an indented line", body: "    echo x; ft msg retry t-1\n"},
 		{name: "wrapped inline span", body: "Prose `ft msg\nretry t-1` here.\n"},
 	}
-	dir := filepath.Join(t.TempDir(), "docs")
+	repo := t.TempDir()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			writeDocUnder(t, dir, filepath.Join("msg", "bogus.md"), tc.body)
-			findings, parsed, err := docsFindings(root, dir)
+			writeDocUnder(t, filepath.Join(repo, "docs"), filepath.Join("msg", "bogus.md"), tc.body)
+			findings, parsed, err := repoDocFindings(root, repo)
 			if err != nil {
-				t.Fatalf("docsFindings() error = %v", err)
+				t.Fatalf("repoDocFindings() error = %v", err)
 			}
 			if parsed != 1 {
 				t.Fatalf("parsed = %d, want the planted invocation", parsed)
@@ -393,37 +542,73 @@ func isDesignFence(info string) bool {
 	return false
 }
 
-// docsFindings walks every markdown file under dir and returns the drift findings
-// plus how many ft invocations the walk parsed, so a caller can prove the checker
-// sees the docs instead of passing because it found nothing. Paths are reported
-// relative to dir's parent, so a message reads like docs/msg/design.md.
-func docsFindings(root *cobra.Command, dir string) ([]string, int, error) {
-	var findings []string
-	parsed := 0
-	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+// repoDocFiles returns the markdown the drift guard walks: every file under
+// docs/ and the top-level *.md files. The README and AGENTS.md carry the run,
+// agent and isolation detail the ft skill used to, so they drift the same way a
+// design doc does and are held to the same check. Markdown nested elsewhere is
+// out of scope: it is neither the docs a reader lands on nor the front page.
+func repoDocFiles(repoRoot string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(filepath.Join(repoRoot, "docs"), func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".md") {
-			return nil
+		if !entry.IsDir() && strings.HasSuffix(path, ".md") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	tops, err := filepath.Glob(filepath.Join(repoRoot, "*.md"))
+	if err != nil {
+		return nil, fmt.Errorf("glob top-level markdown: %w", err)
+	}
+	files = append(files, tops...)
+	// A stable order keeps findings deterministic however the walk enumerates.
+	sort.Strings(files)
+	return files, nil
+}
+
+// repoDocFindings walks the repository markdown the drift guard covers and
+// returns the findings plus how many ft invocations the walk parsed, so a caller
+// can prove the checker sees the markdown instead of passing because it found
+// nothing. Paths are reported relative to repoRoot, so a message reads like
+// docs/msg/design.md or README.md. Both halves of the walk share docFindings, so
+// a command reads the same wherever it is written.
+func repoDocFindings(root *cobra.Command, repoRoot string) ([]string, int, error) {
+	files, err := repoDocFiles(repoRoot)
+	if err != nil {
+		return nil, 0, err
+	}
+	var findings []string
+	parsed := 0
+	for _, path := range files {
+		rel, err := filepath.Rel(repoRoot, path)
+		if err != nil {
+			return nil, 0, fmt.Errorf("rel path %s: %w", path, err)
 		}
 		body, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-		rel, err := filepath.Rel(filepath.Dir(dir), path)
-		if err != nil {
-			return fmt.Errorf("rel path %s: %w", path, err)
+			return nil, 0, fmt.Errorf("read %s: %w", path, err)
 		}
 		docFound, docParsed := docFindings(root, rel, string(body))
 		findings = append(findings, docFound...)
 		parsed += docParsed
-		return nil
-	})
-	if err != nil {
-		return nil, 0, err
 	}
 	return findings, parsed, nil
+}
+
+// containsPath reports whether files holds path, so a test can assert a walker's
+// target list without caring about its order.
+func containsPath(files []string, path string) bool {
+	for _, file := range files {
+		if file == path {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRoleSkillFindingsCoversTranscriptAndBlindSpot(t *testing.T) {

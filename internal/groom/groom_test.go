@@ -317,6 +317,19 @@ func TestKickoffNamesScopeAndOutputs(t *testing.T) {
 	}
 }
 
+// TestKickoffStatesSessionAttribution pins the attribution the completion guard
+// relies on: the kickoff tells the session that the work it creates is stamped
+// with its own session id, so the guard judges only that work and another
+// writer's concurrent task cannot fail the run.
+func TestKickoffStatesSessionAttribution(t *testing.T) {
+	kick := Kickoff("factotum", nil, StagedPaths("groom-1"), "groom-1", false)
+	for _, want := range []string{"groom-1", "attributed to"} {
+		if !strings.Contains(kick, want) {
+			t.Errorf("kickoff does not state the session attribution %q:\n%s", want, kick)
+		}
+	}
+}
+
 // TestKickoffNamesFeatureDocOutputs pins the feature documents the session must
 // emit alongside the task breakdown: the kickoff names each one's output path
 // and its section contract, so a session cannot silently skip a document.

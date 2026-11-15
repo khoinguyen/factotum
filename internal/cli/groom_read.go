@@ -317,36 +317,38 @@ func producedTaskDocs(ctx context.Context, tasks *app.TicketService, ids []strin
 	return docs, nil
 }
 
-// projectTaskIDs snapshots the ids in a project before a session runs, so the
-// capture can tell which tasks the session produced.
-func projectTaskIDs(ctx context.Context, svc *app.TicketService, projectID core.ProjectID) (map[core.TicketID]bool, error) {
-	tasks, err := svc.List(ctx, store.TicketFilter{ProjectID: projectID})
+// producedTaskIDs returns the ids of the tasks the session itself created,
+// read from the task.created events attributed to it, sorted for a deterministic
+// manifest. Attribution is the point, not a window diff: the run injects its own
+// session id (FACTOTUM_SESSION) into the child ft, so every create inside the
+// session is stamped with it, while a task another writer creates while the
+// session runs - the chief filing a follow-up, a parallel builder - carries a
+// different (or no) session and is not the session's produced work. A task the
+// session created and then deleted left nothing stranded, so it is dropped.
+func producedTaskIDs(ctx context.Context, backend store.Backend, tasks *app.TicketService, projectID core.ProjectID, sessionID string) ([]string, error) {
+	events, err := backend.Events().List(ctx, store.EventFilter{
+		ProjectID: projectID,
+		Kinds:     []core.EventKind{core.EventTaskCreated},
+		Session:   sessionID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	ids := make(map[core.TicketID]bool, len(tasks))
-	for _, task := range tasks {
-		ids[task.ID] = true
-	}
-	return ids, nil
-}
-
-// producedTaskIDs returns the ids present after a session that were absent
-// before it, sorted for a deterministic manifest. It is a window diff, not
-// authorship: a task any other writer creates in the project while the session
-// runs is indistinguishable from one the session made and is also included.
-// This is deliberate for a single-operator tool; if exact attribution is ever
-// needed the session must record its own produced ids.
-func producedTaskIDs(ctx context.Context, tasks *app.TicketService, projectID core.ProjectID, before map[core.TicketID]bool) ([]string, error) {
-	after, err := tasks.List(ctx, store.TicketFilter{ProjectID: projectID})
-	if err != nil {
-		return nil, err
-	}
-	var produced []string
-	for _, task := range after {
-		if !before[task.ID] {
-			produced = append(produced, string(task.ID))
+	seen := make(map[core.TicketID]bool, len(events))
+	produced := make([]string, 0, len(events))
+	for _, event := range events {
+		id := event.TicketID
+		if id == nil || seen[*id] {
+			continue
 		}
+		seen[*id] = true
+		if _, err := tasks.Get(ctx, *id); err != nil {
+			if errors.Is(err, core.ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		produced = append(produced, string(*id))
 	}
 	sort.Strings(produced)
 	return produced, nil

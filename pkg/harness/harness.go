@@ -30,6 +30,11 @@ const (
 	EnvTask    = "FACTOTUM_TASK_ID"
 	EnvBin     = "FACTOTUM_BIN"
 	EnvHarness = "FACTOTUM_HARNESS"
+	// EnvSession is the session id a run's child ft attributes its events to.
+	// A run that must be judged on its own work - a groom session - injects its
+	// own id, so its created tasks carry a session distinct from the caller's
+	// and from any other writer running concurrently.
+	EnvSession = "FACTOTUM_SESSION"
 	// EnvStore and EnvStoreOpts carry the caller's resolved storage backend and
 	// its options into the launched session, so the session's child ft reads the
 	// same store instead of resolving one from the checkout's config. EnvStoreOpts

@@ -14,6 +14,7 @@ import (
 	"github.com/khoinguyen/factotum/internal/groom"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
@@ -613,34 +614,57 @@ func TestGroomUnattendedReadsSessionWrites(t *testing.T) {
 // deferred-questions file does not excuse it - a produced task left unready is
 // work the session itself created and stranded. A produced idea is a capture,
 // not work, so it needs nothing more.
+//
+// The produced set is attributed, not diffed: a task the run itself created is
+// stamped with the session id the run injects (FACTOTUM_SESSION), so a task
+// another writer creates while the session runs - the chief filing a follow-up,
+// a parallel builder - is not judged as the session's own work and cannot fail
+// an unattended run.
 func TestGroomUnattendedProducedChildReadiness(t *testing.T) {
 	const report = "# Grooming report\n\n## Summary\n\n## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n"
 	tests := []struct {
 		name string
-		// produce creates the task the session leaves behind and returns its id.
-		produce func(t *testing.T, r *runner, projectID string) string
+		// produce creates the task the run leaves behind and returns its id. The
+		// session argument is the id the run injected, so a case can create work
+		// as the session or as another writer.
+		produce func(t *testing.T, r *runner, projectID, session string) string
 		// deferred wraps produce's id in a deferred-questions body; nil leaves
 		// the file empty.
 		deferred func(id string) string
+		// external pins a case whose task belongs to another writer, so a
+		// passing run must prove the guard ignored a real unready task.
+		external bool
 		wantErr  bool
 	}{
 		{
 			name: "an unready produced child fails",
-			produce: func(t *testing.T, r *runner, projectID string) string {
-				return firstField(t, r.run("task", "create", "-p", projectID, "-t", "Split child"))
+			produce: func(t *testing.T, r *runner, projectID, session string) string {
+				var id string
+				asSession(t, r, session, func() {
+					id = firstField(t, r.run("task", "create", "-p", projectID, "-t", "Split child"))
+				})
+				return id
 			},
 			wantErr: true,
 		},
 		{
 			name: "an agent-ready produced child passes",
-			produce: func(t *testing.T, r *runner, projectID string) string {
-				return agentReadyTask(t, r, projectID, "Split child")
+			produce: func(t *testing.T, r *runner, projectID, session string) string {
+				var id string
+				asSession(t, r, session, func() {
+					id = agentReadyTask(t, r, projectID, "Split child")
+				})
+				return id
 			},
 		},
 		{
 			name: "a deferral does not excuse an unready produced child",
-			produce: func(t *testing.T, r *runner, projectID string) string {
-				return firstField(t, r.run("task", "create", "-p", projectID, "-t", "Split child"))
+			produce: func(t *testing.T, r *runner, projectID, session string) string {
+				var id string
+				asSession(t, r, session, func() {
+					id = firstField(t, r.run("task", "create", "-p", projectID, "-t", "Split child"))
+				})
+				return id
 			},
 			deferred: func(id string) string {
 				return "# Deferred questions\n\n## Questions\n\n- [ ] Which scope?\n  - item: " + id + "\n  - owner: PO\n\n## Resolved\n"
@@ -649,9 +673,31 @@ func TestGroomUnattendedProducedChildReadiness(t *testing.T) {
 		},
 		{
 			name: "a produced idea is a capture",
-			produce: func(t *testing.T, r *runner, projectID string) string {
-				return firstField(t, r.run("idea", "create", "-p", projectID, "-t", "Maybe cache"))
+			produce: func(t *testing.T, r *runner, projectID, session string) string {
+				var id string
+				asSession(t, r, session, func() {
+					id = firstField(t, r.run("idea", "create", "-p", projectID, "-t", "Maybe cache"))
+				})
+				return id
 			},
+		},
+		{
+			name: "a concurrent writer's unready task is not produced",
+			produce: func(t *testing.T, r *runner, projectID, _ string) string {
+				return firstField(t, r.run("task", "create", "-p", projectID, "-t", "Chief follow-up"))
+			},
+			external: true,
+		},
+		{
+			name: "another session's unready task is not produced",
+			produce: func(t *testing.T, r *runner, projectID, _ string) string {
+				var id string
+				asSession(t, r, "groom-other", func() {
+					id = firstField(t, r.run("task", "create", "-p", projectID, "-t", "Builder follow-up"))
+				})
+				return id
+			},
+			external: true,
 		},
 	}
 
@@ -670,7 +716,11 @@ func TestGroomUnattendedProducedChildReadiness(t *testing.T) {
 			base.Program(isolation.ExecResult{Stdout: []byte("groomed\n"), ExitCode: 0})
 			backend := groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
 				prompt := cmd.Argv[len(cmd.Argv)-1]
-				child = tt.produce(t, r, projectID)
+				session := cmd.Env[harnesspkg.EnvSession]
+				if session == "" {
+					t.Fatalf("the run injected no session id; env = %v", cmd.Env)
+				}
+				child = tt.produce(t, r, projectID, session)
 				docs := defaultGroomDocs()
 				docs.report = report
 				if tt.deferred != nil {
@@ -687,6 +737,11 @@ func TestGroomUnattendedProducedChildReadiness(t *testing.T) {
 				if err != nil {
 					t.Fatalf("groom error = %v\n%s", err, out)
 				}
+				if tt.external {
+					if got := r.run("task", "get", child); !strings.Contains(got, "(todo)") {
+						t.Fatalf("the concurrent writer's task %s is not the unready task the case means to exclude:\n%s", child, got)
+					}
+				}
 				return
 			}
 			if err == nil {
@@ -697,6 +752,27 @@ func TestGroomUnattendedProducedChildReadiness(t *testing.T) {
 			}
 		})
 	}
+}
+
+// asSession runs fn with session attributed to every ft call it makes, standing
+// in for the child ft a launched session runs: the fake backend hands back the
+// FACTOTUM_SESSION the run injected, so the test's creates carry the same event
+// attribution the real child's would. Every other environment key keeps the
+// runner's own getenv, so the parent's hermetic setup is unchanged.
+func asSession(t *testing.T, r *runner, session string, fn func()) {
+	t.Helper()
+	prev := r.getenv
+	r.getenv = func(key string) string {
+		if key == harnesspkg.EnvSession {
+			return session
+		}
+		if prev != nil {
+			return prev(key)
+		}
+		return ""
+	}
+	defer func() { r.getenv = prev }()
+	fn()
 }
 
 // TestDeferredIDsWholeTokenMatch pins the anchored deferred detection: an id in

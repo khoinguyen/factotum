@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/internal/groom"
+	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 )
@@ -23,8 +24,10 @@ func seedGroomSessionWithCapture(t *testing.T, r *runner, projectID, cfgPath str
 	stage := backend.onExec
 	backend.onExec = func(cmd isolation.Command) {
 		stage(cmd)
-		captureID = firstField(t, r.run("idea", "create", "-p", projectID, "-t", "Maybe batch the cache"))
-		taskID = firstField(t, r.run("task", "create", "-p", projectID, "-t", "Extract cache module"))
+		asSession(t, r, cmd.Env[harnesspkg.EnvSession], func() {
+			captureID = firstField(t, r.run("idea", "create", "-p", projectID, "-t", "Maybe batch the cache"))
+			taskID = firstField(t, r.run("task", "create", "-p", projectID, "-t", "Extract cache module"))
+		})
 	}
 	r.runBackend = backend
 	r.runHarness = harnessfake.New("opencode")

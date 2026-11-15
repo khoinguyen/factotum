@@ -104,10 +104,14 @@ project's sessions from the store the machine config registers for it, so a
 non-default project's session is reachable without changing directory or editing
 the project file; asking for a project a session does not belong to is an error.
 
-The produced set is a window diff - the tasks that appeared in the project while
-the session ran - not strict authorship. In a single-operator session that is
-the session's own work; if another writer creates a task concurrently, it is
-included too.
+The produced set is attributed to the session, not diffed from the graph. The
+run injects its own session id (`FACTOTUM_SESSION`) into the session's child
+`ft`, so every task the session creates carries `task.created` attributed to
+that session; `ft groom` reads exactly those back. A task another writer creates
+while the session runs - the chief filing a follow-up, a parallel builder - is
+attributed to its own (or no) session, so it is never counted as the session's
+produced work. The manifest and `ft event list --session <session>` show the
+same attribution.
 
 ## Unattended mode
 

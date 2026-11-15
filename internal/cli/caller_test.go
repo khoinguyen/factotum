@@ -144,7 +144,7 @@ func TestLoopRoleActorFlagNeedsNoRecord(t *testing.T) {
 // TestUnregisteredDefaultActorIsUnattributedWithWarning pins the default path to
 // the same rule as --actor, so a typo in FACTOTUM_DEFAULT_ACTOR / default_actor
 // cannot stamp events. A default is trusted only when it names a registered
-// actor or a loop role carrying a real ft id; a role typo or a token that merely
+// actor or a loop role carrying a well-formed ft id; a role typo or a token that merely
 // starts with a role name is warned about and dropped.
 func TestUnregisteredDefaultActorIsUnattributedWithWarning(t *testing.T) {
 	for _, name := range []string{"builer-t-1", "builder-gpt-4", "qa-bot", "ghostrider"} {

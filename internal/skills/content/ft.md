@@ -303,11 +303,11 @@ is used **in place** — not copied into the workspace — so a backend on the w
 in an isolated copy (`ft groom` resolves and warns the same way). The launched session inherits
 the run's project and store (`FACTOTUM_PROJECT`/`FACTOTUM_STORE`/`FACTOTUM_STORE_OPTS`), so the
 `ft` it runs never resolves the checkout's config (your real `~/.factotum`, say). A run with an
-actor exports the receiver identity (`FACTOTUM_ACTOR`, `FACTOTUM_TASK_ID`), and every run
-exports `FACTOTUM_HARNESS`, so a registered run reports `opencode2` rather than the receiver's
-`opencode` default. A run whose named actor resolves to no record and no loop role registers no
-receiver, so it warns and names `ft actor create <name>` instead of launching a session nobody
-can reach over `ft msg`; a loop role needs no record and still registers.
+actor exports `FACTOTUM_ACTOR`, `FACTOTUM_TASK_ID`, and `FACTOTUM_DEFAULT_ACTOR` (what a bare
+`ft msg send` is attributed to); every run exports `FACTOTUM_HARNESS`, so a registered run
+reports `opencode2` rather than the receiver's `opencode` default. A run whose actor resolves to
+no record and no loop role registers no receiver, so it warns and names `ft actor create <name>`
+rather than launch an unreachable session; a loop role needs no record and still registers.
 
 ```sh
 ft run t-abc123 --sandbox local --harness opencode2 --allow-host   # dev-only opt-in

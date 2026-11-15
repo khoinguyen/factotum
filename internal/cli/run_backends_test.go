@@ -381,6 +381,13 @@ func TestRunHarnessOpenCodeDetectsInPlaceV2(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build harness: %v", err)
 		}
+		// The run exports Harness.Name() as FACTOTUM_HARNESS, so an in-place V2
+		// selected under the `opencode` key must report opencode2 - the value
+		// loop-agent.sh exports - or the same agent registers differently
+		// depending on how it launched.
+		if h.Name() != opencode.NameV2 {
+			t.Fatalf("harness name = %q, want %q for an in-place V2", h.Name(), opencode.NameV2)
+		}
 		interactive, err := h.Command(harness.Request{Prompt: "groom", Interactive: true, Model: "provider/model"})
 		if err != nil {
 			t.Fatalf("Command() error = %v", err)

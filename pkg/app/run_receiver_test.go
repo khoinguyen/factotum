@@ -11,7 +11,10 @@ import (
 )
 
 // TestRunCarriesReceiverEnv proves a task run hands the harness the project,
-// actor, and task a message receiver registers with.
+// actor, and task a message receiver registers with, plus the default actor a
+// bare `ft msg send` in the launched session is attributed to. The chief's loop
+// wrapper exports the same pair (FACTOTUM_ACTOR and FACTOTUM_DEFAULT_ACTOR), so
+// attribution cannot depend on which launch path started the session.
 func TestRunCarriesReceiverEnv(t *testing.T) {
 	f := newRunFixture(t)
 	f.backend.Program(isolation.ExecResult{Stdout: []byte("ok\n"), ExitCode: 0})
@@ -30,6 +33,9 @@ func TestRunCarriesReceiverEnv(t *testing.T) {
 	}
 	if env[harnesspkg.EnvActor] != string(actor) {
 		t.Errorf("env actor = %q, want %q", env[harnesspkg.EnvActor], actor)
+	}
+	if env[harnesspkg.EnvDefaultActor] != string(actor) {
+		t.Errorf("env default actor = %q, want %q", env[harnesspkg.EnvDefaultActor], actor)
 	}
 	if env[harnesspkg.EnvTask] != string(f.task.ID) {
 		t.Errorf("env task = %q, want %q", env[harnesspkg.EnvTask], f.task.ID)
@@ -76,6 +82,9 @@ func TestRunWithoutActorHasNoReceiverEnv(t *testing.T) {
 	}
 	if env[harnesspkg.EnvProject] != string(f.project.ID) {
 		t.Errorf("env %s = %q, want the run's project pinned", harnesspkg.EnvProject, env[harnesspkg.EnvProject])
+	}
+	if env[harnesspkg.EnvDefaultActor] != "" {
+		t.Errorf("env %s = %q, want no default actor without an actor", harnesspkg.EnvDefaultActor, env[harnesspkg.EnvDefaultActor])
 	}
 }
 

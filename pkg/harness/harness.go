@@ -27,9 +27,15 @@ import (
 const (
 	EnvProject = "FACTOTUM_PROJECT"
 	EnvActor   = "FACTOTUM_ACTOR"
-	EnvTask    = "FACTOTUM_TASK_ID"
-	EnvBin     = "FACTOTUM_BIN"
-	EnvHarness = "FACTOTUM_HARNESS"
+	// EnvDefaultActor is the actor a child ft attributes a call to when none is
+	// named: `ft msg send` with no --from, and the caller stamp every command
+	// carries. loop-agent.sh exports it for its agents; a run exports it for
+	// the session it launches, so attribution does not depend on which launch
+	// path started the session.
+	EnvDefaultActor = "FACTOTUM_DEFAULT_ACTOR"
+	EnvTask         = "FACTOTUM_TASK_ID"
+	EnvBin          = "FACTOTUM_BIN"
+	EnvHarness      = "FACTOTUM_HARNESS"
 	// EnvSession is the session id a run's child ft attributes its events to.
 	// A run that must be judged on its own work - a groom session - injects its
 	// own id, so its created tasks carry a session distinct from the caller's

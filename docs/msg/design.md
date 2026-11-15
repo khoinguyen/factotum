@@ -524,7 +524,7 @@ ft msg prune [--before <time>] [--state read|failed]   # drop old terminal messa
 - Output follows the repo shapes: single-result commands print `id/action/.../project/repo` yaml-
   like lines (with `sent: true`/`read: true`); list commands print a table; `get` prints a human
   block. `-o json|yaml` are the machine interfaces.
-- `--from` defaults to the configured actor (`FACTOTUM_ACTOR`, else the machine default).
+- `--from` defaults to the configured actor (`FACTOTUM_DEFAULT_ACTOR`, else the machine default).
 - The hidden `ft msg agent *` verbs are the stable interface the plugins shell out to when they
   cannot speak HTTP; they are the same call the transport implements.
 

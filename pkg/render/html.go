@@ -197,6 +197,8 @@ func chipLabel(class Class) string {
 		return "cancelled"
 	case ClassReview:
 		return "in review"
+	case ClassInProgress:
+		return "in progress"
 	case ClassReadyAgent:
 		return "agent next"
 	case ClassReadyHuman:

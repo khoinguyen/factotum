@@ -219,7 +219,7 @@ func TestTreeRenderNestedCaptureDoesNotGateItsDependents(t *testing.T) {
 	out := renderString(t, Tree{}, viewFor(project, tasks, built))
 
 	body := out[:strings.Index(out, "capture:")]
-	if !strings.Contains(body, "- a [blocked]") {
+	if !strings.Contains(body, "- a [in-progress]") {
 		t.Fatalf("blocker should render as a root:\n%s", out)
 	}
 	if !strings.Contains(body, "- t-1 [ready-human]") || strings.Contains(body, "  - t-1") {
@@ -329,6 +329,91 @@ func TestClassifyBug(t *testing.T) {
 	bug, _ := view.Graph.Ticket("b-1")
 	if got := view.Classify(bug); got != ClassCapture {
 		t.Fatalf("Classify(bug) = %q, want %q", got, ClassCapture)
+	}
+}
+
+// statusView builds a view over exactly the given tasks, so a status-class test
+// does not inherit the fixture's readiness mix.
+func statusView(t *testing.T, tasks ...*core.Ticket) View {
+	t.Helper()
+	policy := core.DefaultResolutionPolicy()
+	project := &core.Project{ID: "prj-1", Name: "Acme", Policy: policy}
+	values := make([]core.Ticket, 0, len(tasks))
+	for _, pointer := range tasks {
+		values = append(values, *pointer)
+	}
+	built, err := graph.New(values, policy)
+	if err != nil {
+		t.Fatalf("graph.New() error = %v", err)
+	}
+	return viewFor(project, tasks, built)
+}
+
+// TestClassifyStatuses pins each status to its visual class, matching the web
+// work board's classifier. In progress is the case this fixes: it used to fall
+// through to "blocked".
+func TestClassifyStatuses(t *testing.T) {
+	tests := []struct {
+		name   string
+		status core.TicketStatus
+		want   Class
+	}{
+		{"in progress", core.StatusInProgress, ClassInProgress},
+		{"blocked", core.StatusBlocked, ClassBlocked},
+		{"ready for review", core.StatusReadyForReview, ClassReview},
+		{"done", core.StatusDone, ClassDone},
+		{"cancelled", core.StatusCancelled, ClassCancelled},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			subject := task("subject", tc.status)
+			view := statusView(t, subject)
+			if got := view.Classify(*subject); got != tc.want {
+				t.Fatalf("Classify(%s) = %q, want %q", tc.status, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestJSONRenderLabelsInProgress is the reported bug: `ft graph render --format
+// json` labelled an in-progress task "blocked".
+func TestJSONRenderLabelsInProgress(t *testing.T) {
+	doing := task("doing", core.StatusInProgress)
+	parked := task("parked", core.StatusBlocked)
+	view := statusView(t, doing, parked)
+	out := renderString(t, JSON{}, view)
+	var doc struct {
+		Tasks []struct {
+			ID    string `json:"id"`
+			Class string `json:"class"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("json render invalid: %v\n%s", err, out)
+	}
+	classes := map[string]string{}
+	for _, entry := range doc.Tasks {
+		classes[entry.ID] = entry.Class
+	}
+	if got := classes["doing"]; got != "in-progress" {
+		t.Fatalf("json class for in-progress task = %q, want %q\n%s", got, "in-progress", out)
+	}
+	if got := classes["parked"]; got != "blocked" {
+		t.Fatalf("json class for blocked task = %q, want %q", got, "blocked")
+	}
+}
+
+// TestHTMLChipInProgress proves the HTML view carries the new class and its
+// human label, the way the board's "in progress" chip does.
+func TestHTMLChipInProgress(t *testing.T) {
+	doing := task("doing", core.StatusInProgress)
+	view := statusView(t, doing)
+	out := renderString(t, HTML{}, view)
+	if !strings.Contains(out, `class="chip in-progress"`) {
+		t.Fatalf("html output missing in-progress chip class:\n%s", out)
+	}
+	if !strings.Contains(out, ">in progress</span>") {
+		t.Fatalf("html output missing 'in progress' chip label:\n%s", out)
 	}
 }
 

@@ -334,6 +334,8 @@ writes root-owned files into the bind-mounted checkout, so set `$(id -u):$(id -g
 `openshell` still pins a non-root identity and refuses a root request; `local` ignores
 it. `provider` + `credential_env` name the credential a harness may use; the value is
 read from the host environment and handed to the backend, never placed in the sandbox.
+Only an isolating backend receives it: `local` runs the host binary, which already has
+the host's own credentials, so a configured credential is ignored there.
 
 An isolating backend imposes a deny-by-default policy: the sandbox reaches no host until
 the project opts in, except the model provider endpoint the credential attaches. A

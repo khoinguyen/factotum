@@ -747,6 +747,11 @@ func TestDeferredIDsWholeTokenMatch(t *testing.T) {
 			notWant: []core.TicketID{"t-abc123"},
 		},
 		{
+			name:    "an id in a tilde fenced block does not count",
+			body:    "## Questions\n\n~~~sh\nft task get t-abc123\n~~~\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
 			name:    "an id in an HTML comment does not count",
 			body:    "## Questions\n\n<!-- see t-abc123 -->\n",
 			notWant: []core.TicketID{"t-abc123"},

@@ -86,5 +86,5 @@ func newGraphCommand(deps *Deps) *cobra.Command {
 	renderCmd.Flags().IntVar(&updates, "updates", 20, "number of recent events to include in the report")
 
 	cmd.AddCommand(renderCmd)
-	return cmd
+	return requireSubcommand(cmd)
 }

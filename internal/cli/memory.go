@@ -524,7 +524,7 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 	reindex.Flags().StringVarP(&reindexProject, "project", "p", "", "filter by project id")
 
 	cmd.AddCommand(create, list, search, get, update, del, contextCmd, reindex)
-	return cmd
+	return requireSubcommand(cmd)
 }
 
 // memoryReindexResult is the lossless structured shape of `ft memory reindex`.

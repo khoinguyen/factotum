@@ -74,7 +74,7 @@ func newSessionCommand(deps *Deps) *cobra.Command {
 	retire.Flags().StringVar(&successor, "successor", "", "the session id that replaces this one")
 
 	cmd.AddCommand(start, retire)
-	return cmd
+	return requireSubcommand(cmd)
 }
 
 type sessionResult struct {

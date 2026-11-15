@@ -186,5 +186,5 @@ func newDocCommand(deps *Deps) *cobra.Command {
 	}
 
 	cmd.AddCommand(create, list, search, get)
-	return cmd
+	return requireSubcommand(cmd)
 }

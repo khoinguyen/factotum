@@ -71,7 +71,7 @@ func newCaptureCommand(deps *Deps, s captureSurface) *cobra.Command {
 		newCaptureGetCommand(deps, s),
 		newCaptureRefineCommand(deps, s),
 	)
-	return cmd
+	return requireSubcommand(cmd)
 }
 
 func newCaptureCreateCommand(deps *Deps, s captureSurface) *cobra.Command {

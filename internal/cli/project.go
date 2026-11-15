@@ -100,7 +100,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 	}
 
 	cmd.AddCommand(create, list, get, newProjectRepoCommand(deps), deleteProject)
-	return cmd
+	return requireSubcommand(cmd)
 }
 
 // parseRepoSpec parses a repository specification. Accepted forms:
@@ -214,7 +214,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 	}
 
 	cmd.AddCommand(add, list, newProjectRepoUpdateCommand(deps), rm)
-	return cmd
+	return requireSubcommand(cmd)
 }
 
 func newProjectRepoUpdateCommand(deps *Deps) *cobra.Command {

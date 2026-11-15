@@ -48,6 +48,29 @@ func requireFlags(cmd *cobra.Command, names ...string) error {
 	return usageError(cmd, "%s required", strings.Join(missing, ", "))
 }
 
+// requireSubcommand makes cmd a command group that takes no action of its own:
+// invoking it without a subcommand, or with one it does not have, is a usage
+// error naming the subcommands it expects. A group without a Run function makes
+// cobra print its help to stdout and exit 0, so a script whose subcommand
+// variable is empty or misspelled silently succeeds. -h/--help is unaffected:
+// cobra handles it before RunE, so it still prints help to stdout and exits 0.
+func requireSubcommand(cmd *cobra.Command) *cobra.Command {
+	var names []string
+	for _, sub := range cmd.Commands() {
+		if sub.IsAvailableCommand() {
+			names = append(names, sub.Name())
+		}
+	}
+	expected := strings.Join(names, ", ")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return usageError(cmd, "expected a subcommand: %s", expected)
+		}
+		return usageError(cmd, "unknown subcommand %q: expected one of %s", args[0], expected)
+	}
+	return cmd
+}
+
 func usageError(cmd *cobra.Command, format string, args ...any) error {
 	reason := fmt.Sprintf(format, args...)
 	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "ft:", reason)

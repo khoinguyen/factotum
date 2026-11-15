@@ -76,5 +76,5 @@ func newSkillCommand(deps *Deps) *cobra.Command {
 	}
 
 	cmd.AddCommand(list, get, newSkillLintCommand(deps))
-	return cmd
+	return requireSubcommand(cmd)
 }

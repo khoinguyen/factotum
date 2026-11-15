@@ -83,5 +83,5 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 	}
 
 	cmd.AddCommand(create, list, done)
-	return cmd
+	return requireSubcommand(cmd)
 }

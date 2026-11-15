@@ -25,7 +25,7 @@ func newQACommand(deps *Deps) *cobra.Command {
 			"later task change invalidated is what unlocks accepting the capture.",
 	}
 	cmd.AddCommand(newQAReadyCommand(deps), newQARecordCommand(deps))
-	return cmd
+	return requireSubcommand(cmd)
 }
 
 type qaReadyDoc struct {

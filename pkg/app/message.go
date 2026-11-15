@@ -107,10 +107,11 @@ var roleIDPrefixes = []string{"t-", "art-", "groom-"}
 // exports as a configured default actor, and returns it as the actor id that
 // attributes the call. It is the default-path counterpart of LoopRole: the same
 // loop vocabulary widened to the grooming-agent and architecture-reviewer roles,
-// which are only ever configured, and narrowed so the role must carry a real ft
-// id. The id requirement is what keeps a token that merely starts with a role
-// name (builder-gpt-4, qa-bot, a truncated builder-t) from being trusted as a
-// role and attributed to a mailbox nobody claims.
+// which are only ever configured, and narrowed so the role must carry a
+// well-formed ft id. The check is the id's shape, not its existence: the
+// requirement is what keeps a token that merely starts with a role name
+// (builder-gpt-4, qa-bot, a truncated builder-t) from being trusted as a role and
+// attributed to a mailbox nobody claims.
 func LoopDefaultRole(ref string) (core.ActorID, bool) {
 	if ref == "chief" {
 		return core.ActorID(ref), true

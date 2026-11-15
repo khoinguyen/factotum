@@ -21,7 +21,7 @@ Two things are called "skill", and they load differently. `ft` ships **embedded 
 | Phase | Skill | Who runs it |
 | --- | --- | --- |
 | Groom | `groom` | the team lead, with the product owner |
-| Architecture review | `architecture-reviewer` | a fresh `architecture-reviewer-<feature>` |
+| Architecture review | `architecture-reviewer` | a fresh `architecture-reviewer-<session>` |
 | Build | `chief` | the chief orchestrator |
 | Build one task | `single-task-builder` | a fresh `builder-<task>` |
 | Review a PR | `single-task-reviewer` | a fresh `reviewer-<task>` |
@@ -79,7 +79,7 @@ ft task next -p <project> --groomed
 ### 3. Architecture review
 
 Before any of the feature is built, review the design independently. Dispatch the
-`architecture-reviewer` skill as `architecture-reviewer-<feature>` on the session's spec, plan, and
+`architecture-reviewer` skill as `architecture-reviewer-<session>` on the session's spec, plan, and
 tech design. It records its findings on the origin item and exactly one tech-design verdict:
 
 ```sh

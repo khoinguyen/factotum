@@ -350,7 +350,13 @@ var generatedNoteFamilyCases = []struct {
 	{"Groomed by agent (auto):", "Groomed by agent (auto): closed the gaps", "Groomed by agentic tooling last week"},
 	{"PR opened.", "PR opened.", "PR opened the door to a redesign"},
 	{"PR opened (base <ref>)", "PR opened (base main).", "PR opened by Khoi last week"},
-	{"PR #<n> open", "PR #93 opened: https://example.com/pull/93 (branch ft/x)", "PR #93 needs a rebase"},
+	{"PR #<n> opened", "PR #106 opened: https://example.com/pull/106 (branch ft/x)", "PR #999 open questions remain unresolved"},
+	{"PR #<n> open:", "PR #104 open: https://example.com/pull/104 (branch ft/x)", "PR #999 open questions remain unresolved"},
+	{"PR #<n> open (", "PR #100 open (branch ft/x): non-executable idea kind", "PR #999 open questions remain unresolved"},
+	{"PR #<n> open for review", "PR #138 open for review: https://example.com/pull/138", "PR #999 open questions remain unresolved"},
+	{"PR #<n> open on", "PR #135 open on branch ft/x: durable prompt committed", "PR #999 open questions remain unresolved"},
+	{"PR #<n> open and", "PR #308 open and CI green: https://example.com/pull/308", "PR #999 open questions remain unresolved"},
+	{"PR #<n> open;", "PR #118 open; handed to reviewer-t-abc", "PR #999 open questions remain unresolved"},
 	{"PR #<n>: <url>", "PR #69: https://example.com/pull/69 - bound stdout", "PR #93: needs a rebase"},
 	{"PR #<n> (branch <ref>)", "PR #198 (branch ft/x): ft run injects the env", "PR #93 (branching off) needs care"},
 	{"PR #<n> (base <ref>)", "PR #10 (base main): usageError prints the reason", "PR #93 (based on review feedback) needs care"},
@@ -358,7 +364,8 @@ var generatedNoteFamilyCases = []struct {
 	{"Opened PR #<n>", "Opened PR #106: https://example.com/pull/106", "Opened PR discussion on the topic"},
 	{"PR: <url>", "PR: https://example.com/pull/88", "PR: needs a rebase"},
 	{"PR link attached.", "PR link attached.", "PR link attached by hand"},
-	{"Grooming <date> (session <n>):", "Grooming 2026-10-08 (session 2): split for reviewability", "Grooming 2026-10-07 (advisory). Ideas are managed by hand"},
+	{"Grooming <date> (session <n>):", "Grooming 2026-10-08 (session 2): split for reviewability", "Grooming session notes live in the artifact"},
+	{"Grooming <date> (advisory).", "Grooming 2026-10-07 (advisory). Ideas are managed by hand", "Grooming advisory boards meet weekly"},
 	{"Built (PR base <ref>):", "Built (PR base main): claim and CAS assignment", "Built: TaskRepo.Search port and lexical scoring"},
 	{"Review round <n>", "Review round 1 (reviewer-t-abc123): fixed all findings", "Review round table needed for the kitchen"},
 	{"Reviewer round <n>", "Reviewer round 1 on PR #189: findings fixed", "Reviewer rounds are scheduled weekly"},
@@ -366,7 +373,7 @@ var generatedNoteFamilyCases = []struct {
 	{"Ready for review.", "Ready for review. Build to ./bin/ft", "Ready for review tomorrow morning"},
 	{"Merged as PR #<n>", "Merged as PR #77 (9585a0a)", "Merged as PR review feedback arrived"},
 	{"Landed as PR #<n>", "Landed as PR #70 (merged 5a052a0)", "Landed as PR without a number"},
-	{"QA", "QA report — ft msg end-to-end", "Quality assurance is pending"},
+	{"QA <label>", "QA report — ft msg end-to-end", "Quality assurance is pending"},
 	{"Re-captured as idea <task>", "Re-captured as idea t-aa5c2dqqki (Khoi 2026-10-06).", "Re-captured as ideas from the session"},
 	{"Re-captured from task <task>", "Re-captured from task t-ewr3xidxtk; kind converted to idea", "Re-captured from tasks in the sprint"},
 }
@@ -379,6 +386,28 @@ func TestIsGeneratedNoteFamilies(t *testing.T) {
 			}
 			if IsGeneratedNote(Note{ID: "n-1", Body: tt.nearMiss}) {
 				t.Errorf("family %q marks the near miss %q", tt.family, tt.nearMiss)
+			}
+		})
+	}
+}
+
+// TestIsGeneratedNoteQANearMisses pins the human shapes that open with the QA
+// token but are not a QA run: a bare colon label, a deferred sentence, and a
+// sentence about QA coverage. The QA family matches the run's machine marker
+// instead of the token alone.
+func TestIsGeneratedNoteQANearMisses(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"bare colon label", "QA: needs a look before merge"},
+		{"deferred sentence", "QA later this week when the lab is free"},
+		{"human coverage concern", "QA coverage is thin in pkg/store; add tests"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if IsGeneratedNote(Note{ID: "n-1", Body: tt.body}) {
+				t.Fatalf("marked a human note that opens with QA: %q", tt.body)
 			}
 		})
 	}

@@ -160,8 +160,9 @@ type Note struct {
 // GeneratedNoteFamily is one family of machine-written notes. Shape is the
 // opening template the writer uses, with slots for the varying part: "<date>"
 // is a date, "<n>" a number, "<ref>" a base or branch name, "<task>" a task id,
-// and "<url>" a URL. Meaning is the one line the backfill's --help shows beside
-// it.
+// "<url>" a URL, and "<label>" one of the QA run's machine markers (a verdict, a
+// report kind, a task id, or a date). Meaning is the one line the backfill's
+// --help shows beside it.
 type GeneratedNoteFamily struct {
 	Shape   string
 	Meaning string
@@ -181,12 +182,19 @@ var machineNoteFamilies = []GeneratedNoteFamily{
 	{Shape: "Needs human decision:", Meaning: "the loop is waiting on your decision"},
 	{Shape: "Needs human triage:", Meaning: "the loop is waiting on your triage"},
 	{Shape: "Needs human grooming:", Meaning: "the loop is waiting on your grooming"},
+	{Shape: "Grooming <date> (advisory).", Meaning: "a grooming pass's advisory note"},
 	{Shape: "Grooming <date> (session <n>):", Meaning: "a grooming session's split of the work"},
 	{Shape: "Groomed by agent (auto):", Meaning: "the agent's automatic grooming pass"},
 	{Shape: "Built (PR base <ref>):", Meaning: "the builder's record of what it built"},
 	{Shape: "PR opened.", Meaning: "the builder announced a pull request"},
 	{Shape: "PR opened (base <ref>)", Meaning: "the builder announced a pull request against a base"},
-	{Shape: "PR #<n> open", Meaning: "the builder announced a pull request"},
+	{Shape: "PR #<n> opened", Meaning: "the builder announced a pull request"},
+	{Shape: "PR #<n> open:", Meaning: "the builder announced a pull request"},
+	{Shape: "PR #<n> open (", Meaning: "the builder announced a pull request"},
+	{Shape: "PR #<n> open for review", Meaning: "the builder handed a pull request to review"},
+	{Shape: "PR #<n> open on", Meaning: "the builder announced a pull request"},
+	{Shape: "PR #<n> open and", Meaning: "the builder announced a pull request"},
+	{Shape: "PR #<n> open;", Meaning: "the builder announced a pull request"},
 	{Shape: "PR #<n>: <url>", Meaning: "the builder pointed at a pull request"},
 	{Shape: "PR #<n> (branch <ref>)", Meaning: "the builder announced a pull request on a branch"},
 	{Shape: "PR #<n> (base <ref>)", Meaning: "the builder announced a pull request against a base"},
@@ -198,7 +206,7 @@ var machineNoteFamilies = []GeneratedNoteFamily{
 	{Shape: "Review round <n>", Meaning: "a review round's findings and fixes"},
 	{Shape: "Reviewer round <n>", Meaning: "a review round's findings and fixes"},
 	{Shape: "Reviewer APPROVED", Meaning: "the reviewer's approval verdict"},
-	{Shape: "QA", Meaning: "a QA run report or verdict"},
+	{Shape: "QA <label>", Meaning: "a QA run report or verdict (report, PASS/pass/fail, sweep, task id, date)"},
 	{Shape: "Merged as PR #<n>", Meaning: "the pull request landed"},
 	{Shape: "Landed as PR #<n>", Meaning: "the pull request landed"},
 	{Shape: "Re-captured as idea <task>", Meaning: "a task re-captured as an idea"},
@@ -208,11 +216,12 @@ var machineNoteFamilies = []GeneratedNoteFamily{
 var shapeSlotRE = regexp.MustCompile(`<[a-z]+>`)
 
 var shapeSlots = map[string]string{
-	"<date>": `\d{4}-\d{2}-\d{2}`,
-	"<n>":    `\d+`,
-	"<ref>":  `[A-Za-z0-9._/-]+`,
-	"<task>": `t-[a-z0-9]+`,
-	"<url>":  `https?://[^\s]+`,
+	"<date>":  `\d{4}-\d{2}-\d{2}`,
+	"<n>":     `\d+`,
+	"<ref>":   `[A-Za-z0-9._/-]+`,
+	"<task>":  `t-[a-z0-9]+`,
+	"<url>":   `https?://[^\s]+`,
+	"<label>": `(?:\(qa-t-[a-z0-9]+\)|\(continued\)|report|PASS|FAIL|pass|fail|verdict|sweep|re-verified|observation|evidence|follow-up|re-run|retest|continued|F[0-9]+|t-[a-z0-9]+|qa-t-[a-z0-9]+|\d{4}-\d{2}-\d{2})`,
 }
 
 // machineNoteMatchers is compiled once from the shapes, so the table stays the

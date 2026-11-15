@@ -26,10 +26,18 @@ func TestCallerAttributionPrecedence(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRunner(t)
-			// Register the caller with a neutral environment so it is a known
-			// actor before the case env is applied.
+			// Register every actor the case names with a neutral environment, so
+			// each one is a known actor before the case env is applied: the case
+			// is about which source wins, not which names exist.
 			r.getenv = func(string) string { return "" }
-			r.run("actor", "create", "alice")
+			registered := map[string]bool{}
+			for _, name := range []string{"alice", tc.fileActor, tc.defaultEnv, tc.callerEnv, tc.flagActor} {
+				if name == "" || registered[name] {
+					continue
+				}
+				registered[name] = true
+				r.run("actor", "create", name)
+			}
 			if tc.fileActor != "" {
 				if err := os.WriteFile(r.projectPath, []byte("default_actor = \""+tc.fileActor+"\"\n"), 0o644); err != nil {
 					t.Fatalf("write project config: %v", err)
@@ -83,6 +91,71 @@ func TestUnregisteredCallerIsUnattributedWithWarning(t *testing.T) {
 	}
 	if actors := r.run("actor", "list"); strings.Contains(actors, "ghost") {
 		t.Fatalf("an unregistered caller was auto-created:\n%s", actors)
+	}
+}
+
+// TestUnregisteredActorFlagIsUnattributedWithWarning pins the --actor half of
+// the same rule: an explicit actor that names no registered record and is not a
+// loop role is warned about and left unattributed, never stamped verbatim on the
+// event or used as the auto-QA reminder target.
+func TestUnregisteredActorFlagIsUnattributedWithWarning(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(string) string { return "" }
+
+	_, stderr := r.runSplit("project", "create", "Acme", "--actor", "ghostrider")
+
+	created := findEvent(t, listEvents(t, r), "project.created")
+	if created.By != nil {
+		t.Fatalf("project.created By = %v, want none for an unregistered actor", created.By)
+	}
+	if !strings.Contains(stderr, `actor "ghostrider" is not a registered actor`) {
+		t.Fatalf("stderr = %q, want an unregistered-actor warning naming ghostrider", stderr)
+	}
+	if actors := r.run("actor", "list"); strings.Contains(actors, "ghostrider") {
+		t.Fatalf("an unregistered actor was auto-created:\n%s", actors)
+	}
+}
+
+// TestLoopRoleActorFlagNeedsNoRecord pins the exemption: a loop role is a
+// mailbox, not a store actor, so --actor builder-<task> attributes the event
+// without a warning even though no Actor record exists.
+func TestLoopRoleActorFlagNeedsNoRecord(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(string) string { return "" }
+
+	_, stderr := r.runSplit("project", "create", "Acme", "--actor", "builder-t-1")
+
+	created := findEvent(t, listEvents(t, r), "project.created")
+	if created.By == nil || *created.By != "builder-t-1" {
+		t.Fatalf("project.created By = %v, want builder-t-1", created.By)
+	}
+	if strings.Contains(stderr, "unattributed") {
+		t.Fatalf("a loop role should not warn: %q", stderr)
+	}
+}
+
+// TestConfiguredDefaultActorIsTrustedAsARole pins the scope of the --actor
+// registration check: a configured default is set once by the loop to a
+// role-shaped identity (loop-agent.sh exports FACTOTUM_DEFAULT_ACTOR for the
+// builder, reviewer, qa, chief, and grooming-agent roles), so it is attributed
+// as given even without an Actor record.
+func TestConfiguredDefaultActorIsTrustedAsARole(t *testing.T) {
+	r := newRunner(t)
+	r.getenv = func(key string) string {
+		if key == "FACTOTUM_DEFAULT_ACTOR" {
+			return "grooming-agent-art-1"
+		}
+		return ""
+	}
+
+	_, stderr := r.runSplit("project", "create", "Acme")
+
+	created := findEvent(t, listEvents(t, r), "project.created")
+	if created.By == nil || *created.By != "grooming-agent-art-1" {
+		t.Fatalf("project.created By = %v, want grooming-agent-art-1", created.By)
+	}
+	if strings.Contains(stderr, "unattributed") {
+		t.Fatalf("a configured role should not warn: %q", stderr)
 	}
 }
 

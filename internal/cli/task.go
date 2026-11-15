@@ -481,7 +481,7 @@ func newTaskAssignCommand(deps *Deps) *cobra.Command {
 			switch {
 			case unassign:
 			case actorRef != "":
-				actor, err := deps.Actors.Resolve(cmd.Context(), actorRef)
+				actor, err := deps.resolveActorRef(cmd.Context(), actorRef)
 				if err != nil {
 					return err
 				}
@@ -506,7 +506,7 @@ func newTaskAssignCommand(deps *Deps) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&actorRef, "actor", "a", "", "actor id or name")
+	cmd.Flags().StringVarP(&actorRef, "actor", "a", "", "actor id, actor:<id>, or name")
 	cmd.Flags().BoolVar(&unassign, "unassign", false, "clear the assignee")
 	return cmd
 }
@@ -528,7 +528,7 @@ func newTaskWaitCommand(deps *Deps) *cobra.Command {
 			}
 			var actorIDs []core.ActorID
 			for _, ref := range actorRefs {
-				actor, err := deps.Actors.Resolve(cmd.Context(), ref)
+				actor, err := deps.resolveActorRef(cmd.Context(), ref)
 				if err != nil {
 					return err
 				}
@@ -551,7 +551,7 @@ func newTaskWaitCommand(deps *Deps) *cobra.Command {
 			}, hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the task"})
 		},
 	}
-	cmd.Flags().StringArrayVar(&actorRefs, "on", nil, "actor to wait on (id or name; repeatable)")
+	cmd.Flags().StringArrayVar(&actorRefs, "on", nil, "actor to wait on (id, actor:<id>, or name; repeatable)")
 	cmd.Flags().BoolVar(&clear, "clear", false, "clear the waiting-on list")
 	return cmd
 }
@@ -666,7 +666,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 
 			candidates := unionIDs(snapshot.Ready.Agent, snapshot.Ready.Human)
 			if forRef != "" {
-				actor, err := deps.Actors.Resolve(cmd.Context(), forRef)
+				actor, err := deps.resolveActorRef(cmd.Context(), forRef)
 				if err != nil {
 					return err
 				}
@@ -728,7 +728,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&projectID, "project", "p", "", "project id (required unless --all)")
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "rank ready tasks across all projects")
-	cmd.Flags().StringVar(&forRef, "for", "", "restrict to an actor (id or name)")
+	cmd.Flags().StringVar(&forRef, "for", "", "restrict to an actor (id, actor:<id>, or name)")
 	cmd.Flags().StringVarP(&repo, "repo", "r", "", "restrict to a repository name")
 	cmd.Flags().StringArrayVarP(&labels, "label", "l", nil, "restrict to tasks with all given labels")
 	cmd.Flags().BoolVar(&groomed, "groomed", false, "restrict to groomed tasks, ready for agent execution")
@@ -757,7 +757,7 @@ type notReadyFilter struct {
 func emitNotReady(cmd *cobra.Command, deps *Deps, snapshot *app.Snapshot, filter notReadyFilter) error {
 	ids := snapshot.Graph.IDs()
 	if filter.forRef != "" {
-		actor, err := deps.Actors.Resolve(cmd.Context(), filter.forRef)
+		actor, err := deps.resolveActorRef(cmd.Context(), filter.forRef)
 		if err != nil {
 			return err
 		}
@@ -817,7 +817,7 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 			if ref == "" {
 				return usageError(cmd, "provide --for <actor>, or set default_actor")
 			}
-			actor, err := deps.Actors.Resolve(cmd.Context(), ref)
+			actor, err := deps.resolveActorRef(cmd.Context(), ref)
 			if err != nil {
 				return err
 			}
@@ -865,7 +865,7 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&projectID, "project", "p", "", "project id (defaults to the configured project)")
-	cmd.Flags().StringVar(&forRef, "for", "", "actor to claim for (id or name; defaults to default_actor)")
+	cmd.Flags().StringVar(&forRef, "for", "", "actor to claim for (id, actor:<id>, or name; defaults to default_actor)")
 	cmd.Flags().BoolVar(&start, "start", false, "also move the claimed task to in_progress")
 	return cmd
 }
@@ -911,7 +911,7 @@ func newPromoteCommand(deps *Deps, use, short, action string) *cobra.Command {
 			captureID := core.TicketID(args[0])
 			var assigneeID *core.ActorID
 			if actorRef != "" {
-				actor, err := deps.Actors.Resolve(cmd.Context(), actorRef)
+				actor, err := deps.resolveActorRef(cmd.Context(), actorRef)
 				if err != nil {
 					return err
 				}

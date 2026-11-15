@@ -122,7 +122,14 @@ func (s *MessageService) resolveTarget(ctx context.Context, project core.Project
 	}
 	switch kind {
 	case core.AddressActor:
-		return core.ActorAddress(core.ActorID(id)), nil, nil
+		// The target takes the same reference parsing as an actor flag, so a
+		// doubled (actor:actor:<id>) or nested address is rejected here instead
+		// of being stored as a mailbox no actor can claim.
+		ref, err := core.ParseActorRef(target)
+		if err != nil {
+			return "", nil, err
+		}
+		return core.ActorAddress(ref), nil, nil
 	case core.AddressRun:
 		return core.RunAddress(core.RunID(id)), nil, nil
 	case core.AddressTask:

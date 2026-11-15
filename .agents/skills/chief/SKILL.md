@@ -55,11 +55,12 @@ pair, merging an approved PR, and filing follow-ups. Everything substantive goes
   single short line; the substance lives in the skill and the task body.
 
 - **Design review → an `architecture-reviewer-<session>` agent**, on a groomed feature's docs before
-  any of it is built (see **After grooming**). It is a loop agent like the rest: launch it through
-  the same wrapper, in its **own worktree**, with a **short kickoff**, so it registers as its own
-  actor and reports its verdict to you over ft msg:
+  any of it is built (see **After grooming**). It is a loop agent like the rest: create its own
+  worktree, then launch it through the same wrapper with a **short kickoff**, so it registers as its
+  own actor and reports its verdict to you over ft msg:
 
   ```sh
+  git worktree add --detach /tmp/arch-<session> origin/main
   .agents/skills/chief/scripts/loop-agent.sh architecture-reviewer-<session> <project> - \
     /tmp/arch-<session> "load the architecture-reviewer skill; you are architecture-reviewer-<session>"
   ```
@@ -151,9 +152,11 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
   `cmux move-workspace-to-window --workspace <ref> --window <active>`, then add it to the group.
 - `cmux workspace-group add` resolves refs in the caller's window, so pass the workspace **UUID**
   (from `cmux identify --workspace <ref> --id-format both`), not a bare `workspace:N` ref.
-- **Kill the pair's agents before closing its workspace**, or the close refuses with "Workspace has a
-  running process": `pgrep -f "opencode --prompt.*<task-id>"`, `kill -9 <pids>` (a second attempt may
-  be needed), then close.
+- **Kill the pair's agents before closing its workspace.** The wrapper execs
+  `opencode --standalone --prompt ...`, so match that — a bare `opencode --prompt` pattern matches
+  nothing: `pgrep -f "opencode .*--prompt .*<task-id>"`, then `kill -9 <pids>` (a second attempt may
+  be needed). A close that still refuses with "Workspace has a running process" means a kill was
+  missed; re-run the `pgrep` and kill the survivor.
 - **Never paste into a fresh workspace's anchor surface** (paste-buffer fails "Surface is not a
   terminal"): start the builder with `new-workspace --command` and the reviewer with
   `new-split --command`.
@@ -238,8 +241,9 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    comment: a count line, then **one bullet per follow-up** (`- <task-id> - <one-line brief>`) — so
    the PR shows what was deferred.
 8. **Retire the pair and clean up.** After a merge:
-   - kill the pair's agents first, or the close refuses with "Workspace has a running process":
-     `pgrep -f "opencode --prompt.*<t>"` then `kill -9 <pids>` (a second attempt may be needed);
+   - kill the pair's agents first. The wrapper execs `opencode --standalone --prompt ...`, so
+     `pgrep -f "opencode .*--prompt .*<t>"` then `kill -9 <pids>` (a second attempt may be needed);
+     a close that still refuses with "Workspace has a running process" means a kill was missed;
    - close the pair's whole workspace: `cmux workspace close <pair-workspace-ref>` (the workspace, not
      just its surfaces);
    - remove their worktrees: `git worktree remove --force /tmp/ft-<t> /tmp/review-<t>`, then

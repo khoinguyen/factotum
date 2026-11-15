@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -115,6 +116,117 @@ func TestChiefSkillNeverPollsMsgInbox(t *testing.T) {
 	for _, req := range required {
 		if !strings.Contains(body, req.text) {
 			t.Errorf("chief skill must %s (missing %q); polling the inbox stalls receiver delivery otherwise", req.why, req.text)
+		}
+	}
+}
+
+// agentSkillRaw reads a committed agent skill without lowercasing it, for tests
+// that evaluate a documented shell pattern rather than prose.
+func agentSkillRaw(t *testing.T, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
+	if err != nil {
+		t.Fatalf("read agent skill %s: %v", rel, err)
+	}
+	return string(data)
+}
+
+// documentedPgrepPatterns returns every `pgrep -f "<pattern>"` argument the
+// chief skill documents, so a test can hold each one to the wrapper's real
+// launch argv.
+func documentedPgrepPatterns(body string) []string {
+	var patterns []string
+	for _, m := range regexp.MustCompile(`pgrep -f "([^"]+)"`).FindAllStringSubmatch(body, -1) {
+		patterns = append(patterns, m[1])
+	}
+	return patterns
+}
+
+// loopAgentArgv synthesizes the command line loop-agent.sh execs, with kickoff
+// standing in for the prompt. It derives the arguments from the script's exec
+// line so a wrapper change that invalidates the documented kill pattern fails
+// the guard instead of stranding an agent.
+func loopAgentArgv(t *testing.T, kickoff string) string {
+	t.Helper()
+	script := agentSkillRaw(t, ".agents/skills/chief/scripts/loop-agent.sh")
+	m := regexp.MustCompile(`(?m)^exec (.+)$`).FindStringSubmatch(script)
+	if m == nil {
+		t.Fatal("loop-agent.sh must have an exec line")
+	}
+	var argv []string
+	for _, token := range strings.Fields(m[1]) {
+		switch token = strings.Trim(token, `"`); {
+		case token == "$opencode_bin":
+			argv = append(argv, "opencode")
+		case token == "$prompt":
+			argv = append(argv, kickoff)
+		case strings.HasPrefix(token, "--"):
+			argv = append(argv, token)
+		default:
+			t.Fatalf("loop-agent.sh exec token %q is not understood by this test; teach loopAgentArgv about it so the documented kill pattern stays checked against the real launch", token)
+		}
+	}
+	return strings.Join(argv, " ")
+}
+
+// TestChiefSkillKillPatternMatchesLoopAgentLaunch guards the pair-retire kill
+// (t-n7mx7bob3m): the documented `pgrep -f` pattern must match the process
+// loop-agent.sh actually starts. The pre-fix pattern assumed `opencode
+// --prompt`, but the wrapper execs `opencode --standalone --prompt ...`, so it
+// matched nothing and the agent survived a retire — the workspace close then
+// refused with "Workspace has a running process". Every documented pattern is
+// evaluated, so a second stale copy cannot hide.
+func TestChiefSkillKillPatternMatchesLoopAgentLaunch(t *testing.T) {
+	body := agentSkillRaw(t, ".agents/skills/chief/SKILL.md")
+	patterns := documentedPgrepPatterns(body)
+	if len(patterns) == 0 {
+		t.Fatal("chief skill must document the pair-retire pgrep pattern")
+	}
+	const task = "t-n7mx7bob3m"
+	// The role-tagged task id lives in the kickoff prompt, the only part of the
+	// wrapper's argv that identifies the pair; this is the launch the skill
+	// documents for a builder.
+	kickoff := "load the single-task-builder skill; you are builder-" + task + "; work in /tmp/ft-" + task
+	argv := loopAgentArgv(t, kickoff)
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(strings.NewReplacer("<task-id>", task, "<t>", task).Replace(pattern))
+		if !re.MatchString(argv) {
+			t.Errorf("chief skill documents pgrep -f %q, which matches nothing on the wrapper's launch %q; a retire would leave the agent alive", pattern, argv)
+		}
+	}
+}
+
+// TestChiefSkillNamesTheRefusedCloseAsAMissedKill guards the diagnostic the
+// pair-retire failure had to teach: a workspace close that still refuses with
+// "Workspace has a running process" means the kill missed its process, so the
+// chief re-runs the kill instead of assuming the agents are gone.
+func TestChiefSkillNamesTheRefusedCloseAsAMissedKill(t *testing.T) {
+	body := strings.Join(strings.Fields(agentSkill(t, ".agents/skills/chief/SKILL.md")), " ")
+	for _, want := range []string{"workspace has a running process", "means a kill was missed"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("chief skill must contain %q (a refused close is the signal a kill was missed)", want)
+		}
+	}
+}
+
+// TestChiefSkillDesignReviewDispatchGetsItsOwnWorktree guards the architecture
+// reviewer's dispatch: like every loop agent it runs in its own worktree, so the
+// bullet must create one before the wrapper is launched (a missing worktree
+// leaves loop-agent.sh with no directory to run in).
+func TestChiefSkillDesignReviewDispatchGetsItsOwnWorktree(t *testing.T) {
+	body := strings.Join(strings.Fields(agentSkill(t, ".agents/skills/chief/SKILL.md")), " ")
+	const start = "**design review"
+	i := strings.Index(body, start)
+	if i < 0 {
+		t.Fatalf("chief skill must document %q dispatch", start)
+	}
+	section := body[i:]
+	if next := strings.Index(section[1:], "**any new team-member role"); next >= 0 {
+		section = section[:next+1]
+	}
+	for _, want := range []string{"git worktree add", "/tmp/arch-<session>", "loop-agent.sh architecture-reviewer-"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("design-review dispatch must contain %q (the architecture reviewer needs its own worktree before the wrapper launches)", want)
 		}
 	}
 }
@@ -310,7 +422,7 @@ func TestArchitectureReviewerSkillReviewsDocsNotCode(t *testing.T) {
 		{"surface tech-debt/refactor items", "tech-debt"},
 		{"hand back a tech-design verdict", "tech-design verdict"},
 		{"refuse to review line-level code", "not line-level code"},
-		{"report to the chief over cmux", "cmux-msg.sh"},
+		{"keep the cmux wrapper as a rollout fallback", "cmux-msg.sh"},
 	}
 	for _, req := range required {
 		if !strings.Contains(body, req.text) {

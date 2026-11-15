@@ -550,7 +550,16 @@ func runWorkdir(plan *workspace.Plan) string {
 	return plan.Root
 }
 
+// interactiveOutputNote stands in for the agent's output in a run note when the
+// run was interactive. An attached agent writes its session to the terminal, not
+// through ft, so there is nothing to capture; without this line the note would
+// read like an agent that produced no output at all.
+const interactiveOutputNote = "interactive session: the agent ran attached to the terminal; its output is shown live and not captured in this note"
+
 func (s *RunService) recordRunNote(ctx context.Context, task *core.Ticket, in RunInput, body string) error {
+	if in.Interactive {
+		body += "\n\n" + interactiveOutputNote
+	}
 	_, err := s.tasks.AddNote(ctx, task.ID, NoteInput{
 		Body:   body,
 		Author: in.Actor,

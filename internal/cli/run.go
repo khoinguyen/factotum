@@ -63,9 +63,10 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			"in (default no) and records run.allow_host in the user config; the local\n" +
 			"backend is unsandboxed and otherwise requires --allow-host (or run.allow_host).\n" +
 			"On a terminal, a single-task run or a task-less prompt run attaches the agent\n" +
-			"to the terminal (for example the OpenCode TUI) so a human can answer it;\n" +
-			"--unattended, or a pipe or redirect, keeps the run headless. The --goal loop\n" +
-			"always runs headless.",
+			"to the terminal (for example the OpenCode TUI) so a human can answer it, and\n" +
+			"its output stays live and is not captured, so a task run's note records the\n" +
+			"outcome only; --unattended, or a pipe or redirect, keeps the run headless.\n" +
+			"The --goal loop always runs headless.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.goal != "" && len(args) > 0 {

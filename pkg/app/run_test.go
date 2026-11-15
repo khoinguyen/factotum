@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -407,6 +408,66 @@ func TestRunInteractiveRequestsTTY(t *testing.T) {
 		if cmds[0].TTY != interactive {
 			t.Fatalf("TTY = %v, want %v", cmds[0].TTY, interactive)
 		}
+	}
+}
+
+// TestRunInteractiveNoteRecordsNoTranscript proves an interactive run's note
+// says why it carries no agent output. An attached agent writes to the
+// terminal, not to ft, so a note naming only the exit code would read like an
+// agent that produced nothing; the note records that the session was
+// interactive instead. A headless run's note is unchanged.
+func TestRunInteractiveNoteRecordsNoTranscript(t *testing.T) {
+	for _, interactive := range []bool{true, false} {
+		t.Run(fmt.Sprintf("interactive=%v", interactive), func(t *testing.T) {
+			f := newRunFixture(t)
+			f.backend.Program(isolation.ExecResult{Stdout: []byte("ignored\n"), ExitCode: 0})
+
+			if _, err := f.run(t, RunInput{Interactive: interactive}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+
+			stored, err := f.tasks.Get(context.Background(), f.task.ID)
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			if len(stored.Notes) == 0 {
+				t.Fatal("expected a run note")
+			}
+			note := stored.Notes[len(stored.Notes)-1].Body
+			if got, want := strings.Contains(note, interactiveOutputNote), interactive; got != want {
+				t.Fatalf("note %q carries the interactive marker = %v, want %v", note, got, want)
+			}
+			if !strings.HasPrefix(note, "ft run finished (exit 0)") {
+				t.Fatalf("note %q does not start with the run header", note)
+			}
+		})
+	}
+}
+
+// TestRunFailedInteractiveNoteRecordsNoTranscript proves a failed interactive
+// run's failure note also records that no transcript is captured, so the empty
+// body is not read as a silent failure.
+func TestRunFailedInteractiveNoteRecordsNoTranscript(t *testing.T) {
+	f := newRunFixture(t)
+	f.backend.Program(isolation.ExecResult{ExitCode: 2})
+
+	if _, err := f.run(t, RunInput{Interactive: true}); !errors.Is(err, ErrRunFailed) {
+		t.Fatalf("Run() error = %v, want ErrRunFailed", err)
+	}
+
+	stored, err := f.tasks.Get(context.Background(), f.task.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if len(stored.Notes) == 0 {
+		t.Fatal("expected a failure note")
+	}
+	note := stored.Notes[len(stored.Notes)-1].Body
+	if !strings.HasPrefix(note, "ft run failed (exit 2)") {
+		t.Fatalf("note %q does not start with the failure header", note)
+	}
+	if !strings.Contains(note, interactiveOutputNote) {
+		t.Fatalf("failure note %q does not record the interactive session", note)
 	}
 }
 

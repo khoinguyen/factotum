@@ -210,12 +210,13 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   the graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error
   (exit 1).
 - On a terminal, a single-task or task-less run is **interactive** (the agent attached, the OpenCode
-  TUI) so a human can answer it; its output stays live and is not captured. `--unattended`, a
-  piped/redirected stdin/stdout, or `--goal` runs **headless**. Interactive needs a backend that can
-  attach a terminal (`local`; `openshell` and `docker` tell you to rerun with `--unattended`). A
-  headless run narrates progress on stderr — `ft: run <task> (sandbox=<b> harness=<h>) started`,
-  then a periodic `still running (Ns)` heartbeat — only when stderr is a terminal and output is
-  text; `-o json|yaml`, a piped/redirected stderr, and an interactive run print none.
+  TUI) so a human can answer it; its output stays live and is not captured, so the task's run note
+  records only the outcome and says the session was interactive. `--unattended`, a piped/redirected
+  stdin/stdout, or `--goal` runs **headless**. Interactive needs a backend that can attach a
+  terminal (`local`; `openshell` and `docker` tell you to rerun with `--unattended`). A headless run
+  narrates progress on stderr — `ft: run <task> (sandbox=<b> harness=<h>) started`, then a periodic
+  `still running (Ns)` heartbeat — only when stderr is a terminal and output is text; `-o json|yaml`,
+  a piped/redirected stderr, and an interactive run print none.
 - `openshell` needs its CLI and a gateway, attaches the credential as a provider placeholder, and
   imports a missing provider profile. `docker` needs the `docker` CLI and a daemon, mounts only the
   resolved workspace at its same absolute path, refuses a policy it cannot enforce, and injects

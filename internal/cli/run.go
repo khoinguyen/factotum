@@ -730,7 +730,7 @@ func (d *Deps) driveLoop(cmd *cobra.Command, targetID string, opts runOptions, s
 	if outcome == nil {
 		return runErr
 	}
-	if err := d.printLoopOutcome(target, outcome, runErr); err != nil {
+	if err := d.printLoopOutcome(target, outcome, session, runErr); err != nil {
 		return err
 	}
 	return runErr
@@ -909,6 +909,7 @@ type runLoopDoc struct {
 	Remaining  int              `json:"remaining" yaml:"remaining"`
 	NotRun     []string         `json:"not_run,omitempty" yaml:"not_run,omitempty"`
 	Steps      []runLoopStepDoc `json:"steps" yaml:"steps"`
+	Session    string           `json:"session" yaml:"session"`
 	Project    string           `json:"project" yaml:"project"`
 	Repo       string           `json:"repo" yaml:"repo"`
 }
@@ -934,7 +935,7 @@ func (d *Deps) printLoopStep(step app.LoopStep) {
 	d.printf("\n")
 }
 
-func (d *Deps) printLoopOutcome(goal *core.Ticket, outcome *app.LoopOutcome, runErr error) error {
+func (d *Deps) printLoopOutcome(goal *core.Ticket, outcome *app.LoopOutcome, session string, runErr error) error {
 	doc := runLoopDoc{
 		Goal:       string(outcome.Goal),
 		GoalKind:   string(outcome.GoalKind),
@@ -942,6 +943,7 @@ func (d *Deps) printLoopOutcome(goal *core.Ticket, outcome *app.LoopOutcome, run
 		Stop:       string(outcome.Stop),
 		Iterations: len(outcome.Steps),
 		Remaining:  outcome.Remaining,
+		Session:    session,
 		Project:    string(goal.ProjectID),
 		Repo:       goal.Repo,
 	}
@@ -963,7 +965,7 @@ func (d *Deps) printLoopOutcome(goal *core.Ticket, outcome *app.LoopOutcome, run
 		for _, id := range outcome.NotRun {
 			fields = append(fields, f("not_run", id))
 		}
-		fields = append(fields, f("project", goal.ProjectID), f("repo", d.repoValue(goal.Repo)))
+		fields = append(fields, f("session", session), f("project", goal.ProjectID), f("repo", d.repoValue(goal.Repo)))
 		d.printFields(fields...)
 	}, d.runLoopHints(goal, outcome, runErr)...)
 }

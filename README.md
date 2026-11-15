@@ -161,10 +161,10 @@ message and reads stdout. The launched session inherits the run's project and st
 (`FACTOTUM_PROJECT`, `FACTOTUM_STORE`, `FACTOTUM_STORE_OPTS`), so the `ft` it runs reads and writes
 that store, never a store the checkout's config would resolve — your real `~/.factotum` database,
 for example. `FACTOTUM_STORE_OPTS` is a comma-separated `key=value` list, so a store-opt value
-cannot itself contain a comma. It also inherits `FACTOTUM_SESSION`: the caller's session when the
-run inherited one, else a freshly minted run-scoped id, so the work the agent does is attributable
-to a session (`session:` in the run's output, `ft event list --session <id>`) instead of escaping
-the session timeline.
+cannot itself contain a comma. It also inherits `FACTOTUM_SESSION`: an explicitly named id wins, else
+the caller's session when the run inherited one, else a freshly minted run-scoped id, so the work
+the agent does is attributable to a session (`session:` in the run's output, `ft event list
+--session <id>`) instead of escaping the session timeline.
 
 ```sh
 ft run <task> --sandbox local --harness opencode2 --allow-host   # dev-only, unsandboxed

@@ -160,9 +160,9 @@ type Note struct {
 // GeneratedNoteFamily is one family of machine-written notes. Shape is the
 // opening template the writer uses, with slots for the varying part: "<date>"
 // is a date, "<n>" a number, "<ref>" a base or branch name, "<task>" a task id,
-// "<url>" a URL, and "<label>" one of the QA run's machine markers (a verdict, a
-// report kind, a task id, or a date). Meaning is the one line the backfill's
-// --help shows beside it.
+// "<url>" a URL, "<sha>" a commit, "<paren>" a parenthetical label, and
+// "<label>" one of the QA run's machine markers (a verdict, a report kind, a task
+// id, or a date). Meaning is the one line the backfill's --help shows beside it.
 type GeneratedNoteFamily struct {
 	Shape   string
 	Meaning string
@@ -210,13 +210,15 @@ var machineNoteFamilies = []GeneratedNoteFamily{
 	{Shape: "Reviewer finding <n>", Meaning: "the reviewer's finding and its fix"},
 	{Shape: "Review fix at <sha>", Meaning: "a fix pushed for a review finding"},
 	{Shape: "Review fixes at <sha>", Meaning: "fixes pushed for review findings"},
-	{Shape: "Residual watch item", Meaning: "a residual the reviewer wants watched"},
+	{Shape: "Residual watch item from PR #<n>", Meaning: "a residual the reviewer wants watched"},
+	{Shape: "Residual watch items from PR #<n>", Meaning: "residuals the reviewer wants watched"},
 	{Shape: "Follow-up from PR #<n>", Meaning: "a follow-up filed from a PR's review"},
-	{Shape: "Follow-up (", Meaning: "a follow-up filed from a PR's review"},
+	{Shape: "Follow-up (<paren>) from PR #<n>", Meaning: "a follow-up filed from a PR's review"},
 	{Shape: "Follow-ups from PR #<n>", Meaning: "follow-ups filed from a PR's review"},
-	{Shape: "Follow-ups (", Meaning: "follow-ups filed from a PR's review"},
-	{Shape: "Follow-up filed", Meaning: "a follow-up filed as a task"},
-	{Shape: "Follow-ups filed", Meaning: "follow-ups filed as tasks"},
+	{Shape: "Follow-ups (<paren>) from PR #<n>", Meaning: "follow-ups filed from a PR's review"},
+	{Shape: "Follow-up filed as <task>", Meaning: "a follow-up filed as a task"},
+	{Shape: "Follow-up filed: <task>", Meaning: "a follow-up filed as a task"},
+	{Shape: "Follow-ups filed: <task>", Meaning: "follow-ups filed as tasks"},
 	{Shape: "Follow-up: <task>", Meaning: "a follow-up filed as a task"},
 	{Shape: "Filed from PR #<n>", Meaning: "work filed from a PR's review"},
 	{Shape: "Filed from review of PR #<n>", Meaning: "work filed from a PR's review"},
@@ -249,6 +251,7 @@ var shapeSlots = map[string]string{
 	"<task>":  `t-[a-z0-9]+`,
 	"<url>":   `https?://[^\s]+`,
 	"<sha>":   `[0-9a-f]{7,40}`,
+	"<paren>": `[^)]+`,
 	"<label>": `(?:\(qa-t-[a-z0-9]+\)|\(continued\)|report|PASS|FAIL|pass|fail|verdict|sweep|re-verified|observation|evidence|follow-up|re-run|retest|continued|F[0-9]+|t-[a-z0-9]+|qa-t-[a-z0-9]+|\d{4}-\d{2}-\d{2})`,
 }
 

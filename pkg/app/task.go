@@ -182,7 +182,9 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in
 		return nil, fmt.Errorf("%w: promote %s: an agent assignee is required; groom the %s first (--actor)",
 			core.ErrInvalid, captureID, capture.Kind)
 	}
-	assignee, err := s.backend.Actors().Get(ctx, *in.AssigneeID)
+	// Identity accepts a loop role as an agent, so grooming can hand a capture
+	// to a role mailbox with no Actor record, as claim and assign can.
+	assignee, err := actorIdentity(ctx, s.backend.Actors(), *in.AssigneeID)
 	if err != nil {
 		return nil, fmt.Errorf("promote assignee: %w", err)
 	}
@@ -494,8 +496,11 @@ func (s *TicketService) Assign(ctx context.Context, id core.TicketID, actorID *c
 	if actorID != nil && task.Kind.CapturedByHuman() {
 		return nil, fmt.Errorf("%w: %s %s is not assignable", core.ErrInvalid, task.Kind, id)
 	}
+	// Identity accepts a loop role as well as a record, matching claim: a role
+	// is a mailbox a session registers as a run, so it needs no Actor record to
+	// hold work.
 	if actorID != nil {
-		if _, err := s.backend.Actors().Get(ctx, *actorID); err != nil {
+		if _, err := actorIdentity(ctx, s.backend.Actors(), *actorID); err != nil {
 			return nil, fmt.Errorf("assignee: %w", err)
 		}
 	}
@@ -712,7 +717,7 @@ func (s *TicketService) SetWaitingOn(ctx context.Context, id core.TicketID, acto
 		return nil, err
 	}
 	for _, actorID := range actorIDs {
-		if _, err := s.backend.Actors().Get(ctx, actorID); err != nil {
+		if _, err := actorIdentity(ctx, s.backend.Actors(), actorID); err != nil {
 			return nil, fmt.Errorf("waiting on: %w", err)
 		}
 	}

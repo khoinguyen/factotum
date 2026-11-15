@@ -742,7 +742,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 
 			candidates := unionIDs(snapshot.Ready.Agent, snapshot.Ready.Human)
 			if forRef != "" {
-				actor, err := deps.resolveFilterActor(cmd.Context(), forRef)
+				actor, err := deps.resolveActorRef(cmd.Context(), forRef)
 				if err != nil {
 					return err
 				}
@@ -833,7 +833,7 @@ type notReadyFilter struct {
 func emitNotReady(cmd *cobra.Command, deps *Deps, snapshot *app.Snapshot, filter notReadyFilter) error {
 	ids := snapshot.Graph.IDs()
 	if filter.forRef != "" {
-		actor, err := deps.resolveFilterActor(cmd.Context(), filter.forRef)
+		actor, err := deps.resolveActorRef(cmd.Context(), filter.forRef)
 		if err != nil {
 			return err
 		}
@@ -895,7 +895,7 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 			if ref == "" {
 				return usageError(cmd, "provide --for <actor>, or set default_actor")
 			}
-			actor, err := deps.resolveClaimActor(cmd.Context(), ref, fromDefault)
+			actor, err := deps.resolveActorRef(cmd.Context(), ref)
 			if err != nil {
 				if fromDefault && errors.Is(err, core.ErrNotFound) {
 					// bindCaller already warned that this default is neither a
@@ -952,50 +952,6 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&forRef, "for", "", "actor to claim for (id, actor:<id>, or name; defaults to default_actor)")
 	cmd.Flags().BoolVar(&start, "start", false, "also move the claimed task to in_progress")
 	return cmd
-}
-
-// resolveClaimActor resolves the actor a claim assigns. An explicit --for names
-// an Actor record, like every other actor flag. A configured default follows the
-// rule bindCaller applies to attribution — the record first, then a loop-default
-// role (app.LoopDefaultRole) — because the loop sets the default to a role
-// (builder-<task>, reviewer-<task>, qa-<task>, grooming-agent-<artifact>,
-// architecture-reviewer-<session>, chief) that a session registers as a mailbox
-// rather than an Actor record. A role is an agent session, so it claims under
-// the same groomed-only rule as any other agent.
-func (d *Deps) resolveClaimActor(ctx context.Context, ref string, fromDefault bool) (*core.Actor, error) {
-	actor, err := d.resolveActorRef(ctx, ref)
-	if err == nil || !fromDefault || !errors.Is(err, core.ErrNotFound) {
-		return actor, err
-	}
-	id, parseErr := core.ParseActorRef(ref)
-	if parseErr != nil {
-		return nil, parseErr
-	}
-	if identity, ok := app.RoleIdentity(id); ok {
-		return &identity, nil
-	}
-	return nil, err
-}
-
-// resolveFilterActor resolves a read-only actor filter (`task next --for` and its
-// `--explain`) by the identity rule readiness uses: an Actor record by id or name,
-// else a loop-role identity as an agent. Filtering neither attributes events nor
-// assigns work, so the strict record requirement claim and assign keep for an
-// explicit reference does not apply; a lookalike that is neither a record nor a
-// role still fails as an unknown actor.
-func (d *Deps) resolveFilterActor(ctx context.Context, ref string) (*core.Actor, error) {
-	actor, err := d.resolveActorRef(ctx, ref)
-	if err == nil || !errors.Is(err, core.ErrNotFound) {
-		return actor, err
-	}
-	id, parseErr := core.ParseActorRef(ref)
-	if parseErr != nil {
-		return nil, parseErr
-	}
-	if identity, ok := app.RoleIdentity(id); ok {
-		return &identity, nil
-	}
-	return nil, err
 }
 
 // claimable keeps only unassigned candidates, so repeated claims take new work

@@ -292,16 +292,25 @@ func (d *Deps) bindActor(ctx context.Context) {
 	}
 }
 
-// resolveActorRef resolves a user-supplied actor reference the way the global
-// --actor and ft msg send --from do: a bare id or name, the canonical
+// resolveActorRef resolves a user-supplied actor reference by the identity rule
+// every actor-valued flag follows: a bare id or name, the canonical
 // actor:<id> address, and a colon-bearing name all reach the same Actor record,
-// and a malformed or doubled address is rejected before it is looked up.
+// and an unregistered id that names a loop role resolves as the agent identity
+// it acts as. A malformed or doubled address is rejected before it is looked up;
+// a lookalike that is neither a record nor a role stays an unknown actor.
 func (d *Deps) resolveActorRef(ctx context.Context, ref string) (*core.Actor, error) {
 	id, err := core.ParseActorRef(ref)
 	if err != nil {
 		return nil, err
 	}
-	return d.Actors.Resolve(ctx, string(id))
+	actor, err := d.Actors.Resolve(ctx, string(id))
+	if err == nil || !errors.Is(err, core.ErrNotFound) {
+		return actor, err
+	}
+	if identity, ok := app.RoleIdentity(id); ok {
+		return &identity, nil
+	}
+	return nil, err
 }
 
 func (d *Deps) printf(format string, args ...any) {

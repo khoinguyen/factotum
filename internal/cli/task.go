@@ -599,6 +599,8 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 	var body string
 	var linkSpecs []string
 	var system bool
+	var projectID string
+	var dryRun bool
 
 	add := &cobra.Command{
 		Use:   "create <task>",
@@ -637,7 +639,47 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 	add.Flags().StringArrayVar(&linkSpecs, "link", nil, "link kind=url (repeatable)")
 	add.Flags().BoolVar(&system, "system", false, "mark the note as system-generated (excluded from search)")
 
-	cmd.AddCommand(add)
+	backfill := &cobra.Command{
+		Use:   "backfill",
+		Short: "Mark historical auto-generated triage notes (they leave search)",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			project := deps.resolveProject(projectID)
+			if err := requireProject(cmd, project); err != nil {
+				return err
+			}
+			result, err := deps.Tasks.BackfillTriageNotes(cmd.Context(), store.TicketFilter{ProjectID: project}, dryRun)
+			if err != nil {
+				return err
+			}
+			ids := make([]string, 0, len(result.Marked))
+			for _, ref := range result.Marked {
+				ids = append(ids, ref.NoteID)
+			}
+			out := noteBackfillResult{
+				Scanned: result.Scanned,
+				Marked:  len(result.Marked),
+				Notes:   ids,
+				DryRun:  dryRun,
+				Project: string(project),
+			}
+			return deps.emit(out, func() {
+				fields := []field{f("scanned", out.Scanned), f("marked", out.Marked)}
+				if len(out.Notes) > 0 {
+					fields = append(fields, f("notes", strings.Join(out.Notes, ", ")))
+				}
+				if out.DryRun {
+					fields = append(fields, f("dry_run", true))
+				}
+				fields = append(fields, f("project", out.Project), f("repo", deps.repoValue("")))
+				deps.printFields(fields...)
+			})
+		},
+	}
+	backfill.Flags().StringVarP(&projectID, "project", "p", "", "project id (required)")
+	backfill.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be marked without writing")
+
+	cmd.AddCommand(add, backfill)
 	return cmd
 }
 

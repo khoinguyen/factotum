@@ -296,7 +296,7 @@ build-web` rebuilds it into `web/dist`.
 | Grooming | `task check`, `task decide`, `task promote`, `groom [item...]`, `groom list\|show\|review` |
 | QA | `qa ready\|record` |
 | Prompt | `prompt [-y] <words>` (break a free-form prompt into tasks via the configured agent CLI) |
-| Notes | `task note create [--system]` |
+| Notes | `task note create [--system]`, `task note backfill [--dry-run]` |
 | Messages | `msg send\|get\|read\|inbox\|install` |
 | Session | `session start\|retire` |
 | Capture | `idea create\|list\|get\|search\|promote`, `bug create\|list\|get\|search\|triage` |

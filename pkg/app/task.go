@@ -794,6 +794,53 @@ func (s *TicketService) AddNote(ctx context.Context, id core.TicketID, in NoteIn
 	return task, nil
 }
 
+// TriageNoteRef identifies a note a triage-note backfill marked, or would mark
+// in a dry run.
+type TriageNoteRef struct {
+	TaskID core.TicketID
+	NoteID string
+}
+
+// TriageNoteBackfill is the outcome of one backfill pass: the tickets inspected
+// and the notes that now carry the system marker (or, in a dry run, the notes
+// that would).
+type TriageNoteBackfill struct {
+	Scanned int
+	Marked  []TriageNoteRef
+}
+
+// BackfillTriageNotes marks historical auto-generated triage notes with the
+// System provenance flag, so task search stops indexing them. A note is a
+// candidate only when core.IsTriageTemplateNote reports it: authorless, matching
+// a triage template, and not already marked. Only tickets whose notes changed
+// are written, so a second pass writes nothing.
+func (s *TicketService) BackfillTriageNotes(ctx context.Context, filter store.TicketFilter, dryRun bool) (TriageNoteBackfill, error) {
+	tasks, err := s.backend.Tickets().List(ctx, filter)
+	if err != nil {
+		return TriageNoteBackfill{}, err
+	}
+	result := TriageNoteBackfill{Scanned: len(tasks)}
+	for _, task := range tasks {
+		changed := false
+		for i := range task.Notes {
+			if !core.IsTriageTemplateNote(task.Notes[i]) {
+				continue
+			}
+			result.Marked = append(result.Marked, TriageNoteRef{TaskID: task.ID, NoteID: task.Notes[i].ID})
+			task.Notes[i].System = true
+			changed = true
+		}
+		if !changed || dryRun {
+			continue
+		}
+		task.UpdatedAt = s.clock.Now()
+		if err := s.backend.Tickets().Update(ctx, task); err != nil {
+			return TriageNoteBackfill{}, err
+		}
+	}
+	return result, nil
+}
+
 func (s *TicketService) Delete(ctx context.Context, id core.TicketID) error {
 	task, err := s.backend.Tickets().Get(ctx, id)
 	if err != nil {

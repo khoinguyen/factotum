@@ -193,3 +193,63 @@ func TestTaskSearchRequiresQuery(t *testing.T) {
 		t.Fatalf("task search without a query should be a usage error:\n%s", stderr)
 	}
 }
+
+func TestTaskNoteBackfillExcludesHistoricalTriageNotes(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	otherID := firstField(t, r.run("project", "create", "Other"))
+	task := firstField(t, r.run("task", "create", "-p", projectID, "-t", "unrelated", "-b", "nothing here"))
+	other := firstField(t, r.run("task", "create", "-p", otherID, "-t", "unrelated", "-b", "nothing here"))
+
+	// Historical triage notes predate --system, so they carry no author and no
+	// marker. The human note carries no author either, but not a template.
+	r.run("task", "note", "create", task, "-b", "Triaged by agent: backfillprobe split the work")
+	r.run("task", "note", "create", task, "-b", "Decision: keep humanprobe")
+	r.run("task", "note", "create", other, "-b", "Triaged by agent: otherprobe split the work")
+	if got := searchIDs(t, r.run("task", "search", "backfillprobe", "-p", projectID, "-o", "json")); !equalIDs(got, []string{task}) {
+		t.Fatalf("search before backfill = %v, want [%s]", got, task)
+	}
+
+	// A dry run reports the candidate and leaves search alone.
+	out := r.run("task", "note", "backfill", "-p", projectID, "--dry-run")
+	for _, want := range []string{"scanned: 1", "marked: 1", "dry_run: true"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("backfill --dry-run output missing %q:\n%s", want, out)
+		}
+	}
+	if got := searchIDs(t, r.run("task", "search", "backfillprobe", "-p", projectID, "-o", "json")); !equalIDs(got, []string{task}) {
+		t.Fatalf("search after dry run = %v, want the note still indexed", got)
+	}
+
+	out = r.run("task", "note", "backfill", "-p", projectID)
+	if !strings.Contains(out, "marked: 1") {
+		t.Fatalf("backfill should mark the triage note:\n%s", out)
+	}
+
+	// Idempotent: a second pass marks nothing.
+	if out := r.run("task", "note", "backfill", "-p", projectID); !strings.Contains(out, "marked: 0") {
+		t.Fatalf("second backfill should mark nothing:\n%s", out)
+	}
+
+	// The backfilled note leaves search; the human note stays.
+	if got := searchIDs(t, r.run("task", "search", "backfillprobe", "-p", projectID, "-o", "json")); len(got) != 0 {
+		t.Fatalf("search after backfill = %v, want the triage note excluded", got)
+	}
+	if got := searchIDs(t, r.run("task", "search", "humanprobe", "-p", projectID, "-o", "json")); !equalIDs(got, []string{task}) {
+		t.Fatalf("search humanprobe = %v, want [%s]", got, task)
+	}
+
+	// The backfill is project-scoped: another project's triage note is untouched.
+	if got := searchIDs(t, r.run("task", "search", "otherprobe", "-p", otherID, "-o", "json")); !equalIDs(got, []string{other}) {
+		t.Fatalf("search otherprobe = %v, want [%s]", got, other)
+	}
+
+	// The note stays on the task, now carrying the marker.
+	got := r.run("task", "get", task, "-o", "json")
+	if !strings.Contains(got, "Triaged by agent: backfillprobe split the work") {
+		t.Fatalf("task get should retain the backfilled note:\n%s", got)
+	}
+	if !strings.Contains(got, `"system": true`) {
+		t.Fatalf("task get should expose the backfilled system marker:\n%s", got)
+	}
+}

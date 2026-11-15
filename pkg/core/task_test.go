@@ -333,3 +333,27 @@ func TestNoteValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestIsTriageTemplateNote(t *testing.T) {
+	tests := []struct {
+		name string
+		note Note
+		want bool
+	}{
+		{"triage template", Note{ID: "n-1", Body: "Triaged by agent: split the work"}, true},
+		{"reassignment template", Note{ID: "n-1", Body: "Reassigned to you."}, true},
+		{"indented template", Note{ID: "n-1", Body: "  Triaged by agent: split the work"}, true},
+		{"human note", Note{ID: "n-1", Body: "Decision: ship the small thing"}, false},
+		{"authored template", Note{ID: "n-1", Author: "act-1", Body: "Triaged by agent: split the work"}, false},
+		{"already marked", Note{ID: "n-1", Body: "Reassigned to you.", System: true}, false},
+		{"template without colon", Note{ID: "n-1", Body: "Triaged by agent"}, false},
+		{"empty body", Note{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsTriageTemplateNote(tt.note); got != tt.want {
+				t.Fatalf("IsTriageTemplateNote() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

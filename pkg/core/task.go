@@ -156,6 +156,32 @@ type Note struct {
 	System bool
 }
 
+// triageNoteTemplates are the openings of the triage notes the agent loop and
+// the grooming flow write automatically. Notes ft writes itself set System at
+// creation; these templates identify the ones written before the marker
+// existed, when triage notes were typed by hand with no author.
+var triageNoteTemplates = []string{
+	"Triaged by agent:",
+	"Reassigned to you.",
+}
+
+// IsTriageTemplateNote reports whether n is an unmarked auto-generated triage
+// note: it carries no author and opens with a known triage template. An authored
+// note is never a template, whatever its body, so a backfill driven by this
+// predicate cannot touch a note a human or agent wrote.
+func IsTriageTemplateNote(n Note) bool {
+	if n.System || n.Author != "" {
+		return false
+	}
+	body := strings.TrimSpace(n.Body)
+	for _, template := range triageNoteTemplates {
+		if strings.HasPrefix(body, template) {
+			return true
+		}
+	}
+	return false
+}
+
 func (n Note) Validate() error {
 	if n.ID == "" {
 		return fmt.Errorf("%w: note id is required", ErrInvalid)

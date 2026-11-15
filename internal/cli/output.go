@@ -42,6 +42,18 @@ type applyResult struct {
 	Repo     string `json:"repo" yaml:"repo"`
 }
 
+// noteBackfillResult is the summary of `task note backfill`: how many tickets
+// were inspected, the notes that now carry the system marker (or would, in a dry
+// run), and the project scope it ran in.
+type noteBackfillResult struct {
+	Scanned int      `json:"scanned" yaml:"scanned"`
+	Marked  int      `json:"marked" yaml:"marked"`
+	Notes   []string `json:"notes,omitempty" yaml:"notes,omitempty"`
+	DryRun  bool     `json:"dry_run,omitempty" yaml:"dry_run,omitempty"`
+	Project string   `json:"project" yaml:"project"`
+	Repo    string   `json:"repo" yaml:"repo"`
+}
+
 // field is one `key: value` line of single-result text output.
 type field struct {
 	Key   string

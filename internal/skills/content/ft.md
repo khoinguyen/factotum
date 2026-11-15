@@ -366,12 +366,10 @@ agents" and "Isolation policy" sections carry the rest.
 - A failed run leaves the task's status untouched and stops the loop for a human. The
   stop reason is `stop:` (`goal_reached`, `no_ready_work`, `blocked`, `budget_exhausted`,
   or `failed`), and each iteration prints a compact `step:` block.
-- A successful run moves the task to `ready_for_review`, reports `run: finished`,
-  `exit_code: 0`, `complete: true`, and records a note with the agent's output plus
-  `task.run_started`/`task.run_finished` events; a failed one reports `run: failed`/
-  `complete: false` and only a failure note. Either prints the harness's stderr (final
-  4 KiB) as a `stderr:` block, and `-o json|yaml` carries it in a `stderr` field, so a
-  failure explains itself instead of only its exit code.
+- A successful run moves the task to `ready_for_review` (`run: finished`, `exit_code: 0`,
+  `complete: true`, a note of the output and `task.run_started`/`task.run_finished`); a
+  failed one is `run: failed`/`complete: false` with only a failure note. Either prints the
+  harness's stderr tail (4 KiB) as a `stderr:` block and a json/yaml `stderr` field.
 
 ## Getting help
 

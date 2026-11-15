@@ -40,7 +40,7 @@ func newUpOperatorCommand(deps *Deps, use, short, long string, op upOperator) *c
 // re-owns it on its next pass (design §10).
 func (d *Deps) runUpOperator(cmd *cobra.Command, projectID, pipelineID string, op upOperator) error {
 	ctx := cmd.Context()
-	return d.withUpController(cmd, projectID, func(controller *up.Controller, _ groomTarget, _ core.ProjectID) error {
+	return d.withUpController(cmd, projectID, func(controller *up.Controller, _ projectTarget, _ core.ProjectID) error {
 		pipeline, err := op(ctx, controller, core.PipelineID(pipelineID))
 		if err != nil {
 			return err
@@ -52,13 +52,13 @@ func (d *Deps) runUpOperator(cmd *cobra.Command, projectID, pipelineID string, o
 // withUpController resolves the project, opens its store, and hands a controller
 // bound to that store, its target, and the resolved project id to fn. The target
 // is closed after fn returns.
-func (d *Deps) withUpController(cmd *cobra.Command, projectID string, fn func(*up.Controller, groomTarget, core.ProjectID) error) error {
+func (d *Deps) withUpController(cmd *cobra.Command, projectID string, fn func(*up.Controller, projectTarget, core.ProjectID) error) error {
 	ctx := cmd.Context()
 	project := d.resolveProject(projectID)
 	if err := requireProject(cmd, project); err != nil {
 		return err
 	}
-	target, err := d.openGroomTarget(ctx, project)
+	target, err := d.openProjectTarget(ctx, project)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func newUpAnswerCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return usageError(cmd, "read answers file: %v", err)
 			}
-			return deps.withUpController(cmd, projectID, func(controller *up.Controller, _ groomTarget, _ core.ProjectID) error {
+			return deps.withUpController(cmd, projectID, func(controller *up.Controller, _ projectTarget, _ core.ProjectID) error {
 				pipeline, err := controller.Answer(cmd.Context(), core.PipelineID(args[0]), string(answers))
 				if err != nil {
 					return err
@@ -126,7 +126,7 @@ func newUpApproveCommand(deps *Deps) *cobra.Command {
 
 func (d *Deps) runUpApprove(cmd *cobra.Command, projectID, pipelineID string) error {
 	ctx := cmd.Context()
-	return d.withUpController(cmd, projectID, func(controller *up.Controller, target groomTarget, _ core.ProjectID) error {
+	return d.withUpController(cmd, projectID, func(controller *up.Controller, target projectTarget, _ core.ProjectID) error {
 		updated, err := approvePipeline(ctx, controller, target, core.PipelineID(pipelineID))
 		if err != nil {
 			return err
@@ -138,7 +138,7 @@ func (d *Deps) runUpApprove(cmd *cobra.Command, projectID, pipelineID string) er
 // approvePipeline clears a design_rework gate. It validates the gate first, so a
 // wrong-state call is side-effect-free: the review is re-recorded and the task
 // gate released only once the pipeline is known to be parked at design_rework.
-func approvePipeline(ctx context.Context, controller *up.Controller, target groomTarget, id core.PipelineID) (*core.Pipeline, error) {
+func approvePipeline(ctx context.Context, controller *up.Controller, target projectTarget, id core.PipelineID) (*core.Pipeline, error) {
 	pipeline, err := controller.ValidateGate(ctx, id, core.GateDesignRework)
 	if err != nil {
 		return nil, err
@@ -154,7 +154,7 @@ func approvePipeline(ctx context.Context, controller *up.Controller, target groo
 // and stores the approving verdict, so the resumed review stage reads approve
 // and advances. A pipeline with no session yet (nothing to re-record) is left for
 // the review stage to run.
-func approveGroomSession(ctx context.Context, target groomTarget, pipeline *core.Pipeline) error {
+func approveGroomSession(ctx context.Context, target projectTarget, pipeline *core.Pipeline) error {
 	if pipeline.Session == "" {
 		return nil
 	}

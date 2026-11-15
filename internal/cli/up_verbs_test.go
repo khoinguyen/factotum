@@ -126,7 +126,7 @@ func TestApproveWrongGateHasNoSideEffects(t *testing.T) {
 		t.Fatalf("up.New() error = %v", err)
 	}
 
-	if _, err := approvePipeline(ctx, controller, groomTarget{dataDir: dataDir, tasks: tasks}, pipeline.ID); !errors.Is(err, core.ErrConflict) {
+	if _, err := approvePipeline(ctx, controller, projectTarget{dataDir: dataDir, tasks: tasks}, pipeline.ID); !errors.Is(err, core.ErrConflict) {
 		t.Fatalf("approvePipeline(wrong gate) error = %v, want ErrConflict", err)
 	}
 
@@ -193,7 +193,7 @@ func TestApproveGroomSessionReRecordsReview(t *testing.T) {
 		t.Fatalf("WriteSession() error = %v", err)
 	}
 
-	target := groomTarget{dataDir: dataDir, backend: backend, tasks: tasks}
+	target := projectTarget{dataDir: dataDir, backend: backend, tasks: tasks}
 	if err := approveGroomSession(ctx, target, &core.Pipeline{Session: "groom-1"}); err != nil {
 		t.Fatalf("approveGroomSession() error = %v", err)
 	}

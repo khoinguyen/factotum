@@ -23,6 +23,7 @@ import (
 
 // runOptions are the per-invocation overrides of the [run] config.
 type runOptions struct {
+	project        string
 	sandbox        string
 	harness        string
 	workspace      string
@@ -55,8 +56,11 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			"milestone, or a capture - runs it, and re-reads the graph until the goal is\n" +
 			"reached, no work is ready, on-path work is blocked, or the --max-tasks budget\n" +
 			"is exhausted. With a prompt source and no task id, `ft run` runs the prompt\n" +
-			"once over every repository of the configured project, writing nothing to the\n" +
-			"task graph. The sandbox and harness resolve from --sandbox and --harness,\n" +
+			"once over every repository of the selected project, writing nothing to the\n" +
+			"task graph. -p/--project selects the project whose store the run reads and\n" +
+			"writes, defaulting to the configured project; the target must belong to it,\n" +
+			"and the launched session inherits that store. The sandbox and harness\n" +
+			"resolve from --sandbox and --harness,\n" +
 			"then FACTOTUM_RUN_*, then the [run] config table (project over user); on a\n" +
 			"terminal an unset one prompts once and is saved, while a non-interactive\n" +
 			"unset one is an error. Choosing the local backend in that prompt asks to opt\n" +
@@ -91,6 +95,7 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			return deps.runTask(cmd, args[0], prompt, opts)
 		},
 	}
+	cmd.Flags().StringVarP(&opts.project, "project", "p", "", "project id whose store the run reads and writes (defaults to the configured project)")
 	cmd.Flags().StringVar(&opts.sandbox, "sandbox", "", "isolation backend name (defaults to run.sandbox; e.g. local, openshell, docker)")
 	cmd.Flags().StringVar(&opts.sandbox, "backend", "", "deprecated alias for --sandbox")
 	_ = cmd.Flags().MarkHidden("backend")
@@ -523,15 +528,17 @@ func (d *Deps) warnLocalPlan(plan *workspace.Plan) {
 // unusable for attribution and usable as a mailbox - and its attribution
 // warning does not say the session will be unreachable, so the run says that.
 // Either way the run keeps launching without a receiver: the work is still
-// worth doing and the actor can be registered while it runs.
-func (d *Deps) runActor(ctx context.Context) *core.ActorID {
+// worth doing and the actor can be registered while it runs. The actor resolves
+// against the selected project's store, because that is the store the launched
+// receiver registers in.
+func (d *Deps) runActor(ctx context.Context, actors *app.ActorService) *core.ActorID {
 	if d.ActorRef == "" {
 		if d.ActorDropped != "" {
 			d.warnNoReceiver(d.ActorDropped)
 		}
 		return nil
 	}
-	actor, err := d.Actors.Identity(ctx, core.ActorID(d.ActorRef))
+	actor, err := actors.Identity(ctx, core.ActorID(d.ActorRef))
 	if err != nil {
 		if !errors.Is(err, core.ErrNotFound) {
 			d.warnf("could not resolve actor %q (%v)", d.ActorRef, err)
@@ -542,6 +549,24 @@ func (d *Deps) runActor(ctx context.Context) *core.ActorID {
 	return &actor.ID
 }
 
+// runTargetCheck reports whether the resolved run target belongs to the project
+// the run selected. A target absent from the selected project's store, or one
+// that lives there under another project, is a not-found error naming both, so
+// -p is authoritative rather than advisory. An unset project (no flag and none
+// configured) changes nothing, so a run against a bare store keeps working.
+func runTargetCheck(id core.TicketID, projectID core.ProjectID, task *core.Ticket, err error) error {
+	if err != nil {
+		if errors.Is(err, core.ErrNotFound) && projectID != "" {
+			return fmt.Errorf("%w: task %s in project %s", core.ErrNotFound, id, projectID)
+		}
+		return err
+	}
+	if projectID != "" && task.ProjectID != projectID {
+		return fmt.Errorf("%w: task %s is not in project %s (it belongs to %s)", core.ErrNotFound, id, projectID, task.ProjectID)
+	}
+	return nil
+}
+
 // warnNoReceiver names the receiver consequence and its fix for a run whose
 // named actor resolves to no mailbox, so a launched session nobody can reach is
 // never silent.
@@ -550,15 +575,22 @@ func (d *Deps) warnNoReceiver(ref string) {
 }
 
 func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {
-	actor := d.runActor(cmd.Context())
+	projectID := d.resolveProject(opts.project)
+	target, err := d.openProjectTarget(cmd.Context(), projectID)
+	if err != nil {
+		return err
+	}
+	defer target.close()
+
+	actor := d.runActor(cmd.Context(), target.actors)
 	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
 	}
 
-	task, err := d.Tasks.Get(cmd.Context(), core.TicketID(taskID))
-	if err != nil {
+	task, err := target.tasks.Get(cmd.Context(), core.TicketID(taskID))
+	if err := runTargetCheck(core.TicketID(taskID), projectID, task, err); err != nil {
 		return err
 	}
 	// A capture (idea or bug) is not a task to run once: target it as a loop
@@ -567,13 +599,13 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		if prompt != "" {
 			return usageError(cmd, "--prompt-file and --prompt-artifact apply to a single task or task-less run, not a capture (%s %s)", task.Kind, task.ID)
 		}
-		return d.driveLoop(cmd, taskID, opts, sel, actor)
+		return d.driveLoop(cmd, target, taskID, opts, sel, actor)
 	}
 
 	interactive := d.runInteractive(cmd, opts.unattended)
 
 	progress := d.startRunProgress(runProgressLabel("run "+taskID, sel.backendName, sel.harness.Name()), interactive)
-	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).Run(cmd.Context(), app.RunInput{
+	outcome, runErr := app.NewRunService(target.backend, target.tasks, d.Clock, d.IDs).Run(cmd.Context(), app.RunInput{
 		TicketID:         task.ID,
 		Backend:          sel.backend,
 		Harness:          sel.harness,
@@ -586,7 +618,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 		Actor:            actor,
 		MsgURL:           d.Config.Serve.URL,
 		ServeToken:       d.Config.Serve.Token,
-		StoreEnv:         d.storeEnv(),
+		StoreEnv:         d.storeEnvFor(target.store),
 		Interactive:      interactive,
 		OnResolve:        d.warnLocalPlan,
 	})
@@ -606,28 +638,34 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 	return runErr
 }
 
-// runProject runs one stored prompt over all of the configured project's repos
+// runProject runs one stored prompt over all of the selected project's repos
 // with no task: a task-less prompt run (a grooming session, for example). It
 // materializes every project repo and writes nothing to the task graph.
 func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) error {
-	actor := d.runActor(cmd.Context())
+	projectID := d.resolveProject(opts.project)
+	if err := requireProject(cmd, projectID); err != nil {
+		return err
+	}
+	target, err := d.openProjectTarget(cmd.Context(), projectID)
+	if err != nil {
+		return err
+	}
+	defer target.close()
+
+	actor := d.runActor(cmd.Context(), target.actors)
 	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
 	}
 	interactive := d.runInteractive(cmd, opts.unattended)
-	projectID := d.resolveProject("")
-	if err := requireProject(cmd, projectID); err != nil {
-		return err
-	}
-	project, err := d.Projects.Get(cmd.Context(), projectID)
+	project, err := target.projects.Get(cmd.Context(), projectID)
 	if err != nil {
 		return err
 	}
 
 	progress := d.startRunProgress(runProgressLabel("run project "+string(project.ID), sel.backendName, sel.harness.Name()), interactive)
-	outcome, runErr := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs).RunProject(cmd.Context(), app.ProjectRunInput{
+	outcome, runErr := app.NewRunService(target.backend, target.tasks, d.Clock, d.IDs).RunProject(cmd.Context(), app.ProjectRunInput{
 		ProjectID:        project.ID,
 		Backend:          sel.backend,
 		Harness:          sel.harness,
@@ -640,7 +678,7 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 		Actor:            actor,
 		MsgURL:           d.Config.Serve.URL,
 		ServeToken:       d.Config.Serve.Token,
-		StoreEnv:         d.storeEnv(),
+		StoreEnv:         d.storeEnvFor(target.store),
 		Interactive:      interactive,
 		OnResolve:        d.warnLocalPlan,
 	})
@@ -663,20 +701,27 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 // runGoal drives the DAG loop toward a goal: a task, a milestone, or a capture
 // (idea/bug), whose tasks the loop runs in DAG order.
 func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error {
-	actor := d.runActor(cmd.Context())
+	projectID := d.resolveProject(opts.project)
+	target, err := d.openProjectTarget(cmd.Context(), projectID)
+	if err != nil {
+		return err
+	}
+	defer target.close()
+
+	actor := d.runActor(cmd.Context(), target.actors)
 	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
 	}
-	return d.driveLoop(cmd, goalID, opts, sel, actor)
+	return d.driveLoop(cmd, target, goalID, opts, sel, actor)
 }
 
 // driveLoop runs the loop target - a task, milestone, or capture - through the
 // single-task service, reusing an already-resolved run selection.
-func (d *Deps) driveLoop(cmd *cobra.Command, targetID string, opts runOptions, sel *runSelection, actor *core.ActorID) error {
-	target, err := d.Tasks.Get(cmd.Context(), core.TicketID(targetID))
-	if err != nil {
+func (d *Deps) driveLoop(cmd *cobra.Command, target projectTarget, targetID string, opts runOptions, sel *runSelection, actor *core.ActorID) error {
+	goal, err := target.tasks.Get(cmd.Context(), core.TicketID(targetID))
+	if err := runTargetCheck(core.TicketID(targetID), d.resolveProject(opts.project), goal, err); err != nil {
 		return err
 	}
 	ranker, err := d.Rankers.MustLookup("composite")
@@ -684,7 +729,7 @@ func (d *Deps) driveLoop(cmd *cobra.Command, targetID string, opts runOptions, s
 		return err
 	}
 
-	svc := app.NewRunService(d.Backend, d.Tasks, d.Clock, d.IDs)
+	svc := app.NewRunService(target.backend, target.tasks, d.Clock, d.IDs)
 	// One session for the whole loop: the caller's when this invocation inherited
 	// one, else a fresh id, so every task the loop runs lands on one timeline
 	// instead of each run minting its own.
@@ -707,15 +752,15 @@ func (d *Deps) driveLoop(cmd *cobra.Command, targetID string, opts runOptions, s
 			Actor:            actor,
 			MsgURL:           d.Config.Serve.URL,
 			ServeToken:       d.Config.Serve.Token,
-			StoreEnv:         d.storeEnv(),
+			StoreEnv:         d.storeEnvFor(target.store),
 			Session:          session,
 			OnResolve:        d.warnLocalPlan,
 		})
 	}
 
 	text := !d.structured()
-	outcome, runErr := app.NewRunLoopService(d.Backend, ranker, d.Clock).Run(cmd.Context(), app.LoopInput{
-		GoalID:   target.ID,
+	outcome, runErr := app.NewRunLoopService(target.backend, ranker, d.Clock).Run(cmd.Context(), app.LoopInput{
+		GoalID:   goal.ID,
 		Runner:   runner,
 		MaxTasks: opts.maxTasks,
 		OnStep: func(step app.LoopStep) {
@@ -730,7 +775,7 @@ func (d *Deps) driveLoop(cmd *cobra.Command, targetID string, opts runOptions, s
 	if outcome == nil {
 		return runErr
 	}
-	if err := d.printLoopOutcome(target, outcome, session, runErr); err != nil {
+	if err := d.printLoopOutcome(goal, outcome, session, runErr); err != nil {
 		return err
 	}
 	return runErr

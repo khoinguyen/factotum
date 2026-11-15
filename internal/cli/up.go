@@ -156,7 +156,7 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 	if err := requireProject(cmd, projectID); err != nil {
 		return err
 	}
-	target, err := d.openGroomTarget(ctx, projectID)
+	target, err := d.openProjectTarget(ctx, projectID)
 	if err != nil {
 		return err
 	}
@@ -263,7 +263,7 @@ func (d *Deps) upRunSelection(cmd *cobra.Command) (*runSelection, error) {
 // QA) share one resolved run selection, the build stage drives the produced
 // tasks through the run loop, and rollout is a no-op until its mechanics land
 // (design §8/§9).
-func (d *Deps) upStages(cmd *cobra.Command, target groomTarget, sel *runSelection, interactive bool) map[core.PipelineState]up.StageRunner {
+func (d *Deps) upStages(cmd *cobra.Command, target projectTarget, sel *runSelection, interactive bool) map[core.PipelineState]up.StageRunner {
 	projectRoot := config.ProjectRoot(d.ProjectConfigPath)
 	return map[core.PipelineState]up.StageRunner{
 		core.PipelineGrooming: &up.GroomRunner{DataDir: target.dataDir, IDs: d.IDs, Session: d.upGroomSession(cmd, target, sel, interactive)},
@@ -279,7 +279,7 @@ func (d *Deps) upStages(cmd *cobra.Command, target groomTarget, sel *runSelectio
 // reports the produced tasks and whether product questions were deferred. When a
 // PO is attached (interactive) the session runs with the PO's terminal; with no
 // PO it runs unattended, deferring every product question.
-func (d *Deps) upGroomSession(cmd *cobra.Command, target groomTarget, sel *runSelection, interactive bool) up.SessionFunc {
+func (d *Deps) upGroomSession(cmd *cobra.Command, target projectTarget, sel *runSelection, interactive bool) up.SessionFunc {
 	return func(ctx context.Context, p *core.Pipeline, sessionID string) (up.SessionResult, error) {
 		if sel == nil {
 			return up.SessionResult{}, errUpNoRunConfig
@@ -345,7 +345,7 @@ var errUpNoRunConfig = errors.New("up: run.sandbox and run.harness are required 
 // service, sharing the groom path's store env and workspace resolution so the
 // dispatched agent reads and writes the same store. It is the shared dispatch
 // for the review and QA stages; the build stage drives the run loop instead.
-func (d *Deps) upAgentRunProject(ctx context.Context, target groomTarget, projectID core.ProjectID, sel *runSelection, prompt string, interactive bool) error {
+func (d *Deps) upAgentRunProject(ctx context.Context, target projectTarget, projectID core.ProjectID, sel *runSelection, prompt string, interactive bool) error {
 	if sel == nil {
 		return errUpNoRunConfig
 	}
@@ -387,7 +387,7 @@ func upSkillPrompt(projectRoot, name string) (string, error) {
 // the reviewer records its verdict with `ft groom review`, which the runner then
 // reads back and maps to the gate. The runner is idempotent, so a restart does
 // not re-review.
-func (d *Deps) upReviewFunc(target groomTarget, projectRoot string, sel *runSelection, interactive bool) up.ReviewFunc {
+func (d *Deps) upReviewFunc(target projectTarget, projectRoot string, sel *runSelection, interactive bool) up.ReviewFunc {
 	return func(ctx context.Context, p *core.Pipeline, sessionID string) (up.ReviewOutcome, error) {
 		skill, err := upSkillPrompt(projectRoot, "architecture-reviewer")
 		if err != nil {
@@ -425,7 +425,7 @@ func reviewKickoff(dataDir, sessionID string) string {
 // upQAFunc builds the QA stage's dispatch: it runs the single-task-qa agent over
 // the pipeline's capture; the agent records its verdict with `ft qa record`,
 // which the runner then reads back.
-func (d *Deps) upQAFunc(target groomTarget, projectRoot string, sel *runSelection, interactive bool) up.QAFunc {
+func (d *Deps) upQAFunc(target projectTarget, projectRoot string, sel *runSelection, interactive bool) up.QAFunc {
 	return func(ctx context.Context, p *core.Pipeline) (up.QAOutcome, error) {
 		skill, err := upSkillPrompt(projectRoot, "single-task-qa")
 		if err != nil {
@@ -449,7 +449,7 @@ func qaKickoff(capture core.TicketID) string {
 // capture produced to done through the run loop, which sets each built task
 // ready_for_review for a human to merge. The BuildRunner then reads the durable
 // task state back and preserves the merge gate.
-func (d *Deps) upBuildFunc(target groomTarget, sel *runSelection) up.BuildFunc {
+func (d *Deps) upBuildFunc(target projectTarget, sel *runSelection) up.BuildFunc {
 	return func(ctx context.Context, p *core.Pipeline) (up.BuildOutcome, error) {
 		if sel == nil {
 			return up.BuildOutcome{}, errUpNoRunConfig
@@ -604,7 +604,7 @@ func (d *Deps) runUpStart(cmd *cobra.Command, projectID, captureID string) error
 	if err := requireProject(cmd, project); err != nil {
 		return err
 	}
-	target, err := d.openGroomTarget(ctx, project)
+	target, err := d.openProjectTarget(ctx, project)
 	if err != nil {
 		return err
 	}
@@ -648,7 +648,7 @@ func (d *Deps) runUpStart(cmd *cobra.Command, projectID, captureID string) error
 // (the configured one, or another registered project's), so `-p` reads the
 // project it names rather than the caller's.
 func (d *Deps) upPipelines(ctx context.Context, project core.ProjectID) ([]*core.Pipeline, error) {
-	target, err := d.openGroomTarget(ctx, project)
+	target, err := d.openProjectTarget(ctx, project)
 	if err != nil {
 		return nil, err
 	}

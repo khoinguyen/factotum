@@ -168,8 +168,15 @@ the agent does is attributable to a session (`session:` in the run's output, `ft
 
 ```sh
 ft run <task> --sandbox local --harness opencode2 --allow-host   # dev-only, unsandboxed
+ft run <task> -p other-project --sandbox openshell --harness opencode2  # another project's store
 ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tasks 5
 ```
+
+- `-p/--project` selects the project whose store the run reads and writes, so a task in a
+  non-default project needs no `FACTOTUM_PROJECT`, `default_project`, or user-config edit; omitting
+  it falls back to the configured project. The target must belong to the selected project: one
+  absent from that store, or held there by another project, is a not-found error (exit 3) naming
+  both. The launched session inherits the selected store.
 
 - `--sandbox` and `--harness` resolve flag > `FACTOTUM_RUN_*` > committed project `[run]` > machine
   `[run]`. On a terminal an unset one prompts once and saves the answer; with no configured project

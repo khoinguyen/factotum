@@ -353,7 +353,7 @@ agents" and "Isolation policy" sections carry the rest.
 
 - `--prompt-file <path>` or `--prompt-artifact <id>` supplies a stored prompt: with a task
   it replaces the task prompt, and with no task id it runs the prompt once over every
-  repository of the configured project (a task-less session such as grooming), writing
+  repository of the selected project (a task-less session such as grooming), writing
   nothing to the graph. They are mutually exclusive; a missing or empty `--prompt-file`
   is an input error (exit 1). On a terminal a single-task or task-less run runs
   **interactive** (the agent attached) so a human can answer it, and its run note records
@@ -362,6 +362,7 @@ agents" and "Isolation policy" sections carry the rest.
   `openshell`/`docker`, which say to rerun with `--unattended`). A headless run narrates
   on stderr — `ft: run <task> (sandbox=<b> harness=<h>) started`, then a periodic `still
   running (Ns)` heartbeat — only when stderr is a terminal and output is text.
+- `-p/--project` picks the project whose store the run reads and writes (else the configured one); a target it does not hold is not found (exit 3).
 - `ft run --goal <task|milestone|capture>` repeatedly runs the highest-ranked agent-ready
   on-path task until the goal is reached, work stalls, or `--max-tasks N` (0 = no budget)
   is exhausted. Only groomed work assigned to an agent is run; startable but

@@ -27,6 +27,7 @@ type runOptions struct {
 	harness        string
 	workspace      string
 	model          string
+	image          string
 	args           []string
 	allowHost      bool
 	refresh        bool
@@ -91,9 +92,10 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&opts.sandbox, "sandbox", "", "isolation backend name (defaults to run.sandbox; e.g. local, openshell, docker)")
 	cmd.Flags().StringVar(&opts.sandbox, "backend", "", "deprecated alias for --sandbox")
 	_ = cmd.Flags().MarkHidden("backend")
-	cmd.Flags().StringVar(&opts.harness, "harness", "", "harness name (defaults to run.harness; e.g. opencode, opencode2)")
+	cmd.Flags().StringVar(&opts.harness, "harness", "", "harness name (defaults to run.harness; e.g. opencode, opencode2, pi)")
 	cmd.Flags().StringVar(&opts.workspace, "workspace", "", "workspace root directory (default under the config dir)")
 	cmd.Flags().StringVar(&opts.model, "model", "", "model override passed to the harness")
+	cmd.Flags().StringVar(&opts.image, "image", "", "base image an isolating backend runs the harness from (required for pi; defaults to the harness's own image)")
 	cmd.Flags().StringArrayVar(&opts.args, "arg", nil, "extra argument passed to the harness (repeatable)")
 	cmd.Flags().BoolVar(&opts.allowHost, "allow-host", false, "opt in to the unsandboxed local backend (dev-only)")
 	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "fetch and reset a reused workspace checkout to its upstream before running")
@@ -224,6 +226,9 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 	}
 	if opts.model != "" {
 		cfg.Model = opts.model
+	}
+	if opts.image != "" {
+		cfg.Image = opts.image
 	}
 	if len(opts.args) > 0 {
 		cfg.Args = append(append([]string(nil), cfg.Args...), opts.args...)

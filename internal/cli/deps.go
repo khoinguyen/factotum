@@ -297,11 +297,13 @@ func (r envCredentialResolver) Resolve(_ context.Context, c isolation.Credential
 // (distinct binary, image, and interactive flags) so it selects with
 // `--harness opencode2` without changing V1. The configured provider and
 // credential variable are forwarded so an isolating backend can attach the
-// credential as a provider placeholder.
+// credential as a provider placeholder, and a configured base image overrides
+// the harness's own image (pi, which publishes none, requires one to isolate).
 func runHarnesses() *registry.Registry[HarnessFactory] {
 	reg := registry.New[HarnessFactory]()
 	registerRunHarness(reg, opencode.Name, func(cfg config.Run) (harness.Harness, error) {
 		opts := opencode.Options{
+			Image:            cfg.Image,
 			Model:            cfg.Model,
 			Args:             cfg.Args,
 			Provider:         cfg.Provider,
@@ -323,6 +325,7 @@ func runHarnesses() *registry.Registry[HarnessFactory] {
 	registerRunHarness(reg, opencode.NameV2, func(cfg config.Run) (harness.Harness, error) {
 		return opencode.New(opencode.Options{
 			Variant:          opencode.V2,
+			Image:            cfg.Image,
 			Model:            cfg.Model,
 			Args:             cfg.Args,
 			Provider:         cfg.Provider,
@@ -330,7 +333,16 @@ func runHarnesses() *registry.Registry[HarnessFactory] {
 		}), nil
 	})
 	registerRunHarness(reg, pi.Name, func(cfg config.Run) (harness.Harness, error) {
+		// pi ships as an npm package with no published image, so an isolating
+		// backend has nothing to run unless the caller names a base image that
+		// carries pi. Reject that at selection rather than launch the backend's
+		// default image, which would fail deep inside the sandbox with no clue
+		// which knob was missing.
+		if cfg.Sandbox != local.Name && cfg.Image == "" {
+			return nil, fmt.Errorf("harness %q publishes no image: set run.image (or --image, or FACTOTUM_RUN_IMAGE) to a base image with pi on PATH, or run it on the local sandbox", pi.Name)
+		}
 		return pi.New(pi.Options{
+			Image:            cfg.Image,
 			Model:            cfg.Model,
 			Args:             cfg.Args,
 			Provider:         cfg.Provider,

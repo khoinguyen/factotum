@@ -120,6 +120,10 @@ type Run struct {
 	// machine-scoped, like the rest of this table.
 	Provider         string
 	CredentialEnvVar string
+	// Image is the base image an isolating backend runs the harness from,
+	// overriding the harness's own default. A harness that publishes no image
+	// (pi ships as an npm package) requires it; a local run ignores it.
+	Image string
 	// PolicyPath is the resolved project OpenShell policy override (the
 	// sibling of the loaded project config, for example
 	// <projectRoot>/.factotum/openshell-policy.yaml). The launcher sets it
@@ -223,6 +227,7 @@ type runFile struct {
 	Args             []string `toml:"args"`
 	Provider         string   `toml:"provider"`
 	CredentialEnvVar string   `toml:"credential_env"`
+	Image            string   `toml:"image"`
 }
 
 // projectRunFile is the project-scoped [run] subset: the harness and sandbox a
@@ -325,6 +330,7 @@ func Load(in Input) (Config, error) {
 		Args:             append([]string(nil), user.Run.Args...),
 		Provider:         user.Run.Provider,
 		CredentialEnvVar: user.Run.CredentialEnvVar,
+		Image:            user.Run.Image,
 	}
 	applyRunEnv(&cfg.Run, getenv)
 	cfg.Serve = Serve{Token: user.Serve.Token, URL: user.Serve.URL}
@@ -584,6 +590,9 @@ func applyRunEnv(run *Run, getenv func(string) string) {
 	}
 	if credEnv := getenv("FACTOTUM_RUN_CREDENTIAL_ENV"); credEnv != "" {
 		run.CredentialEnvVar = credEnv
+	}
+	if image := getenv("FACTOTUM_RUN_IMAGE"); image != "" {
+		run.Image = image
 	}
 }
 

@@ -724,11 +724,13 @@ func deferredIDs(body string) map[core.TicketID]bool {
 func openDeferredQuestions(body string) string {
 	var b strings.Builder
 	fence, inResolved := "", false
-	// CommonMark makes a 4-space line prose when it continues a paragraph (or
-	// opens a nested list item) and code only when it starts a block, so tracking
-	// that state keeps a legitimately indented deferral from reading as a code
-	// sample. A heading ends the paragraph above it: indented code needs no blank
-	// line after one.
+	// Markdown resolves indentation against the block it sits in, and lists are
+	// what makes a 4-space line prose: up to three columns beyond the innermost
+	// open item's content column still continue that item, and only four beyond it
+	// start an indented code block. A blank line does not close a list item, so the
+	// open content columns are remembered across blank lines; a heading ends the
+	// paragraph above it, so indented code needs no blank line after one.
+	var lists []int
 	inParagraph, inCode := false, false
 	for _, line := range strings.Split(htmlCommentPattern.ReplaceAllString(body, ""), "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -750,14 +752,30 @@ func openDeferredQuestions(body string) string {
 			inParagraph = false
 			continue
 		}
-		// An indented code block is the indentation-only form of a quoted sample:
-		// an id there defers nothing, and an indented "## Resolved" stays code
-		// rather than opening a section.
-		if isIndentedCode(line) && (inCode || (!inParagraph && !isNestedListMarker(trimmed))) {
+		indent := indentColumns(line)
+		// An indented code block runs until a non-blank line is no longer indented
+		// as code.
+		if inCode {
+			if indent >= codeColumn(lists) {
+				continue
+			}
+			inCode = false
+		}
+		for len(lists) > 0 && indent < lists[len(lists)-1] {
+			lists = lists[:len(lists)-1]
+		}
+		// An indented code block cannot interrupt a paragraph, so a continuation
+		// line is prose however far it is indented. Anywhere else, code starts four
+		// columns beyond the innermost open list item (four at the top level): an id
+		// there defers nothing, and an indented "## Resolved" stays code rather than
+		// opening a section.
+		if !inParagraph && indent >= codeColumn(lists) {
 			inCode = true
 			continue
 		}
-		inCode = false
+		if col, ok := listContentColumn(line); ok {
+			lists = append(lists, col)
+		}
 		inParagraph = !strings.HasPrefix(trimmed, "#")
 		if inResolved {
 			continue
@@ -772,29 +790,65 @@ func openDeferredQuestions(body string) string {
 	return b.String()
 }
 
-// isIndentedCode reports whether line is indented as a markdown code block: a tab
-// or at least four leading spaces. Whether it *is* code depends on the block it
-// sits in, which openDeferredQuestions tracks.
-func isIndentedCode(line string) bool {
-	return strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "    ")
+// codeColumn is the column at which an indented code block starts: four beyond
+// the innermost open list item's content column, or four at the top level.
+func codeColumn(lists []int) int {
+	if len(lists) == 0 {
+		return 4
+	}
+	return lists[len(lists)-1] + 4
 }
 
-// isNestedListMarker reports whether trimmed text opens a list item ("- x",
-// "1. x"), which an indented line may be when it continues a list: a nested item
-// is prose, not an indented code block.
-func isNestedListMarker(trimmed string) bool {
-	if len(trimmed) < 2 {
-		return false
+// indentColumns is the width of line's leading whitespace, with a tab advancing
+// to the next multiple of four as markdown renders it.
+func indentColumns(line string) int {
+	col := 0
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case ' ':
+			col++
+		case '\t':
+			col += 4 - col%4
+		default:
+			return col
+		}
 	}
-	if strings.ContainsRune("-*+", rune(trimmed[0])) {
-		return trimmed[1] == ' ' || trimmed[1] == '\t'
+	return col
+}
+
+// listContentColumn reports the column a list item's content starts at when line
+// opens one, so a line indented up to three columns beyond it reads as that
+// item's prose rather than as an indented code block.
+func listContentColumn(line string) (int, bool) {
+	col := indentColumns(line)
+	rest := strings.TrimLeft(line, " \t")
+	if rest == "" {
+		return 0, false
 	}
-	i := 0
-	for i < len(trimmed) && trimmed[i] >= '0' && trimmed[i] <= '9' {
-		i++
+	marker := 0
+	if strings.ContainsRune("-*+", rune(rest[0])) && len(rest) > 1 && (rest[1] == ' ' || rest[1] == '\t') {
+		marker = 1
+	} else {
+		for marker < len(rest) && marker < 9 && rest[marker] >= '0' && rest[marker] <= '9' {
+			marker++
+		}
+		if marker == 0 || marker+1 >= len(rest) || (rest[marker] != '.' && rest[marker] != ')') ||
+			(rest[marker+1] != ' ' && rest[marker+1] != '\t') {
+			return 0, false
+		}
+		marker++
 	}
-	return i > 0 && i+1 < len(trimmed) && (trimmed[i] == '.' || trimmed[i] == ')') &&
-		(trimmed[i+1] == ' ' || trimmed[i+1] == '\t')
+	pad := 0
+	for _, c := range rest[marker:] {
+		if c != ' ' && c != '\t' {
+			break
+		}
+		pad++
+	}
+	if pad == 0 {
+		pad = 1
+	}
+	return col + marker + pad, true
 }
 
 // producedHandled reports whether a task the session produced is admissible: an

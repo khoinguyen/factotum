@@ -516,6 +516,17 @@ func TestGroomUnattendedCompletesOrDefers(t *testing.T) {
 			wantErr: "neither agent-ready nor deferred",
 		},
 		{
+			name: "a blank-line indented continuation under a list item defers the item",
+			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
+				ready := agentReadyTask(t, r, projectID, "Add widget")
+				open := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Add gadget"))
+				// Four spaces under a bullet is a paragraph inside the item, not a
+				// code block: pandoc renders it as a <p> in the <li>.
+				deferred := "# Deferred questions\n\n## Questions\n\n- [ ] Which scope?\n\n    item: " + open + "\n    owner: PO\n\n## Resolved\n"
+				return []string{ready, open}, deferred
+			},
+		},
+		{
 			name: "a promoted idea is agent-ready",
 			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
 				ready := agentReadyTask(t, r, projectID, "Add widget")
@@ -945,7 +956,7 @@ func TestDeferredIDsWholeTokenMatch(t *testing.T) {
 		},
 		{
 			name:    "an indented code block does not swallow a prose deferral",
-			body:    "## Questions\n\n- Which cache? (item: t-abc123, owner: PO)\n\n    ft task get t-def456\n",
+			body:    "## Questions\n\n- Which cache? (item: t-abc123, owner: PO)\n\n      ft task get t-def456\n",
 			want:    []core.TicketID{"t-abc123"},
 			notWant: []core.TicketID{"t-def456"},
 		},
@@ -982,6 +993,31 @@ func TestDeferredIDsWholeTokenMatch(t *testing.T) {
 		{
 			name:    "a list marker inside an indented code block stays code",
 			body:    "## Questions\n\n    SELECT *\n    - item: t-abc123\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "a blank-line 4-space continuation under a bullet parent still defers",
+			body: "## Questions\n\n- [ ] Which cache?\n\n    item: t-abc123\n    owner: PO\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "a blank-line 4-space continuation under an ordered parent still defers",
+			body: "## Questions\n\n1. Which cache?\n\n    item: t-abc123\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "a blank-line 6-space continuation of a nested item still defers",
+			body: "## Questions\n\n- [ ] Which cache?\n  - b\n\n      item: t-abc123\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "a 6-space code block under a bullet parent does not count",
+			body:    "## Questions\n\n- [ ] Which cache?\n\n      ft task get t-abc123\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "an indented list marker with no enclosing list is code",
+			body:    "## Questions\n\n    - item: t-abc123\n",
 			notWant: []core.TicketID{"t-abc123"},
 		},
 		{

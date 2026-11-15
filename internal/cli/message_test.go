@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -280,6 +281,31 @@ func TestMessageSendReplyTo(t *testing.T) {
 	got := r.run("msg", "get", second)
 	if !strings.Contains(got, "reply_to: "+first) {
 		t.Fatalf("get should show reply_to %s:\n%s", first, got)
+	}
+}
+
+// TestMessageGetJSONCarriesContent pins `ft msg get -o json` to the same
+// message a human reads in the text block: a machine consumer needs the body
+// and the reply edge, not just the inbox summary row.
+func TestMessageGetJSONCarriesContent(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	first := firstField(t, r.run("msg", "send", "actor:claude", "first", "--project", projectID))
+	second := firstField(t, r.run("msg", "send", "actor:claude", "the body text", "--project", projectID, "--reply-to", first))
+
+	out := r.run("msg", "get", second, "-o", "json")
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("get -o json is not JSON: %v\n%s", err, out)
+	}
+	if got["body"] != "the body text" {
+		t.Fatalf("get -o json body = %v, want the body text:\n%s", got["body"], out)
+	}
+	if got["reply_to"] != first {
+		t.Fatalf("get -o json reply_to = %v, want %s:\n%s", got["reply_to"], first, out)
+	}
+	if got["id"] != second || got["to"] != "actor:claude" || got["state"] != "queued" || got["project"] != projectID {
+		t.Fatalf("get -o json lost the summary fields:\n%s", out)
 	}
 }
 

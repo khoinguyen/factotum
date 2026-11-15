@@ -650,11 +650,20 @@ func testMessagePrune(t *testing.T, repo store.MessageRepo, ctx context.Context)
 		queuedMessage("p-read-old", project, core.ActorAddress("act-1"), old),
 		queuedMessage("p-failed-old", project, core.ActorAddress("act-1"), old),
 		queuedMessage("p-read-young", project, core.ActorAddress("act-1"), young),
+		queuedMessage("p-read-acked-recently", project, core.ActorAddress("act-1"), old),
+		queuedMessage("p-read-acked-long-ago", project, core.ActorAddress("act-1"), young),
 	}
 	messages[1].State = core.MessageDelivered
 	messages[2].State = core.MessageRead
 	messages[3].State = core.MessageFailed
 	messages[4].State = core.MessageRead
+	// Age is measured from the terminal transition (UpdatedAt), not from
+	// creation: a message sent long ago but acked yesterday keeps its retention
+	// window, and a clock-skewed one acked long ago is already stale.
+	messages[5].State = core.MessageRead
+	messages[5].UpdatedAt = young
+	messages[6].State = core.MessageRead
+	messages[6].UpdatedAt = old
 	for _, message := range messages {
 		if err := repo.Create(ctx, message); err != nil {
 			t.Fatalf("Create(%s) error = %v", message.ID, err)
@@ -665,20 +674,25 @@ func testMessagePrune(t *testing.T, repo store.MessageRepo, ctx context.Context)
 	if moved, err := repo.Prune(ctx, cutoff, nil); err != nil || moved != 0 {
 		t.Fatalf("Prune(nil states) = (%d, %v), want (0, nil)", moved, err)
 	}
+	// Only terminal states can be pruned: asking for a live state is a no-op,
+	// never a way to delete queued or in-flight work.
+	if moved, err := repo.Prune(ctx, cutoff, []core.MessageState{core.MessageQueued, core.MessageDelivered}); err != nil || moved != 0 {
+		t.Fatalf("Prune(non-terminal states) = (%d, %v), want (0, nil)", moved, err)
+	}
 
 	moved, err := repo.Prune(ctx, cutoff, []core.MessageState{core.MessageRead, core.MessageFailed})
 	if err != nil {
 		t.Fatalf("Prune() error = %v", err)
 	}
-	if moved != 2 {
-		t.Fatalf("Prune() moved = %d, want 2", moved)
+	if moved != 3 {
+		t.Fatalf("Prune() moved = %d, want 3", moved)
 	}
-	for _, gone := range []core.MessageID{"p-read-old", "p-failed-old"} {
+	for _, gone := range []core.MessageID{"p-read-old", "p-failed-old", "p-read-acked-long-ago"} {
 		if _, err := repo.Get(ctx, gone); !errors.Is(err, core.ErrNotFound) {
 			t.Fatalf("Get(%s) after prune error = %v, want ErrNotFound", gone, err)
 		}
 	}
-	for _, kept := range []core.MessageID{"p-queued", "p-delivered", "p-read-young"} {
+	for _, kept := range []core.MessageID{"p-queued", "p-delivered", "p-read-young", "p-read-acked-recently"} {
 		if _, err := repo.Get(ctx, kept); err != nil {
 			t.Fatalf("Get(%s) after prune error = %v, want kept", kept, err)
 		}

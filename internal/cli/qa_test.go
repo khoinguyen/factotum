@@ -88,6 +88,65 @@ func TestUnregisteredActorDoesNotMisrouteTheQAReminder(t *testing.T) {
 	}
 }
 
+// TestUnregisteredDefaultActorDoesNotMisrouteTheQAReminder is the default-path
+// twin of the --actor reproduction: a typo in FACTOTUM_DEFAULT_ACTOR must warn
+// and leave no reminder addressed to a mailbox nobody claims, even though the
+// transition itself still completes.
+func TestUnregisteredDefaultActorDoesNotMisrouteTheQAReminder(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "a feature"))
+	r.run("actor", "create", "claude", "-k", "agent")
+	task := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+
+	r.getenv = func(key string) string {
+		if key == "FACTOTUM_DEFAULT_ACTOR" {
+			return "builer-t-1"
+		}
+		return ""
+	}
+	_, stderr := r.runSplit("task", "done", task)
+
+	if !strings.Contains(stderr, `default actor "builer-t-1" is not a registered actor`) {
+		t.Fatalf("stderr = %q, want a warning naming the typo'd default actor", stderr)
+	}
+	if all := r.run("msg", "inbox", "-p", projectID, "-o", "json"); strings.Contains(all, "builer-t-1") {
+		t.Fatalf("the auto-QA reminder went to a dead mailbox:\n%s", all)
+	}
+	changed := findEvent(t, listEvents(t, r), "task.status_changed")
+	if changed.By != nil {
+		t.Fatalf("task.status_changed By = %v, want none for an unregistered default", changed.By)
+	}
+}
+
+// TestLoopDefaultActorStillReceivesTheQAReminder pins the loop's attribution:
+// a role-shaped default is the acting caller, so the reminder lands in that
+// role's mailbox without an Actor record.
+func TestLoopDefaultActorStillReceivesTheQAReminder(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "a feature"))
+	r.run("actor", "create", "claude", "-k", "agent")
+	task := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+
+	r.getenv = func(key string) string {
+		if key == "FACTOTUM_DEFAULT_ACTOR" {
+			return "builder-t-1"
+		}
+		return ""
+	}
+	r.run("task", "done", task)
+
+	entries := inboxEntries(t, r, projectID, "builder-t-1")
+	if len(entries) != 1 || entries[0].To != "actor:builder-t-1" {
+		t.Fatalf("inbox for builder-t-1 = %+v, want exactly one reminder to actor:builder-t-1", entries)
+	}
+	changed := findEvent(t, listEvents(t, r), "task.status_changed")
+	if changed.By == nil || *changed.By != "builder-t-1" {
+		t.Fatalf("task.status_changed By = %v, want builder-t-1", changed.By)
+	}
+}
+
 // completedFeature creates a project with one idea whose single task is done,
 // leaving the feature ready for QA.
 func completedFeature(t *testing.T) (*runner, string, string, string) {

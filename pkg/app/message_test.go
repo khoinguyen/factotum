@@ -72,6 +72,48 @@ func TestLoopRole(t *testing.T) {
 	}
 }
 
+// TestLoopDefaultRole pins the grammar a configured default actor
+// (FACTOTUM_DEFAULT_ACTOR / default_actor) must match to be trusted: a loop
+// role name the wrapper exports, carrying a real ft id — a task (t-), an
+// artifact (art-), or a grooming session (groom-). The loop's grooming-agent and
+// architecture-reviewer roles are defaults only, so LoopRole rejects them while
+// this accepts them. A token that merely starts with a role name is not a role.
+func TestLoopDefaultRole(t *testing.T) {
+	cases := []struct {
+		ref  string
+		want core.ActorID
+		ok   bool
+	}{
+		{"chief", "chief", true},
+		{"builder-t-1", "builder-t-1", true},
+		{"reviewer-t-ww4tono3t6", "reviewer-t-ww4tono3t6", true},
+		{"qa-t-1", "qa-t-1", true},
+		{"grooming-agent-art-ilsnyg2h3a", "grooming-agent-art-ilsnyg2h3a", true},
+		{"architecture-reviewer-groom-abcde", "architecture-reviewer-groom-abcde", true},
+		{"architecture-reviewer-t-1", "architecture-reviewer-t-1", true},
+		// A role name with a suffix that is not an ft id: a model, a tool, or a
+		// truncated id. Trusting one would attribute to a mailbox nobody claims.
+		{"builder-gpt-4", "", false},
+		{"qa-bot", "", false},
+		{"reviewer-tool-2", "", false},
+		{"grooming-agent-tool", "", false},
+		{"grooming-agent-", "", false},
+		{"builder-", "", false},
+		{"builder", "", false},
+		{"builer-t-1", "", false},
+		{"ghostrider", "", false},
+		{"t-1", "", false},
+		{"actor:builder-t-1", "", false},
+		{"", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := LoopDefaultRole(tc.ref)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("LoopDefaultRole(%q) = (%q, %v), want (%q, %v)", tc.ref, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
 func TestMessageSendResolvesRoleAddress(t *testing.T) {
 	f := newMessageFixture(t)
 	ctx := context.Background()

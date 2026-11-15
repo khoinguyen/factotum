@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/app"
+	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
@@ -383,6 +384,40 @@ func TestRunCommandLoopDrivesToGoal(t *testing.T) {
 	}
 	if got := backend.Commands(); len(got) != 2 {
 		t.Fatalf("ran %d tasks, want 2", len(got))
+	}
+}
+
+// TestRunCommandLoopSharesOneSession proves a `--goal` loop resolves one session
+// for the whole invocation: every task it runs exports that same id, the loop
+// reports it, and the loop's run events sit on it, so a goal run is followable
+// as one timeline rather than a new session per task.
+func TestRunCommandLoopSharesOneSession(t *testing.T) {
+	r := newRunner(t)
+	projectID, _, goal := loopContext(t, r)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("run", "--goal", goal, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+
+	prepared := backend.Prepared()
+	if len(prepared) != 2 {
+		t.Fatalf("prepared %d harnesses, want 2", len(prepared))
+	}
+	sid := prepared[0].Env[harnesspkg.EnvSession]
+	if sid == "" {
+		t.Fatal("the loop exported no FACTOTUM_SESSION")
+	}
+	if got := prepared[1].Env[harnesspkg.EnvSession]; got != sid {
+		t.Fatalf("loop sessions = %q then %q, want one shared id", sid, got)
+	}
+	if !strings.Contains(out, "session: "+sid) {
+		t.Fatalf("loop output does not report its session %q:\n%s", sid, out)
+	}
+	if listed := r.run("event", "list", "--project", projectID, "--session", sid); strings.Count(listed, "task.run_started") != 2 {
+		t.Fatalf("the loop's run events are not all on session %q:\n%s", sid, listed)
 	}
 }
 

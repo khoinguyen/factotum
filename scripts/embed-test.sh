@@ -16,7 +16,9 @@
 # blob is complete, so a second run reads a half-written GGUF and dies in
 # gguf_init_from_reader. The download is serialized instead: a per-volume lock is
 # held from the container start until the server reports healthy, so the next
-# run starts against a warm, consistent cache.
+# run starts against a warm, consistent cache. A waiting run gives up after
+# FACTOTUM_EMBED_TEST_LOCK_TIMEOUT seconds (default 240) and names the lock it
+# could not take.
 set -euo pipefail
 
 # embed_volume is the named docker volume that keeps the downloaded model,
@@ -35,26 +37,83 @@ embed_lock_file() {
   printf '%s/ft-embed-test-%s.lock\n' "${TMPDIR:-/tmp}" "$name"
 }
 
-# embed_lock_acquire takes the volume's download lock. The owner is the
-# symlink's target (a pid), so taking the lock is one atomic `ln -s` on any
-# filesystem, and a run killed mid-download is reclaimable instead of wedging
-# every later run. A stale owner is only ever trusted when its pid is gone, and
-# a live holder is bounded by this script's own 180s health timeout.
+# embed_lock_owner prints the pid holding <lock>, or nothing when the lock does
+# not exist (or is unreadable, which no lock this script writes can be).
+embed_lock_owner() {
+  readlink "$1" 2>/dev/null || true
+}
+
+# embed_lock_reclaim <lock> drops a lock left by a run that is gone. The
+# decision and the removal happen under a guard directory, because two
+# reclaimers removing one stale lock is not safe: the second `rm` lands after
+# the first has published its own lock and deletes it, handing two runs the
+# same download. Under the guard a present lock is still the one whose owner was
+# read as gone - a live run cannot publish into a taken path, and a dead owner
+# cannot release - and an absent one is left alone, since a peer may publish it
+# the next instant.
+embed_lock_reclaim() {
+  local lock="$1" guard owner
+  guard="${lock}.reclaim"
+  if ! mkdir "$guard" 2>/dev/null; then
+    # This section is a few syscalls, so an old guard is a reclaimer that died.
+    if [ -z "$(find "$guard" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+      return 1
+    fi
+    rmdir "$guard" 2>/dev/null || true
+    if ! mkdir "$guard" 2>/dev/null; then
+      return 1
+    fi
+  fi
+  owner="$(embed_lock_owner "$lock")"
+  if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+    rmdir "$guard" 2>/dev/null || true
+    return 1
+  fi
+  # Only remove what this section saw: with no lock present, a peer publishes one
+  # at any moment, and the `rm` below would delete it. An occupied path cannot be
+  # published into, so the lock read above is still the one removed.
+  if [ -e "$lock" ] || [ -L "$lock" ]; then
+    rm -f "$lock"
+  fi
+  rmdir "$guard" 2>/dev/null || true
+  return 0
+}
+
+# embed_lock_acquire takes the volume's download lock, waiting for a concurrent
+# run to finish warming the cache. The owner is the symlink's target (a pid), so
+# taking the lock is one atomic `ln -s` on any filesystem, and a run killed
+# mid-download is reclaimable instead of wedging every later run. A live holder
+# is bounded by this script's own health timeout; the wait here is bounded too,
+# so a wedged lock names itself instead of hanging forever.
 embed_lock_acquire() {
-  local lock owner
+  local lock owner reclaimed started waited limit
   lock="$(embed_lock_file)"
+  limit="${FACTOTUM_EMBED_TEST_LOCK_TIMEOUT:-240}"
+  if [ ! -d "$(dirname "$lock")" ] || [ ! -w "$(dirname "$lock")" ]; then
+    echo "embed-test: cannot create the download lock ${lock}" >&2
+    return 1
+  fi
+  started=$SECONDS
+  waited=""
   while :; do
     if ln -s "$$" "$lock" 2>/dev/null; then
       return 0
     fi
-    if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then
-      echo "embed-test: cannot create the download lock ${lock}" >&2
-      return 1
+    owner="$(embed_lock_owner "$lock")"
+    if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+      reclaimed=""
+      if embed_lock_reclaim "$lock"; then reclaimed=1; fi
+      if [ -n "$reclaimed" ] && ln -s "$$" "$lock" 2>/dev/null; then
+        return 0
+      fi
+      owner="$(embed_lock_owner "$lock")"
     fi
-    owner="$(readlink "$lock" 2>/dev/null || true)"
-    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
-      rm -f "$lock"
-      continue
+    if [ -z "$waited" ]; then
+      waited=1
+      echo "embed-test: waiting for the download lock ${lock} (owner ${owner:-unknown})" >&2
+    elif [ "$((SECONDS - started))" -ge "$limit" ]; then
+      echo "embed-test: gave up after ${limit}s on the download lock ${lock} (owner ${owner:-unknown}); remove that file if its run is gone" >&2
+      return 1
     fi
     sleep 1
   done
@@ -65,7 +124,7 @@ embed_lock_acquire() {
 embed_lock_release() {
   local lock
   lock="$(embed_lock_file)"
-  if [ "$(readlink "$lock" 2>/dev/null || true)" = "$$" ]; then
+  if [ "$(embed_lock_owner "$lock")" = "$$" ]; then
     rm -f "$lock"
   fi
 }

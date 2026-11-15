@@ -328,7 +328,7 @@ if latter="$(bash -c 'set -euo pipefail
   export FACTOTUM_EMBED_TEST_VOLUME="$2"
   embed_lock_acquire
   embed_lock_release
-  printf acquired' _ "$script" "$lock_vol")"; then
+  printf acquired' _ "$script" "$lock_vol" 2>/dev/null)"; then
   waited=$((SECONDS - started))
   if [ "$latter" = acquired ] && [ "$waited" -ge 1 ]; then
     ok
@@ -343,11 +343,10 @@ if [ -L "$lock" ]; then bad "the download lock outlived its owner: $lock"; else 
 
 # A run killed mid-download leaves its lock behind. That must not wedge every
 # later run until someone removes it by hand, so a lock whose owner is gone is
-# reclaimed.
+# reclaimed. The owner is a pid that can never exist, so "gone" holds on every
+# platform and a just-exited child's pid cannot be reused under the test.
+dead_pid=2147483647
 rm -f "$lock"
-( exit 0 ) &
-dead_pid=$!
-wait "$dead_pid" 2>/dev/null || true
 ln -s "$dead_pid" "$lock"
 started=$SECONDS
 if bash -c 'set -euo pipefail
@@ -361,6 +360,164 @@ else
   bad "a dead run's download lock was never reclaimed"
 fi
 if [ -L "$lock" ]; then bad "the reclaimed download lock outlived its owner: $lock"; else ok; fi
+
+# A lock that cannot name its owner (a plain file, or a symlink with an empty
+# target) is stale too: nothing this script writes looks like that, so waiting on
+# it would wait for a run that does not exist.
+rm -f "$lock"
+: >"$lock"
+started=$SECONDS
+if bash -c 'set -euo pipefail
+  . "$1"
+  export FACTOTUM_EMBED_TEST_VOLUME="$2"
+  embed_lock_acquire
+  embed_lock_release' _ "$script" "$lock_vol"; then
+  waited=$((SECONDS - started))
+  if [ "$waited" -lt 2 ]; then ok; else bad "an ownerless download lock wedged the next run for ${waited}s"; fi
+else
+  bad "an ownerless download lock was never reclaimed"
+fi
+if [ -e "$lock" ] || [ -L "$lock" ]; then bad "the ownerless download lock outlived its run: $lock"; else ok; fi
+
+# A stale lock can also sit behind a guard left by a reclaimer that died. That
+# guard is a few syscalls old at worst, so an old one must not block reclaim.
+rm -f "$lock"
+ln -s "$dead_pid" "$lock"
+mkdir "${lock}.reclaim"
+touch -t 202001010000 "${lock}.reclaim"
+started=$SECONDS
+if bash -c 'set -euo pipefail
+  . "$1"
+  export FACTOTUM_EMBED_TEST_VOLUME="$2"
+  embed_lock_acquire
+  embed_lock_release' _ "$script" "$lock_vol"; then
+  waited=$((SECONDS - started))
+  if [ "$waited" -lt 2 ]; then ok; else bad "an abandoned reclaim guard blocked the lock for ${waited}s"; fi
+else
+  bad "an abandoned reclaim guard blocked the lock forever"
+fi
+rmdir "${lock}.reclaim" 2>/dev/null || true
+if [ -e "$lock" ] || [ -L "$lock" ]; then bad "the lock survived an abandoned reclaim guard: $lock"; else ok; fi
+
+# A reclaimer must not remove the lock while a peer holds the reclaim guard: that
+# is the `rm` that hands two runs the same download. Proved directly, because the
+# stampede below can only catch that race by luck.
+guard_lock="$(FACTOTUM_EMBED_TEST_VOLUME=$lock_vol embed_lock_file)"
+rm -f "$guard_lock" "${guard_lock}.reclaim"
+ln -s "$dead_pid" "$guard_lock"
+mkdir "${guard_lock}.reclaim"
+if bash -c '. "$1"; embed_lock_reclaim "$2"' _ "$script" "$guard_lock"; then
+  bad "a reclaimer removed the lock while a peer held the reclaim guard"
+else
+  ok
+fi
+if [ -L "$guard_lock" ]; then ok; else bad "the guarded reclaimer dropped a stale lock it had no guard for"; fi
+rmdir "${guard_lock}.reclaim"
+if bash -c '. "$1"; embed_lock_reclaim "$2"' _ "$script" "$guard_lock"; then ok; else bad "the guard holder could not reclaim the stale lock"; fi
+if [ -e "$guard_lock" ] || [ -L "$guard_lock" ]; then bad "the reclaim left the stale lock behind"; else ok; fi
+
+# Reclaiming must never hand two runs the same lock: several processes released
+# at once onto a dead run's lock, each reading back the owner it holds. A reclaim
+# that removes a lock a peer has just taken shows up here as a foreign pid.
+stampede_vol=ft-embed-lock-stampede
+stampede_lock="$(FACTOTUM_EMBED_TEST_VOLUME=$stampede_vol embed_lock_file)"
+rm -f "$stampede_lock" "${stampede_lock}.reclaim"
+ln -s "$dead_pid" "$stampede_lock"
+stolen="$tmp/stolen"
+gate="$tmp/stampede-go"
+: >"$stolen"
+stampede_pids=()
+for _ in 1 2 3 4; do
+  bash -c 'set -euo pipefail
+    . "$1"
+    export FACTOTUM_EMBED_TEST_VOLUME="$2"
+    while [ ! -e "$3" ]; do sleep 0.05; done
+    round=0
+    while [ "$round" -lt 2 ]; do
+      embed_lock_acquire
+      held="$(readlink "$(embed_lock_file)")"
+      if [ "$held" != "$$" ]; then printf "held by %s, not %s\n" "$held" "$$" >>"$4"; fi
+      embed_lock_release
+      round=$((round + 1))
+    done' _ "$script" "$stampede_vol" "$gate" "$stolen" 2>/dev/null &
+  stampede_pids+=("$!")
+done
+sleep 0.3
+: >"$gate"
+stampede_rc=0
+for pid in "${stampede_pids[@]}"; do if wait "$pid"; then :; else stampede_rc=1; fi; done
+if [ "$stampede_rc" -eq 0 ]; then ok; else bad "a run in the reclaim stampede failed"; fi
+if [ -s "$stolen" ]; then bad "a reclaimer stole a live download lock: $(head -n 1 "$stolen")"; else ok; fi
+if [ -e "$stampede_lock" ] || [ -L "$stampede_lock" ]; then bad "the reclaim stampede left a lock behind: $stampede_lock"; else ok; fi
+
+# Release must not delete a lock it does not own, or a reclaiming run could drop
+# a peer's live lock at the end of its own run.
+owner_vol=ft-embed-lock-release
+owner_lock="$(FACTOTUM_EMBED_TEST_VOLUME=$owner_vol embed_lock_file)"
+rm -f "$owner_lock" "${owner_lock}.reclaim"
+owner_ready="$tmp/owner-ready"
+bash -c 'set -euo pipefail
+  . "$1"
+  export FACTOTUM_EMBED_TEST_VOLUME="$2"
+  embed_lock_acquire
+  : >"$3"
+  sleep 2
+  embed_lock_release' _ "$script" "$owner_vol" "$owner_ready" &
+lock_owner=$!
+deadline=$((SECONDS + 10))
+while [ ! -e "$owner_ready" ] && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.1; done
+bash -c 'set -euo pipefail
+  . "$1"
+  export FACTOTUM_EMBED_TEST_VOLUME="$2"
+  embed_lock_release' _ "$script" "$owner_vol"
+if [ "$(readlink "$owner_lock" 2>/dev/null)" = "$lock_owner" ]; then
+  ok
+else
+  bad "a stranger's release deleted the owner's download lock"
+fi
+if wait "$lock_owner"; then ok; else bad "the lock owner failed"; fi
+if [ -e "$owner_lock" ] || [ -L "$owner_lock" ]; then bad "the owner's lock outlived its run: $owner_lock"; else ok; fi
+
+# A waiting run must say what it is waiting for, and it must not wait forever:
+# with a short timeout it gives up naming the lock and leaves it alone.
+wait_vol=ft-embed-lock-wait
+wait_lock="$(FACTOTUM_EMBED_TEST_VOLUME=$wait_vol embed_lock_file)"
+rm -f "$wait_lock" "${wait_lock}.reclaim"
+wait_ready="$tmp/wait-ready"
+bash -c 'set -euo pipefail
+  . "$1"
+  export FACTOTUM_EMBED_TEST_VOLUME="$2"
+  embed_lock_acquire
+  : >"$3"
+  sleep 2
+  embed_lock_release' _ "$script" "$wait_vol" "$wait_ready" &
+lock_holder=$!
+deadline=$((SECONDS + 10))
+while [ ! -e "$wait_ready" ] && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.1; done
+started=$SECONDS
+if waiter_out="$(FACTOTUM_EMBED_TEST_LOCK_TIMEOUT=1 bash -c 'set -euo pipefail
+  . "$1"
+  export FACTOTUM_EMBED_TEST_VOLUME="$2"
+  embed_lock_acquire' _ "$script" "$wait_vol" 2>&1)"; then
+  bad "a waiting run took a lock another run holds"
+else
+  waited=$((SECONDS - started))
+  case "$waiter_out" in
+    *"waiting for the download lock $wait_lock (owner $lock_holder)"*) ok ;;
+    *) bad "a waiting run did not name the lock and its owner: $(tr '\n' ';' <<<"$waiter_out")" ;;
+  esac
+  if [ "$waited" -le 3 ]; then ok; else bad "a waiting run gave up only after ${waited}s, want ~1s"; fi
+  case "$waiter_out" in
+    *"gave up"*"$wait_lock"*) ok ;;
+    *) bad "a waiting run did not name the lock it gave up on: $(tr '\n' ';' <<<"$waiter_out")" ;;
+  esac
+fi
+if [ "$(readlink "$wait_lock" 2>/dev/null)" = "$lock_holder" ]; then
+  ok
+else
+  bad "a run that gave up deleted the holder's lock"
+fi
+if wait "$lock_holder"; then ok; else bad "the lock holder failed"; fi
 
 # The whole point: two concurrent runs on a cold shared cache must both pass,
 # with their startup windows serialized.

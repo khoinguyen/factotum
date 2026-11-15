@@ -32,20 +32,24 @@ func TestNoteSnippetClipBoundary(t *testing.T) {
 }
 
 // TestBackfillHelpListsRecognizedFamilies keeps the verb's documentation on the
-// same table the predicate uses: adding a family must not need a second edit.
+// same table the predicate uses: adding a family must not need a second edit,
+// and the help must show what each family means, not only its prefix.
 func TestBackfillHelpListsRecognizedFamilies(t *testing.T) {
 	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, io.Discard, io.Discard, nil)
 	backfill, _, err := NewRoot(deps).Find([]string{"task", "note", "backfill"})
 	if err != nil {
 		t.Fatalf("find task note backfill: %v", err)
 	}
-	families := core.GeneratedNoteOpenings()
+	families := core.GeneratedNoteFamilies()
 	if len(families) == 0 {
 		t.Fatal("no generated-note families to document")
 	}
-	for _, opening := range families {
-		if !strings.Contains(backfill.Long, opening) {
-			t.Errorf("backfill help does not list the %q family", opening)
+	for _, family := range families {
+		if !strings.Contains(backfill.Long, family.Shape) {
+			t.Errorf("backfill help does not list the %q family", family.Shape)
+		}
+		if !strings.Contains(backfill.Long, family.Meaning) {
+			t.Errorf("backfill help does not explain the %q family (%q)", family.Shape, family.Meaning)
 		}
 	}
 }

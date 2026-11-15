@@ -347,6 +347,8 @@ func TestIsGeneratedNote(t *testing.T) {
 		{"pr opened without base", Note{ID: "n-1", Body: "PR opened."}, true},
 		{"pr opened with base", Note{ID: "n-1", Body: "PR opened (base main)."}, true},
 		{"needs human decision", Note{ID: "n-1", Body: "Needs human decision: pick a transport"}, true},
+		{"needs human triage", Note{ID: "n-1", Body: "Needs human triage: pick a transport"}, true},
+		{"needs human grooming", Note{ID: "n-1", Body: "Needs human grooming: scope the transport"}, true},
 		{"human note", Note{ID: "n-1", Body: "Decision: ship the small thing"}, false},
 		{"human decision with date", Note{ID: "n-1", Body: "Decision (Khoi 2026-10-06): keep XOR"}, false},
 		{"human needs wording, not the machine label", Note{ID: "n-1", Body: "We need human decision on this later"}, false},
@@ -354,6 +356,7 @@ func TestIsGeneratedNote(t *testing.T) {
 		{"authored groomed note", Note{ID: "n-1", Author: "act-1", Body: "Groomed by agent (auto): closed the gaps"}, false},
 		{"authored pr-opened note", Note{ID: "n-1", Author: "act-1", Body: "PR opened (base main)."}, false},
 		{"authored needs-decision note", Note{ID: "n-1", Author: "act-1", Body: "Needs human decision: pick a transport"}, false},
+		{"authored needs-grooming note", Note{ID: "n-1", Author: "act-1", Body: "Needs human grooming: scope the transport"}, false},
 		{"already marked", Note{ID: "n-1", Body: "Reassigned to you.", System: true}, false},
 		{"template without colon", Note{ID: "n-1", Body: "Triaged by agent"}, false},
 		{"empty body", Note{}, false},
@@ -362,6 +365,16 @@ func TestIsGeneratedNote(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := IsGeneratedNote(tt.note); got != tt.want {
 				t.Fatalf("IsGeneratedNote() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	// Every family in the table is recognized, so a new family needs only its
+	// line in machineNoteOpenings.
+	for _, opening := range GeneratedNoteOpenings() {
+		t.Run("family "+opening, func(t *testing.T) {
+			if !IsGeneratedNote(Note{ID: "n-1", Body: opening + " probe"}) {
+				t.Fatalf("family %q is not recognized", opening)
 			}
 		})
 	}

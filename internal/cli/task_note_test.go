@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/khoinguyen/factotum/pkg/app"
+	"github.com/khoinguyen/factotum/pkg/core"
 )
 
 func TestNoteSnippetClipBoundary(t *testing.T) {
@@ -24,5 +28,24 @@ func TestNoteSnippetClipBoundary(t *testing.T) {
 				t.Fatalf("noteSnippet(%d chars) = %q, want %q", len([]rune(tt.body)), got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBackfillHelpListsRecognizedFamilies keeps the verb's documentation on the
+// same table the predicate uses: adding a family must not need a second edit.
+func TestBackfillHelpListsRecognizedFamilies(t *testing.T) {
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, io.Discard, io.Discard, nil)
+	backfill, _, err := NewRoot(deps).Find([]string{"task", "note", "backfill"})
+	if err != nil {
+		t.Fatalf("find task note backfill: %v", err)
+	}
+	families := core.GeneratedNoteOpenings()
+	if len(families) == 0 {
+		t.Fatal("no generated-note families to document")
+	}
+	for _, opening := range families {
+		if !strings.Contains(backfill.Long, opening) {
+			t.Errorf("backfill help does not list the %q family", opening)
+		}
 	}
 }

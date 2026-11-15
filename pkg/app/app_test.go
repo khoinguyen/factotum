@@ -1240,9 +1240,12 @@ func TestBackfillGeneratedNotes(t *testing.T) {
 		{task.ID, NoteInput{Body: "Groomed by agent (auto): groomedprobe closed the gaps"}},
 		{task.ID, NoteInput{Body: "PR opened (base main)."}},
 		{task.ID, NoteInput{Body: "Needs human decision: decisionprobe pick a transport"}},
+		{task.ID, NoteInput{Body: "Needs human triage: triagehumanprobe pick a transport"}},
+		{task.ID, NoteInput{Body: "Needs human grooming: groominghumanprobe scope the transport"}},
 		{task.ID, NoteInput{Body: "Triaged by agent: authoredprobe split the work", Author: &author}},
 		{task.ID, NoteInput{Body: "Groomed by agent (auto): authoredgroomprobe closed the gaps", Author: &author}},
 		{task.ID, NoteInput{Body: "Needs human decision: authoreddecisionprobe pick a transport", Author: &author}},
+		{task.ID, NoteInput{Body: "Needs human grooming: authoredgroomingprobe scope the transport", Author: &author}},
 		{human.ID, NoteInput{Body: "Decision: keep humanprobe"}},
 	}
 	for _, note := range notes {
@@ -1257,8 +1260,8 @@ func TestBackfillGeneratedNotes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackfillGeneratedNotes(dry) error = %v", err)
 	}
-	if dry.Scanned != 2 || len(dry.Marked) != 5 {
-		t.Fatalf("dry run = scanned %d, marked %v, want 2 scanned and 5 marked", dry.Scanned, dry.Marked)
+	if dry.Scanned != 2 || len(dry.Marked) != 7 {
+		t.Fatalf("dry run = scanned %d, marked %v, want 2 scanned and 7 marked", dry.Scanned, dry.Marked)
 	}
 	if hits, err := h.tasks.Search(ctx, filter, "triageprobe"); err != nil || len(hits) != 1 {
 		t.Fatalf("Search(triageprobe) after dry run = %d hits, %v; want the note still indexed", len(hits), err)
@@ -1269,8 +1272,8 @@ func TestBackfillGeneratedNotes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackfillGeneratedNotes() error = %v", err)
 	}
-	if got.Scanned != 2 || len(got.Marked) != 5 {
-		t.Fatalf("backfill = scanned %d, marked %v, want 2 scanned and 5 marked", got.Scanned, got.Marked)
+	if got.Scanned != 2 || len(got.Marked) != 7 {
+		t.Fatalf("backfill = scanned %d, marked %v, want 2 scanned and 7 marked", got.Scanned, got.Marked)
 	}
 	for _, ref := range got.Marked {
 		if ref.TaskID != task.ID {
@@ -1286,14 +1289,17 @@ func TestBackfillGeneratedNotes(t *testing.T) {
 		t.Fatalf("Get() error = %v", err)
 	}
 	wantSystem := map[string]bool{
-		"Triaged by agent: triageprobe split the work":                 true,
-		"Reassigned to you.":                                           true,
-		"Groomed by agent (auto): groomedprobe closed the gaps":        true,
-		"PR opened (base main).":                                       true,
-		"Needs human decision: decisionprobe pick a transport":         true,
-		"Triaged by agent: authoredprobe split the work":               false,
-		"Groomed by agent (auto): authoredgroomprobe closed the gaps":  false,
-		"Needs human decision: authoreddecisionprobe pick a transport": false,
+		"Triaged by agent: triageprobe split the work":                    true,
+		"Reassigned to you.":                                              true,
+		"Groomed by agent (auto): groomedprobe closed the gaps":           true,
+		"PR opened (base main).":                                          true,
+		"Needs human decision: decisionprobe pick a transport":            true,
+		"Needs human triage: triagehumanprobe pick a transport":           true,
+		"Needs human grooming: groominghumanprobe scope the transport":    true,
+		"Triaged by agent: authoredprobe split the work":                  false,
+		"Groomed by agent (auto): authoredgroomprobe closed the gaps":     false,
+		"Needs human decision: authoreddecisionprobe pick a transport":    false,
+		"Needs human grooming: authoredgroomingprobe scope the transport": false,
 	}
 	for _, note := range stored.Notes {
 		want, ok := wantSystem[note.Body]
@@ -1321,8 +1327,17 @@ func TestBackfillGeneratedNotes(t *testing.T) {
 	if hits, err := h.tasks.Search(ctx, filter, "decisionprobe"); err != nil || len(hits) != 0 {
 		t.Fatalf("Search(decisionprobe) = %d hits, %v; want the backfilled note excluded", len(hits), err)
 	}
+	if hits, err := h.tasks.Search(ctx, filter, "triagehumanprobe"); err != nil || len(hits) != 0 {
+		t.Fatalf("Search(triagehumanprobe) = %d hits, %v; want the backfilled note excluded", len(hits), err)
+	}
+	if hits, err := h.tasks.Search(ctx, filter, "groominghumanprobe"); err != nil || len(hits) != 0 {
+		t.Fatalf("Search(groominghumanprobe) = %d hits, %v; want the backfilled note excluded", len(hits), err)
+	}
 	if hits, err := h.tasks.Search(ctx, filter, "authoredgroomprobe"); err != nil || len(hits) != 1 {
 		t.Fatalf("Search(authoredgroomprobe) = %d hits, %v; want the authored note still indexed", len(hits), err)
+	}
+	if hits, err := h.tasks.Search(ctx, filter, "authoredgroomingprobe"); err != nil || len(hits) != 1 {
+		t.Fatalf("Search(authoredgroomingprobe) = %d hits, %v; want the authored note still indexed", len(hits), err)
 	}
 	if hits, err := h.tasks.Search(ctx, filter, "humanprobe"); err != nil || len(hits) != 1 {
 		t.Fatalf("Search(humanprobe) = %d hits, %v; want the human note still indexed", len(hits), err)

@@ -61,6 +61,45 @@ func TestRunArgsMountOnlyWorkspace(t *testing.T) {
 	}
 }
 
+// TestRunArgsForwardUser pins the exact argv for a spec that names a container
+// identity: the workload runs as that user, so a caller-supplied image whose
+// own USER is root cannot write root-owned files into the bind-mounted
+// checkout.
+func TestRunArgsForwardUser(t *testing.T) {
+	spec := isolation.Spec{Image: isolation.Image{Ref: "img:1", User: "501:20"}}
+	got := runArgs("fttest", spec, "/ws", "img:1")
+	want := []string{
+		"run",
+		"--detach",
+		"--name", "fttest",
+		"--workdir", "/ws",
+		"--mount", "type=bind,source=/ws,target=/ws",
+		"--user", "501:20",
+		"--entrypoint", "sh", "img:1", "-c", KeepAlive,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("run args =\n%v\nwant\n%v", got, want)
+	}
+}
+
+// TestRunArgsKeepImageUserWhenUnset pins the documented default: with no
+// configured identity the image's own USER applies, so the definition carries
+// no --user flag and the argv is unchanged.
+func TestRunArgsKeepImageUserWhenUnset(t *testing.T) {
+	got := runArgs("fttest", isolation.Spec{Image: isolation.Image{Ref: "img:1"}}, "/ws", "img:1")
+	want := []string{
+		"run",
+		"--detach",
+		"--name", "fttest",
+		"--workdir", "/ws",
+		"--mount", "type=bind,source=/ws,target=/ws",
+		"--entrypoint", "sh", "img:1", "-c", KeepAlive,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("run args =\n%v\nwant\n%v", got, want)
+	}
+}
+
 // TestExecArgsInjectKeysNotValues pins that plain env values never appear in
 // argv: exec passes `--env KEY` and the value travels in the client environment.
 func TestExecArgsInjectKeysNotValues(t *testing.T) {

@@ -350,7 +350,7 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode2 --allow-hos
 - `--sandbox`/`--harness` are optional: they resolve flag > `FACTOTUM_RUN_*` > committed
   project `[run]` > machine `[run]`. On a terminal an unset one prompts once and saves to
   the chosen config; choosing `local` there asks to opt in (default no) and records
-  `run.allow_host = true` in the user config; the project scope needs a configured project, else it fails clearly and writes nothing (rerun and choose `user`, or pin one first). A committed project `[run]` may set only `sandbox`/`harness`; the machine table also holds workspace/model/image/args/allow_host/credential_env (`--image` names the isolating base image for the selected harness; pi requires one). `--refresh` hard-resets a reused checkout; a changed origin URL fails.
+  `run.allow_host = true` in the user config; the project scope needs a configured project, else it fails clearly and writes nothing (rerun and choose `user`, or pin one first). A committed project `[run]` may set only `sandbox`/`harness`; the machine table also holds workspace/model/image/user/args/allow_host/credential_env (`--image` names the isolating base image for the selected harness; pi requires one). `--user`/`run.user`/`FACTOTUM_RUN_USER` sets the container identity (uid, uid:gid, or name) an isolating backend runs as; the default is empty, so the image's own `USER` applies — a root-`USER` image (common with a caller-supplied `--image`) writes root-owned files into the bind-mounted checkout, so set it to your host `$(id -u):$(id -g)`. `openshell` still pins a non-root identity and refuses a root request; `local` ignores it. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
 - `provider` and `credential_env` name the credential a harness may use and the
   variable it arrives under, e.g. `provider = "openrouter"` with
   `credential_env = "OPENROUTER_API_KEY"`; the value is read from the host
@@ -364,7 +364,7 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode2 --allow-hos
 - The `docker` backend runs the harness in a per-task container from the
   harness's image, mounting only the resolved workspace at its same absolute
   path. It needs the `docker` CLI and a daemon, refuses a policy it cannot
-  enforce, and injects credentials per-exec so no secret enters argv or metadata.
+  enforce, and injects credentials per-exec so no secret enters argv or metadata. It runs as `run.user`/`--user` when set, else the image's own `USER`.
 - A successful run moves the task to `ready_for_review`, reports `run: finished`,
   `exit_code: 0`, `complete: true`, and records a note with the agent's output plus
   `task.run_started`/`task.run_finished` events. A failed run leaves the status

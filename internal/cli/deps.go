@@ -300,11 +300,14 @@ func (r envCredentialResolver) Resolve(_ context.Context, c isolation.Credential
 // credential variable are forwarded so an isolating backend can attach the
 // credential as a provider placeholder, and a configured base image overrides
 // the harness's own image (pi, which publishes none, requires one to isolate).
+// A configured user overrides the harness's identity, so a caller-supplied image
+// with a root USER still runs as the uid:gid the host asked for.
 func runHarnesses() *registry.Registry[HarnessFactory] {
 	reg := registry.New[HarnessFactory]()
 	registerRunHarness(reg, opencode.Name, func(cfg config.Run) (harness.Harness, error) {
 		opts := opencode.Options{
 			Image:            cfg.Image,
+			User:             cfg.User,
 			Model:            cfg.Model,
 			Args:             cfg.Args,
 			Provider:         cfg.Provider,
@@ -327,6 +330,7 @@ func runHarnesses() *registry.Registry[HarnessFactory] {
 		return opencode.New(opencode.Options{
 			Variant:          opencode.V2,
 			Image:            cfg.Image,
+			User:             cfg.User,
 			Model:            cfg.Model,
 			Args:             cfg.Args,
 			Provider:         cfg.Provider,
@@ -344,6 +348,7 @@ func runHarnesses() *registry.Registry[HarnessFactory] {
 		}
 		return pi.New(pi.Options{
 			Image:            cfg.Image,
+			User:             cfg.User,
 			Model:            cfg.Model,
 			Args:             cfg.Args,
 			Provider:         cfg.Provider,

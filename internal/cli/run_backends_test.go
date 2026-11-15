@@ -513,13 +513,20 @@ func TestRunHarnessPiNeedsAnImageToIsolate(t *testing.T) {
 
 	t.Run("isolating without an image is rejected", func(t *testing.T) {
 		for _, sandbox := range []string{openshell.Name, docker.Name} {
-			_, err := factory(config.Run{Sandbox: sandbox})
-			if err == nil {
-				t.Fatalf("build pi harness on %s = nil error, want a missing-image error", sandbox)
-			}
-			for _, want := range []string{"pi", "run.image", "--image"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("error %q does not name %q", err, want)
+			// A user does not stand in for an image: the gate is about pi
+			// being on PATH inside the image, not about identity.
+			for _, cfg := range []config.Run{
+				{Sandbox: sandbox},
+				{Sandbox: sandbox, User: "501:20"},
+			} {
+				_, err := factory(cfg)
+				if err == nil {
+					t.Fatalf("build pi harness on %s (user %q) = nil error, want a missing-image error", sandbox, cfg.User)
+				}
+				for _, want := range []string{"pi", "run.image", "--image"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("error %q does not name %q", err, want)
+					}
 				}
 			}
 		}
@@ -597,5 +604,61 @@ func TestPrepareRunForwardsImageFlag(t *testing.T) {
 	}
 	if want := "ghcr.io/acme/pi:1"; got.Image != want {
 		t.Fatalf("harness factory got Image = %q, want %q", got.Image, want)
+	}
+}
+
+// TestRunHarnessesForwardConfiguredUser pins that a configured container
+// identity reaches every harness's spec, so an isolating backend runs the
+// workload as that uid:gid instead of whatever the image's own USER says.
+func TestRunHarnessesForwardConfiguredUser(t *testing.T) {
+	const user = "501:20"
+	for _, name := range []string{opencode.Name, opencode.NameV2, pi.Name} {
+		t.Run(name, func(t *testing.T) {
+			factory, err := runHarnesses().MustLookup(name)
+			if err != nil {
+				t.Fatalf("lookup %q: %v", name, err)
+			}
+			h, err := factory(config.Run{Sandbox: docker.Name, Image: "ghcr.io/acme/agent:1", User: user})
+			if err != nil {
+				t.Fatalf("build harness: %v", err)
+			}
+			spec, err := h.Spec(harness.Request{})
+			if err != nil {
+				t.Fatalf("Spec() error = %v", err)
+			}
+			if spec.Image.User != user {
+				t.Fatalf("Spec.Image.User = %q, want the configured %q", spec.Image.User, user)
+			}
+		})
+	}
+}
+
+// TestPrepareRunForwardsUserFlag pins that --user reaches the harness factory as
+// run.user, so one run can force a container identity without a config edit.
+func TestPrepareRunForwardsUserFlag(t *testing.T) {
+	var got config.Run
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, io.Discard, io.Discard, func(string) string { return "" })
+	if err := deps.RunBackends.Register("capture", func(cfg config.Run, _ io.Writer) (isolation.IsolationBackend, error) {
+		return isofake.New("capture"), nil
+	}); err != nil {
+		t.Fatalf("register backend: %v", err)
+	}
+	if err := deps.RunHarnesses.Register("fake", func(cfg config.Run) (harness.Harness, error) {
+		got = cfg
+		return harnessfake.New("fake"), nil
+	}); err != nil {
+		t.Fatalf("register harness: %v", err)
+	}
+
+	if _, err := deps.prepareRun(&cobra.Command{Use: "run"}, runOptions{
+		sandbox:   "capture",
+		harness:   "fake",
+		user:      "501:20",
+		workspace: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("prepareRun() error = %v", err)
+	}
+	if want := "501:20"; got.User != want {
+		t.Fatalf("harness factory got User = %q, want %q", got.User, want)
 	}
 }

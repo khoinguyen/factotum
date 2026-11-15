@@ -197,10 +197,11 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   is reached, work stalls, or `--max-tasks` is exhausted. Only tasks on a path to the goal run,
   ordered by the composite ranker with the goal as the toward preference, so readiness and priority
   decide the order. A task goal resolves on its own; a milestone is a human gate, so the loop stops
-  `no_ready_work` until a human closes it. Only groomed work assigned to an agent is run; startable
-  but non-agent-ready on-path work (unassigned, human-owned, or ungroomed) is left for a human and
-  named in `not_run:`. The stop reason is `stop:` (`goal_reached`, `no_ready_work`, `blocked`,
-  `budget_exhausted`, or `failed`), and each iteration prints a compact `step:` block.
+  `no_ready_work` until a human closes it. Only groomed work assigned to an agent is run — the
+  bucket `ft task next --for <agent>` offers; startable but non-agent-ready on-path work
+  (unassigned, human-owned, or ungroomed) is left for a human and named in `not_run:`. The stop
+  reason is `stop:` (`goal_reached`, `no_ready_work`, `blocked`, `budget_exhausted`, or `failed`),
+  and each iteration prints a compact `step:` block.
 - `--prompt-file`/`--prompt-artifact` supply a stored prompt: with a task it replaces the task
   prompt, and with no task id it runs the prompt once over every repository and writes nothing to
   the graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error

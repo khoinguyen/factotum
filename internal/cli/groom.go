@@ -692,17 +692,28 @@ func deferredIDs(body string) map[core.TicketID]bool {
 }
 
 // openDeferredQuestions drops the parts of a deferred-questions file that defer
-// nothing: fenced code blocks, HTML comments, and the Resolved section.
+// nothing: fenced code blocks (backtick or tilde fences; an indented code block
+// is not recognized), HTML comments, and the Resolved section.
 func openDeferredQuestions(body string) string {
 	var b strings.Builder
-	inFence, inResolved := false, false
+	fence, inResolved := "", false
 	for _, line := range strings.Split(htmlCommentPattern.ReplaceAllString(body, ""), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			inFence = !inFence
+		if fence != "" {
+			if strings.HasPrefix(trimmed, fence) {
+				fence = ""
+			}
 			continue
 		}
-		if inFence || inResolved {
+		if strings.HasPrefix(trimmed, "```") {
+			fence = "```"
+			continue
+		}
+		if strings.HasPrefix(trimmed, "~~~") {
+			fence = "~~~"
+			continue
+		}
+		if inResolved {
 			continue
 		}
 		if title, ok := strings.CutPrefix(trimmed, "## "); ok {

@@ -435,7 +435,20 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 }
 
 func newTaskDepCommand(deps *Deps) *cobra.Command {
-	cmd := &cobra.Command{Use: "dep", Short: "Manage task dependencies"}
+	cmd := &cobra.Command{
+		Use:   "dep",
+		Short: "Manage task dependencies",
+		// Without a Run, cobra treats `ft task dep <task> <dep>` as a group
+		// invocation and prints help with exit 0, so a caller believes the
+		// dependency was recorded. The RunE exists to reject that shorthand with
+		// a usage error; `-h` still prints help and exits 0.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return usageError(cmd, "expected a subcommand: create <task> <depends-on> or delete <task> <depends-on>")
+			}
+			return usageError(cmd, "unknown subcommand %q: expected create <task> <depends-on> or delete <task> <depends-on>", args[0])
+		},
+	}
 	add := &cobra.Command{
 		Use:   "create <task> <depends-on>",
 		Short: "Create a dependency (rejects cycles)",

@@ -309,7 +309,10 @@ the checkout's config would resolve (for example your real `~/.factotum` databas
 comma. A run with an actor also exports the receiver identity (`FACTOTUM_ACTOR`,
 `FACTOTUM_TASK_ID`), and every run exports `FACTOTUM_HARNESS`, the harness it drives,
 so a registered run reports `opencode2` for a V2 run rather than the receiver's
-`opencode` default.
+`opencode` default. A run whose named actor resolves to no record and no loop role
+registers no receiver, so it warns and names `ft actor create <name>` instead of
+launching a session nobody can reach over `ft msg`; a loop role needs no record and
+still registers.
 
 ```sh
 ft run t-abc123 --sandbox local --harness opencode2 --allow-host   # dev-only opt-in

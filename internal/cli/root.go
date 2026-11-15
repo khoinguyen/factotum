@@ -283,10 +283,12 @@ func (d *Deps) bindActor(ctx context.Context) {
 		d.ActorRef = string(actor.ID)
 	case !errors.Is(err, core.ErrNotFound):
 		d.warnf("could not resolve %s %q (%v); this invocation is unattributed", source, d.ActorRef, err)
+		d.ActorDropped = d.ActorRef
 		d.ActorRef = ""
 	default:
 		if _, ok := role(d.ActorRef); !ok {
 			d.warnf("%s %q is not a registered actor; this invocation is unattributed", source, d.ActorRef)
+			d.ActorDropped = d.ActorRef
 			d.ActorRef = ""
 		}
 	}

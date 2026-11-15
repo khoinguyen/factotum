@@ -15,14 +15,18 @@ trap 'rm -rf "$tmp"' EXIT
 # Hermetic: a real loop agent's env carries FACTOTUM_HARNESS and, as the very
 # bug this tests, may set OPENCODE_BIN to a --standalone wrapper. Either would
 # mask a regression, so clear them; the script must supply both itself. FT_BIN
-# and the FACTOTUM_* identity vars are cleared for the same reason.
+# and the FACTOTUM_* identity vars are cleared for the same reason, as is the
+# guard's bypass so a matching test can set it deliberately.
 unset FT_BIN OPENCODE_BIN FACTOTUM_HARNESS FACTOTUM_SESSION \
-  FACTOTUM_PROJECT FACTOTUM_ACTOR FACTOTUM_TASK_ID FACTOTUM_DEFAULT_ACTOR
+  FACTOTUM_PROJECT FACTOTUM_ACTOR FACTOTUM_TASK_ID FACTOTUM_DEFAULT_ACTOR \
+  FT_LOOP_AGENT_ALLOW_BUSY_DIR
 
 export FT_STUB_LOG="$tmp/ft.log"
 export OPENCODE_STUB_LOG="$tmp/opencode.log"
+export OPENCODE_PROBE_LOG="$tmp/opencode-probe.log"
 : >"$FT_STUB_LOG"
 : >"$OPENCODE_STUB_LOG"
+: >"$OPENCODE_PROBE_LOG"
 
 mkdir -p "$tmp/bin" "$tmp/worktree"
 cat >"$tmp/bin/ft" <<'STUB'
@@ -33,8 +37,24 @@ if [ "${1:-}" = "session" ] && [ "${2:-}" = "start" ]; then
 fi
 exit 0
 STUB
+# The opencode stub answers the two probes the directory guard makes
+# (`service status`, and `api --server <url> debug.location.list`) from
+# $SERVICE_STATUS_FILE / $LOCATIONS_FILE, and logs them to a separate probe log
+# so a test can assert a refused launch never reached the TUI launch path.
 cat >"$tmp/bin/opencode" <<'STUB'
 #!/usr/bin/env bash
+case "${1:-}" in
+  service)
+    printf '%s\n' "$*" >>"$OPENCODE_PROBE_LOG"
+    if [ -n "${SERVICE_STATUS_FILE:-}" ]; then cat "$SERVICE_STATUS_FILE"; fi
+    exit 0
+    ;;
+  api)
+    printf '%s\n' "$*" >>"$OPENCODE_PROBE_LOG"
+    if [ -n "${LOCATIONS_FILE:-}" ]; then cat "$LOCATIONS_FILE"; fi
+    exit "${API_EXIT:-0}"
+    ;;
+esac
 {
   printf 'cwd=%s\n' "$PWD"
   printf 'project=%s actor=%s task=%s default=%s session=%s harness=%s\n' \
@@ -101,6 +121,96 @@ if "$script" builder-t-1 factotum t-1 "$tmp/nope" "x" >/dev/null 2>&1; then
 elif [ -s "$OPENCODE_STUB_LOG" ]; then
   echo "FAIL bad worktree launched the agent"; fail=$((fail+1));
 else pass=$((pass+1)); fi
+
+# --- Directory guard --------------------------------------------------------
+# Launching OpenCode in a directory that already hosts a running instance
+# attaches the new TUI as a tab of that instance and inherits *that* instance's
+# env: the new role's FACTOTUM_* never reach the receiver, so the agent is
+# silently unreachable. The guard asks the shared service which directories it
+# owns and refuses the launch instead. Every probe is best-effort: when the
+# service is absent or answers badly the launch must go ahead (a false refusal
+# breaks the whole loop).
+
+target="$(cd "$tmp/worktree" && pwd -P)"
+ln -s "$tmp/worktree" "$tmp/link"
+printf 'stopped\n' >"$tmp/status-stopped"
+printf 'http://127.0.0.1:49374\n' >"$tmp/status-live"
+printf '[{"directory":"%s"}]\n' "$target" >"$tmp/loc-self"
+printf '[{"directory":"%s"},{"directory":"/somewhere/else"}]' "$tmp" >"$tmp/loc-other"
+printf '[{"directory":"%s"}]\n' "$tmp/link" >"$tmp/loc-symlinked"
+printf 'not json at all\n' >"$tmp/loc-garbage"
+printf 'Error: could not reach server\n' >"$tmp/status-broken"
+
+# run_guard <status-file> <locations-file> [NAME=VALUE...]
+# Runs the script in the worktree and leaves rc / out / logs for the assertions.
+run_guard() {
+  local status="$1" locations="$2"; shift 2
+  : >"$FT_STUB_LOG"; : >"$OPENCODE_STUB_LOG"; : >"$OPENCODE_PROBE_LOG"
+  set +e
+  out="$(SERVICE_STATUS_FILE="$status" LOCATIONS_FILE="$locations" env "$@" \
+    "$script" builder-t-9 factotum t-9 "$tmp/worktree" "you are builder-t-9" 2>&1)"
+  rc=$?
+  set -e
+}
+
+# No instance: the service is not running, so there is nothing to attach to and
+# the launch proceeds without even asking for locations.
+run_guard "$tmp/status-stopped" "$tmp/loc-self"
+if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
+  echo "FAIL guard: stopped service should launch (rc=$rc): $out"; fail=$((fail+1)); fi
+if grep -q "debug.location.list" "$OPENCODE_PROBE_LOG"; then
+  echo "FAIL guard: should not list locations when the service is stopped: $(cat "$OPENCODE_PROBE_LOG")"; fail=$((fail+1));
+else pass=$((pass+1)); fi
+
+# A live service that owns *other* directories is the normal loop case: launch,
+# and keep staging the receiver first.
+run_guard "$tmp/status-live" "$tmp/loc-other"
+if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
+  echo "FAIL guard: another directory's instance must not block the launch (rc=$rc): $out"; fail=$((fail+1)); fi
+if grep -q "msg install --harness opencode2" "$FT_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL guard: receiver not staged before launch: $(cat "$FT_STUB_LOG")"; fail=$((fail+1)); fi
+# The probe only runs once the service reports itself up (a bare `opencode api`
+# would otherwise start a background service of its own).
+if grep -q "api debug.location.list" "$OPENCODE_PROBE_LOG"; then pass=$((pass+1)); else
+  echo "FAIL guard: probe should list the service's locations: $(cat "$OPENCODE_PROBE_LOG")"; fail=$((fail+1)); fi
+
+# The bug itself: the target directory already hosts an instance. Refuse loudly,
+# name the directory, and leave no side effects (no receiver install, no TUI).
+run_guard "$tmp/status-live" "$tmp/loc-self"
+if [ "$rc" -ne 0 ]; then pass=$((pass+1)); else
+  echo "FAIL guard: should refuse a directory that already hosts an instance: $out"; fail=$((fail+1)); fi
+if [ -s "$OPENCODE_STUB_LOG" ]; then
+  echo "FAIL guard: refused launch still started a TUI: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1));
+else pass=$((pass+1)); fi
+if grep -q "msg install" "$FT_STUB_LOG"; then
+  echo "FAIL guard: refusal should happen before staging the receiver: $(cat "$FT_STUB_LOG")"; fail=$((fail+1));
+else pass=$((pass+1)); fi
+if printf '%s' "$out" | grep -q "already hosts" && printf '%s' "$out" | grep -q -- "$target"; then pass=$((pass+1)); else
+  echo "FAIL guard: refusal should name the directory and the reason: $out"; fail=$((fail+1)); fi
+
+# A directory recorded under a different spelling (a symlinked worktree) is the
+# same location: compare canonical paths, or the guard is trivially bypassed.
+run_guard "$tmp/status-live" "$tmp/loc-symlinked"
+if [ "$rc" -ne 0 ] && [ ! -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
+  echo "FAIL guard: symlinked location should still refuse (rc=$rc): $out"; fail=$((fail+1)); fi
+
+# The escape hatch: a known-harmless attach must not block the loop.
+run_guard "$tmp/status-live" "$tmp/loc-self" FT_LOOP_AGENT_ALLOW_BUSY_DIR=1
+if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
+  echo "FAIL guard: FT_LOOP_AGENT_ALLOW_BUSY_DIR=1 should launch (rc=$rc): $out"; fail=$((fail+1)); fi
+
+# Fail open. A service that misreports itself, an API that errors, and an
+# unparseable answer must all leave the launch untouched rather than wedge the
+# loop on a probe.
+for probe in broken-service failing-api garbled-answer; do
+  case "$probe" in
+    broken-service) run_guard "$tmp/status-broken" "$tmp/loc-self" ;;
+    failing-api) run_guard "$tmp/status-live" "$tmp/loc-self" API_EXIT=2 ;;
+    garbled-answer) run_guard "$tmp/status-live" "$tmp/loc-garbage" ;;
+  esac
+  if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ]; then pass=$((pass+1)); else
+    echo "FAIL guard/$probe: probe trouble must not block the launch (rc=$rc): $out"; fail=$((fail+1)); fi
+done
 
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

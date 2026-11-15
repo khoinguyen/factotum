@@ -53,7 +53,10 @@ func Acquire(path string, exclusive bool) (func(), error) {
 // store another uid wrote (a container hub) or a read-only checkout still
 // serves reads. A nil file means this read runs unlocked (see Acquire).
 func openLockFile(path string, exclusive bool) (*os.File, error) {
-	lockPath := path + ".lock"
+	// Clean first: the lock's identity is its path, so one store spelled with
+	// and without a trailing separator must name the same sibling file rather
+	// than locking "store/.lock" and "store.lock" separately.
+	lockPath := filepath.Clean(path) + ".lock"
 	if exclusive {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, fmt.Errorf("create state dir: %w", err)

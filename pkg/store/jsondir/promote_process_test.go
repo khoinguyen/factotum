@@ -25,7 +25,9 @@ func TestMain(m *testing.M) {
 }
 
 // TestPromotionAcrossProcessesKeepsEveryTask promotes a different capture from
-// each of 20 processes at once and requires every promoted task to survive.
+// each of 20 processes at once. Only AgreesOnOneTask is jsondir's signal for
+// this fix: a per-file store already keeps distinct promotions, so this one
+// guards against regression rather than proving the guard.
 func TestPromotionAcrossProcessesKeepsEveryTask(t *testing.T) {
 	promotetest.DistinctCaptures(t, openPromotionStore, t.TempDir())
 }
@@ -40,7 +42,9 @@ func TestPromotionAcrossProcessesAgreesOnOneTask(t *testing.T) {
 
 // TestPromotionAcrossProcessesKeepsAnotherWritersWrite writes a message from
 // another process while the promotion handles have loaded their snapshots; the
-// promotion writes only its own task file, so the message must survive.
+// promotion writes only its own task file, so the message must survive. Like
+// KeepsEveryTask this guards jsondir against regression rather than proving the
+// cross-process guard.
 func TestPromotionAcrossProcessesKeepsAnotherWritersWrite(t *testing.T) {
 	promotetest.KeepsAnotherWritersWrite(t, openPromotionStore, t.TempDir())
 }

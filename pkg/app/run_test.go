@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
@@ -434,4 +435,135 @@ func TestRunThroughRealLocalBackend(t *testing.T) {
 	if stored.Status != core.StatusReadyForReview {
 		t.Fatalf("status = %q, want ready_for_review", stored.Status)
 	}
+}
+
+// TestRunReportsHarnessStderrOnFailure proves a failed harness's own message
+// survives the run: the outcome carries it and the failure note records it, so
+// the reason is visible without re-running the harness by hand.
+func TestRunReportsHarnessStderrOnFailure(t *testing.T) {
+	f := newRunFixture(t)
+	f.backend.Program(isolation.ExecResult{
+		Stderr:   []byte("No API key found for opencode-go. Use /login\n"),
+		ExitCode: 1,
+	})
+
+	outcome, err := f.run(t, RunInput{})
+	if !errors.Is(err, ErrRunFailed) {
+		t.Fatalf("Run() error = %v, want ErrRunFailed", err)
+	}
+	if outcome == nil {
+		t.Fatal("outcome = nil, want the failed run's outcome")
+	}
+	if outcome.ExitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", outcome.ExitCode)
+	}
+	if outcome.Complete {
+		t.Fatal("Complete = true, want false for a failed run")
+	}
+	if !strings.Contains(outcome.Stderr, "No API key found for opencode-go") {
+		t.Fatalf("outcome.Stderr = %q, want the harness's error stream", outcome.Stderr)
+	}
+
+	stored, err := f.tasks.Get(context.Background(), f.task.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	note := stored.Notes[len(stored.Notes)-1].Body
+	if !strings.Contains(note, "failed") || !strings.Contains(note, "No API key found for opencode-go") {
+		t.Fatalf("failure note = %q, want it to record the harness stderr", note)
+	}
+}
+
+// TestRunReportsHarnessStderrOnSuccess proves a successful harness's stderr is
+// not dropped either: a warning an agent writes there is part of what it said.
+func TestRunReportsHarnessStderrOnSuccess(t *testing.T) {
+	f := newRunFixture(t)
+	f.backend.Program(isolation.ExecResult{
+		Stdout:   []byte("done\n"),
+		Stderr:   []byte("warning: deprecated model alias\n"),
+		ExitCode: 0,
+	})
+
+	outcome, err := f.run(t, RunInput{})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(outcome.Stderr, "warning: deprecated model alias") {
+		t.Fatalf("outcome.Stderr = %q, want the harness's stderr", outcome.Stderr)
+	}
+}
+
+// TestRunKeepsOnlyStderrTail proves a chatty harness cannot flood the outcome or
+// the note: the service keeps the final bytes, where a failing agent's diagnosis
+// sits, behind a truncation marker.
+func TestRunKeepsOnlyStderrTail(t *testing.T) {
+	f := newRunFixture(t)
+	stderr := "HEAD-ONLY\n" + strings.Repeat("chatter line\n", 2048) + "fatal: no key\n"
+	f.backend.Program(isolation.ExecResult{Stderr: []byte(stderr), ExitCode: 1})
+
+	outcome, err := f.run(t, RunInput{})
+	if !errors.Is(err, ErrRunFailed) {
+		t.Fatalf("Run() error = %v, want ErrRunFailed", err)
+	}
+	if !strings.Contains(outcome.Stderr, "fatal: no key") {
+		t.Fatalf("outcome.Stderr lost the tail: %q", outcome.Stderr)
+	}
+	if strings.Contains(outcome.Stderr, "HEAD-ONLY") {
+		t.Fatalf("outcome.Stderr kept the head of a long stream, want the tail: %q", outcome.Stderr)
+	}
+	if !strings.HasPrefix(outcome.Stderr, "... [truncated]") {
+		t.Fatalf("outcome.Stderr = %q, want a truncation marker", outcome.Stderr)
+	}
+	if len(outcome.Stderr) > 4096+len("\n... [truncated]") {
+		t.Fatalf("outcome.Stderr length = %d, want it bounded", len(outcome.Stderr))
+	}
+}
+
+// TestRunThroughRealLocalBackendReportsStderr proves the capture is wired
+// through a real subprocess: a harness that writes a real error to stderr and
+// exits non-zero reports the message, not just the exit code.
+func TestRunThroughRealLocalBackendReportsStderr(t *testing.T) {
+	f := newRunFixture(t)
+	backend := local.New(local.Options{AllowHost: true, Warn: io.Discard})
+
+	outcome, err := f.run(t, RunInput{
+		Backend: backend,
+		Harness: shellHarness{script: "printf 'No API key found for opencode-go\\n' >&2; exit 1"},
+	})
+	if !errors.Is(err, ErrRunFailed) {
+		t.Fatalf("Run() error = %v, want ErrRunFailed", err)
+	}
+	if outcome.ExitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", outcome.ExitCode)
+	}
+	if !strings.Contains(outcome.Stderr, "No API key found for opencode-go") {
+		t.Fatalf("outcome.Stderr = %q, want the subprocess's error stream", outcome.Stderr)
+	}
+}
+
+// TestStderrTail pins the stderr bound: a short stream is kept (trimmed), a long
+// one keeps its final bytes behind a marker, and the cut never splits a
+// multibyte character.
+func TestStderrTail(t *testing.T) {
+	t.Run("short is kept and trimmed", func(t *testing.T) {
+		if got := stderrTail("  no key  \n"); got != "no key" {
+			t.Fatalf("stderrTail() = %q, want the trimmed message", got)
+		}
+	})
+	t.Run("long keeps the tail", func(t *testing.T) {
+		got := stderrTail("HEAD\n" + strings.Repeat("x", defaultRunErrorLimit) + "\nfatal: no key")
+		if !strings.HasPrefix(got, "... [truncated]") {
+			t.Fatalf("stderrTail() = %q, want a truncation marker", got)
+		}
+		if !strings.HasSuffix(got, "fatal: no key") {
+			t.Fatalf("stderrTail() = %q, want the final bytes", got)
+		}
+	})
+	t.Run("multibyte cut stays valid", func(t *testing.T) {
+		// Three-byte runes make a naive byte cut land inside a character.
+		in := strings.Repeat("x", 1000) + strings.Repeat("€", 2000) + "\nfatal: no key"
+		if got := stderrTail(in); !utf8.ValidString(got) {
+			t.Fatalf("stderrTail() cut a rune in half: %q", got)
+		}
+	})
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
@@ -20,6 +21,13 @@ var ErrRunFailed = errors.New("run: harness failed")
 // defaultRunOutputLimit bounds the agent output stored in a run note, so a
 // chatty agent cannot bloat the store.
 const defaultRunOutputLimit = 8192
+
+// defaultRunErrorLimit bounds the harness's stderr kept on an outcome, in a run
+// note, and in structured output.
+const defaultRunErrorLimit = 4096
+
+// tailTruncationMarker prefixes a stderr tail cut at defaultRunErrorLimit.
+const tailTruncationMarker = "... [truncated]\n"
 
 // RunService orchestrates one task end-to-end: it resolves the task's
 // workspace, prepares the selected isolation backend, runs the selected harness,
@@ -94,6 +102,9 @@ type RunOutcome struct {
 	TicketID core.TicketID
 	Status   core.TicketStatus
 	Output   string
+	// Stderr is the harness's error stream (its tail, bounded by
+	// defaultRunErrorLimit) so a failure reports why, not just the exit code.
+	Stderr   string
 	ExitCode int
 	// Complete reports whether the run finished successfully, which for a
 	// harness is a zero exit code. It is true exactly when the run does not
@@ -165,13 +176,14 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		TicketID:  task.ID,
 		Status:    task.Status,
 		Output:    res.output,
+		Stderr:    res.stderr,
 		ExitCode:  res.exitCode,
 		Complete:  res.exitCode == 0,
 		Workspace: plan.Root,
 	}
 
 	if res.exitCode != 0 {
-		if err := s.recordRunNote(ctx, task, in, runReport("failed", res.exitCode, res.output, in.OutputLimit)); err != nil {
+		if err := s.recordRunNote(ctx, task, in, runReport("failed", res.exitCode, res.output, res.stderr, in.OutputLimit)); err != nil {
 			return outcome, err
 		}
 		if err := s.finishRunEvent(ctx, task, res.exitCode, false); err != nil {
@@ -185,7 +197,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		return outcome, err
 	}
 	outcome.Status = updated.Status
-	if err := s.recordRunNote(ctx, task, in, runReport("finished", res.exitCode, res.output, in.OutputLimit)); err != nil {
+	if err := s.recordRunNote(ctx, task, in, runReport("finished", res.exitCode, res.output, res.stderr, in.OutputLimit)); err != nil {
 		return outcome, err
 	}
 	if err := s.finishRunEvent(ctx, task, res.exitCode, true); err != nil {
@@ -256,7 +268,10 @@ type ProjectRunInput struct {
 type ProjectRunOutcome struct {
 	ProjectID core.ProjectID
 	Output    string
-	ExitCode  int
+	// Stderr is the harness's error stream (its tail, bounded by
+	// defaultRunErrorLimit), so a failed prompt run reports why.
+	Stderr   string
+	ExitCode int
 	// Complete reports whether the run finished successfully, which for a
 	// harness is a zero exit code.
 	Complete  bool
@@ -323,6 +338,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 	outcome := &ProjectRunOutcome{
 		ProjectID: project.ID,
 		Output:    res.output,
+		Stderr:    res.stderr,
 		ExitCode:  res.exitCode,
 		Complete:  res.exitCode == 0,
 		Workspace: plan.Root,
@@ -364,6 +380,9 @@ type harnessRun struct {
 type harnessResult struct {
 	exitCode int
 	output   string
+	// stderr is the harness's error stream, tail-bounded by stderrTail, so a
+	// caller reports the failure reason rather than just the exit code.
+	stderr string
 	// captured holds the requested capture paths' contents, keyed by the path as
 	// requested. Nil when the run requested no capture.
 	captured map[string][]byte
@@ -422,7 +441,7 @@ func (s *RunService) runHarness(ctx context.Context, r harnessRun) (harnessResul
 	if err != nil {
 		return harnessResult{}, err
 	}
-	return harnessResult{exitCode: result.ExitCode, output: parsed.Output, captured: captured}, nil
+	return harnessResult{exitCode: result.ExitCode, output: parsed.Output, stderr: stderrTail(string(result.Stderr)), captured: captured}, nil
 }
 
 // captureFiles reads the requested workspace-relative paths out of the
@@ -580,17 +599,38 @@ func (s *RunService) finishRunEvent(ctx context.Context, task *core.Ticket, exit
 		map[string]any{"exit_code": exitCode, "completed": completed})
 }
 
-func runReport(state string, exitCode int, output string, limit int) string {
+func runReport(state string, exitCode int, output, stderr string, limit int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "ft run %s (exit %d)", state, exitCode)
 	if output = strings.TrimSpace(output); output != "" {
 		b.WriteString("\n\n")
 		b.WriteString(truncateOutput(output, limit))
 	}
+	if stderr = strings.TrimSpace(stderr); stderr != "" {
+		b.WriteString("\n\nstderr:\n")
+		b.WriteString(stderr)
+	}
 	return b.String()
 }
 
 const truncationMarker = "\n... [truncated]"
+
+// stderrTail keeps a harness's stderr bounded to its final bytes: a failing
+// agent prints its diagnosis last, so the tail carries the reason without the
+// store or structured output carrying the whole stream. Surrounding whitespace
+// is trimmed so a caller can print it as a block, and the cut starts on a rune
+// boundary so a multibyte character is never split.
+func stderrTail(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= defaultRunErrorLimit {
+		return s
+	}
+	start := len(s) - defaultRunErrorLimit
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return tailTruncationMarker + s[start:]
+}
 
 func truncateOutput(s string, limit int) string {
 	if limit <= 0 {

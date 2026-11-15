@@ -670,3 +670,37 @@ func TestRunLoopReportsUngroomedTaskAfterAgentWork(t *testing.T) {
 		t.Fatalf("NotRun = %v, want [%s]", outcome.NotRun, ungroomed.ID)
 	}
 }
+
+// TestRunLoopStepCarriesHarnessStderr proves a failed step keeps the harness's
+// stderr, so the loop's per-step report says why the task failed instead of only
+// its exit code.
+func TestRunLoopStepCarriesHarnessStderr(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	first := addLoopTask(t, h, project, "first", 0)
+	goal := addLoopTask(t, h, project, "goal", 0)
+	mustDep(t, h, goal, first)
+
+	runner := &loopStderrRunner{tasks: h.tasks, stderr: "No API key found for opencode-go"}
+	outcome, err := newLoopService(t, h).Run(ctx, LoopInput{GoalID: goal.ID, Runner: runner.run})
+	if !errors.Is(err, ErrRunFailed) {
+		t.Fatalf("Run() error = %v, want ErrRunFailed", err)
+	}
+	if len(outcome.Steps) != 1 {
+		t.Fatalf("steps = %d, want 1", len(outcome.Steps))
+	}
+	if got := outcome.Steps[0].Stderr; got != "No API key found for opencode-go" {
+		t.Fatalf("step stderr = %q, want the harness's error stream", got)
+	}
+}
+
+// loopStderrRunner is a failing loop runner that reports a harness error stream.
+type loopStderrRunner struct {
+	tasks  *TicketService
+	stderr string
+}
+
+func (f *loopStderrRunner) run(_ context.Context, id core.TicketID) (*RunOutcome, error) {
+	return &RunOutcome{TicketID: id, ExitCode: 1, Stderr: f.stderr}, ErrRunFailed
+}

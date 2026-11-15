@@ -180,7 +180,7 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 	inbox.Flags().StringArrayVar(&inboxStates, "state", nil, "filter by state (queued, delivered, read, failed; repeatable)")
 	inbox.Flags().StringVar(&inboxAddress, "address", "", "exact stored address to match")
 	inbox.Flags().StringVar(&inboxActor, "for", "", "exact actor:<id> address to match (id or actor:<id>)")
-	inbox.Flags().StringVar(&inboxRun, "run", "", "exact run:<id> address to match (id or run:<id>)")
+	inbox.Flags().StringVar(&inboxRun, "run", "", "exact run id (matched as run:<id>)")
 	inbox.Flags().IntVar(&inboxLimit, "limit", 0, "maximum number of messages")
 
 	get := &cobra.Command{
@@ -531,7 +531,7 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 	}
 	claim.Flags().StringVar(&claimRun, "run", "", "run id (required)")
 	claim.Flags().StringVar(&claimActor, "actor", "", "the run's actor (id or actor:<id>)")
-	claim.Flags().StringVar(&claimTask, "task", "", "the run's task address")
+	claim.Flags().StringVar(&claimTask, "task", "", "the run's task id (matched as task:<id>)")
 	claim.Flags().DurationVar(&claimWait, "wait", 0, "long-poll window (default none)")
 	claim.Flags().DurationVar(&claimLease, "lease", 0, "delivered lease (default 30s)")
 

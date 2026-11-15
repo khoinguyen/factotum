@@ -9,19 +9,32 @@
 # Usage: ./probe.sh 2>&1 | tee transcript.txt
 set -uo pipefail
 
-OWNER="$(gh api user --jq .login)"
-REPO="ft-spike-probe-$(date +%s)"
-PUB="ft-spike-wiki-$(date +%s)"
-TOK="$(gh auth token)"
-API="repos/$OWNER/$REPO"
-PUBAPI="repos/$OWNER/$PUB"
+# probe_clone_base makes the per-run directory that holds the throwaway wiki
+# checkout, so two concurrent probes do not share one path.
+probe_clone_base() {
+  mktemp -d "${TMPDIR:-/tmp}/ft-spike-wiki-clone.XXXXXX"
+}
 
+# cleanup deletes the throwaway repos and the per-run checkout.
 cleanup() {
   echo
   echo "== cleanup =="
   gh repo delete "$OWNER/$REPO" --yes >/dev/null 2>&1 && echo "deleted $OWNER/$REPO"
   gh repo delete "$OWNER/$PUB" --yes >/dev/null 2>&1 && echo "deleted $OWNER/$PUB"
+  rm -rf "$CLONE_DIR"
 }
+
+# Sourced by scripts/probe-clone_test.sh to exercise the helpers above; stop here.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
+
+OWNER="$(gh api user --jq .login)"
+REPO="ft-spike-probe-$(date +%s)"
+PUB="ft-spike-wiki-$(date +%s)"
+CLONE_DIR="$(probe_clone_base)"
+TOK="$(gh auth token)"
+API="repos/$OWNER/$REPO"
+PUBAPI="repos/$OWNER/$PUB"
+
 trap cleanup EXIT
 
 echo "== setup: $OWNER/$REPO (private, issues on, wiki toggle) =="
@@ -95,7 +108,7 @@ echo "  private repo has_wiki after enabling: $(gh api -X PATCH "$API" -f has_wi
 gh repo create "$OWNER/$PUB" --public --enable-wiki -y >/dev/null 2>&1
 echo "  public repo has_wiki: $(gh api "$PUBAPI" --jq .has_wiki)"
 curl -s -o /dev/null -w "  REST /wiki -> HTTP %{http_code} (no wiki API)\n" -H "Authorization: Bearer $TOK" "https://api.github.com/$PUBAPI/wiki"
-git clone "https://x-access-token:$TOK@github.com/$OWNER/$PUB.wiki.git" /tmp/ft-spike-wiki-clone >/dev/null 2>&1 \
+git clone "https://x-access-token:$TOK@github.com/$OWNER/$PUB.wiki.git" "$CLONE_DIR/wiki" >/dev/null 2>&1 \
   && echo "  empty .wiki.git clone: ok" \
   || echo "  empty .wiki.git clone: FAILED (first page must be created in the web UI first)"
 

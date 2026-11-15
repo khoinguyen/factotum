@@ -154,10 +154,11 @@ func TestChiefSkillAnchorsQADispatchToCwd(t *testing.T) {
 // TestChiefSkillRequiresAnOwnDirectoryPerAgent guards the launch-directory rule
 // (t-ezt7hvgtkx): OpenCode attaches a TUI started in a directory that already
 // hosts one as a tab of that instance, inheriting its env, so the new role's
-// FACTOTUM_* never reach the receiver and the agent is silently unreachable.
-// The skill must send every agent — and the chief — to its own directory, and
-// must document that loop-agent.sh refuses a hosted directory instead of
-// launching an unreachable agent.
+// FACTOTUM_* never reach the receiver and a plain launch there is silently
+// unreachable. The skill must send every agent — and the chief — to its own
+// directory, and must say that loop-agent.sh reports such a directory without
+// blocking the launch (a --standalone launch keeps its own env; refusing would
+// strand a working agent).
 func TestChiefSkillRequiresAnOwnDirectoryPerAgent(t *testing.T) {
 	body := strings.Join(strings.Fields(agentSkill(t, ".agents/skills/chief/SKILL.md")), " ")
 	required := []struct {
@@ -167,7 +168,7 @@ func TestChiefSkillRequiresAnOwnDirectoryPerAgent(t *testing.T) {
 		{"give the chief its own directory", "the chief keeps its own directory"},
 		{"state that a launch in a hosted directory attaches as a tab", "attaches to the running one as a tab"},
 		{"name the inherited env as the failure", "inherits *that* instance's env"},
-		{"document that the wrapper refuses such a launch", "refuses such a launch"},
+		{"say the wrapper notes, and does not block, a hosted directory", "prints a note when the directory is"},
 	}
 	for _, req := range required {
 		if !strings.Contains(body, req.text) {

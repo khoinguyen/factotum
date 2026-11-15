@@ -675,14 +675,44 @@ func unattendedUnresolved(ctx context.Context, tasks *app.TicketService, actors 
 // excuse the shorter one, which a bare substring search did.
 var deferredIDPattern = regexp.MustCompile(`\bt-[a-z0-9]+\b`)
 
-// deferredIDs parses the ids named in a deferred-questions file. "Named" means a
-// whole token: the template's `- item: <id>` field, or an id inline in prose.
+// htmlCommentPattern matches an HTML comment, including one left unclosed: a
+// commented-out id never defers anything.
+var htmlCommentPattern = regexp.MustCompile(`(?s)<!--.*?(?:-->|$)`)
+
+// deferredIDs parses the ids named as open deferred questions: a whole token,
+// outside a fenced code block, an HTML comment, or the Resolved section. An id
+// merely quoted in a sample command, or one whose question was already answered,
+// does not defer that item.
 func deferredIDs(body string) map[core.TicketID]bool {
 	ids := make(map[core.TicketID]bool)
-	for _, token := range deferredIDPattern.FindAllString(body, -1) {
+	for _, token := range deferredIDPattern.FindAllString(openDeferredQuestions(body), -1) {
 		ids[core.TicketID(token)] = true
 	}
 	return ids
+}
+
+// openDeferredQuestions drops the parts of a deferred-questions file that defer
+// nothing: fenced code blocks, HTML comments, and the Resolved section.
+func openDeferredQuestions(body string) string {
+	var b strings.Builder
+	inFence, inResolved := false, false
+	for _, line := range strings.Split(htmlCommentPattern.ReplaceAllString(body, ""), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence || inResolved {
+			continue
+		}
+		if title, ok := strings.CutPrefix(trimmed, "## "); ok {
+			inResolved = strings.EqualFold(strings.TrimSpace(title), "Resolved")
+			continue
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // producedHandled reports whether a task the session produced is admissible: an

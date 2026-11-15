@@ -406,6 +406,10 @@ func TestKickoffUnattendedMode(t *testing.T) {
 				"groomed",
 				"assigned",
 				"timing guard",
+				// A produced task has no deferred escape: the kickoff must say
+				// so, since the completion guard refuses one (PR #328 review).
+				"produced task",
+				"does not excuse",
 			},
 		},
 	}

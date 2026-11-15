@@ -742,9 +742,30 @@ func TestDeferredIDsWholeTokenMatch(t *testing.T) {
 			want: []core.TicketID{"t-aaa111", "t-bbb222"},
 		},
 		{
-			name: "an empty body",
-			body: "",
-			want: nil,
+			name:    "an id in a fenced code block does not count",
+			body:    "## Questions\n\n```sh\nft task get t-abc123\n```\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "an id in an HTML comment does not count",
+			body:    "## Questions\n\n<!-- see t-abc123 -->\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "an id under Resolved does not count",
+			body:    "## Questions\n\n## Resolved\n\n- [x] Dropped - item: t-abc123 - resolved as duplicate\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "an id under Questions counts with a Resolved section after it",
+			body:    "## Questions\n\n- [ ] Which cache?\n  - item: t-abc123\n\n## Resolved\n\n- [x] Old - item: t-def456\n",
+			want:    []core.TicketID{"t-abc123"},
+			notWant: []core.TicketID{"t-def456"},
+		},
+		{
+			name:    "an empty body",
+			body:    "",
+			notWant: []core.TicketID{"t-abc123"},
 		},
 	}
 	for _, tt := range tests {

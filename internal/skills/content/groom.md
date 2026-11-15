@@ -117,9 +117,11 @@ deferred-questions file, record engineering calls as notes, and suspend the
 pre-answer timing guard so it still promotes, splits, and marks produced tasks
 groomed and assigned. After the run `ft groom` requires every scoped item to be
 agent-ready or named in the deferred-questions file, and every executable task
-the session produced to be agent-ready or resolved; work left neither fails the
-run. Use it for an automated loop; a human session omits the flag, runs
-attached on a terminal, and grills the PO as usual.
+the session produced to be agent-ready or resolved. The deferred file does not
+excuse a task the session created: capture human-only follow-up as an idea, or
+defer the scoped item it came from. Work left neither fails the run. Use it for
+an automated loop; a human session omits the flag, runs attached on a terminal,
+and grills the PO as usual.
 
 ## Who decides what
 
@@ -172,9 +174,11 @@ agent, so it lands in the agent bucket (`ft task next --for <agent>`). Promoting
 an idea creates a linked task that is groomed and assigned in the same step; it is
 idempotent (a re-run returns the same task) and a failed promote leaves the idea
 untouched.
-Work that is groomed but unassigned, or assigned but ungroomed, still counts as
-human-next. Genuinely human items (product decisions, human testing and review)
-stay human on purpose and are named in the report.
+Work that is groomed but unassigned, assigned but ungroomed, or assigned to a
+human still counts as human-next, so an unattended run fails when a task it
+produced is left that way or merely named in the deferred-questions file. A
+genuinely human item stays human on purpose: it is named in the report, and its
+follow-up is captured as an idea rather than created as a human-assigned task.
 
 ## Deterministic report
 
@@ -194,7 +198,8 @@ section set and ordering are fixed and asserted by a test.
 The deferred-questions file has two sections, in this order:
 
 1. `Questions` - one entry per deferred product question, with its item, options,
-   owner, and the date it was raised.
+   owner, and the date it was raised. Only ids here defer an item; an id quoted
+   in a sample, in an HTML comment, or under `Resolved` does not.
 2. `Resolved` - questions stakeholders have since answered.
 
 ## Feature documents

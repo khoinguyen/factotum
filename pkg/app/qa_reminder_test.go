@@ -31,7 +31,7 @@ func TestReminderFiresWhenLastTaskResolvesCaptureWithoutQA(t *testing.T) {
 	agent := newAgent(t, h, "claude")
 	idea := newIdea(t, h, project, "a feature")
 	first := promoteTask(t, h, idea, agent)
-	second := promoteTask(t, h, idea, agent)
+	second := splitTask(t, h, idea, agent)
 	ctx := chiefCtx()
 
 	if _, err := h.tasks.SetStatus(ctx, first.ID, core.StatusDone); err != nil {
@@ -65,7 +65,7 @@ func TestNoReminderWhenCaptureAlreadyPassedQA(t *testing.T) {
 	agent := newAgent(t, h, "claude")
 	idea := newIdea(t, h, project, "a feature")
 	first := promoteTask(t, h, idea, agent)
-	second := promoteTask(t, h, idea, agent)
+	second := splitTask(t, h, idea, agent)
 	ctx := chiefCtx()
 
 	if _, err := h.tasks.SetStatus(ctx, first.ID, core.StatusDone); err != nil {
@@ -95,7 +95,7 @@ func TestNoReminderOnNonCompletingTransition(t *testing.T) {
 	agent := newAgent(t, h, "claude")
 	idea := newIdea(t, h, project, "a feature")
 	first := promoteTask(t, h, idea, agent)
-	promoteTask(t, h, idea, agent)
+	splitTask(t, h, idea, agent)
 	ctx := chiefCtx()
 
 	if _, err := h.tasks.SetStatus(ctx, first.ID, core.StatusReadyForReview); err != nil {

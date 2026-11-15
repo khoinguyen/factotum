@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -153,6 +154,13 @@ type PromoteInput struct {
 // resolved), and leaves the capture untouched as history with a note naming the
 // promoted task. Grooming precedes promotion, so a capture without the required
 // grooming data is rejected rather than promoted into an unassigned todo.
+//
+// Promotion is idempotent: a capture that already has an executable dependent
+// returns that task, so re-running it adds no duplicate work and no second note.
+// It is atomic in effect: the capture is written last, and a failure before the
+// promotion completes deletes the task it created, so a failed promote leaves no
+// half-promoted capture or orphan task. The add/dep/delete events stay in the log
+// (rollback is compensating, not transactional) as an audit trail.
 func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in PromoteInput) (*core.Ticket, error) {
 	capture, err := s.backend.Tickets().Get(ctx, captureID)
 	if err != nil {
@@ -160,6 +168,11 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in
 	}
 	if !capture.Kind.CapturedByHuman() {
 		return nil, fmt.Errorf("%w: %s is not a capture", core.ErrInvalid, captureID)
+	}
+	if existing, err := s.promotedTask(ctx, capture); err != nil {
+		return nil, err
+	} else if existing != nil {
+		return existing, nil
 	}
 	if len(in.AcceptanceCriteria) == 0 {
 		return nil, fmt.Errorf("%w: promote %s: at least one acceptance criterion is required; groom the %s first (--acceptance)",
@@ -177,7 +190,7 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in
 		return nil, fmt.Errorf("%w: promote %s: assignee %s is a %s, not an agent; groom the %s first",
 			core.ErrInvalid, captureID, assignee.ID, assignee.Kind, capture.Kind)
 	}
-	task, err := s.Add(ctx, TicketInput{
+	created, err := s.Add(ctx, TicketInput{
 		ProjectID:          capture.ProjectID,
 		Repo:               capture.Repo,
 		Kind:               core.KindTask,
@@ -192,17 +205,47 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in
 	if err != nil {
 		return nil, err
 	}
-	task, err = s.AddDep(ctx, task.ID, captureID)
+	task, err := s.AddDep(ctx, created.ID, captureID)
 	if err != nil {
-		return nil, err
+		return nil, s.rollbackPromotion(ctx, created.ID, err)
 	}
 	if _, err := s.AddNote(ctx, captureID, NoteInput{
 		Body:   fmt.Sprintf("Promoted to %s.", task.ID),
 		System: true,
 	}); err != nil {
-		return nil, err
+		return nil, s.rollbackPromotion(ctx, created.ID, err)
 	}
 	return task, nil
+}
+
+// promotedTask returns the executable task a capture already produced, if any.
+// The origin edge promotion writes is an executable dependent, so finding one
+// means the capture is already groomed into work. Candidates are ordered by id so
+// a capture with several dependents resolves deterministically.
+func (s *TicketService) promotedTask(ctx context.Context, capture *core.Ticket) (*core.Ticket, error) {
+	tasks, err := s.backend.Tickets().List(ctx, store.TicketFilter{
+		ProjectID: capture.ProjectID,
+		DependsOn: &capture.ID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].ID < tasks[j].ID })
+	for _, task := range tasks {
+		if task.Kind.Executable() {
+			return task, nil
+		}
+	}
+	return nil, nil
+}
+
+// rollbackPromotion deletes the task a failed promotion created, so the capture
+// and its dependents return to their prior state.
+func (s *TicketService) rollbackPromotion(ctx context.Context, taskID core.TicketID, cause error) error {
+	if err := s.Delete(ctx, taskID); err != nil {
+		return errors.Join(cause, fmt.Errorf("promote: roll back %s: %w", taskID, err))
+	}
+	return cause
 }
 
 // Dependencies splits a ticket's dependency edges into blocking dependencies

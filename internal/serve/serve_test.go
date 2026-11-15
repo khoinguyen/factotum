@@ -690,8 +690,25 @@ func TestIdeaViewCountsUnstartedTasksInTheirOwnBucket(t *testing.T) {
 		}
 	}
 	setStatus(promote().ID, core.StatusDone)
-	setStatus(promote().ID, core.StatusCancelled)
-	promote() // left unstarted (todo)
+	// Promotion is idempotent (one task per capture), so the rest of the split is
+	// created as explicit linked tasks.
+	split := func(title string) *core.Ticket {
+		t.Helper()
+		task, err := f.tasks.Add(ctx, app.TicketInput{
+			ProjectID: project.ID, Kind: core.KindTask, Title: title,
+			AssigneeID: &agent.ID, Groomed: true, AcceptanceCriteria: []string{"it works"},
+		})
+		if err != nil {
+			t.Fatalf("Add(%s) error = %v", title, err)
+		}
+		task, err = f.tasks.AddDep(ctx, task.ID, idea.ID)
+		if err != nil {
+			t.Fatalf("AddDep(%s) error = %v", title, err)
+		}
+		return task
+	}
+	setStatus(split("second slice").ID, core.StatusCancelled)
+	split("third slice") // left unstarted (todo)
 
 	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
 	if err != nil {

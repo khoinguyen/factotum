@@ -350,7 +350,7 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode2 --allow-hos
 - `--sandbox`/`--harness` are optional: they resolve flag > `FACTOTUM_RUN_*` > committed
   project `[run]` > machine `[run]`. On a terminal an unset one prompts once and saves to
   the chosen config; choosing `local` there asks to opt in (default no) and records
-  `run.allow_host = true` in the user config. A committed project `[run]` may set only `sandbox`/`harness`; the machine table also holds workspace/model/args/allow_host/credential_env. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
+  `run.allow_host = true` in the user config; the project scope needs a configured project, else it fails clearly and writes nothing (rerun and choose `user`, or pin one first). A committed project `[run]` may set only `sandbox`/`harness`; the machine table also holds workspace/model/args/allow_host/credential_env. `--refresh` hard-resets a reused checkout; a changed origin URL fails.
 - `provider` and `credential_env` name the credential a harness may use and the
   variable it arrives under, e.g. `provider = "openrouter"` with
   `credential_env = "OPENROUTER_API_KEY"`; the value is read from the host

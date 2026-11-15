@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
-# Contract test for scripts/embed-test.sh's container name and host port.
-# Parallel `mise run test-embed` runs on one machine must not share them: a
-# fixed ft-embed-test container made the second run's `docker rm -f` delete the
-# first run's container, and a fixed port 18080 made it die with "port is
-# already allocated". FACTOTUM_EMBED_TEST_CONTAINER/PORT must still pin both for
-# anyone who needs a predictable one. A source-guard regression is labelled
-# instead of surfacing as a bare non-zero exit: the guard is probed in a
-# subshell before the helpers are sourced.
+# Contract test for scripts/embed-test.sh's container name, host port, model
+# cache, and startup.
+#
+# Parallel `mise run test-embed` runs on one machine must not share the
+# container or the host port: a fixed ft-embed-test container made the second
+# run's `docker rm -f` delete the first run's container, and a fixed port 18080
+# made it die with "port is already allocated".
+# FACTOTUM_EMBED_TEST_CONTAINER/PORT must still pin both for anyone who needs a
+# predictable one.
+#
+# The *model cache*, by contrast, is deliberately shared: one volume
+# (ft-llamacpp-models) so a re-run skips the ~80MB download. Two concurrent runs
+# on that cold cache used to kill each other (one reads the half-written GGUF
+# blob the other is still downloading), so the download is serialized by a
+# per-volume lock instead of a per-run cache. Both invariants are checked here,
+# and a container that dies must fail at once with its own logs rather than burn
+# the 180s health wait.
+#
+# A regression is reported as a labelled FAIL, not a bare non-zero exit: the
+# source guard is probed in a subshell before the helpers are sourced, and the
+# concurrency check is proved against a copy with the lock removed.
 #
 # Run: bash scripts/embed-test_test.sh
 set -euo pipefail
@@ -40,6 +53,91 @@ probe_source_guard() {
 # labelled failure rather than an unexplained non-zero exit.
 guard_label() {
   printf 'embed test guard: sourcing %s did not stop at the source guard' "$1"
+}
+
+# write_endpoint_stubs <dir> fills <dir>/bin with docker/curl/go recorders, so a
+# script run starts no container, opens no socket, and runs no Go test. The
+# docker recorder is the harness's cache simulator: `run` records LOCKED when
+# the download lock is held by a live process at that moment, then holds
+# STUB_RUNNING_MARK for STUB_RUN_SECS (a cold download) and creates
+# STUB_OVERLAP when another run's `run` is already in flight - the collision
+# that killed both runs. STUB_INSPECT_RUNNING=false simulates a container that
+# exited, and STUB_CURL_EXIT=1 keeps its health endpoint dark.
+write_endpoint_stubs() {
+  local dir="$1"
+  mkdir -p "$dir/bin" "$dir/locks"
+  cat >"$dir/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+printf 'docker %s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+  run)
+    if [ -L "$STUB_LOCK" ] && kill -0 "$(readlink "$STUB_LOCK")" 2>/dev/null; then
+      printf 'LOCKED\n' >>"$STUB_LOG"
+    else
+      printf 'UNLOCKED\n' >>"$STUB_LOG"
+    fi
+    if [ -e "$STUB_RUNNING_MARK" ]; then : >"$STUB_OVERLAP"; fi
+    : >"$STUB_RUNNING_MARK"
+    sleep "${STUB_RUN_SECS:-0}"
+    rm -f "$STUB_RUNNING_MARK"
+    printf 'ft-embed-test-stub-id\n'
+    ;;
+  port) printf '127.0.0.1:49153\n' ;;
+  inspect) printf '%s\n' "${STUB_INSPECT_RUNNING:-true}" ;;
+  logs) printf '%s\n' "${STUB_CONTAINER_LOG:-stub container log}" ;;
+esac
+exit 0
+STUB
+  cat >"$dir/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"$STUB_LOG"
+exit "${STUB_CURL_EXIT:-0}"
+STUB
+  cat >"$dir/bin/go" <<'STUB'
+#!/usr/bin/env bash
+printf 'go %s\n' "$*" >>"$STUB_LOG"
+exit 0
+STUB
+  chmod +x "$dir/bin/docker" "$dir/bin/curl" "$dir/bin/go"
+}
+
+# serialization_verdict <script> runs two concurrent instances of <script>
+# against the stub docker and prints OK, or the label of the invariant that
+# broke. Both runs share the default model cache (no volume pin) and start from
+# a cold one, so they contend exactly as two `mise run test-embed` calls on a
+# fresh machine do.
+serialization_verdict() {
+  local script="$1" dir lock overlap rc_a rc_b
+  dir="$(mktemp -d)"
+  write_endpoint_stubs "$dir"
+  lock="$(TMPDIR="$dir/locks" embed_lock_file)"
+  overlap="$dir/overlap"
+  PATH="$dir/bin:$PATH" TMPDIR="$dir/locks" STUB_LOG="$dir/a.log" \
+    STUB_LOCK="$lock" STUB_RUNNING_MARK="$dir/run.mark" STUB_OVERLAP="$overlap" \
+    STUB_RUN_SECS=1 FACTOTUM_EMBED_TEST_ENDPOINT= FACTOTUM_EMBED_TEST_VOLUME= \
+    FACTOTUM_EMBED_TEST_CONTAINER= bash "$script" >/dev/null 2>&1 &
+  local pid_a=$!
+  PATH="$dir/bin:$PATH" TMPDIR="$dir/locks" STUB_LOG="$dir/b.log" \
+    STUB_LOCK="$lock" STUB_RUNNING_MARK="$dir/run.mark" STUB_OVERLAP="$overlap" \
+    STUB_RUN_SECS=1 FACTOTUM_EMBED_TEST_ENDPOINT= FACTOTUM_EMBED_TEST_VOLUME= \
+    FACTOTUM_EMBED_TEST_CONTAINER= bash "$script" >/dev/null 2>&1 &
+  local pid_b=$!
+  if wait "$pid_a"; then rc_a=0; else rc_a=$?; fi
+  if wait "$pid_b"; then rc_b=0; else rc_b=$?; fi
+  if [ "$rc_a" -ne 0 ] || [ "$rc_b" -ne 0 ]; then
+    printf 'a concurrent run failed (rc %s and %s)' "$rc_a" "$rc_b"
+  elif ! grep -q '^LOCKED$' "$dir/a.log" || ! grep -q '^LOCKED$' "$dir/b.log"; then
+    printf 'a run started the server without holding the download lock'
+  elif [ -e "$overlap" ]; then
+    printf 'two runs started into the cold cache at the same time'
+  elif ! grep -q '^go ' "$dir/a.log" || ! grep -q '^go ' "$dir/b.log"; then
+    printf 'a concurrent run never reached the Go test'
+  elif [ -L "$lock" ]; then
+    printf 'the download lock outlived its run'
+  else
+    printf 'OK'
+  fi
+  rm -rf "$dir"
 }
 
 tmp="$(mktemp -d)"
@@ -189,6 +287,129 @@ check "a pinned port wins" "127.0.0.1:18999:8080" \
 # default free-port request is resolved back to a concrete port.
 check "a bound port is read back" "49153" "$(embed_bound_port '127.0.0.1:49153')"
 check "an unbound port yields nothing" "" "$(embed_bound_port '')"
+
+# The model cache is one shared volume for every run on the machine, because a
+# per-run cache would re-download ~80MB on every run. Concurrency is made safe
+# below by serializing the download instead.
+check "the default model cache is the shared ft-llamacpp-models" "ft-llamacpp-models" \
+  "$(unset FACTOTUM_EMBED_TEST_VOLUME; embed_volume)"
+check "a pinned model cache wins" "ft-embed-pinned" \
+  "$(FACTOTUM_EMBED_TEST_VOLUME=ft-embed-pinned embed_volume)"
+
+# Runs that share a cache must share its download lock, and runs on distinct
+# caches must never contend: the lock is keyed by volume, not per run.
+export TMPDIR="$tmp"
+lock_a="$(FACTOTUM_EMBED_TEST_VOLUME=ft-embed-lock-same embed_lock_file)"
+lock_b="$(FACTOTUM_EMBED_TEST_VOLUME=ft-embed-lock-same embed_lock_file)"
+lock_other="$(FACTOTUM_EMBED_TEST_VOLUME=ft-embed-lock-other embed_lock_file)"
+check "one volume has one download lock" "$lock_a" "$lock_b"
+if [ "$lock_other" != "$lock_a" ]; then ok; else bad "two volumes share one download lock '$lock_other'"; fi
+
+# The lock must exclude a second process, not merely exist: two concurrent runs
+# on a cold cache raced because both were allowed to download at once.
+lock_vol=ft-embed-lock-exclusive
+lock="$(FACTOTUM_EMBED_TEST_VOLUME=$lock_vol embed_lock_file)"
+rm -f "$lock"
+held="$tmp/lock-held"
+bash -c 'set -euo pipefail
+  . "$1"
+  export FACTOTUM_EMBED_TEST_VOLUME="$2"
+  embed_lock_acquire
+  : >"$3"
+  sleep 2
+  embed_lock_release' _ "$script" "$lock_vol" "$held" &
+holder=$!
+deadline=$((SECONDS + 10))
+while [ ! -e "$held" ] && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.1; done
+if [ -e "$held" ]; then ok; else bad "the lock holder never took the download lock"; fi
+started=$SECONDS
+if latter="$(bash -c 'set -euo pipefail
+  . "$1"
+  export FACTOTUM_EMBED_TEST_VOLUME="$2"
+  embed_lock_acquire
+  embed_lock_release
+  printf acquired' _ "$script" "$lock_vol")"; then
+  waited=$((SECONDS - started))
+  if [ "$latter" = acquired ] && [ "$waited" -ge 1 ]; then
+    ok
+  else
+    bad "a second run did not wait for a held download lock (waited ${waited}s)"
+  fi
+else
+  bad "a second run never took the download lock after the holder released it"
+fi
+if wait "$holder"; then ok; else bad "the lock holder failed"; fi
+if [ -L "$lock" ]; then bad "the download lock outlived its owner: $lock"; else ok; fi
+
+# A run killed mid-download leaves its lock behind. That must not wedge every
+# later run until someone removes it by hand, so a lock whose owner is gone is
+# reclaimed.
+rm -f "$lock"
+( exit 0 ) &
+dead_pid=$!
+wait "$dead_pid" 2>/dev/null || true
+ln -s "$dead_pid" "$lock"
+started=$SECONDS
+if bash -c 'set -euo pipefail
+  . "$1"
+  export FACTOTUM_EMBED_TEST_VOLUME="$2"
+  embed_lock_acquire
+  embed_lock_release' _ "$script" "$lock_vol"; then
+  waited=$((SECONDS - started))
+  if [ "$waited" -lt 2 ]; then ok; else bad "a dead run's download lock wedged the next run for ${waited}s"; fi
+else
+  bad "a dead run's download lock was never reclaimed"
+fi
+if [ -L "$lock" ]; then bad "the reclaimed download lock outlived its owner: $lock"; else ok; fi
+
+# The whole point: two concurrent runs on a cold shared cache must both pass,
+# with their startup windows serialized.
+check "two concurrent runs on a cold cache serialize the download" "OK" \
+  "$(serialization_verdict "$script")"
+
+# A lock that is gone must fail that check loudly, so it cannot go vacuous.
+nolock="$tmp/scripts/embed-test-nolock.sh"
+grep -v '^[[:space:]]*embed_lock_acquire$' "$script" >"$nolock"
+if cmp -s "$script" "$nolock"; then
+  bad "the lock-less copy is unchanged (has the lock acquire left its own line?)"
+elif verdict="$(serialization_verdict "$nolock")"; then
+  case "$verdict" in
+    OK) bad "the concurrency check passes a script with no download lock" ;;
+    *) ok ;;
+  esac
+else
+  bad "the concurrency check on a lock-less script reported no verdict"
+fi
+
+# A container that exits must fail the run at once, print its own logs, and not
+# wait out the 180s health timeout.
+dead_dir="$tmp/dead"
+write_endpoint_stubs "$dead_dir"
+dead_lock="$(TMPDIR="$dead_dir/locks" embed_lock_file)"
+started=$SECONDS
+if out="$(PATH="$dead_dir/bin:$PATH" TMPDIR="$dead_dir/locks" STUB_LOG="$dead_dir/stub.log" \
+  STUB_LOCK="$dead_lock" STUB_CURL_EXIT=1 STUB_INSPECT_RUNNING=false \
+  STUB_CONTAINER_LOG='boom: gguf_init_from_reader' \
+  FACTOTUM_EMBED_TEST_ENDPOINT= FACTOTUM_EMBED_TEST_VOLUME= \
+  FACTOTUM_EMBED_TEST_CONTAINER= bash "$script" 2>&1)"; then
+  bad "a container that exited was reported as a healthy run"
+else
+  dead_wait=$((SECONDS - started))
+  if [ "$dead_wait" -le 5 ]; then ok; else bad "a container that exited failed only after ${dead_wait}s"; fi
+  case "$out" in
+    *"docker logs ft-embed-test-"*) ok ;;
+    *) bad "an exited container did not print 'docker logs <container>': $(tr '\n' ';' <<<"$out")" ;;
+  esac
+  case "$out" in
+    *'boom: gguf_init_from_reader'*) ok ;;
+    *) bad "an exited container's own logs were not printed: $(tr '\n' ';' <<<"$out")" ;;
+  esac
+  case "$out" in
+    *'did not become healthy'*) bad "an exited container was reported as a health timeout" ;;
+    *) ok ;;
+  esac
+fi
+if [ -L "$dead_lock" ]; then bad "a failed run kept its download lock: $dead_lock"; else ok; fi
 
 # The mise task delegates to this script, and its own body carries neither fixed
 # value, so neither can creep back into the task.

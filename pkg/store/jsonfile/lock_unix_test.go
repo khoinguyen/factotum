@@ -24,10 +24,11 @@ func TestReadOnlyStoreIsReadable(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		keepLock bool
+		lockMode os.FileMode // 0 removes the lock file; otherwise its mode
 	}{
-		{name: "no lock file", keepLock: false},
-		{name: "read-only lock file", keepLock: true},
+		{name: "no lock file"},
+		{name: "read-only lock file", lockMode: 0o444},
+		{name: "unreadable lock file", lockMode: 0o200},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,11 +42,11 @@ func TestReadOnlyStoreIsReadable(t *testing.T) {
 			if err := writer.Projects().Create(ctx, &core.Project{ID: "prj-1", Name: "Acme"}); err != nil {
 				t.Fatalf("Projects().Create() error = %v", err)
 			}
-			if !tc.keepLock {
+			if tc.lockMode == 0 {
 				if err := os.Remove(path + ".lock"); err != nil {
 					t.Fatalf("remove lock file: %v", err)
 				}
-			} else if err := os.Chmod(path+".lock", 0o444); err != nil {
+			} else if err := os.Chmod(path+".lock", tc.lockMode); err != nil {
 				t.Fatalf("chmod lock file: %v", err)
 			}
 			if err := os.Chmod(path, 0o444); err != nil {

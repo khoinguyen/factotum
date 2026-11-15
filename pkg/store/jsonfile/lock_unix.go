@@ -21,9 +21,10 @@ func (b *Backend) lockStore(exclusive bool) (func(), error) {
 		return nil, err
 	}
 	if file == nil {
-		// A read-only store we cannot create the lock in cannot be written at
-		// all either (persist could not create its temp file), and a write lands
-		// by atomic rename, so an unlocked read still sees a whole document.
+		// No lock was available for this read. Writes replace the document by
+		// rename and this path never writes, so an unlocked read still sees a
+		// whole document — at worst a moment stale. Never build a
+		// read-modify-write on this path.
 		return func() {}, nil
 	}
 	how := syscall.LOCK_SH
@@ -49,7 +50,7 @@ func (b *Backend) lockStore(exclusive bool) (func(), error) {
 // openLockFile opens the lock file for the lock mode. A writer needs it
 // writable and creates it; a reader takes it read-only when it exists, so a
 // store another uid wrote (a container hub) or a read-only checkout still
-// serves reads. A nil file means no lock is needed: nothing can write the store.
+// serves reads. A nil file means this read runs unlocked (see lockStore).
 func (b *Backend) openLockFile(exclusive bool) (*os.File, error) {
 	lockPath := b.path + ".lock"
 	if exclusive {
@@ -66,11 +67,16 @@ func (b *Backend) openLockFile(exclusive bool) (*os.File, error) {
 	if err == nil {
 		return file, nil
 	}
+	if errors.Is(err, os.ErrPermission) {
+		// A lock file this uid cannot read (another uid's umask, e.g. 0600) is
+		// no reason to refuse a read.
+		return nil, nil
+	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("open lock file %s: %w", lockPath, err)
 	}
 	// No lock file yet: creating it lets this read serialize with a writer that
-	// starts later. Where that is not permitted, no writer can be active.
+	// starts later. Where that is denied, fall back to an unlocked read.
 	file, err = os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err == nil {
 		return file, nil

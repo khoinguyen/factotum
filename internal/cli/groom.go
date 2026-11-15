@@ -724,6 +724,12 @@ func deferredIDs(body string) map[core.TicketID]bool {
 func openDeferredQuestions(body string) string {
 	var b strings.Builder
 	fence, inResolved := "", false
+	// CommonMark makes a 4-space line prose when it continues a paragraph (or
+	// opens a nested list item) and code only when it starts a block, so tracking
+	// that state keeps a legitimately indented deferral from reading as a code
+	// sample. A heading ends the paragraph above it: indented code needs no blank
+	// line after one.
+	inParagraph, inCode := false, false
 	for _, line := range strings.Split(htmlCommentPattern.ReplaceAllString(body, ""), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if fence != "" {
@@ -733,19 +739,26 @@ func openDeferredQuestions(body string) string {
 			continue
 		}
 		if strings.HasPrefix(trimmed, "```") {
-			fence = "```"
+			fence, inParagraph, inCode = "```", false, false
 			continue
 		}
 		if strings.HasPrefix(trimmed, "~~~") {
-			fence = "~~~"
+			fence, inParagraph, inCode = "~~~", false, false
+			continue
+		}
+		if trimmed == "" {
+			inParagraph = false
 			continue
 		}
 		// An indented code block is the indentation-only form of a quoted sample:
 		// an id there defers nothing, and an indented "## Resolved" stays code
 		// rather than opening a section.
-		if isIndentedCode(line) {
+		if isIndentedCode(line) && (inCode || (!inParagraph && !isNestedListMarker(trimmed))) {
+			inCode = true
 			continue
 		}
+		inCode = false
+		inParagraph = !strings.HasPrefix(trimmed, "#")
 		if inResolved {
 			continue
 		}
@@ -759,12 +772,29 @@ func openDeferredQuestions(body string) string {
 	return b.String()
 }
 
-// isIndentedCode reports whether line is part of a markdown indented code block:
-// a tab or at least four leading spaces. The deferred-questions template keeps
-// its fields at two spaces, so the format's real content is never indented this
-// far.
+// isIndentedCode reports whether line is indented as a markdown code block: a tab
+// or at least four leading spaces. Whether it *is* code depends on the block it
+// sits in, which openDeferredQuestions tracks.
 func isIndentedCode(line string) bool {
 	return strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "    ")
+}
+
+// isNestedListMarker reports whether trimmed text opens a list item ("- x",
+// "1. x"), which an indented line may be when it continues a list: a nested item
+// is prose, not an indented code block.
+func isNestedListMarker(trimmed string) bool {
+	if len(trimmed) < 2 {
+		return false
+	}
+	if strings.ContainsRune("-*+", rune(trimmed[0])) {
+		return trimmed[1] == ' ' || trimmed[1] == '\t'
+	}
+	i := 0
+	for i < len(trimmed) && trimmed[i] >= '0' && trimmed[i] <= '9' {
+		i++
+	}
+	return i > 0 && i+1 < len(trimmed) && (trimmed[i] == '.' || trimmed[i] == ')') &&
+		(trimmed[i+1] == ' ' || trimmed[i+1] == '\t')
 }
 
 // producedHandled reports whether a task the session produced is admissible: an

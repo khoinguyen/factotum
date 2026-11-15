@@ -955,6 +955,36 @@ func TestDeferredIDsWholeTokenMatch(t *testing.T) {
 			want: []core.TicketID{"t-abc123"},
 		},
 		{
+			name: "a 4-space prose continuation still defers",
+			body: "## Questions\n\n- [ ] Which cache?\n    The cache is undecided; item: t-abc123, owner: PO\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "a 4-space nested list item still defers",
+			body: "## Questions\n\n- [ ] Which cache?\n    - item: t-abc123\n    - owner: PO\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "a 4-space nested list item after a blank line still defers",
+			body: "## Questions\n\n- [ ] Which cache?\n\n    - item: t-abc123\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "a tab-indented prose continuation still defers",
+			body: "## Questions\n\n- [ ] Which cache?\n\titem: t-abc123\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "an indented code block after a heading needs no blank line",
+			body:    "## Questions\n    ft task get t-abc123\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "a list marker inside an indented code block stays code",
+			body:    "## Questions\n\n    SELECT *\n    - item: t-abc123\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
 			name:    "an id in an HTML comment does not count",
 			body:    "## Questions\n\n<!-- see t-abc123 -->\n",
 			notWant: []core.TicketID{"t-abc123"},

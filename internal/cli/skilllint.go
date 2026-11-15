@@ -336,9 +336,18 @@ func skillReferences(root *cobra.Command, line string) []skillRef {
 	cmd := root
 	descending := true
 	skipNext := false
-	for _, token := range strings.Fields(line)[1:] {
+	for _, field := range strings.Fields(line)[1:] {
 		if skipNext {
 			skipNext = false
+			continue
+		}
+		// A doc writes a synopsis, not a transcript: optional flags sit in
+		// brackets and alternatives are joined by a pipe (`ft msg send <addr>
+		// [-b body | -]`). The notation is not part of the token, and a bare `-`
+		// is the stdin/placeholder argument, never an unnamed flag.
+		token := strings.Trim(field, "[]")
+		if token == "" || token == "-" || token == "|" {
+			descending = false
 			continue
 		}
 		if strings.HasPrefix(token, "-") {
@@ -378,8 +387,14 @@ func skillReferences(root *cobra.Command, line string) []skillRef {
 // staleSkillReferences returns one message per command or flag referenced by an
 // `ft ...` invocation in body that no longer exists in root.
 func staleSkillReferences(root *cobra.Command, body string) []string {
+	return staleReferences(root, skillCommandLines(body))
+}
+
+// staleReferences is staleSkillReferences over already-extracted invocations, so
+// a caller that reads code differently (a doc's design block) shares the check.
+func staleReferences(root *cobra.Command, lines []string) []string {
 	var stale []string
-	for _, line := range skillCommandLines(body) {
+	for _, line := range lines {
 		for _, ref := range skillReferences(root, line) {
 			if ref.valid {
 				continue
@@ -412,10 +427,19 @@ func isIdentifier(token string) bool {
 // skillCommandLines extracts the `ft ...` invocations from a skill: fenced code
 // block lines and inline code spans that begin with ft.
 func skillCommandLines(body string) []string {
+	return ftCommandLines(skillCodeSnippets(body))
+}
+
+// ftCommandLines keeps the snippets that begin with an ft invocation. A snippet
+// may hold several commands joined by `;` (a skill packs a few into one span), so
+// each one is checked against the command chain it actually starts.
+func ftCommandLines(snippets []string) []string {
 	var out []string
-	for _, snippet := range skillCodeSnippets(body) {
-		if command, ok := asFTCommand(snippet); ok {
-			out = append(out, command)
+	for _, snippet := range snippets {
+		for _, part := range strings.Split(snippet, ";") {
+			if command, ok := asFTCommand(strings.TrimSpace(part)); ok {
+				out = append(out, command)
+			}
 		}
 	}
 	return out
@@ -425,16 +449,30 @@ func skillCommandLines(body string) []string {
 // block line and every inline code span. It is the raw material both the
 // invocation parser and the drift guard's blind-spot check read.
 func skillCodeSnippets(body string) []string {
+	return codeSnippets(body, nil)
+}
+
+// codeSnippets returns the code a document presents as shell. skipFence, when
+// set, receives each fence's info string and drops that block's lines when it
+// reports true.
+func codeSnippets(body string, skipFence func(info string) bool) []string {
 	var out []string
 	inFence := false
+	skipped := false
 	for _, raw := range strings.Split(body, "\n") {
 		line := strings.TrimSpace(raw)
 		if strings.HasPrefix(line, "```") {
+			if !inFence {
+				info := strings.TrimSpace(strings.TrimPrefix(line, "```"))
+				skipped = skipFence != nil && skipFence(info)
+			}
 			inFence = !inFence
 			continue
 		}
 		if inFence {
-			out = append(out, line)
+			if !skipped {
+				out = append(out, line)
+			}
 			continue
 		}
 		out = append(out, inlineCode(line)...)

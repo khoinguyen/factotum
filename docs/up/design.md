@@ -376,8 +376,8 @@ decision human.
 ## 10. CLI surface
 
 ```
-ft up [--bind host:port] [-p project] [--no-auto-groom] [--unattended] [--max-parallel N]
-ft up status [--pipeline <id>] [-o json|yaml]     # phases and open gates
+ft up [--bind host:port] [-p project] [--no-auto-groom] [--unattended]
+ft up status [-p project] [-o json|yaml]          # phases and open gates
 ft up list                                        # pipelines table
 ft up start <capture>                             # enqueue a pipeline by hand
 ft up answer <pipeline> -f <file>                 # answer deferred groom questions; resume
@@ -387,6 +387,10 @@ ft up release <pipeline>                          # close the release milestone
 ft up promote <pipeline>                          # clear rollout_approval
 ft up pause|resume|retry|cancel <pipeline>        # operator control
 ```
+
+The design also proposed a `--max-parallel N` flag on the daemon and a pipeline filter on
+`ft up status`; neither is built (concurrency is `up.max_parallel`, one pipeline per process
+today), so the synopsis lists only the flags the commands have.
 
 - Output follows the repo shapes: single results print `key: value` lines ending `project`, `repo`;
   lists print a table; `-o json|yaml` are the machine interfaces.

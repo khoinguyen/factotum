@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -85,6 +87,117 @@ func TestAgentSkillsReferenceRealCommandsAndFlags(t *testing.T) {
 	}
 }
 
+// TestDocsReferenceRealCommands extends the drift guard from the skill entry
+// points to docs/. A design doc is what the implementation is reviewed against,
+// so a command it advertises that does not exist sends readers and agents at a
+// verb that fails, and nothing else catches it: the skills checker only walks
+// .agents/skills. The walk is the same cobra check; a fenced block marked
+// `design` is exempt because it records verbs that were considered but not
+// built, and only that block is exempt.
+func TestDocsReferenceRealCommands(t *testing.T) {
+	root := skillDriftRoot(t)
+	dir := filepath.Join(repoRoot(t), "docs")
+	findings, parsed, err := docsFindings(root, dir)
+	if err != nil {
+		t.Fatalf("docsFindings(%s) error = %v", dir, err)
+	}
+	if parsed < 50 {
+		// The docs carry well over a hundred invocations today; a collapse means
+		// the walk or the parser broke and the check would pass on nothing.
+		t.Fatalf("docs parsed only %d ft invocations; the checker is not seeing the docs", parsed)
+	}
+	for _, finding := range findings {
+		t.Error(finding)
+	}
+}
+
+// TestDocsFindingsFailsOnUnknownCommand plants a doc that advertises a verb the
+// command tree does not have and requires the docs check to report it. The guard
+// is only worth having if a bogus command turns it red.
+func TestDocsFindingsFailsOnUnknownCommand(t *testing.T) {
+	root := skillDriftRoot(t)
+	dir := filepath.Join(t.TempDir(), "docs")
+	writeDocUnder(t, dir, filepath.Join("msg", "bogus.md"), "```sh\n$ ft msg retry t-1\n```\n")
+	findings, parsed, err := docsFindings(root, dir)
+	if err != nil {
+		t.Fatalf("docsFindings() error = %v", err)
+	}
+	if parsed != 1 {
+		t.Fatalf("parsed = %d, want the planted invocation", parsed)
+	}
+	joined := strings.Join(findings, "\n")
+	if !strings.Contains(joined, "docs/msg/bogus.md") || !strings.Contains(joined, `unknown command "retry"`) {
+		t.Fatalf("findings = %v, want the planted unknown command under its doc path", findings)
+	}
+}
+
+// TestDocFindingsScopesTheDesignExemption pins the one way a doc may name an
+// unbuilt command: an explicit `design` fence. The exemption is block-scoped, so
+// the same verb in a plain fence or in prose is still drift.
+func TestDocFindingsScopesTheDesignExemption(t *testing.T) {
+	root := skillDriftRoot(t)
+	cases := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{
+			name: "plain fence is checked",
+			body: "```sh\nft msg retry t-1\n```\n",
+			want: []string{`unknown command "retry"`},
+		},
+		{
+			name: "design fence is exempt",
+			body: "```design\nft msg retry t-1\n```\n",
+		},
+		{
+			name: "design fence does not exempt the next block",
+			body: "```design\nft msg retry t-1\n```\n\n```sh\nft msg prune\n```\n",
+			want: []string{`unknown command "prune"`},
+		},
+		{
+			name: "prose is never exempt",
+			body: "An operator can `ft msg retry` a failed message.\n",
+			want: []string{`unknown command "retry"`},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings := docFindings(root, "docs/x.md", tc.body)
+			joined := strings.Join(findings, "\n")
+			if len(tc.want) == 0 {
+				if len(findings) != 0 {
+					t.Fatalf("findings = %v, want none", findings)
+				}
+				return
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("findings = %v, want %q", findings, want)
+				}
+			}
+			if len(findings) != len(tc.want) {
+				t.Fatalf("findings = %v, want exactly %v", findings, tc.want)
+			}
+		})
+	}
+}
+
+// TestStaleSkillReferencesReadsSynopsisBrackets guards the shared checker against
+// reporting a doc's synopsis notation as drift: docs write optional flags in
+// brackets and alternatives with a pipe, so `[-b body | -]` must not read as an
+// unknown `-]` flag.
+func TestStaleSkillReferencesReadsSynopsisBrackets(t *testing.T) {
+	root := skillDriftRoot(t)
+	body := "```\n" +
+		"ft msg send <address|ticket-id> [-b body | -] [--from <actor>] [--link kind=url]\n" +
+		"ft msg inbox [--state queued|delivered|read|failed] [--limit N]\n" +
+		"```\n"
+	if stale := staleSkillReferences(root, body); len(stale) != 0 {
+		t.Fatalf("stale = %v, want the synopsis notation read, not reported", stale)
+	}
+}
+
 // ftMentionPattern matches the ft binary as a standalone word in a skill's
 // code, so the drift guard notices a skill whose commands the parser cannot see.
 var ftMentionPattern = regexp.MustCompile(`\bft\b`)
@@ -95,19 +208,81 @@ var ftMentionPattern = regexp.MustCompile(`\bft\b`)
 // the checker to inspect. A skill whose code never names ft (typesafe-ai) has
 // nothing to drift.
 func roleSkillFindings(root *cobra.Command, rel, body string) []string {
-	if len(skillCommandLines(body)) == 0 {
-		for _, snippet := range skillCodeSnippets(body) {
+	return codeFindings(root, rel, skillCodeSnippets(body), "skill")
+}
+
+// docFindings returns the drift findings for one repository doc. Docs are held to
+// the command tree like a skill, with one deliberate exception: a fenced block
+// whose info string marks it `design` records verbs the design considered but the
+// CLI does not implement yet, so that block is exempt. The exemption is explicit
+// and block-scoped, so prose and every plain block still fail on a verb that does
+// not exist.
+func docFindings(root *cobra.Command, rel, body string) []string {
+	return codeFindings(root, rel, codeSnippets(body, isDesignFence), "doc")
+}
+
+// codeFindings reports the stale references in the code snippets of one file, or
+// a blind-spot finding when the snippets name ft but yield no invocation.
+func codeFindings(root *cobra.Command, rel string, snippets []string, kind string) []string {
+	lines := ftCommandLines(snippets)
+	if len(lines) == 0 {
+		for _, snippet := range snippets {
 			if ftMentionPattern.MatchString(snippet) {
-				return []string{fmt.Sprintf("%s names ft commands but parsed none; the checker is not seeing the skill", rel)}
+				return []string{fmt.Sprintf("%s names ft commands but parsed none; the checker is not seeing the %s", rel, kind)}
 			}
 		}
 		return nil
 	}
 	findings := make([]string, 0)
-	for _, stale := range staleSkillReferences(root, body) {
+	for _, stale := range staleReferences(root, lines) {
 		findings = append(findings, fmt.Sprintf("%s: %s", rel, stale))
 	}
 	return findings
+}
+
+// isDesignFence reports whether a fence's info string marks an unbuilt design
+// sketch. Marking the fence is the doc's explicit claim that the block is not the
+// shipped surface; a plain fence is checked.
+func isDesignFence(info string) bool {
+	for _, field := range strings.Fields(info) {
+		if field == "design" {
+			return true
+		}
+	}
+	return false
+}
+
+// docsFindings walks every markdown file under dir and returns the drift findings
+// plus how many ft invocations the walk parsed, so a caller can prove the checker
+// sees the docs instead of passing because it found nothing. Paths are reported
+// relative to dir's parent, so a message reads like docs/msg/design.md.
+func docsFindings(root *cobra.Command, dir string) ([]string, int, error) {
+	var findings []string
+	parsed := 0
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		rel, err := filepath.Rel(filepath.Dir(dir), path)
+		if err != nil {
+			return fmt.Errorf("rel path %s: %w", path, err)
+		}
+		snippets := codeSnippets(string(body), isDesignFence)
+		parsed += len(ftCommandLines(snippets))
+		findings = append(findings, codeFindings(root, rel, snippets, "doc")...)
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return findings, parsed, nil
 }
 
 func TestRoleSkillFindingsCoversTranscriptAndBlindSpot(t *testing.T) {
@@ -199,5 +374,18 @@ func TestStaleSkillReferencesDetectsBadCommandAndFlag(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(stale, "\n"), "--bogus") {
 		t.Fatalf("stale = %v, want the unknown flag reported", stale)
+	}
+}
+
+// writeDocUnder plants a markdown file under dir, creating the parent directory,
+// so a test can point the docs drift check at a fixture instead of the repo docs.
+func writeDocUnder(t *testing.T, dir, rel, body string) {
+	t.Helper()
+	path := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s) error = %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s) error = %v", path, err)
 	}
 }

@@ -1,5 +1,9 @@
 // Package jsonfile is a single-document JSON storage backend with atomic
-// writes. It is intended for local, single-process use.
+// writes. Every operation re-reads the document under a host-local advisory
+// file lock, so concurrent ft processes — an `ft serve` hub beside the local
+// CLI, or a run beside the agent it launches — share one store without either
+// rewriting the other's collections away. A store on a filesystem shared
+// across hosts is not supported: use sqlite for that.
 package jsonfile
 
 import (
@@ -67,6 +71,36 @@ func load(path string) (state, error) {
 	return loaded, nil
 }
 
+// beginRead takes the shared cross-process lock, re-loads the document and
+// returns its release. Reads re-read because another ft process may have
+// written since this handle last looked.
+func (b *Backend) beginRead() (func(), error) { return b.begin(false) }
+
+// beginWrite takes the exclusive cross-process lock, re-loads the document and
+// returns its release. A write must apply to the document on disk, never to
+// the snapshot this handle loaded at Open.
+func (b *Backend) beginWrite() (func(), error) { return b.begin(true) }
+
+func (b *Backend) begin(exclusive bool) (func(), error) {
+	b.mu.Lock()
+	unlock, err := b.lockStore(exclusive)
+	if err != nil {
+		b.mu.Unlock()
+		return nil, err
+	}
+	loaded, err := load(b.path)
+	if err != nil {
+		unlock()
+		b.mu.Unlock()
+		return nil, err
+	}
+	b.state = loaded
+	return func() {
+		unlock()
+		b.mu.Unlock()
+	}, nil
+}
+
 func (b *Backend) persist() error {
 	data, err := json.MarshalIndent(b.state, "", "  ")
 	if err != nil {
@@ -119,8 +153,11 @@ func (b *Backend) Pipelines() store.PipelineRepo {
 type projectRepo struct{ backend *Backend }
 
 func (r *projectRepo) Create(_ context.Context, project *core.Project) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if _, ok := r.backend.projectIndex(project.ID); ok {
 		return fmt.Errorf("%w: project %s", core.ErrAlreadyExists, project.ID)
 	}
@@ -129,8 +166,11 @@ func (r *projectRepo) Create(_ context.Context, project *core.Project) error {
 }
 
 func (r *projectRepo) Get(_ context.Context, id core.ProjectID) (*core.Project, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	index, ok := r.backend.projectIndex(id)
 	if !ok {
 		return nil, fmt.Errorf("%w: project %s", core.ErrNotFound, id)
@@ -140,8 +180,11 @@ func (r *projectRepo) Get(_ context.Context, id core.ProjectID) (*core.Project, 
 }
 
 func (r *projectRepo) List(_ context.Context) ([]*core.Project, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	out := make([]*core.Project, 0, len(r.backend.state.Projects))
 	for _, project := range r.backend.state.Projects {
 		cloned := clone.Project(project)
@@ -152,8 +195,11 @@ func (r *projectRepo) List(_ context.Context) ([]*core.Project, error) {
 }
 
 func (r *projectRepo) Update(_ context.Context, project *core.Project) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.projectIndex(project.ID)
 	if !ok {
 		return fmt.Errorf("%w: project %s", core.ErrNotFound, project.ID)
@@ -163,8 +209,11 @@ func (r *projectRepo) Update(_ context.Context, project *core.Project) error {
 }
 
 func (r *projectRepo) Delete(_ context.Context, id core.ProjectID) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.projectIndex(id)
 	if !ok {
 		return fmt.Errorf("%w: project %s", core.ErrNotFound, id)
@@ -185,8 +234,11 @@ func (b *Backend) projectIndex(id core.ProjectID) (int, bool) {
 type taskRepo struct{ backend *Backend }
 
 func (r *taskRepo) Create(_ context.Context, task *core.Ticket) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if _, ok := r.backend.taskIndex(task.ID); ok {
 		return fmt.Errorf("%w: task %s", core.ErrAlreadyExists, task.ID)
 	}
@@ -195,8 +247,11 @@ func (r *taskRepo) Create(_ context.Context, task *core.Ticket) error {
 }
 
 func (r *taskRepo) Get(_ context.Context, id core.TicketID) (*core.Ticket, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	index, ok := r.backend.taskIndex(id)
 	if !ok {
 		return nil, fmt.Errorf("%w: task %s", core.ErrNotFound, id)
@@ -206,8 +261,11 @@ func (r *taskRepo) Get(_ context.Context, id core.TicketID) (*core.Ticket, error
 }
 
 func (r *taskRepo) List(_ context.Context, filter store.TicketFilter) ([]*core.Ticket, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	out := make([]*core.Ticket, 0, len(r.backend.state.Tasks))
 	for _, task := range r.backend.state.Tasks {
 		if !matchesTask(task, filter) {
@@ -262,8 +320,11 @@ func taskDependsOn(task core.Ticket, id core.TicketID) bool {
 }
 
 func (r *taskRepo) Search(_ context.Context, filter store.TicketFilter, query string) ([]store.TicketSearchHit, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	terms := store.LexicalTerms(query)
 	hits := make([]store.TicketSearchHit, 0)
 	for _, task := range r.backend.state.Tasks {
@@ -282,8 +343,11 @@ func (r *taskRepo) Search(_ context.Context, filter store.TicketFilter, query st
 }
 
 func (r *taskRepo) Update(_ context.Context, task *core.Ticket) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.taskIndex(task.ID)
 	if !ok {
 		return fmt.Errorf("%w: task %s", core.ErrNotFound, task.ID)
@@ -293,8 +357,11 @@ func (r *taskRepo) Update(_ context.Context, task *core.Ticket) error {
 }
 
 func (r *taskRepo) UpdateExpected(_ context.Context, task *core.Ticket, expected time.Time) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.taskIndex(task.ID)
 	if !ok {
 		return fmt.Errorf("%w: task %s", core.ErrNotFound, task.ID)
@@ -307,8 +374,11 @@ func (r *taskRepo) UpdateExpected(_ context.Context, task *core.Ticket, expected
 }
 
 func (r *taskRepo) Delete(_ context.Context, id core.TicketID) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.taskIndex(id)
 	if !ok {
 		return fmt.Errorf("%w: task %s", core.ErrNotFound, id)
@@ -369,8 +439,11 @@ func (b *Backend) promoted(captureID core.TicketID) *core.Ticket {
 type actorRepo struct{ backend *Backend }
 
 func (r *actorRepo) Create(_ context.Context, actor *core.Actor) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if _, ok := r.backend.actorIndex(actor.ID); ok {
 		return fmt.Errorf("%w: actor %s", core.ErrAlreadyExists, actor.ID)
 	}
@@ -379,8 +452,11 @@ func (r *actorRepo) Create(_ context.Context, actor *core.Actor) error {
 }
 
 func (r *actorRepo) Get(_ context.Context, id core.ActorID) (*core.Actor, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	index, ok := r.backend.actorIndex(id)
 	if !ok {
 		return nil, fmt.Errorf("%w: actor %s", core.ErrNotFound, id)
@@ -390,8 +466,11 @@ func (r *actorRepo) Get(_ context.Context, id core.ActorID) (*core.Actor, error)
 }
 
 func (r *actorRepo) FindByName(_ context.Context, name string) (*core.Actor, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	for _, actor := range r.backend.state.Actors {
 		if actor.Name == name {
 			found := clone.Actor(actor)
@@ -402,8 +481,11 @@ func (r *actorRepo) FindByName(_ context.Context, name string) (*core.Actor, err
 }
 
 func (r *actorRepo) List(_ context.Context) ([]*core.Actor, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	out := make([]*core.Actor, 0, len(r.backend.state.Actors))
 	for _, actor := range r.backend.state.Actors {
 		cloned := clone.Actor(actor)
@@ -414,8 +496,11 @@ func (r *actorRepo) List(_ context.Context) ([]*core.Actor, error) {
 }
 
 func (r *actorRepo) Update(_ context.Context, actor *core.Actor) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.actorIndex(actor.ID)
 	if !ok {
 		return fmt.Errorf("%w: actor %s", core.ErrNotFound, actor.ID)
@@ -425,8 +510,11 @@ func (r *actorRepo) Update(_ context.Context, actor *core.Actor) error {
 }
 
 func (r *actorRepo) Delete(_ context.Context, id core.ActorID) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.actorIndex(id)
 	if !ok {
 		return fmt.Errorf("%w: actor %s", core.ErrNotFound, id)
@@ -447,8 +535,11 @@ func (b *Backend) actorIndex(id core.ActorID) (int, bool) {
 type artifactRepo struct{ backend *Backend }
 
 func (r *artifactRepo) Create(_ context.Context, artifact *core.Artifact) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if _, ok := r.backend.artifactIndex(artifact.ID); ok {
 		return fmt.Errorf("%w: artifact %s", core.ErrAlreadyExists, artifact.ID)
 	}
@@ -457,8 +548,11 @@ func (r *artifactRepo) Create(_ context.Context, artifact *core.Artifact) error 
 }
 
 func (r *artifactRepo) Get(_ context.Context, id core.ArtifactID) (*core.Artifact, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	index, ok := r.backend.artifactIndex(id)
 	if !ok {
 		return nil, fmt.Errorf("%w: artifact %s", core.ErrNotFound, id)
@@ -468,8 +562,11 @@ func (r *artifactRepo) Get(_ context.Context, id core.ArtifactID) (*core.Artifac
 }
 
 func (r *artifactRepo) List(_ context.Context, filter store.ArtifactFilter) ([]*core.Artifact, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	out := make([]*core.Artifact, 0, len(r.backend.state.Artifacts))
 	for _, artifact := range r.backend.state.Artifacts {
 		if !store.MatchesArtifactFilter(&artifact, filter) {
@@ -483,8 +580,11 @@ func (r *artifactRepo) List(_ context.Context, filter store.ArtifactFilter) ([]*
 }
 
 func (r *artifactRepo) Search(_ context.Context, filter store.ArtifactFilter, query string) ([]store.SearchHit, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	terms := store.LexicalTerms(query)
 	hits := make([]store.SearchHit, 0)
 	for _, artifact := range r.backend.state.Artifacts {
@@ -503,8 +603,11 @@ func (r *artifactRepo) Search(_ context.Context, filter store.ArtifactFilter, qu
 }
 
 func (r *artifactRepo) Update(_ context.Context, artifact *core.Artifact) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.artifactIndex(artifact.ID)
 	if !ok {
 		return fmt.Errorf("%w: artifact %s", core.ErrNotFound, artifact.ID)
@@ -514,8 +617,11 @@ func (r *artifactRepo) Update(_ context.Context, artifact *core.Artifact) error 
 }
 
 func (r *artifactRepo) Delete(_ context.Context, id core.ArtifactID) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.artifactIndex(id)
 	if !ok {
 		return fmt.Errorf("%w: artifact %s", core.ErrNotFound, id)
@@ -536,15 +642,21 @@ func (b *Backend) artifactIndex(id core.ArtifactID) (int, bool) {
 type eventRepo struct{ backend *Backend }
 
 func (r *eventRepo) Append(_ context.Context, event *core.Event) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	r.backend.state.Events = append(r.backend.state.Events, clone.Event(*event))
 	return r.backend.persist()
 }
 
 func (r *eventRepo) List(_ context.Context, filter store.EventFilter) ([]*core.Event, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	out := make([]*core.Event, 0)
 	for i := len(r.backend.state.Events) - 1; i >= 0; i-- {
 		event := r.backend.state.Events[i]
@@ -587,8 +699,11 @@ func (r *messageRepo) Create(_ context.Context, message *core.Message) error {
 	if err := message.Validate(0); err != nil {
 		return err
 	}
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if _, ok := r.backend.messageIndex(message.ID); ok {
 		return fmt.Errorf("%w: message %s", core.ErrAlreadyExists, message.ID)
 	}
@@ -597,8 +712,11 @@ func (r *messageRepo) Create(_ context.Context, message *core.Message) error {
 }
 
 func (r *messageRepo) Get(_ context.Context, id core.MessageID) (*core.Message, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	index, ok := r.backend.messageIndex(id)
 	if !ok {
 		return nil, fmt.Errorf("%w: message %s", core.ErrNotFound, id)
@@ -608,8 +726,11 @@ func (r *messageRepo) Get(_ context.Context, id core.MessageID) (*core.Message, 
 }
 
 func (r *messageRepo) List(_ context.Context, filter store.MessageFilter) ([]*core.Message, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	out := make([]*core.Message, 0, len(r.backend.state.Messages))
 	for _, message := range r.backend.state.Messages {
 		if !store.MatchesMessageFilter(&message, filter) {
@@ -629,8 +750,11 @@ func (r *messageRepo) Update(_ context.Context, message *core.Message) error {
 	if err := message.Validate(0); err != nil {
 		return err
 	}
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.messageIndex(message.ID)
 	if !ok {
 		return fmt.Errorf("%w: message %s", core.ErrNotFound, message.ID)
@@ -644,8 +768,11 @@ func (r *messageRepo) Claim(ctx context.Context, req store.ClaimRequest) (*core.
 }
 
 func (r *messageRepo) claimOnce(req store.ClaimRequest) (*core.Message, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	var (
 		best   core.Message
 		bestID core.MessageID
@@ -687,8 +814,11 @@ func (r *messageRepo) claimOnce(req store.ClaimRequest) (*core.Message, error) {
 }
 
 func (r *messageRepo) Ack(_ context.Context, req store.AckRequest) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.messageIndex(req.ID)
 	if !ok {
 		return fmt.Errorf("%w: message %s", core.ErrNotFound, req.ID)
@@ -734,8 +864,11 @@ func checkAckOwner(message core.Message, runID core.RunID) error {
 }
 
 func (r *messageRepo) Nack(_ context.Context, id core.MessageID, runID core.RunID, reason string) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.messageIndex(id)
 	if !ok {
 		return fmt.Errorf("%w: message %s", core.ErrNotFound, id)
@@ -759,8 +892,11 @@ func (r *messageRepo) Nack(_ context.Context, id core.MessageID, runID core.RunI
 }
 
 func (r *messageRepo) RequeueExpired(_ context.Context, now time.Time, maxAttempts int) (int, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return 0, err
+	}
+	defer release()
 	moved := 0
 	for i, message := range r.backend.state.Messages {
 		if message.State != core.MessageDelivered || message.LeaseUntil == nil || message.LeaseUntil.After(now) {
@@ -790,8 +926,11 @@ func (r *messageRepo) Prune(_ context.Context, before time.Time, states []core.M
 	if len(states) == 0 {
 		return 0, nil
 	}
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return 0, err
+	}
+	defer release()
 	kept := r.backend.state.Messages[:0]
 	removed := 0
 	for _, message := range r.backend.state.Messages {
@@ -834,8 +973,11 @@ func (r *runRepo) Register(_ context.Context, run *core.Run) (*core.Run, error) 
 	if err := run.Validate(); err != nil {
 		return nil, err
 	}
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	for i, existing := range r.backend.state.Runs {
 		if existing.ProjectID == run.ProjectID && existing.ActorID == run.ActorID && existing.Host == run.Host && existing.PID == run.PID {
 			existing.TaskID = run.TaskID
@@ -861,8 +1003,11 @@ func (r *runRepo) Register(_ context.Context, run *core.Run) (*core.Run, error) 
 }
 
 func (r *runRepo) Heartbeat(_ context.Context, id core.RunID, now time.Time, lease time.Duration) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.runIndex(id)
 	if !ok {
 		return fmt.Errorf("%w: run %s", core.ErrNotFound, id)
@@ -875,8 +1020,11 @@ func (r *runRepo) Heartbeat(_ context.Context, id core.RunID, now time.Time, lea
 }
 
 func (r *runRepo) List(_ context.Context, filter store.RunFilter) ([]*core.Run, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	now := filter.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -897,8 +1045,11 @@ func (r *runRepo) List(_ context.Context, filter store.RunFilter) ([]*core.Run, 
 }
 
 func (r *runRepo) Delete(_ context.Context, id core.RunID) error {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.runIndex(id)
 	if !ok {
 		return fmt.Errorf("%w: run %s", core.ErrNotFound, id)
@@ -922,8 +1073,11 @@ func (r *pipelineRepo) Create(_ context.Context, pipeline *core.Pipeline) error 
 	if err := pipeline.Validate(); err != nil {
 		return err
 	}
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if _, ok := r.backend.pipelineIndex(pipeline.ID); ok {
 		return fmt.Errorf("%w: pipeline %s", core.ErrAlreadyExists, pipeline.ID)
 	}
@@ -937,8 +1091,11 @@ func (r *pipelineRepo) Create(_ context.Context, pipeline *core.Pipeline) error 
 }
 
 func (r *pipelineRepo) Get(_ context.Context, id core.PipelineID) (*core.Pipeline, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	index, ok := r.backend.pipelineIndex(id)
 	if !ok {
 		return nil, fmt.Errorf("%w: pipeline %s", core.ErrNotFound, id)
@@ -948,8 +1105,11 @@ func (r *pipelineRepo) Get(_ context.Context, id core.PipelineID) (*core.Pipelin
 }
 
 func (r *pipelineRepo) List(_ context.Context, filter store.PipelineFilter) ([]*core.Pipeline, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginRead()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	out := make([]*core.Pipeline, 0, len(r.backend.state.Pipelines))
 	for _, pipeline := range r.backend.state.Pipelines {
 		if !store.MatchesPipelineFilter(&pipeline, filter) {
@@ -969,8 +1129,11 @@ func (r *pipelineRepo) Update(_ context.Context, pipeline *core.Pipeline) error 
 	if err := pipeline.Validate(); err != nil {
 		return err
 	}
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
 	index, ok := r.backend.pipelineIndex(pipeline.ID)
 	if !ok {
 		return fmt.Errorf("%w: pipeline %s", core.ErrNotFound, pipeline.ID)
@@ -986,8 +1149,11 @@ func (r *pipelineRepo) Update(_ context.Context, pipeline *core.Pipeline) error 
 }
 
 func (r *pipelineRepo) Claim(_ context.Context, req store.PipelineClaimRequest) (*core.Pipeline, error) {
-	r.backend.mu.Lock()
-	defer r.backend.mu.Unlock()
+	release, err := r.backend.beginWrite()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if req.ID != nil {
 		index, ok := r.backend.pipelineIndex(*req.ID)
 		if !ok {

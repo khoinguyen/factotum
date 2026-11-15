@@ -234,7 +234,8 @@ sandbox = "openshell"       # or docker; local is unsandboxed and needs allow_ho
 harness = "opencode2"       # OpenCode V2; "opencode" is V1, "pi" is the pi agent
 # image = "ghcr.io/acme/pi:1"   # one image for the selected harness; required for pi
 #                               # (an OpenCode harness would need an image with opencode2)
-# user = "501:20"             # your $(id -u):$(id -g); default keeps the image's USER
+# user = "501:20"             # your $(id -u):$(id -g); docker keeps the image's USER,
+#                             # openshell defaults to the hardened 1000:1000
 provider = "openrouter"
 credential_env = "OPENROUTER_API_KEY"   # isolating backends only; local ignores it
 ```

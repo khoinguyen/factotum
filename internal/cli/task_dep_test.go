@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/app"
+	"github.com/khoinguyen/factotum/pkg/judge"
+	"github.com/khoinguyen/factotum/pkg/judge/fake"
 )
 
 // runSplitErr executes a command against the runner's store and returns stdout,
@@ -104,6 +106,73 @@ func TestTaskDepHelpIsNotAUsageError(t *testing.T) {
 		if strings.TrimSpace(stderr) != "" {
 			t.Fatalf("%s: stderr must stay empty, stderr =\n%s", flag, stderr)
 		}
+	}
+}
+
+// TestReferenceHintSuggestsCanonicalDepCommand pins the actionable hint an
+// agent follows verbatim. The note reference hint used to emit
+// `ft task dep <task> <ref>`, the shorthand this change rejects, so following
+// the hint was a guaranteed error.
+func TestReferenceHintSuggestsCanonicalDepCommand(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	refID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Fix the frobnicator overflow"))
+	noteID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Wire the frobnicator panel"))
+
+	r.judge = fake.New(map[string]judge.Answer{
+		"exists": {Probability: 0.9},
+		"which":  {Choice: refID, Confidence: 0.9},
+	})
+
+	_, stderr := r.runSplit("task", "note", "create", noteID, "-b", "blocked by the task Fix the frobnicator overflow")
+	want := "ft task dep create " + noteID + " " + refID
+	if !strings.Contains(stderr, want) {
+		t.Fatalf("reference hint must emit %q:\n%s", want, stderr)
+	}
+	if strings.Contains(stderr, "ft task dep "+noteID+" "+refID) {
+		t.Fatalf("reference hint must not emit the rejected shorthand:\n%s", stderr)
+	}
+
+	if _, errOut, err := r.runSplitErr(strings.Fields(want)[1:]...); err != nil {
+		t.Fatalf("following the hint %q failed: %v\n%s", want, err, errOut)
+	}
+	if got := r.run("task", "get", noteID); !strings.Contains(got, refID) {
+		t.Fatalf("the hinted command must record the dependency:\n%s", got)
+	}
+}
+
+// TestDuplicateHintSuggestsCanonicalDepCommand covers the other hint that links
+// related work: the duplicate warning must also emit the canonical form.
+func TestDuplicateHintSuggestsCanonicalDepCommand(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	existingID := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Fix the frobnicator overflow"))
+
+	r.judge = fake.New(map[string]judge.Answer{
+		"link::" + existingID: {Rating: 2, Confidence: 0.9},
+		"same::" + existingID: {Probability: 0.9},
+	})
+
+	_, stderr, err := r.runSplitErr("task", "create", "-p", projectID, "-t", "Rework the frobnicator overflow")
+	if err != nil {
+		t.Fatalf("task create error = %v\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "a related task may already exist") {
+		t.Fatalf("expected the duplicate warning:\n%s", stderr)
+	}
+	// The new task's id is generated, so extract the suggested command from the
+	// warning line and require the canonical form, then run it verbatim.
+	idx := strings.Index(stderr, "consider `")
+	if idx < 0 {
+		t.Fatalf("duplicate hint must emit the canonical dep command:\n%s", stderr)
+	}
+	command, _, _ := strings.Cut(stderr[idx+len("consider `"):], "`")
+	if !strings.HasPrefix(command, "ft task dep create ") || !strings.Contains(command, existingID) {
+		t.Fatalf("duplicate hint must emit the canonical dep command, got %q", command)
+	}
+
+	if _, errOut, err := r.runSplitErr(strings.Fields(command)[1:]...); err != nil {
+		t.Fatalf("following the hint %q failed: %v\n%s", command, err, errOut)
 	}
 }
 

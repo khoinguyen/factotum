@@ -24,7 +24,7 @@ func TestStoreEnvMakesRelativePathAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := deps.storeEnv()
+	env := deps.storeEnvFor(deps.Config.Store)
 	if env[harnesspkg.EnvStore] != "jsonfile" {
 		t.Fatalf("env %s = %q, want jsonfile", harnesspkg.EnvStore, env[harnesspkg.EnvStore])
 	}
@@ -51,7 +51,7 @@ func TestStoreEnvMakesRelativeMigrateFromAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := deps.storeEnv()
+	env := deps.storeEnvFor(deps.Config.Store)
 	want := "migrate_from=" + wantSource + ",path=" + wantPath
 	if got := env[harnesspkg.EnvStoreOpts]; got != want {
 		t.Fatalf("env %s = %q, want %q", harnesspkg.EnvStoreOpts, got, want)
@@ -65,14 +65,14 @@ func TestStoreEnvKeepsMemoryPath(t *testing.T) {
 		Backend: "sqlite",
 		Options: map[string]string{"path": ":memory:"},
 	}}}
-	env := deps.storeEnv()
+	env := deps.storeEnvFor(deps.Config.Store)
 	if got := env[harnesspkg.EnvStoreOpts]; got != "path=:memory:" {
 		t.Fatalf("env %s = %q, want path=:memory:", harnesspkg.EnvStoreOpts, got)
 	}
 }
 
 // TestStoreEnvOverridesRealUserDatabase closes the chain: config.Load, given the
-// env storeEnv derives and a user config that maps the project to a real
+// env storeEnvFor derives and a user config that maps the project to a real
 // database, resolves the run's store. That is exactly the fallback the bug was
 // about - the session's child ft reading the real user DB because the checkout
 // could not resolve the intended store.
@@ -88,7 +88,7 @@ func TestStoreEnvOverridesRealUserDatabase(t *testing.T) {
 		Backend: "jsonfile",
 		Options: map[string]string{"path": lab},
 	}}}
-	env := deps.storeEnv()
+	env := deps.storeEnvFor(deps.Config.Store)
 	loaded, err := config.Load(config.Input{
 		UserPath:    user,
 		ProjectPath: project,

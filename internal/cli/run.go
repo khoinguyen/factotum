@@ -60,12 +60,12 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			"task graph. -p/--project selects the project whose store the run reads and\n" +
 			"writes, defaulting to the configured project; the target must belong to it,\n" +
 			"and the launched session inherits that store. The sandbox and harness\n" +
-			"resolve from --sandbox and --harness,\n" +
-			"then FACTOTUM_RUN_*, then the [run] config table (project over user); on a\n" +
-			"terminal an unset one prompts once and is saved, while a non-interactive\n" +
-			"unset one is an error. Choosing the local backend in that prompt asks to opt\n" +
-			"in (default no) and records run.allow_host in the user config; the local\n" +
-			"backend is unsandboxed and otherwise requires --allow-host (or run.allow_host).\n" +
+			"resolve from --sandbox and --harness, then FACTOTUM_RUN_*, then the [run]\n" +
+			"config table (project over user); on a terminal an unset one prompts once\n" +
+			"and is saved, while a non-interactive unset one is an error. Choosing the\n" +
+			"local backend in that prompt asks to opt in (default no) and records\n" +
+			"run.allow_host in the user config; the local backend is unsandboxed and\n" +
+			"otherwise requires --allow-host (or run.allow_host).\n" +
 			"On a terminal, a single-task run or a task-less prompt run attaches the agent\n" +
 			"to the terminal (for example the OpenCode TUI) so a human can answer it, and\n" +
 			"its output stays live and is not captured, so a task run's note records the\n" +
@@ -82,17 +82,16 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			if opts.maxTasks < 0 {
 				return usageError(cmd, "--max-tasks must not be negative")
 			}
-			prompt, err := deps.resolveRunPrompt(cmd, opts)
-			if err != nil {
+			if err := validateRunPrompt(cmd, opts); err != nil {
 				return err
 			}
 			if opts.goal != "" {
 				return deps.runGoal(cmd, opts.goal, opts)
 			}
 			if len(args) == 0 {
-				return deps.runProject(cmd, prompt, opts)
+				return deps.runProject(cmd, opts)
 			}
-			return deps.runTask(cmd, args[0], prompt, opts)
+			return deps.runTask(cmd, args[0], opts)
 		},
 	}
 	cmd.Flags().StringVarP(&opts.project, "project", "p", "", "project id whose store the run reads and writes (defaults to the configured project)")
@@ -129,19 +128,14 @@ func (d *Deps) resolveSandboxFlag(cmd *cobra.Command, opts runOptions) (string, 
 	return opts.sandbox, nil
 }
 
-// storeEnv is the store configuration a run hands its launched session, so the
-// session's child ft reads the same store instead of resolving one - possibly
-// the real user database - from the checkout's project or user config. It names
-// the resolved backend and formats the options as config.Load parses them. A
-// file-naming option is made absolute because the session runs with a different
-// working directory than ft, so a relative value would name a different file
-// (or none) inside the checkout.
-func (d *Deps) storeEnv() map[string]string {
-	return d.storeEnvFor(d.Config.Store)
-}
-
-// storeEnvFor is storeEnv for an explicit store, so a cross-project `ft groom`
-// hands its session the target project's store rather than the configured one.
+// storeEnvFor is the store configuration a run hands its launched session, so
+// the session's child ft reads the same store instead of resolving one -
+// possibly the real user database - from the checkout's project or user config.
+// It names the store the run reads and writes: the configured store, or the
+// selected project's store for a cross-project `-p`. It formats the options as
+// config.Load parses them. A file-naming option is made absolute because the
+// session runs with a different working directory than ft, so a relative value
+// would name a different file (or none) inside the checkout.
 func (d *Deps) storeEnvFor(store config.Store) map[string]string {
 	if store.Backend == "" {
 		return nil
@@ -166,18 +160,25 @@ func (d *Deps) storeEnvFor(store config.Store) map[string]string {
 	return env
 }
 
-// resolveRunPrompt resolves the optional prompt override for a run from a file
-// or an artifact body. An empty result means the run uses the task-derived
-// prompt (a task-less run always has a source). The two sources are mutually
-// exclusive and apply to a single task run or a task-less run, so a --goal loop
-// (whose prompt differs per task) rejects them.
-func (d *Deps) resolveRunPrompt(cmd *cobra.Command, opts runOptions) (string, error) {
+// validateRunPrompt checks the prompt-source flags before the run resolves its
+// project: the two sources are mutually exclusive, and a --goal loop derives its
+// prompt per task so it takes neither.
+func validateRunPrompt(cmd *cobra.Command, opts runOptions) error {
 	if opts.promptFile != "" && opts.promptArtifact != "" {
-		return "", usageError(cmd, "give either --prompt-file or --prompt-artifact, not both")
+		return usageError(cmd, "give either --prompt-file or --prompt-artifact, not both")
 	}
 	if opts.goal != "" && (opts.promptFile != "" || opts.promptArtifact != "") {
-		return "", usageError(cmd, "--prompt-file and --prompt-artifact apply to a single task or task-less run, not --goal")
+		return usageError(cmd, "--prompt-file and --prompt-artifact apply to a single task or task-less run, not --goal")
 	}
+	return nil
+}
+
+// resolveRunPrompt resolves the optional prompt override for a run from a file
+// or an artifact body. An empty result means the run uses the task-derived
+// prompt (a task-less run always has a source). The artifact resolves against
+// the project the run selected, so a -p run uses the prompt stored in that
+// project's store rather than the caller's.
+func (d *Deps) resolveRunPrompt(cmd *cobra.Command, opts runOptions, artifacts *app.ArtifactService) (string, error) {
 	switch {
 	case opts.promptFile != "":
 		data, err := os.ReadFile(opts.promptFile)
@@ -189,7 +190,7 @@ func (d *Deps) resolveRunPrompt(cmd *cobra.Command, opts runOptions) (string, er
 		}
 		return string(data), nil
 	case opts.promptArtifact != "":
-		artifact, err := d.Artifacts.Get(cmd.Context(), core.ArtifactID(opts.promptArtifact))
+		artifact, err := artifacts.Get(cmd.Context(), core.ArtifactID(opts.promptArtifact))
 		if err != nil {
 			return "", fmt.Errorf("resolve prompt artifact %s: %w", opts.promptArtifact, err)
 		}
@@ -574,13 +575,18 @@ func (d *Deps) warnNoReceiver(ref string) {
 	d.warnf("no message receiver will register for actor %q; the run launches unreachable over ft msg (create it with ft actor create %q, or pass a registered actor or loop role)", ref, ref)
 }
 
-func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {
+func (d *Deps) runTask(cmd *cobra.Command, taskID string, opts runOptions) error {
 	projectID := d.resolveProject(opts.project)
 	target, err := d.openProjectTarget(cmd.Context(), projectID)
 	if err != nil {
 		return err
 	}
 	defer target.close()
+
+	prompt, err := d.resolveRunPrompt(cmd, opts, target.artifacts)
+	if err != nil {
+		return err
+	}
 
 	actor := d.runActor(cmd.Context(), target.actors)
 	d.warnIncompleteHubForRun(actor)
@@ -641,7 +647,7 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOption
 // runProject runs one stored prompt over all of the selected project's repos
 // with no task: a task-less prompt run (a grooming session, for example). It
 // materializes every project repo and writes nothing to the task graph.
-func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) error {
+func (d *Deps) runProject(cmd *cobra.Command, opts runOptions) error {
 	projectID := d.resolveProject(opts.project)
 	if err := requireProject(cmd, projectID); err != nil {
 		return err
@@ -651,6 +657,11 @@ func (d *Deps) runProject(cmd *cobra.Command, prompt string, opts runOptions) er
 		return err
 	}
 	defer target.close()
+
+	prompt, err := d.resolveRunPrompt(cmd, opts, target.artifacts)
+	if err != nil {
+		return err
+	}
 
 	actor := d.runActor(cmd.Context(), target.actors)
 	d.warnIncompleteHubForRun(actor)

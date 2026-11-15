@@ -183,6 +183,81 @@ func TestRunGoalProjectFlagDrivesAnotherProjectsStore(t *testing.T) {
 	}
 }
 
+// TestRunProjectFlagRejectsTaskAbsentFromSelectedStore pins the not-found path
+// against a project whose tasks live in a store of their own: a caller's task id
+// the selected project has never seen is a not-found error (exit 3) naming both,
+// not a lookup in the caller's store that would find it.
+func TestRunProjectFlagRejectsTaskAbsentFromSelectedStore(t *testing.T) {
+	r := newRunner(t)
+	_, alphaTask := runContext(t, r)
+	beta := seedRunProject(t, r, "Beta")
+
+	backend := promptRunBackend()
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	_, _, err := r.runSplitErr("run", alphaTask, "-p", beta.id,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("run of a task absent from the selected store error = %v, want not-found", err)
+	}
+	if code := ExitCode(err); code != 3 {
+		t.Fatalf("run of a task absent from the selected store exit = %d, want 3", code)
+	}
+	for _, want := range []string{alphaTask, beta.id} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("not-found error %q does not name %q", err, want)
+		}
+	}
+	if got := backend.Prepared(); len(got) != 0 {
+		t.Fatalf("the rejected run still prepared %d harnesses", len(got))
+	}
+}
+
+// TestRunTasklessProjectFlagResolvesPromptArtifactInSelectedStore pins that
+// --prompt-artifact resolves against the selected project's store: the artifact
+// lives only there, so resolving it from the caller's store would fail.
+func TestRunTasklessProjectFlagResolvesPromptArtifactInSelectedStore(t *testing.T) {
+	r := newRunner(t)
+	_, cfgPath := tasklessContext(t, r)
+	beta := seedRunProject(t, r, "Beta")
+	docID := firstField(t, beta.runner.run("doc", "create", "-p", beta.id,
+		"-t", "Grooming prompt", "-b", "You are the grooming agent."))
+
+	backend := promptRunBackend()
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	r.run("--config", cfgPath, "run", "--prompt-artifact", docID, "-p", beta.id,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if got := strings.TrimSpace(lastPrompt(t, backend)); got != "You are the grooming agent." {
+		t.Fatalf("prompt = %q, want the selected project's artifact body", got)
+	}
+}
+
+// TestRunProjectFlagResolvesTaskPromptArtifactInSelectedStore pins the same for
+// a single-task run: -p makes the task and its prompt artifact come from one
+// store, so a prompt stored with the task is readable.
+func TestRunProjectFlagResolvesTaskPromptArtifactInSelectedStore(t *testing.T) {
+	r := newRunner(t)
+	beta := seedRunProject(t, r, "Beta")
+	docID := firstField(t, beta.runner.run("doc", "create", "-p", beta.id,
+		"-t", "Focused prompt", "-b", "Do the beta work."))
+
+	backend := promptRunBackend()
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("run", beta.taskID, "-p", beta.id, "--prompt-artifact", docID,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !strings.Contains(out, "task_id: "+beta.taskID) {
+		t.Fatalf("run -p with a prompt artifact did not run the task:\n%s", out)
+	}
+	if got := strings.TrimSpace(lastPrompt(t, backend)); got != "Do the beta work." {
+		t.Fatalf("prompt = %q, want the selected project's artifact body", got)
+	}
+}
+
 // TestRunTasklessProjectFlagRunsAnotherProjectsRepos pins that -p reaches the
 // task-less prompt run too: it materializes the named project's repos and hands
 // the session that project's store.

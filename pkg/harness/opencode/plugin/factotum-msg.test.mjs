@@ -112,6 +112,13 @@ test("configFromEnv reads the receiver settings with defaults", () => {
   assert.equal(config.ttlMs, 90000);
 });
 
+test("configFromEnv reports the harness the run selected", () => {
+  // `ft run` exports the harness it drives; a V2 run must register as
+  // opencode2 rather than this receiver's opencode default.
+  const config = configFromEnv({ FACTOTUM_PROJECT: "prj", FACTOTUM_ACTOR: "act", FACTOTUM_HARNESS: "opencode2" });
+  assert.equal(config.harness, "opencode2");
+});
+
 test("configFromEnv defaults to the local ft transport", () => {
   const config = configFromEnv({ FACTOTUM_PROJECT: "prj", FACTOTUM_ACTOR: "act" });
   assert.equal(config.msgUrl, "");

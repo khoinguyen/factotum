@@ -306,7 +306,10 @@ session inherits the run's project and store (`FACTOTUM_PROJECT`, `FACTOTUM_STOR
 `FACTOTUM_STORE_OPTS`), so the `ft` it runs reads and writes that store, never a store
 the checkout's config would resolve (for example your real `~/.factotum` database);
 `FACTOTUM_STORE_OPTS` is a comma-separated `key=value` list, so a value cannot hold a
-comma.
+comma. A run with an actor also exports the receiver identity (`FACTOTUM_ACTOR`,
+`FACTOTUM_TASK_ID`), and every run exports `FACTOTUM_HARNESS`, the harness it drives,
+so a registered run reports `opencode2` for a V2 run rather than the receiver's
+`opencode` default.
 
 ```sh
 ft run t-abc123 --sandbox local --harness opencode2 --allow-host   # dev-only opt-in

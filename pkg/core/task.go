@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -156,27 +157,121 @@ type Note struct {
 	System bool
 }
 
-// machineNoteOpenings is the table of openings the machine-written notes use:
-// the agent loop, the triage flow, and the grooming flow write them. Each entry
-// is a family prefix, not a whole template: "PR opened" covers "PR opened." and
-// "PR opened (base main).". Notes ft writes itself set System at creation; these
-// openings identify the ones written before the marker existed, when generated
-// notes were simply typed with no author. This slice is the single source of
-// truth: the backfill predicate and the verb's help both read it.
-var machineNoteOpenings = []string{
-	"Triaged by agent:",
-	"Reassigned to you.",
-	"Needs human decision:",
-	"Needs human triage:",
-	"Needs human grooming:",
-	"Groomed by agent",
-	"PR opened",
+// GeneratedNoteFamily is one family of machine-written notes. Shape is the
+// opening template the writer uses, with slots for the varying part: "<date>"
+// is a date, "<n>" a number, "<ref>" a base or branch name, "<task>" a task id,
+// and "<url>" a URL. Meaning is the one line the backfill's --help shows beside
+// it.
+type GeneratedNoteFamily struct {
+	Shape   string
+	Meaning string
 }
 
-// GeneratedNoteOpenings returns the recognized generated-note family prefixes,
-// so documentation renders from the same table the predicate uses.
-func GeneratedNoteOpenings() []string {
-	return append([]string(nil), machineNoteOpenings...)
+// machineNoteFamilies is the table of openings the machine-written notes use:
+// the agent loop, the triage flow, the grooming flow, review, and QA write them.
+// Notes ft writes itself set System at creation; these openings identify the
+// ones written before the marker existed, when generated notes were simply typed
+// with no author. Each entry is a family template, not a whole note: the text
+// after the shape is the writer's summary. This slice is the single source of
+// truth: the backfill predicate and the verb's help both read it, and the shape
+// is compiled into the matcher, so a family cannot be documented by hand.
+var machineNoteFamilies = []GeneratedNoteFamily{
+	{Shape: "Triaged by agent:", Meaning: "the agent's triage decision"},
+	{Shape: "Reassigned to you.", Meaning: "the loop handed the work back to you"},
+	{Shape: "Needs human decision:", Meaning: "the loop is waiting on your decision"},
+	{Shape: "Needs human triage:", Meaning: "the loop is waiting on your triage"},
+	{Shape: "Needs human grooming:", Meaning: "the loop is waiting on your grooming"},
+	{Shape: "Grooming <date> (session <n>):", Meaning: "a grooming session's split of the work"},
+	{Shape: "Groomed by agent (auto):", Meaning: "the agent's automatic grooming pass"},
+	{Shape: "Built (PR base <ref>):", Meaning: "the builder's record of what it built"},
+	{Shape: "PR opened.", Meaning: "the builder announced a pull request"},
+	{Shape: "PR opened (base <ref>)", Meaning: "the builder announced a pull request against a base"},
+	{Shape: "PR #<n> open", Meaning: "the builder announced a pull request"},
+	{Shape: "PR #<n>: <url>", Meaning: "the builder pointed at a pull request"},
+	{Shape: "PR #<n> (branch <ref>)", Meaning: "the builder announced a pull request on a branch"},
+	{Shape: "PR #<n> (base <ref>)", Meaning: "the builder announced a pull request against a base"},
+	{Shape: "PR #<n> for review", Meaning: "the builder handed a pull request to review"},
+	{Shape: "Opened PR #<n>", Meaning: "the builder announced a pull request"},
+	{Shape: "PR: <url>", Meaning: "the builder pointed at a pull request"},
+	{Shape: "PR link attached.", Meaning: "a pull-request link was attached to the task"},
+	{Shape: "Ready for review.", Meaning: "the builder's handoff to review"},
+	{Shape: "Review round <n>", Meaning: "a review round's findings and fixes"},
+	{Shape: "Reviewer round <n>", Meaning: "a review round's findings and fixes"},
+	{Shape: "Reviewer APPROVED", Meaning: "the reviewer's approval verdict"},
+	{Shape: "QA", Meaning: "a QA run report or verdict"},
+	{Shape: "Merged as PR #<n>", Meaning: "the pull request landed"},
+	{Shape: "Landed as PR #<n>", Meaning: "the pull request landed"},
+	{Shape: "Re-captured as idea <task>", Meaning: "a task re-captured as an idea"},
+	{Shape: "Re-captured from task <task>", Meaning: "a task re-captured from another task"},
+}
+
+var shapeSlotRE = regexp.MustCompile(`<[a-z]+>`)
+
+var shapeSlots = map[string]string{
+	"<date>": `\d{4}-\d{2}-\d{2}`,
+	"<n>":    `\d+`,
+	"<ref>":  `[A-Za-z0-9._/-]+`,
+	"<task>": `t-[a-z0-9]+`,
+	"<url>":  `https?://[^\s]+`,
+}
+
+// machineNoteMatchers is compiled once from the shapes, so the table stays the
+// only place a family is written.
+var machineNoteMatchers = func() []*regexp.Regexp {
+	matchers := make([]*regexp.Regexp, len(machineNoteFamilies))
+	for i, family := range machineNoteFamilies {
+		matchers[i] = compileShape(family.Shape)
+	}
+	return matchers
+}()
+
+// shapePart is one piece of a family shape: a literal when name is empty, a slot
+// when it is set.
+type shapePart struct {
+	name string
+	text string
+}
+
+func shapeParts(shape string) []shapePart {
+	var parts []shapePart
+	last := 0
+	for _, loc := range shapeSlotRE.FindAllStringIndex(shape, -1) {
+		if loc[0] > last {
+			parts = append(parts, shapePart{text: shape[last:loc[0]]})
+		}
+		parts = append(parts, shapePart{name: shape[loc[0]:loc[1]]})
+		last = loc[1]
+	}
+	if last < len(shape) {
+		parts = append(parts, shapePart{text: shape[last:]})
+	}
+	return parts
+}
+
+// compileShape turns a shape into the anchored opening matcher. Slots become
+// permissive patterns and literals are quoted, so a shape such as "PR opened."
+// cannot turn its period into a wildcard.
+func compileShape(shape string) *regexp.Regexp {
+	var b strings.Builder
+	b.WriteString("^")
+	for _, part := range shapeParts(shape) {
+		if part.name == "" {
+			b.WriteString(regexp.QuoteMeta(part.text))
+			continue
+		}
+		pattern, ok := shapeSlots[part.name]
+		if !ok {
+			panic("core: unknown generated-note shape slot " + part.name)
+		}
+		b.WriteString(pattern)
+	}
+	return regexp.MustCompile(b.String())
+}
+
+// GeneratedNoteFamilies returns the recognized generated-note families, so
+// documentation renders from the same table the predicate uses.
+func GeneratedNoteFamilies() []GeneratedNoteFamily {
+	return append([]GeneratedNoteFamily(nil), machineNoteFamilies...)
 }
 
 // IsGeneratedNote reports whether n is an unmarked machine-written note: it
@@ -188,8 +283,8 @@ func IsGeneratedNote(n Note) bool {
 		return false
 	}
 	body := strings.TrimSpace(n.Body)
-	for _, opening := range machineNoteOpenings {
-		if strings.HasPrefix(body, opening) {
+	for _, matcher := range machineNoteMatchers {
+		if matcher.MatchString(body) {
 			return true
 		}
 	}

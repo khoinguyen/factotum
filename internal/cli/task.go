@@ -636,8 +636,13 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 	help := "Mark the machine-written notes recorded before notes carried a system marker,\n" +
 		"so task search stops indexing them. A note is a candidate only when it has no\n" +
 		"author and opens with one of the recognized generated-note families:\n\n"
-	for _, opening := range core.GeneratedNoteOpenings() {
-		help += "  " + opening + "\n"
+	families := core.GeneratedNoteFamilies()
+	width := 0
+	for _, family := range families {
+		width = max(width, len(family.Shape))
+	}
+	for _, family := range families {
+		help += "  " + family.Shape + strings.Repeat(" ", width-len(family.Shape)) + "  " + family.Meaning + "\n"
 	}
 	help += "\nAn authored note is never marked, whatever its body. The mark is one-way:\n" +
 		"there is no unmark, and a second pass marks nothing."

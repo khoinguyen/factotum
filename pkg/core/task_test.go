@@ -334,21 +334,63 @@ func TestNoteValidate(t *testing.T) {
 	}
 }
 
+// generatedNoteFamilyCases is the per-family contract: one representative body
+// that must match, and one near miss that must not. The near miss is the shape a
+// human note takes when it opens with the same words but is not the template.
+var generatedNoteFamilyCases = []struct {
+	family   string
+	match    string
+	nearMiss string
+}{
+	{"Triaged by agent:", "Triaged by agent: split the work", "Triaged by agent notes are useful"},
+	{"Reassigned to you.", "Reassigned to you.", "Reassigned to you earlier"},
+	{"Needs human decision:", "Needs human decision: pick a transport", "Needs human decision makers are listed"},
+	{"Needs human triage:", "Needs human triage: pick a transport", "Needs human triage later this week"},
+	{"Needs human grooming:", "Needs human grooming: scope the transport", "Needs human grooming standards apply"},
+	{"Groomed by agent (auto):", "Groomed by agent (auto): closed the gaps", "Groomed by agentic tooling last week"},
+	{"PR opened.", "PR opened.", "PR opened the door to a redesign"},
+	{"PR opened (base <ref>)", "PR opened (base main).", "PR opened by Khoi last week"},
+	{"PR #<n> open", "PR #93 opened: https://example.com/pull/93 (branch ft/x)", "PR #93 needs a rebase"},
+	{"PR #<n>: <url>", "PR #69: https://example.com/pull/69 - bound stdout", "PR #93: needs a rebase"},
+	{"PR #<n> (branch <ref>)", "PR #198 (branch ft/x): ft run injects the env", "PR #93 (branching off) needs care"},
+	{"PR #<n> (base <ref>)", "PR #10 (base main): usageError prints the reason", "PR #93 (based on review feedback) needs care"},
+	{"PR #<n> for review", "PR #93 for review", "PR #93 for the record"},
+	{"Opened PR #<n>", "Opened PR #106: https://example.com/pull/106", "Opened PR discussion on the topic"},
+	{"PR: <url>", "PR: https://example.com/pull/88", "PR: needs a rebase"},
+	{"PR link attached.", "PR link attached.", "PR link attached by hand"},
+	{"Grooming <date> (session <n>):", "Grooming 2026-10-08 (session 2): split for reviewability", "Grooming 2026-10-07 (advisory). Ideas are managed by hand"},
+	{"Built (PR base <ref>):", "Built (PR base main): claim and CAS assignment", "Built: TaskRepo.Search port and lexical scoring"},
+	{"Review round <n>", "Review round 1 (reviewer-t-abc123): fixed all findings", "Review round table needed for the kitchen"},
+	{"Reviewer round <n>", "Reviewer round 1 on PR #189: findings fixed", "Reviewer rounds are scheduled weekly"},
+	{"Reviewer APPROVED", "Reviewer APPROVED PR #107 at 17b715f", "Reviewer approval still pending"},
+	{"Ready for review.", "Ready for review. Build to ./bin/ft", "Ready for review tomorrow morning"},
+	{"Merged as PR #<n>", "Merged as PR #77 (9585a0a)", "Merged as PR review feedback arrived"},
+	{"Landed as PR #<n>", "Landed as PR #70 (merged 5a052a0)", "Landed as PR without a number"},
+	{"QA", "QA report — ft msg end-to-end", "Quality assurance is pending"},
+	{"Re-captured as idea <task>", "Re-captured as idea t-aa5c2dqqki (Khoi 2026-10-06).", "Re-captured as ideas from the session"},
+	{"Re-captured from task <task>", "Re-captured from task t-ewr3xidxtk; kind converted to idea", "Re-captured from tasks in the sprint"},
+}
+
+func TestIsGeneratedNoteFamilies(t *testing.T) {
+	for _, tt := range generatedNoteFamilyCases {
+		t.Run(tt.family, func(t *testing.T) {
+			if !IsGeneratedNote(Note{ID: "n-1", Body: tt.match}) {
+				t.Errorf("family %q does not match its own template %q", tt.family, tt.match)
+			}
+			if IsGeneratedNote(Note{ID: "n-1", Body: tt.nearMiss}) {
+				t.Errorf("family %q marks the near miss %q", tt.family, tt.nearMiss)
+			}
+		})
+	}
+}
+
 func TestIsGeneratedNote(t *testing.T) {
 	tests := []struct {
 		name string
 		note Note
 		want bool
 	}{
-		{"triage template", Note{ID: "n-1", Body: "Triaged by agent: split the work"}, true},
-		{"reassignment template", Note{ID: "n-1", Body: "Reassigned to you."}, true},
 		{"indented template", Note{ID: "n-1", Body: "  Triaged by agent: split the work"}, true},
-		{"groomed by agent", Note{ID: "n-1", Body: "Groomed by agent (auto): closed the gaps"}, true},
-		{"pr opened without base", Note{ID: "n-1", Body: "PR opened."}, true},
-		{"pr opened with base", Note{ID: "n-1", Body: "PR opened (base main)."}, true},
-		{"needs human decision", Note{ID: "n-1", Body: "Needs human decision: pick a transport"}, true},
-		{"needs human triage", Note{ID: "n-1", Body: "Needs human triage: pick a transport"}, true},
-		{"needs human grooming", Note{ID: "n-1", Body: "Needs human grooming: scope the transport"}, true},
 		{"human note", Note{ID: "n-1", Body: "Decision: ship the small thing"}, false},
 		{"human decision with date", Note{ID: "n-1", Body: "Decision (Khoi 2026-10-06): keep XOR"}, false},
 		{"human needs wording, not the machine label", Note{ID: "n-1", Body: "We need human decision on this later"}, false},
@@ -368,14 +410,34 @@ func TestIsGeneratedNote(t *testing.T) {
 			}
 		})
 	}
+}
 
-	// Every family in the table is recognized, so a new family needs only its
-	// line in machineNoteOpenings.
-	for _, opening := range GeneratedNoteOpenings() {
-		t.Run("family "+opening, func(t *testing.T) {
-			if !IsGeneratedNote(Note{ID: "n-1", Body: opening + " probe"}) {
-				t.Fatalf("family %q is not recognized", opening)
-			}
-		})
+// TestGeneratedNoteFamiliesDocumented keeps the table and its per-family cases
+// in step: every family needs a shape and a meaning, and every family needs a
+// match and a near-miss row, so a new family cannot land documented but
+// untested (or tested but undocumented).
+func TestGeneratedNoteFamiliesDocumented(t *testing.T) {
+	families := GeneratedNoteFamilies()
+	if len(families) == 0 {
+		t.Fatal("no generated-note families")
+	}
+	cases := make(map[string]bool, len(generatedNoteFamilyCases))
+	for _, tt := range generatedNoteFamilyCases {
+		cases[tt.family] = true
+	}
+	for _, f := range families {
+		if f.Shape == "" {
+			t.Errorf("family %+v has no shape", f)
+		}
+		if f.Meaning == "" {
+			t.Errorf("family %q has no meaning", f.Shape)
+		}
+		if !cases[f.Shape] {
+			t.Errorf("family %q has no match/near-miss case", f.Shape)
+		}
+		delete(cases, f.Shape)
+	}
+	for shape := range cases {
+		t.Errorf("case for %q has no family in the table", shape)
 	}
 }

@@ -160,6 +160,16 @@ func TestDocFindingsScopesTheDesignExemption(t *testing.T) {
 			body: "An operator can `ft msg retry` a failed message.\n",
 			want: []string{`unknown command "retry"`},
 		},
+		{
+			name: "an unclosed fence fails closed and is reported",
+			body: "```design\nft msg retry t-1\n",
+			want: []string{`unknown command "retry"`, "unterminated code fence"},
+		},
+		{
+			name: "an unclosed fence after a design block still fails",
+			body: "```design\nft msg retry t-1\n\n```sh\nft msg frobnicate t-1\n```\n",
+			want: []string{"unterminated code fence"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,9 +226,14 @@ func roleSkillFindings(root *cobra.Command, rel, body string) []string {
 // whose info string marks it `design` records verbs the design considered but the
 // CLI does not implement yet, so that block is exempt. The exemption is explicit
 // and block-scoped, so prose and every plain block still fail on a verb that does
-// not exist.
+// not exist. A fence left open is reported: it would otherwise move commands in or
+// out of a block without the reader or the check knowing.
 func docFindings(root *cobra.Command, rel, body string) []string {
-	return codeFindings(root, rel, codeSnippets(body, isDesignFence), "doc")
+	findings := codeFindings(root, rel, codeSnippets(body, isDesignFence), "doc")
+	if unterminatedFence(body) {
+		findings = append(findings, fmt.Sprintf("%s: unterminated code fence; commands after it are not reliably in a block", rel))
+	}
+	return findings
 }
 
 // codeFindings reports the stale references in the code snippets of one file, or
@@ -276,7 +291,7 @@ func docsFindings(root *cobra.Command, dir string) ([]string, int, error) {
 		}
 		snippets := codeSnippets(string(body), isDesignFence)
 		parsed += len(ftCommandLines(snippets))
-		findings = append(findings, codeFindings(root, rel, snippets, "doc")...)
+		findings = append(findings, docFindings(root, rel, string(body))...)
 		return nil
 	})
 	if err != nil {

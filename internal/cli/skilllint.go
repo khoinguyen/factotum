@@ -454,30 +454,55 @@ func skillCodeSnippets(body string) []string {
 
 // codeSnippets returns the code a document presents as shell. skipFence, when
 // set, receives each fence's info string and drops that block's lines when it
-// reports true.
+// reports true. The exemption needs the doc to close the block: a fence still
+// open at the end of the file keeps its lines, so a missing close fence can never
+// hide the rest of the file from the check. Indented and `~~~` fences are not
+// read, as in the skills checker; no doc in the repo uses either.
 func codeSnippets(body string, skipFence func(info string) bool) []string {
 	var out []string
 	inFence := false
-	skipped := false
+	exempt := false
+	var pending []string
 	for _, raw := range strings.Split(body, "\n") {
 		line := strings.TrimSpace(raw)
 		if strings.HasPrefix(line, "```") {
 			if !inFence {
 				info := strings.TrimSpace(strings.TrimPrefix(line, "```"))
-				skipped = skipFence != nil && skipFence(info)
+				exempt = skipFence != nil && skipFence(info)
+				inFence = true
+				pending = nil
+				continue
 			}
-			inFence = !inFence
+			inFence = false
+			if !exempt {
+				out = append(out, pending...)
+			}
+			exempt = false
+			pending = nil
 			continue
 		}
 		if inFence {
-			if !skipped {
-				out = append(out, line)
-			}
+			pending = append(pending, line)
 			continue
 		}
 		out = append(out, inlineCode(line)...)
 	}
+	// An unterminated design fence is not exempt.
+	out = append(out, pending...)
 	return out
+}
+
+// unterminatedFence reports whether body opens a fenced code block it never
+// closes. Such a doc moves commands in or out of a block silently, so the drift
+// check reports it instead of guessing where the block ended.
+func unterminatedFence(body string) bool {
+	inFence := false
+	for _, raw := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(raw), "```") {
+			inFence = !inFence
+		}
+	}
+	return inFence
 }
 
 func asFTCommand(line string) (string, bool) {

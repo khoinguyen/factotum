@@ -22,11 +22,17 @@ func skillDriftRoot(t *testing.T) *cobra.Command {
 	return NewRoot(deps)
 }
 
+// skillHeadroom is the free space every embedded skill keeps under the output
+// bound. With no headroom, the next one-line addition to any skill turns an
+// unrelated PR red and the cheapest fix is an arbitrary trim; ten lines absorbs
+// a small edit while the bound still fails a skill that keeps growing.
+const skillHeadroom = 10
+
 // TestEmbeddedSkillsFitOutputBound guards `ft skill get` against the output
 // bound silently truncating a skill: when stdout is not a terminal the printed
 // window keeps only a head and tail, so a piped skill must stay under
-// maxOutputLines with headroom. The guard fails at the bound, before truncation
-// can reach an agent.
+// maxOutputLines with headroom. The guard fails before truncation can reach an
+// agent.
 func TestEmbeddedSkillsFitOutputBound(t *testing.T) {
 	all, err := skills.All()
 	if err != nil {
@@ -36,11 +42,56 @@ func TestEmbeddedSkillsFitOutputBound(t *testing.T) {
 		t.Fatal("no embedded skills to check")
 	}
 	for _, skill := range all {
-		if lines := countLines([]byte(skill.Body)); lines >= maxOutputLines {
-			t.Errorf("skill %q is %d lines; keep it below the %d-line output bound or `ft skill get %s` is truncated",
-				skill.Name, lines, maxOutputLines, skill.Name)
+		if finding := skillBoundFinding(skill.Name, skill.Body); finding != "" {
+			t.Error(finding)
 		}
 	}
+}
+
+// TestSkillBoundFindingKeepsHeadroom pins the guard itself: a skill at the
+// allowed size passes, one line over fails naming the budget, and a skill at
+// the raw output bound still fails, so the bound cannot quietly become the
+// budget.
+func TestSkillBoundFindingKeepsHeadroom(t *testing.T) {
+	budget := maxOutputLines - skillHeadroom
+	body := func(lines int) string { return strings.Repeat("line\n", lines) }
+	cases := []struct {
+		name     string
+		lines    int
+		wantFail bool
+	}{
+		{name: "well under", lines: skillHeadroom, wantFail: false},
+		{name: "exactly the budget", lines: budget, wantFail: false},
+		{name: "one line over the budget", lines: budget + 1, wantFail: true},
+		{name: "at the output bound", lines: maxOutputLines, wantFail: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			finding := skillBoundFinding("probe", body(tc.lines))
+			if !tc.wantFail {
+				if finding != "" {
+					t.Fatalf("skillBoundFinding(%d lines) = %q, want it to fit", tc.lines, finding)
+				}
+				return
+			}
+			if !strings.Contains(finding, fmt.Sprintf("at or below %d", budget)) {
+				t.Fatalf("skillBoundFinding(%d lines) = %q, want the %d-line budget named", tc.lines, finding, budget)
+			}
+		})
+	}
+}
+
+// skillBoundFinding reports why a skill's body breaks the output bound, or ""
+// when it fits with the required headroom. The guard fires one line above the
+// budget, before the bound could truncate the skill's output.
+func skillBoundFinding(name, body string) string {
+	budget := maxOutputLines - skillHeadroom
+	lines := countLines([]byte(body))
+	if lines <= budget {
+		return ""
+	}
+	return fmt.Sprintf("skill %q is %d lines; keep it at or below %d (the %d-line output bound less %d lines of headroom) so a small edit cannot trip the bound and `ft skill get %s` is never truncated",
+		name, lines, budget, maxOutputLines, skillHeadroom, name)
 }
 
 func TestEmbeddedSkillsReferenceRealCommandsAndFlags(t *testing.T) {

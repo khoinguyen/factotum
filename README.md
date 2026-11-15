@@ -146,8 +146,19 @@ ft idea list && ft bug list
 ## Run agents
 
 `ft run <task>` resolves the task's repositories into a workspace, prepares the selected **isolation
-backend**, runs the selected **harness**, captures the output, and reflects progress into the store.
-A successful run moves the task to `ready_for_review`.
+backend**, runs the selected **harness** with the task as its prompt, captures the output, and
+reflects progress into the store. A successful run moves the task to `ready_for_review`, reports
+`run: finished`, `exit_code: 0`, `complete: true`, and records a note with the agent's output plus
+`task.run_started`/`task.run_finished` events; a failed run leaves the status untouched, reports
+`run: failed`/`complete: false`, and records only a failure note.
+
+A harness describes one agent CLI end to end (image, invocation, model flag, prompt delivery,
+completion, output parsing); each builds a headless invocation that passes the prompt as the final
+message and reads stdout. The launched session inherits the run's project and store
+(`FACTOTUM_PROJECT`, `FACTOTUM_STORE`, `FACTOTUM_STORE_OPTS`), so the `ft` it runs reads and writes
+that store, never a store the checkout's config would resolve — your real `~/.factotum` database,
+for example. `FACTOTUM_STORE_OPTS` is a comma-separated `key=value` list, so a store-opt value
+cannot itself contain a comma.
 
 ```sh
 ft run <task> --sandbox local --harness opencode2 --allow-host   # dev-only, unsandboxed
@@ -155,33 +166,57 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
 ```
 
 - `--sandbox` and `--harness` resolve flag > `FACTOTUM_RUN_*` > committed project `[run]` > machine
-  `[run]`. On a terminal an unset one prompts once and saves the answer; non-interactively, an
-  unset one is an error. The `local` backend is unsandboxed and must be opted in explicitly
-  (`--allow-host` or `run.allow_host`).
+  `[run]`. On a terminal an unset one prompts once and saves the answer; with no configured project
+  it saves to machine scope and says why (project scope needs a pinned project, so it is not
+  offered). Non-interactively, an unset one is an error. The `local` backend is unsandboxed, warns
+  when it starts, and must be opted in explicitly: `--allow-host`, `run.allow_host`, or the
+  interactive prompt, which asks (default no) and records `run.allow_host = true` in the user
+  config.
 - Sandboxes: `local` (dev only), `openshell`, and `docker`. Harnesses: `opencode2` (OpenCode V2,
-  preferred), `opencode` (OpenCode V1), and `pi`. On the local backend `--harness opencode`
+  preferred, image `ghcr.io/anomalyco/opencode:2.0.27`), `opencode` (OpenCode V1, image
+  `ghcr.io/anomalyco/opencode:latest`), and `pi`. On the local backend `--harness opencode`
   probes the installed binary's `--version` and drives V2 automatically after an in-place upgrade;
-  `--harness opencode2` forces V2 (npm alias or pinned V2 image). An isolating backend runs the
-  harness's image under its policy: `openshell` runs it as the policy's non-root uid (1000:1000 by
-  default, and refuses a root request), while `docker` runs as the identity ft passes it. That
-  identity defaults to **empty**, so the image's own `USER` applies unchanged: a caller-supplied
-  `--image` whose `USER` is root writes root-owned files into the bind-mounted checkout, and ft adds
-  none for `pi` (OpenCode's default uid is not applied to a custom image either). Set `--user`, or
-  `run.user`/`FACTOTUM_RUN_USER`, to `$(id -u):$(id -g)` to run as the host user and keep the
-  checkout's files yours; `local` ignores it. A configured credential is attached as a provider
-  placeholder, never placed in the sandbox. Supply or override the image with `--image`,
-  `FACTOTUM_RUN_IMAGE`, or `run.image`; one image applies to whichever harness runs, so it must
-  match (a `pi` image has no `opencode2`, an OpenCode image has no `pi`).
+  `--harness opencode2` forces V2 (npm alias or pinned V2 image). Model and credentials come from
+  the configured provider, never hardcoded (a backend-resolved provider reference). An isolating
+  backend runs the harness's image under its policy: `openshell` runs it as the policy's non-root
+  uid (1000:1000 by default, and refuses a root request), while `docker` runs as the identity ft
+  passes it. That identity defaults to **empty**, so the image's own `USER` applies unchanged: a
+  caller-supplied `--image` whose `USER` is root writes root-owned files into the bind-mounted
+  checkout, and ft adds none for `pi` (OpenCode's default uid is not applied to a custom image
+  either). Set `--user`, or `run.user`/`FACTOTUM_RUN_USER`, to `$(id -u):$(id -g)` to run as the
+  host user and keep the checkout's files yours; `local` ignores it. A configured credential is
+  attached as a provider placeholder, never placed in the sandbox. Supply or override the image
+  with `--image`, `FACTOTUM_RUN_IMAGE`, or `run.image`; one image applies to whichever harness
+  runs, so it must match (a `pi` image has no `opencode2`, an OpenCode image has no `pi`).
 - `pi` ships as an npm package rather than a published container image, so it has no image of its
   own: an isolating run needs one named with `--image`/`run.image` (it must have `pi` on PATH, and
   `ft` too when the run carries an actor and no `FACTOTUM_MSG_URL` hub). Without one, `ft run`
   fails at selection and names the knob instead of launching the backend's default image. On
-  `local` it drives the host `pi`.
+  `local` it drives the host `pi`; pi trusts local files, so pair it with an isolating backend.
 - `--goal` repeatedly runs the highest-ranked **agent-ready, groomed, on-path** task until the goal
-  is reached, work stalls, or `--max-tasks` is exhausted. A task goal resolves on its own; a
-  milestone is a human gate, so the loop stops `no_ready_work` until a human closes it.
-- With `--prompt-file`/`--prompt-artifact` and no task id, `ft run` runs the prompt once over every
-  repository and writes nothing to the graph.
+  is reached, work stalls, or `--max-tasks` is exhausted. Only tasks on a path to the goal run,
+  ordered by the composite ranker with the goal as the toward preference, so readiness and priority
+  decide the order. A task goal resolves on its own; a milestone is a human gate, so the loop stops
+  `no_ready_work` until a human closes it. Only groomed work assigned to an agent is run; startable
+  but non-agent-ready on-path work (unassigned, human-owned, or ungroomed) is left for a human and
+  named in `not_run:`. The stop reason is `stop:` (`goal_reached`, `no_ready_work`, `blocked`,
+  `budget_exhausted`, or `failed`), and each iteration prints a compact `step:` block.
+- `--prompt-file`/`--prompt-artifact` supply a stored prompt: with a task it replaces the task
+  prompt, and with no task id it runs the prompt once over every repository and writes nothing to
+  the graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error
+  (exit 1).
+- On a terminal, a single-task or task-less run is **interactive** (the agent attached, the OpenCode
+  TUI) so a human can answer it; its output stays live and is not captured. `--unattended`, a
+  piped/redirected stdin/stdout, or `--goal` runs **headless**. Interactive needs a backend that can
+  attach a terminal (`local`; `openshell` and `docker` tell you to rerun with `--unattended`). A
+  headless run narrates progress on stderr — `ft: run <task> (sandbox=<b> harness=<h>) started`,
+  then a periodic `still running (Ns)` heartbeat — only when stderr is a terminal and output is
+  text; `-o json|yaml`, a piped/redirected stderr, and an interactive run print none.
+- `openshell` needs its CLI and a gateway, attaches the credential as a provider placeholder, and
+  imports a missing provider profile. `docker` needs the `docker` CLI and a daemon, mounts only the
+  resolved workspace at its same absolute path, refuses a policy it cannot enforce, and injects
+  credentials per-exec so no secret enters argv or metadata. `--refresh` hard-resets a reused
+  checkout; a changed origin URL fails.
 
 The machine-scoped `[run]` table holds the launcher settings (`sandbox`, `harness`, `workspace`,
 `model`, `image`, `user`, `args`, `refresh`, `allow_host`, `provider`, `credential_env`):
@@ -214,6 +249,29 @@ it. Install skips the write when the staged file already matches, so a relaunch 
 plugin watcher reload a running agent; and a reloaded V2 receiver resumes the session it persisted,
 so an idle agent still receives a queued handoff. V2 is in beta; V1 stays available with
 `--harness opencode`.
+
+### Isolation policy
+
+An isolating backend imposes a policy on the run. The OpenShell policy
+(`pkg/isolation/openshell`, checked-in template `policy.yaml`) is deny-by-default: the sandbox
+reaches no host until a project opts in, except the model provider endpoint (`openrouter.ai` for
+OpenRouter), which the credential provider attaches from `run.provider` + `run.credential_env`.
+OpenCode's phone-home to `models.opencode.ai` and `registry.npmjs.org` is optional and stays denied
+until a project opts in. The workload runs non-root with no credential value in the sandbox;
+filesystem and the `manual` advisor are pinned by `policy.yaml`.
+
+A project opts in to extra hosts by committing `.factotum/openshell-policy.yaml`:
+
+```yaml
+allow_hosts:
+  - models.opencode.ai
+  - registry.npmjs.org
+```
+
+Only `allow_hosts` is honored. Any other key is rejected, so a project can widen egress but never
+weaken the identity, filesystem, or credential defaults. `ft run` resolves it next to the active
+project config (a custom `-c` uses its sibling `openshell-policy.yaml`); with no policy file it
+warns that egress is deny-all.
 
 ## Teach your agent to use ft
 

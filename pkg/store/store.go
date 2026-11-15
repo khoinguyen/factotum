@@ -72,6 +72,52 @@ func MatchLabels(task core.Ticket, labels []string) bool {
 	return true
 }
 
+// PromotedTask returns the task a capture was promoted into, or nil. A capture
+// owns at most one promoted task: its first task-kind dependent, ordered by id.
+// A milestone dependent is a release gate that may depend on a capture without
+// being promoted work, so it does not count. The scan backends share this rule
+// so they cannot drift from the sqlite guard's `kind = task` query.
+func PromotedTask(tasks []*core.Ticket, captureID core.TicketID) *core.Ticket {
+	var found *core.Ticket
+	for _, task := range tasks {
+		if task == nil || task.Kind != core.KindTask || !taskDependsOn(*task, captureID) {
+			continue
+		}
+		if found == nil || task.ID < found.ID {
+			found = task
+		}
+	}
+	return found
+}
+
+// ValidatePromotion reports whether task may be stored as captureID's promoted
+// task: a task-kind ticket that declares the capture as a dependency. The edge
+// is what the guard keys on, so a task without it is refused rather than stored
+// as an unguarded promotion.
+func ValidatePromotion(captureID core.TicketID, task *core.Ticket) error {
+	if task == nil {
+		return fmt.Errorf("%w: promotion task is required", core.ErrInvalid)
+	}
+	if task.Kind != core.KindTask {
+		return fmt.Errorf("%w: promote %s: %s is a %s, not a task", core.ErrInvalid, captureID, task.ID, task.Kind)
+	}
+	for _, dep := range task.Deps {
+		if dep == captureID {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: promote %s: %s does not declare it as a dependency", core.ErrInvalid, captureID, task.ID)
+}
+
+func taskDependsOn(task core.Ticket, id core.TicketID) bool {
+	for _, dep := range task.Deps {
+		if dep == id {
+			return true
+		}
+	}
+	return false
+}
+
 type TicketRepo interface {
 	Create(ctx context.Context, task *core.Ticket) error
 	Get(ctx context.Context, id core.TicketID) (*core.Ticket, error)
@@ -82,6 +128,16 @@ type TicketRepo interface {
 	// caller that read a document reject a stale write atomically.
 	UpdateExpected(ctx context.Context, task *core.Ticket, expected time.Time) error
 	Delete(ctx context.Context, id core.TicketID) error
+	// Promoted returns the task a capture was promoted into, or (nil, nil) when
+	// it has none. A capture owns at most one promoted task: its first task-kind
+	// dependent, ordered by id (see PromotedTask).
+	Promoted(ctx context.Context, captureID core.TicketID) (*core.Ticket, error)
+	// CreatePromoted stores task as captureID's promoted task and returns it
+	// with created=true. When the capture already has a promoted task it stores
+	// nothing and returns that task with created=false. The lookup and the
+	// insert are one atomic step in the store, so concurrent promotions of one
+	// capture agree on a single task; the guard is here, not in the caller.
+	CreatePromoted(ctx context.Context, captureID core.TicketID, task *core.Ticket) (promoted *core.Ticket, created bool, err error)
 	// Search returns tasks in filter scope whose title, description, or notes
 	// match the query, ranked by relevance. An empty query matches everything in
 	// scope.

@@ -252,6 +252,43 @@ func (r *taskRepo) Delete(_ context.Context, id core.TicketID) error {
 	return nil
 }
 
+func (r *taskRepo) Promoted(_ context.Context, captureID core.TicketID) (*core.Ticket, error) {
+	r.backend.mu.RLock()
+	defer r.backend.mu.RUnlock()
+	return r.backend.promoted(captureID), nil
+}
+
+func (r *taskRepo) CreatePromoted(_ context.Context, captureID core.TicketID, task *core.Ticket) (*core.Ticket, bool, error) {
+	if err := store.ValidatePromotion(captureID, task); err != nil {
+		return nil, false, err
+	}
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	if existing := r.backend.promoted(captureID); existing != nil {
+		return existing, false, nil
+	}
+	if _, ok := r.backend.tasks[task.ID]; ok {
+		return nil, false, fmt.Errorf("%w: task %s", core.ErrAlreadyExists, task.ID)
+	}
+	stored := clone.Ticket(*task)
+	r.backend.tasks[task.ID] = stored
+	return &stored, true, nil
+}
+
+// promoted returns the capture's promoted task, or nil. The caller holds mu.
+func (b *Backend) promoted(captureID core.TicketID) *core.Ticket {
+	tasks := make([]*core.Ticket, 0, len(b.tasks))
+	for _, task := range b.tasks {
+		cloned := task
+		tasks = append(tasks, &cloned)
+	}
+	if promoted := store.PromotedTask(tasks, captureID); promoted != nil {
+		cloned := clone.Ticket(*promoted)
+		return &cloned
+	}
+	return nil
+}
+
 type actorRepo struct{ backend *Backend }
 
 func (r *actorRepo) Create(_ context.Context, actor *core.Actor) error {

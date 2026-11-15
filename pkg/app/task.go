@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -58,6 +57,26 @@ type TicketInput struct {
 }
 
 func (s *TicketService) Add(ctx context.Context, in TicketInput) (*core.Ticket, error) {
+	task, err := s.buildTicket(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	if err := task.Validate(); err != nil {
+		return nil, err
+	}
+	if err := s.backend.Tickets().Create(ctx, task); err != nil {
+		return nil, err
+	}
+	if err := s.recordTaskCreated(ctx, task); err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+// buildTicket validates the input against its project and builds the ticket Add
+// stores. It does not write, so a caller can add store-level data (the origin
+// edge of a promotion) before validating and creating it.
+func (s *TicketService) buildTicket(ctx context.Context, in TicketInput) (*core.Ticket, error) {
 	project, err := s.backend.Projects().Get(ctx, in.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("task project: %w", err)
@@ -79,7 +98,7 @@ func (s *TicketService) Add(ctx context.Context, in TicketInput) (*core.Ticket, 
 		id = *in.ID
 	}
 	now := s.clock.Now()
-	task := &core.Ticket{
+	return &core.Ticket{
 		ID:                 id,
 		ProjectID:          in.ProjectID,
 		Repo:               in.Repo,
@@ -97,22 +116,17 @@ func (s *TicketService) Add(ctx context.Context, in TicketInput) (*core.Ticket, 
 		OriginArtifact:     in.OriginArtifact,
 		CreatedAt:          now,
 		UpdatedAt:          now,
-	}
-	if err := task.Validate(); err != nil {
-		return nil, err
-	}
-	if err := s.backend.Tickets().Create(ctx, task); err != nil {
-		return nil, err
-	}
-	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
-		ProjectID: project.ID,
+	}, nil
+}
+
+// recordTaskCreated appends the event a newly stored task emits.
+func (s *TicketService) recordTaskCreated(ctx context.Context, task *core.Ticket) error {
+	return appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
+		ProjectID: task.ProjectID,
 		TicketID:  &task.ID,
 		Kind:      core.EventTaskCreated,
 		Summary:   fmt.Sprintf("added %s %s: %s", task.Kind, task.ID, task.Title),
-	}); err != nil {
-		return nil, err
-	}
-	return task, nil
+	})
 }
 
 func (s *TicketService) Get(ctx context.Context, id core.TicketID) (*core.Ticket, error) {
@@ -155,12 +169,12 @@ type PromoteInput struct {
 // promoted task. Grooming precedes promotion, so a capture without the required
 // grooming data is rejected rather than promoted into an unassigned todo.
 //
-// Promotion is idempotent: a capture that already has an executable dependent
-// returns that task, so re-running it adds no duplicate work and no second note.
-// It is atomic in effect: the capture is written last, and a failure before the
-// promotion completes deletes the task it created, so a failed promote leaves no
-// half-promoted capture or orphan task. The add/dep/delete events stay in the log
-// (rollback is compensating, not transactional) as an audit trail.
+// Promotion is idempotent and safe under concurrency: a capture owns at most one
+// promoted task, and the store guards that with an atomic create
+// (TicketRepo.CreatePromoted) rather than a caller's check-then-write, so N
+// parallel promotes all return the one task and only the winner records the
+// created event and the note. A failed promote deletes the task it created, so
+// it leaves no half-promoted capture or orphan task.
 func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in PromoteInput) (*core.Ticket, error) {
 	capture, err := s.backend.Tickets().Get(ctx, captureID)
 	if err != nil {
@@ -169,7 +183,10 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in
 	if !capture.Kind.CapturedByHuman() {
 		return nil, fmt.Errorf("%w: %s is not a capture", core.ErrInvalid, captureID)
 	}
-	if existing, err := s.promotedTask(ctx, capture); err != nil {
+	// A re-run returns the promoted task before requiring the grooming flags, so
+	// re-running a promotion never demands them again. This read only shapes that
+	// error path: the invariant is the store guard below, which decides the race.
+	if existing, err := s.backend.Tickets().Promoted(ctx, capture.ID); err != nil {
 		return nil, err
 	} else if existing != nil {
 		return existing, nil
@@ -192,7 +209,7 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in
 		return nil, fmt.Errorf("%w: promote %s: assignee %s is a %s, not an agent; groom the %s first",
 			core.ErrInvalid, captureID, assignee.ID, assignee.Kind, capture.Kind)
 	}
-	created, err := s.Add(ctx, TicketInput{
+	task, err := s.buildTicket(ctx, TicketInput{
 		ProjectID:          capture.ProjectID,
 		Repo:               capture.Repo,
 		Kind:               core.KindTask,
@@ -207,41 +224,39 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in
 	if err != nil {
 		return nil, err
 	}
-	task, err := s.AddDep(ctx, created.ID, captureID)
-	if err != nil {
-		return nil, s.rollbackPromotion(ctx, created.ID, err)
+	// The origin edge is written with the task, in the store's atomic create; a
+	// fresh task whose only edge points at an existing capture cannot close a
+	// cycle, so the graph needs no check.
+	task.Deps = []core.TicketID{capture.ID}
+	if err := task.Validate(); err != nil {
+		return nil, err
 	}
-	if _, err := s.AddNote(ctx, captureID, NoteInput{
-		Body:   fmt.Sprintf("Promoted to %s.", task.ID),
-		System: true,
-	}); err != nil {
-		return nil, s.rollbackPromotion(ctx, created.ID, err)
-	}
-	return task, nil
-}
-
-// promotedTask returns the task a capture already produced, if any. The origin
-// edge promotion writes makes it a dependent of the capture, so finding a task
-// one means the capture is already groomed into work. Only a task counts: a
-// milestone is a release gate that may depend on a capture without being
-// promoted work, so `promote` must still create the task (up.Controller.promoted
-// deliberately stays looser, where any executable dependent skips the pipeline).
-// Candidates are ordered by id so several dependents resolve deterministically.
-func (s *TicketService) promotedTask(ctx context.Context, capture *core.Ticket) (*core.Ticket, error) {
-	tasks, err := s.backend.Tickets().List(ctx, store.TicketFilter{
-		ProjectID: capture.ProjectID,
-		DependsOn: &capture.ID,
-	})
+	promoted, created, err := s.backend.Tickets().CreatePromoted(ctx, capture.ID, task)
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(tasks, func(i, j int) bool { return tasks[i].ID < tasks[j].ID })
-	for _, task := range tasks {
-		if task.Kind == core.KindTask {
-			return task, nil
-		}
+	if !created {
+		return promoted, nil
 	}
-	return nil, nil
+	if err := s.recordTaskCreated(ctx, promoted); err != nil {
+		return nil, s.rollbackPromotion(ctx, promoted.ID, err)
+	}
+	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
+		ProjectID: promoted.ProjectID,
+		TicketID:  &promoted.ID,
+		Kind:      core.EventTaskDepAdded,
+		Summary:   fmt.Sprintf("%s now depends on %s", promoted.ID, capture.ID),
+		Data:      map[string]any{"dep": string(capture.ID)},
+	}); err != nil {
+		return nil, s.rollbackPromotion(ctx, promoted.ID, err)
+	}
+	if _, err := s.AddNote(ctx, capture.ID, NoteInput{
+		Body:   fmt.Sprintf("Promoted to %s.", promoted.ID),
+		System: true,
+	}); err != nil {
+		return nil, s.rollbackPromotion(ctx, promoted.ID, err)
+	}
+	return promoted, nil
 }
 
 // rollbackPromotion deletes the task a failed promotion created, so the capture

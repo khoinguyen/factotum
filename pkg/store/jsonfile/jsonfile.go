@@ -326,6 +326,46 @@ func (b *Backend) taskIndex(id core.TicketID) (int, bool) {
 	return 0, false
 }
 
+func (r *taskRepo) Promoted(_ context.Context, captureID core.TicketID) (*core.Ticket, error) {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	return r.backend.promoted(captureID), nil
+}
+
+func (r *taskRepo) CreatePromoted(_ context.Context, captureID core.TicketID, task *core.Ticket) (*core.Ticket, bool, error) {
+	if err := store.ValidatePromotion(captureID, task); err != nil {
+		return nil, false, err
+	}
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	if existing := r.backend.promoted(captureID); existing != nil {
+		return existing, false, nil
+	}
+	if _, ok := r.backend.taskIndex(task.ID); ok {
+		return nil, false, fmt.Errorf("%w: task %s", core.ErrAlreadyExists, task.ID)
+	}
+	stored := clone.Ticket(*task)
+	r.backend.state.Tasks = append(r.backend.state.Tasks, stored)
+	if err := r.backend.persist(); err != nil {
+		r.backend.state.Tasks = r.backend.state.Tasks[:len(r.backend.state.Tasks)-1]
+		return nil, false, err
+	}
+	return &stored, true, nil
+}
+
+// promoted returns the capture's promoted task, or nil. The caller holds mu.
+func (b *Backend) promoted(captureID core.TicketID) *core.Ticket {
+	tasks := make([]*core.Ticket, 0, len(b.state.Tasks))
+	for i := range b.state.Tasks {
+		tasks = append(tasks, &b.state.Tasks[i])
+	}
+	if promoted := store.PromotedTask(tasks, captureID); promoted != nil {
+		cloned := clone.Ticket(*promoted)
+		return &cloned
+	}
+	return nil
+}
+
 type actorRepo struct{ backend *Backend }
 
 func (r *actorRepo) Create(_ context.Context, actor *core.Actor) error {

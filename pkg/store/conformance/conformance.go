@@ -5,6 +5,8 @@ package conformance
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +23,8 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("Task", func(t *testing.T) { testTask(t, factory(t)) })
 	t.Run("TaskCaptureKinds", func(t *testing.T) { testTaskCaptureKinds(t, factory(t)) })
 	t.Run("TaskDependents", func(t *testing.T) { testTaskDependents(t, factory(t)) })
+	t.Run("TaskPromotion", func(t *testing.T) { testTaskPromotion(t, factory(t)) })
+	t.Run("TaskPromotionConcurrent", func(t *testing.T) { testTaskPromotionConcurrent(t, factory(t)) })
 	t.Run("TaskSearch", func(t *testing.T) { testTaskSearch(t, factory(t)) })
 	t.Run("Artifact", func(t *testing.T) { testArtifact(t, factory(t)) })
 	t.Run("ArtifactSearch", func(t *testing.T) { testArtifactSearch(t, factory(t)) })
@@ -425,9 +429,171 @@ func testTaskDependents(t *testing.T, be store.Backend) {
 	assertTaskIDs(t, repo, ctx, scoped("b"), nil)
 }
 
-func depPtr(id core.TicketID) *core.TicketID { return &id }
+// promotionTask builds the task CreatePromoted stores: a task-kind ticket that
+// declares the capture as its origin edge.
+func promotionTask(id, captureID core.TicketID, title string) *core.Ticket {
+	return &core.Ticket{
+		ID:        id,
+		ProjectID: "prj-1",
+		Kind:      core.KindTask,
+		Title:     title,
+		Status:    core.StatusTodo,
+		Deps:      []core.TicketID{captureID},
+	}
+}
 
-func boolPtr(value bool) *bool { return &value }
+// testTaskPromotion covers the store-level promotion guard: a capture owns at
+// most one promoted task, the guard is the store's (Promoted and
+// CreatePromoted), and a loser of the race is handed the winner's task rather
+// than an error.
+func testTaskPromotion(t *testing.T, be store.Backend) {
+	t.Helper()
+	ctx := context.Background()
+	repo := be.Tickets()
+
+	capture := &core.Ticket{ID: "cap-1", ProjectID: "prj-1", Kind: core.KindIdea, Title: "an idea", Status: core.StatusTodo}
+	if err := repo.Create(ctx, capture); err != nil {
+		t.Fatalf("Create(capture) error = %v", err)
+	}
+	if promoted, err := repo.Promoted(ctx, capture.ID); err != nil || promoted != nil {
+		t.Fatalf("Promoted(no dependents) = %v, %v; want nil, nil", promoted, err)
+	}
+
+	// A milestone is a release gate that may depend on a capture without being
+	// promoted work, so it is not the capture's promoted task.
+	gate := &core.Ticket{ID: "gate-1", ProjectID: "prj-1", Kind: core.KindMilestone, Title: "release", Status: core.StatusTodo, Deps: []core.TicketID{capture.ID}}
+	if err := repo.Create(ctx, gate); err != nil {
+		t.Fatalf("Create(gate) error = %v", err)
+	}
+	if promoted, err := repo.Promoted(ctx, capture.ID); err != nil || promoted != nil {
+		t.Fatalf("Promoted(milestone only) = %v, %v; want nil, nil", promoted, err)
+	}
+
+	// Only a task that declares the capture can be stored as its promotion; the
+	// guard is meaningless without the edge.
+	unlinked := promotionTask("t-unlinked", "", "unlinked")
+	if _, _, err := repo.CreatePromoted(ctx, capture.ID, unlinked); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("CreatePromoted(unlinked) error = %v, want ErrInvalid", err)
+	}
+	if _, err := repo.Get(ctx, unlinked.ID); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("CreatePromoted(unlinked) stored %s; want nothing", unlinked.ID)
+	}
+
+	first := promotionTask("t-first", capture.ID, "the promoted task")
+	promoted, created, err := repo.CreatePromoted(ctx, capture.ID, first)
+	if err != nil {
+		t.Fatalf("CreatePromoted(first) error = %v", err)
+	}
+	if !created || promoted == nil || promoted.ID != first.ID {
+		t.Fatalf("CreatePromoted(first) = %v, created = %v; want %s, created", promoted, created, first.ID)
+	}
+	if promoted, err := repo.Promoted(ctx, capture.ID); err != nil || promoted == nil || promoted.ID != first.ID {
+		t.Fatalf("Promoted() = %v, %v; want %s", promoted, err, first.ID)
+	}
+	assertTaskIDs(t, repo, ctx, store.TicketFilter{ProjectID: "prj-1", DependsOn: &capture.ID}, []core.TicketID{"gate-1", "t-first"})
+
+	// A second promotion stores nothing and returns the task already there.
+	second := promotionTask("t-second", capture.ID, "a duplicate")
+	promoted, created, err = repo.CreatePromoted(ctx, capture.ID, second)
+	if err != nil {
+		t.Fatalf("CreatePromoted(second) error = %v", err)
+	}
+	if created || promoted == nil || promoted.ID != first.ID {
+		t.Fatalf("CreatePromoted(second) = %v, created = %v; want the existing %s", promoted, created, first.ID)
+	}
+	if _, err := repo.Get(ctx, second.ID); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("CreatePromoted(second) stored %s; want nothing", second.ID)
+	}
+
+	// Only a task is promoted work; a capture-derived kind is rejected.
+	notTask := &core.Ticket{ID: "cap-2", ProjectID: "prj-1", Kind: core.KindIdea, Title: "another idea", Status: core.StatusTodo, Deps: []core.TicketID{capture.ID}}
+	if _, _, err := repo.CreatePromoted(ctx, capture.ID, notTask); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("CreatePromoted(non-task) error = %v, want ErrInvalid", err)
+	}
+
+	// A capture that already holds several task dependents still resolves to one
+	// of them, the first by id, so every caller names the same task.
+	duplicated := &core.Ticket{ID: "cap-3", ProjectID: "prj-1", Kind: core.KindBug, Title: "a defect", Status: core.StatusTodo}
+	if err := repo.Create(ctx, duplicated); err != nil {
+		t.Fatalf("Create(duplicated) error = %v", err)
+	}
+	for _, id := range []core.TicketID{"t-z", "t-a"} {
+		if err := repo.Create(ctx, promotionTask(id, duplicated.ID, string(id))); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	if promoted, err := repo.Promoted(ctx, duplicated.ID); err != nil || promoted == nil || promoted.ID != "t-a" {
+		t.Fatalf("Promoted(duplicated) = %v, %v; want t-a", promoted, err)
+	}
+	if promoted, created, err := repo.CreatePromoted(ctx, duplicated.ID, promotionTask("t-new", duplicated.ID, "new")); err != nil || created || promoted.ID != "t-a" {
+		t.Fatalf("CreatePromoted(duplicated) = %v, created = %v, %v; want the existing t-a", promoted, created, err)
+	}
+}
+
+// testTaskPromotionConcurrent proves the guard is atomic: parallel promotions
+// of one capture all name the same task, exactly one of them creates it, and
+// the store holds exactly one promoted task and one origin edge.
+func testTaskPromotionConcurrent(t *testing.T, be store.Backend) {
+	t.Helper()
+	ctx := context.Background()
+	repo := be.Tickets()
+
+	capture := &core.Ticket{ID: "cap-1", ProjectID: "prj-1", Kind: core.KindIdea, Title: "an idea", Status: core.StatusTodo}
+	if err := repo.Create(ctx, capture); err != nil {
+		t.Fatalf("Create(capture) error = %v", err)
+	}
+
+	const calls = 12
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	results := make([]*core.Ticket, calls)
+	created := make([]bool, calls)
+	errs := make([]error, calls)
+	for i := range calls {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			candidate := promotionTask(core.TicketID(fmt.Sprintf("t-c%02d", i)), capture.ID, fmt.Sprintf("candidate %d", i))
+			<-start
+			results[i], created[i], errs[i] = repo.CreatePromoted(ctx, capture.ID, candidate)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	winners := 0
+	for i := range results {
+		if errs[i] != nil {
+			t.Fatalf("CreatePromoted(%d) error = %v", i, errs[i])
+		}
+		if results[i] == nil {
+			t.Fatalf("CreatePromoted(%d) returned no task", i)
+		}
+		if results[i].ID != results[0].ID {
+			t.Fatalf("CreatePromoted(%d) = %s, want every caller to get %s", i, results[i].ID, results[0].ID)
+		}
+		if created[i] {
+			winners++
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("%d promotions reported created; want exactly one", winners)
+	}
+
+	won := results[0].ID
+	assertTaskIDs(t, repo, ctx, store.TicketFilter{ProjectID: "prj-1", DependsOn: &capture.ID}, []core.TicketID{won})
+	for i := range results {
+		if created[i] {
+			continue
+		}
+		if _, err := repo.Get(ctx, core.TicketID(fmt.Sprintf("t-c%02d", i))); !errors.Is(err, core.ErrNotFound) {
+			t.Fatalf("loser %d stored its candidate; want only %s", i, won)
+		}
+	}
+}
+
+func depPtr(id core.TicketID) *core.TicketID { return &id }
+func boolPtr(value bool) *bool               { return &value }
 
 func assertTaskIDs(t *testing.T, repo store.TicketRepo, ctx context.Context, filter store.TicketFilter, want []core.TicketID) {
 	t.Helper()

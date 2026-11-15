@@ -635,6 +635,55 @@ func (r *taskRepo) Delete(_ context.Context, id core.TicketID) error {
 	return nil
 }
 
+func (r *taskRepo) Promoted(_ context.Context, captureID core.TicketID) (*core.Ticket, error) {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.promoted(captureID), nil
+}
+
+func (r *taskRepo) CreatePromoted(_ context.Context, captureID core.TicketID, task *core.Ticket) (*core.Ticket, bool, error) {
+	if err := store.ValidatePromotion(captureID, task); err != nil {
+		return nil, false, err
+	}
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if existing := b.promoted(captureID); existing != nil {
+		return existing, false, nil
+	}
+	if _, ok := b.tasks[task.ID]; ok {
+		return nil, false, fmt.Errorf("%w: task %s", core.ErrAlreadyExists, task.ID)
+	}
+	if err := checkID("task", string(task.ID)); err != nil {
+		return nil, false, err
+	}
+	data, err := encodeTask(*task, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := writeFileAtomic(b.docPath("tasks", string(task.ID)), data); err != nil {
+		return nil, false, err
+	}
+	stored := clone.Ticket(*task)
+	b.tasks[task.ID] = &taskRecord{task: stored}
+	return &stored, true, nil
+}
+
+// promoted returns the capture's promoted task, or nil. The caller holds mu.
+func (b *Backend) promoted(captureID core.TicketID) *core.Ticket {
+	tasks := make([]*core.Ticket, 0, len(b.tasks))
+	for _, record := range b.tasks {
+		task := record.task
+		tasks = append(tasks, &task)
+	}
+	if promoted := store.PromotedTask(tasks, captureID); promoted != nil {
+		cloned := clone.Ticket(*promoted)
+		return &cloned
+	}
+	return nil
+}
+
 func matchesTask(task core.Ticket, filter store.TicketFilter) bool {
 	if filter.ProjectID != "" && task.ProjectID != filter.ProjectID {
 		return false

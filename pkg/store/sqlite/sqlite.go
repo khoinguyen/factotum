@@ -848,6 +848,84 @@ func (r *taskRepo) UpdateExpected(ctx context.Context, task *core.Ticket, expect
 	return tx.Commit()
 }
 
+func (r *taskRepo) Promoted(ctx context.Context, captureID core.TicketID) (*core.Ticket, error) {
+	return promotedTask(ctx, r.db, captureID)
+}
+
+func (r *taskRepo) CreatePromoted(ctx context.Context, captureID core.TicketID, task *core.Ticket) (*core.Ticket, bool, error) {
+	if err := store.ValidatePromotion(captureID, task); err != nil {
+		return nil, false, err
+	}
+	// The DSN opens immediate transactions, so the guard's read and its insert
+	// hold the write lock against every other writer: a concurrent promotion of
+	// the same capture waits, then sees the winner's task.
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("begin task promotion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	existing, err := promotedTask(ctx, tx, captureID)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing != nil {
+		return existing, false, nil
+	}
+	exists, err := rowExistsTx(ctx, tx, "SELECT 1 FROM tasks WHERE id = ?", string(task.ID))
+	if err != nil {
+		return nil, false, err
+	}
+	if exists {
+		return nil, false, fmt.Errorf("%w: task %s", core.ErrAlreadyExists, task.ID)
+	}
+	data, err := encode(task)
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO tasks (id, project_id, repo, kind, status, data) VALUES (?, ?, ?, ?, ?, ?)",
+		string(task.ID), string(task.ProjectID), task.Repo, string(task.Kind), string(task.Status), data); err != nil {
+		return nil, false, fmt.Errorf("insert promoted task: %w", err)
+	}
+	if err := indexTask(ctx, tx, task); err != nil {
+		return nil, false, err
+	}
+	if err := indexTaskDeps(ctx, tx, task); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("commit task promotion: %w", err)
+	}
+	return task, true, nil
+}
+
+// promoter is the query surface Promoted and CreatePromoted share: the pool for
+// a read, the transaction for the guard.
+type promoter interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// promotedTask returns the capture's promoted task — its first task-kind
+// dependent, ordered by id — or nil. The kind predicate is the sqlite form of
+// store.PromotedTask, so both backends share one rule.
+func promotedTask(ctx context.Context, q promoter, captureID core.TicketID) (*core.Ticket, error) {
+	var data string
+	err := q.QueryRowContext(ctx,
+		"SELECT t.data FROM task_deps d JOIN tasks t ON t.id = d.task_id WHERE d.dep_id = ? AND t.kind = ? ORDER BY t.id LIMIT 1",
+		string(captureID), string(core.KindTask)).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("promoted task: %w", err)
+	}
+	var task core.Ticket
+	if err := json.Unmarshal([]byte(data), &task); err != nil {
+		return nil, fmt.Errorf("decode task: %w", err)
+	}
+	return &task, nil
+}
+
 func (r *taskRepo) Delete(ctx context.Context, id core.TicketID) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

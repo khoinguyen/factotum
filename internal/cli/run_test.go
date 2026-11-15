@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -662,5 +663,125 @@ func TestRunCommandFailureLeavesTaskIntact(t *testing.T) {
 	}
 	if shown := r.run("task", "get", taskID); !strings.HasPrefix(shown, "(todo) ") {
 		t.Fatalf("failed run changed task status:\n%s", shown)
+	}
+}
+
+// TestRunCommandPrintsHarnessStderrOnFailure proves a failed run prints the
+// harness's stderr next to the exit code, so the reason is visible without
+// re-running by hand.
+func TestRunCommandPrintsHarnessStderrOnFailure(t *testing.T) {
+	r := newRunner(t)
+	_, taskID := runContext(t, r)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{
+		Stdout:   []byte("partial work\n"),
+		Stderr:   []byte("No API key found for opencode-go. Use /login\n"),
+		ExitCode: 1,
+	})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out, stderrOut, err := r.runSplitErr("run", taskID, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, app.ErrRunFailed) {
+		t.Fatalf("run error = %v, want ErrRunFailed", err)
+	}
+	for _, want := range []string{"run: failed", "exit_code: 1", "complete: false", "stderr:", "No API key found for opencode-go"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("run output missing %q:\nstdout:\n%s\nstderr:\n%s", want, out, stderrOut)
+		}
+	}
+	if !strings.Contains(out, "partial work") {
+		t.Fatalf("run output dropped the harness stdout:\n%s", out)
+	}
+}
+
+// TestRunCommandJSONCarriesHarnessStderr proves the structured output keeps the
+// stderr in a bounded field, so a machine reader learns why a run failed without
+// the exit code alone.
+func TestRunCommandJSONCarriesHarnessStderr(t *testing.T) {
+	r := newRunner(t)
+	_, taskID := runContext(t, r)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{
+		Stderr:   []byte("No API key found for opencode-go. Use /login\n"),
+		ExitCode: 1,
+	})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out, _, err := r.runSplitErr("run", taskID, "-o", "json", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, app.ErrRunFailed) {
+		t.Fatalf("run error = %v, want ErrRunFailed", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("run -o json output is not JSON: %v\n%s", err, out)
+	}
+	if got, _ := doc["stderr"].(string); !strings.Contains(got, "No API key found for opencode-go") {
+		t.Fatalf("json stderr = %q, want the harness's error stream\n%s", got, out)
+	}
+	if got, _ := doc["exit_code"].(float64); got != 1 {
+		t.Fatalf("json exit_code = %v, want 1\n%s", doc["exit_code"], out)
+	}
+	if got, _ := doc["complete"].(bool); got {
+		t.Fatalf("json complete = true, want false\n%s", out)
+	}
+}
+
+// TestRunCommandTasklessPrintsHarnessStderrOnFailure is the task-less twin: a
+// prompt run that dies in the sandbox reports the harness's stderr too.
+func TestRunCommandTasklessPrintsHarnessStderrOnFailure(t *testing.T) {
+	r := newRunner(t)
+	_, cfgPath := tasklessContext(t, r)
+	promptPath := filepath.Join(t.TempDir(), "grooming.md")
+	if err := os.WriteFile(promptPath, []byte("You are the grooming agent.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{
+		Stderr:   []byte("docker: Error response from daemon: No such image: pi\n"),
+		ExitCode: 125,
+	})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out, _, err := r.runSplitErr("--config", cfgPath, "run", "--prompt-file", promptPath,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, app.ErrRunFailed) {
+		t.Fatalf("task-less run error = %v, want ErrRunFailed", err)
+	}
+	for _, want := range []string{"run: failed", "exit_code: 125", "stderr:", "No such image: pi"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("task-less run output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRunCommandGoalPrintsHarnessStderrOnFailure proves a failed step in the
+// --goal loop prints the harness's stderr too, so a loop that stops on a broken
+// harness names the reason instead of only the exit code.
+func TestRunCommandGoalPrintsHarnessStderrOnFailure(t *testing.T) {
+	r := newRunner(t)
+	_, prereq, goal := loopContext(t, r)
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{
+		Stderr:   []byte("No API key found for opencode-go. Use /login\n"),
+		ExitCode: 1,
+	})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out, _, err := r.runSplitErr("run", "--goal", goal, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, app.ErrRunFailed) {
+		t.Fatalf("loop run error = %v, want ErrRunFailed", err)
+	}
+	for _, want := range []string{"stop: failed", prereq, "stderr:", "No API key found for opencode-go"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("loop output missing %q:\n%s", want, out)
+		}
 	}
 }

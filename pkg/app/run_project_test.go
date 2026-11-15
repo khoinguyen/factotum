@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -375,5 +376,30 @@ func TestRunProjectRequiresBackendAndHarness(t *testing.T) {
 	f := newProjectRunFixture(t)
 	if _, err := f.svc.RunProject(context.Background(), ProjectRunInput{ProjectID: f.project.ID, WorkspaceRoot: f.root, Prompt: "p"}); err == nil {
 		t.Fatal("RunProject() with no backend/harness error = nil, want error")
+	}
+}
+
+// TestRunProjectReportsHarnessStderrOnFailure proves a task-less run surfaces a
+// failing harness's stderr too, so a prompt run that dies (a missing image, an
+// unauthenticated provider) reports why instead of only its exit code.
+func TestRunProjectReportsHarnessStderrOnFailure(t *testing.T) {
+	f := newProjectRunFixture(t)
+	f.backend.Program(isolation.ExecResult{
+		Stderr:   []byte("docker: Error response from daemon: No such image: pi\n"),
+		ExitCode: 125,
+	})
+
+	outcome, err := f.run(t, ProjectRunInput{Prompt: "groom"})
+	if !errors.Is(err, ErrRunFailed) {
+		t.Fatalf("RunProject() error = %v, want ErrRunFailed", err)
+	}
+	if outcome == nil {
+		t.Fatal("outcome = nil, want the failed run's outcome")
+	}
+	if outcome.ExitCode != 125 {
+		t.Fatalf("exit code = %d, want 125", outcome.ExitCode)
+	}
+	if !strings.Contains(outcome.Stderr, "No such image: pi") {
+		t.Fatalf("outcome.Stderr = %q, want the harness's error stream", outcome.Stderr)
 	}
 }

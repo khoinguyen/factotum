@@ -39,6 +39,9 @@ type LoopStep struct {
 	Complete  bool
 	Failed    bool
 	Output    string
+	// Stderr is the failed run's harness error stream, so the step report says
+	// why the task failed instead of only its exit code.
+	Stderr string
 	// Remaining is the number of unresolved tasks still on the path to the goal
 	// after this iteration.
 	Remaining int
@@ -173,6 +176,7 @@ func (s *RunLoopService) Run(ctx context.Context, in LoopInput) (*LoopOutcome, e
 			step.ExitCode = runOutcome.ExitCode
 			step.Complete = runOutcome.Complete
 			step.Output = runOutcome.Output
+			step.Stderr = runOutcome.Stderr
 		}
 
 		if snapshot, err = LoadSnapshot(ctx, s.backend, goal.ProjectID, s.clock.Now()); err != nil {

@@ -762,6 +762,7 @@ type runDoc struct {
 	ExitCode int    `json:"exit_code" yaml:"exit_code"`
 	Complete bool   `json:"complete" yaml:"complete"`
 	Output   string `json:"output,omitempty" yaml:"output,omitempty"`
+	Stderr   string `json:"stderr,omitempty" yaml:"stderr,omitempty"`
 	Project  string `json:"project" yaml:"project"`
 	Repo     string `json:"repo" yaml:"repo"`
 }
@@ -778,6 +779,7 @@ func (d *Deps) printRunOutcome(task *core.Ticket, outcome *app.RunOutcome, runEr
 		ExitCode: outcome.ExitCode,
 		Complete: outcome.Complete,
 		Output:   outcome.Output,
+		Stderr:   outcome.Stderr,
 		Project:  string(task.ProjectID),
 		Repo:     task.Repo,
 	}
@@ -793,6 +795,9 @@ func (d *Deps) printRunOutcome(task *core.Ticket, outcome *app.RunOutcome, runEr
 		)
 		if output := strings.TrimSpace(outcome.Output); output != "" {
 			d.printf("\n%s\n", output)
+		}
+		if stderr := strings.TrimSpace(outcome.Stderr); stderr != "" {
+			d.printf("\nstderr:\n%s\n", stderr)
 		}
 	}, d.runHints(task, runErr)...)
 }
@@ -815,6 +820,7 @@ type runProjectDoc struct {
 	Complete bool     `json:"complete" yaml:"complete"`
 	Repos    []string `json:"repos" yaml:"repos"`
 	Output   string   `json:"output,omitempty" yaml:"output,omitempty"`
+	Stderr   string   `json:"stderr,omitempty" yaml:"stderr,omitempty"`
 	Project  string   `json:"project" yaml:"project"`
 	Repo     string   `json:"repo" yaml:"repo"`
 }
@@ -834,6 +840,7 @@ func (d *Deps) printProjectRunOutcome(project *core.Project, outcome *app.Projec
 		Complete: outcome.Complete,
 		Repos:    repos,
 		Output:   outcome.Output,
+		Stderr:   outcome.Stderr,
 		Project:  string(project.ID),
 		Repo:     "",
 	}
@@ -848,6 +855,9 @@ func (d *Deps) printProjectRunOutcome(project *core.Project, outcome *app.Projec
 		)
 		if output := strings.TrimSpace(outcome.Output); output != "" {
 			d.printf("\n%s\n", output)
+		}
+		if stderr := strings.TrimSpace(outcome.Stderr); stderr != "" {
+			d.printf("\nstderr:\n%s\n", stderr)
 		}
 	}, d.runProjectHints(project, runErr)...)
 }
@@ -871,6 +881,7 @@ type runLoopStepDoc struct {
 	Complete  bool   `json:"complete" yaml:"complete"`
 	Remaining int    `json:"remaining" yaml:"remaining"`
 	Output    string `json:"output,omitempty" yaml:"output,omitempty"`
+	Stderr    string `json:"stderr,omitempty" yaml:"stderr,omitempty"`
 }
 
 // runLoopDoc is the lossless structured shape of `ft run --goal`.
@@ -902,6 +913,9 @@ func (d *Deps) printLoopStep(step app.LoopStep) {
 		f("exit_code", step.ExitCode),
 		f("remaining", step.Remaining),
 	)
+	if stderr := strings.TrimSpace(step.Stderr); stderr != "" {
+		d.printf("stderr:\n%s\n", stderr)
+	}
 	d.printf("\n")
 }
 
@@ -954,6 +968,7 @@ func loopStepDoc(step app.LoopStep) runLoopStepDoc {
 		Complete:  step.Complete,
 		Remaining: step.Remaining,
 		Output:    step.Output,
+		Stderr:    step.Stderr,
 	}
 }
 

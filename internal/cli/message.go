@@ -179,8 +179,8 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 	inbox.Flags().StringVarP(&inboxProject, "project", "p", "", "filter by project id")
 	inbox.Flags().StringArrayVar(&inboxStates, "state", nil, "filter by state (queued, delivered, read, failed; repeatable)")
 	inbox.Flags().StringVar(&inboxAddress, "address", "", "exact stored address to match")
-	inbox.Flags().StringVar(&inboxActor, "for", "", "messages claimable by this actor (id or actor:<id>)")
-	inbox.Flags().StringVar(&inboxRun, "run", "", "messages claimable by this run")
+	inbox.Flags().StringVar(&inboxActor, "for", "", "exact actor:<id> address to match (id or actor:<id>)")
+	inbox.Flags().StringVar(&inboxRun, "run", "", "exact run:<id> address to match (id or run:<id>)")
 	inbox.Flags().IntVar(&inboxLimit, "limit", 0, "maximum number of messages")
 
 	get := &cobra.Command{

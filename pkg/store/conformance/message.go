@@ -43,6 +43,7 @@ func testMessage(t *testing.T, be store.Backend) {
 	t.Run("claim", func(t *testing.T) { testMessageClaim(t, repo, ctx) })
 	t.Run("claim-project-scope", func(t *testing.T) { testMessageClaimProjectScope(t, repo, ctx) })
 	t.Run("claim-addressing", func(t *testing.T) { testMessageClaimAddressing(t, repo, ctx) })
+	t.Run("claim-nil-task", func(t *testing.T) { testMessageClaimNilTask(t, repo, ctx) })
 	t.Run("claim-concurrency", func(t *testing.T) { testMessageClaimConcurrency(t, repo, ctx) })
 	t.Run("ack", func(t *testing.T) { testMessageAck(t, repo, ctx) })
 	t.Run("nack", func(t *testing.T) { testMessageNack(t, repo, ctx) })
@@ -379,6 +380,44 @@ func testMessageClaimAddressing(t *testing.T, repo store.MessageRepo, ctx contex
 	}
 	if fourth.ID != "x-1" {
 		t.Fatalf("resolved Claim() = %s, want x-1", fourth.ID)
+	}
+}
+
+// testMessageClaimNilTask pins the task: half of claim addressing: a run whose
+// TaskID is nil has no task address, so it claims no stored task: message. The
+// task: message is the only queued one, so nothing older can win the claim and
+// hide a task: fallback behind FIFO order.
+func testMessageClaimNilTask(t *testing.T, repo store.MessageRepo, ctx context.Context) {
+	t.Helper()
+	const project = core.ProjectID("prj-nil-task")
+	taskID := core.TicketID("t-1")
+	taskMsg := queuedMessage("nt-1", project, core.TaskAddress(taskID), msgBase)
+	taskMsg.TaskID = &taskID
+	if err := repo.Create(ctx, taskMsg); err != nil {
+		t.Fatalf("Create(nt-1) error = %v", err)
+	}
+
+	nilTask := store.ClaimRequest{ProjectID: project, RunID: "run-nil"}
+	if _, err := repo.Claim(ctx, nilTask); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("nil-task Claim() error = %v, want ErrNotFound (a nil TaskID has no task: address)", err)
+	}
+	// The refused claim left the message queued.
+	queued, err := repo.Get(ctx, "nt-1")
+	if err != nil {
+		t.Fatalf("Get(nt-1) error = %v", err)
+	}
+	if queued.State != core.MessageQueued {
+		t.Fatalf("nt-1 after nil-task claim = %q, want queued", queued.State)
+	}
+
+	// Supplying the recipient's task address is what makes it claimable.
+	nilTask.Recipient = store.ClaimRecipient{TaskID: &taskID}
+	claimed, err := repo.Claim(ctx, nilTask)
+	if err != nil {
+		t.Fatalf("task Claim() error = %v", err)
+	}
+	if claimed.ID != "nt-1" {
+		t.Fatalf("task Claim() = %s, want nt-1", claimed.ID)
 	}
 }
 

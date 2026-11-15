@@ -182,6 +182,41 @@ func TestDocsFindingsFailsOnUnknownCommand(t *testing.T) {
 	}
 }
 
+// TestDocFindingsChecksEveryFenceForm plants a doc in each way markdown can show
+// code and requires the walk to report the bogus verb inside it. A form the walk
+// does not read is a place a stale command hides and passes, so the guard is only
+// as strong as the forms it understands.
+func TestDocFindingsChecksEveryFenceForm(t *testing.T) {
+	root := skillDriftRoot(t)
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "backtick fence", body: "```sh\nft msg retry t-1\n```\n"},
+		{name: "tilde fence", body: "~~~sh\nft msg retry t-1\n~~~\n"},
+		{name: "indented backtick fence", body: "    ```sh\n    ft msg retry t-1\n    ```\n"},
+		{name: "indented tilde fence", body: "    ~~~sh\n    ft msg retry t-1\n    ~~~\n"},
+		{name: "indented code block", body: "    ft msg retry t-1\n"},
+	}
+	dir := filepath.Join(t.TempDir(), "docs")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			writeDocUnder(t, dir, filepath.Join("msg", "bogus.md"), tc.body)
+			findings, parsed, err := docsFindings(root, dir)
+			if err != nil {
+				t.Fatalf("docsFindings() error = %v", err)
+			}
+			if parsed != 1 {
+				t.Fatalf("parsed = %d, want the planted invocation", parsed)
+			}
+			joined := strings.Join(findings, "\n")
+			if !strings.Contains(joined, "docs/msg/bogus.md") || !strings.Contains(joined, `unknown command "retry"`) {
+				t.Fatalf("findings = %v, want the planted unknown command under its doc path", findings)
+			}
+		})
+	}
+}
+
 // TestDocFindingsScopesTheDesignExemption pins the one way a doc may name an
 // unbuilt command: an explicit `design` fence. The exemption is block-scoped, so
 // the same verb in a plain fence or in prose is still drift.
@@ -218,13 +253,46 @@ func TestDocFindingsScopesTheDesignExemption(t *testing.T) {
 		},
 		{
 			name: "an unclosed fence after a design block still fails",
-			body: "```design\nft msg retry t-1\n\n```sh\nft msg frobnicate t-1\n```\n",
+			body: "```design\nft msg retry t-1\n```\n\n```sh\nft task next\n",
 			want: []string{"unterminated code fence"},
+		},
+		{
+			name: "tilde design fence is exempt",
+			body: "~~~design\nft msg retry t-1\n~~~\n",
+		},
+		{
+			name: "tilde design fence does not exempt the next block",
+			body: "~~~design\nft msg retry t-1\n~~~\n\n~~~sh\nft msg prune\n~~~\n",
+			want: []string{`unknown command "prune"`},
+		},
+		{
+			name: "an unclosed tilde fence fails closed and is reported",
+			body: "~~~design\nft msg retry t-1\n",
+			want: []string{`unknown command "retry"`, "unterminated code fence"},
+		},
+		{
+			name: "a fence closes only on its own marker",
+			body: "~~~sh\n```\nft msg retry t-1\n```\n~~~\n",
+			want: []string{`unknown command "retry"`},
+		},
+		{
+			name: "a shorter fence does not close a longer one",
+			body: "````sh\n```\nft msg retry t-1\n```\n````\n",
+			want: []string{`unknown command "retry"`},
+		},
+		{
+			name: "an indented code block is checked",
+			body: "    ft msg retry t-1\n",
+			want: []string{`unknown command "retry"`},
+		},
+		{
+			name: "indented prose that mentions ft is not read as a command",
+			body: "- a step\n\n    the ft binary lives on PATH.\n",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			findings := docFindings(root, "docs/x.md", tc.body)
+			findings, _ := docFindings(root, "docs/x.md", tc.body)
 			joined := strings.Join(findings, "\n")
 			if len(tc.want) == 0 {
 				if len(findings) != 0 {
@@ -269,28 +337,32 @@ var ftMentionPattern = regexp.MustCompile(`\bft\b`)
 // the checker to inspect. A skill whose code never names ft (typesafe-ai) has
 // nothing to drift.
 func roleSkillFindings(root *cobra.Command, rel, body string) []string {
-	return codeFindings(root, rel, skillCodeSnippets(body), "skill")
+	snippets := skillCodeSnippets(body)
+	return codeFindings(root, rel, snippets, ftCommandLines(snippets), "skill")
 }
 
-// docFindings returns the drift findings for one repository doc. Docs are held to
-// the command tree like a skill, with one deliberate exception: a fenced block
-// whose info string marks it `design` records verbs the design considered but the
-// CLI does not implement yet, so that block is exempt. The exemption is explicit
-// and block-scoped, so prose and every plain block still fail on a verb that does
-// not exist. A fence left open is reported: it would otherwise move commands in or
-// out of a block without the reader or the check knowing.
-func docFindings(root *cobra.Command, rel, body string) []string {
-	findings := codeFindings(root, rel, codeSnippets(body, isDesignFence), "doc")
-	if unterminatedFence(body) {
+// docFindings returns the drift findings for one repository doc and how many ft
+// invocations the walk parsed. Docs are held to the command tree like a skill,
+// with one deliberate exception: a fenced block whose info string marks it
+// `design` records verbs the design considered but the CLI does not implement
+// yet, so that block is exempt. The exemption is explicit and block-scoped, so
+// prose and every plain block still fail on a verb that does not exist. A fence
+// left open is reported: it would otherwise move commands in or out of a block
+// without the reader or the check knowing.
+func docFindings(root *cobra.Command, rel, body string) ([]string, int) {
+	snippets, unterminated := scanCode(body, isDesignFence)
+	lines := ftCommandLines(snippets)
+	findings := codeFindings(root, rel, snippets, lines, "doc")
+	if unterminated {
 		findings = append(findings, fmt.Sprintf("%s: unterminated code fence; commands after it are not reliably in a block", rel))
 	}
-	return findings
+	return findings, len(lines)
 }
 
-// codeFindings reports the stale references in the code snippets of one file, or
-// a blind-spot finding when the snippets name ft but yield no invocation.
-func codeFindings(root *cobra.Command, rel string, snippets []string, kind string) []string {
-	lines := ftCommandLines(snippets)
+// codeFindings reports the stale references in the invocations of one file, or a
+// blind-spot finding when the snippets they came from name ft but yield no
+// invocation. The caller passes both so the snippets are parsed once.
+func codeFindings(root *cobra.Command, rel string, snippets, lines []string, kind string) []string {
 	if len(lines) == 0 {
 		for _, snippet := range snippets {
 			if ftMentionPattern.MatchString(snippet) {
@@ -340,9 +412,9 @@ func docsFindings(root *cobra.Command, dir string) ([]string, int, error) {
 		if err != nil {
 			return fmt.Errorf("rel path %s: %w", path, err)
 		}
-		snippets := codeSnippets(string(body), isDesignFence)
-		parsed += len(ftCommandLines(snippets))
-		findings = append(findings, docFindings(root, rel, string(body))...)
+		docFound, docParsed := docFindings(root, rel, string(body))
+		findings = append(findings, docFound...)
+		parsed += docParsed
 		return nil
 	})
 	if err != nil {

@@ -42,16 +42,24 @@ type applyResult struct {
 	Repo     string `json:"repo" yaml:"repo"`
 }
 
+// backfilledNote is one note a backfill marked: enough to review the pass
+// without a `task get -o json` per note.
+type backfilledNote struct {
+	NoteID string `json:"note_id" yaml:"note_id"`
+	TaskID string `json:"task_id" yaml:"task_id"`
+	Body   string `json:"body" yaml:"body"`
+}
+
 // noteBackfillResult is the summary of `task note backfill`: how many tickets
 // were inspected, the notes that now carry the system marker (or would, in a dry
 // run), and the project scope it ran in.
 type noteBackfillResult struct {
-	Scanned int      `json:"scanned" yaml:"scanned"`
-	Marked  int      `json:"marked" yaml:"marked"`
-	Notes   []string `json:"notes,omitempty" yaml:"notes,omitempty"`
-	DryRun  bool     `json:"dry_run,omitempty" yaml:"dry_run,omitempty"`
-	Project string   `json:"project" yaml:"project"`
-	Repo    string   `json:"repo" yaml:"repo"`
+	Scanned int              `json:"scanned" yaml:"scanned"`
+	Marked  int              `json:"marked" yaml:"marked"`
+	Notes   []backfilledNote `json:"notes,omitempty" yaml:"notes,omitempty"`
+	DryRun  bool             `json:"dry_run,omitempty" yaml:"dry_run,omitempty"`
+	Project string           `json:"project" yaml:"project"`
+	Repo    string           `json:"repo" yaml:"repo"`
 }
 
 // field is one `key: value` line of single-result text output.

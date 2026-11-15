@@ -2,12 +2,20 @@ package cli
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/judge"
 	"github.com/khoinguyen/factotum/pkg/judge/fake"
 )
+
+// backfilledNoteLine is the `task note backfill` text line for a marked note: the
+// note id and a quote of its body, so a pass can be reviewed without a task get.
+var backfilledNoteLine = regexp.MustCompile(`(?m)^note note-\w+: Triaged by agent: backfillprobe split the work$`)
+
+// systemNoteHeader is the text `task get` note header for a system note.
+var systemNoteHeader = regexp.MustCompile(`(?m)^[^\n]*\([^)]*\) \[system\]$`)
 
 type taskSearchResult struct {
 	ID    string
@@ -210,12 +218,16 @@ func TestTaskNoteBackfillExcludesHistoricalTriageNotes(t *testing.T) {
 		t.Fatalf("search before backfill = %v, want [%s]", got, task)
 	}
 
-	// A dry run reports the candidate and leaves search alone.
+	// A dry run reports the candidate, with enough of the note to review it,
+	// and leaves search alone.
 	out := r.run("task", "note", "backfill", "-p", projectID, "--dry-run")
 	for _, want := range []string{"scanned: 1", "marked: 1", "dry_run: true"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("backfill --dry-run output missing %q:\n%s", want, out)
 		}
+	}
+	if !backfilledNoteLine.MatchString(out) {
+		t.Fatalf("backfill output should name the note and quote its body:\n%s", out)
 	}
 	if got := searchIDs(t, r.run("task", "search", "backfillprobe", "-p", projectID, "-o", "json")); !equalIDs(got, []string{task}) {
 		t.Fatalf("search after dry run = %v, want the note still indexed", got)
@@ -244,12 +256,21 @@ func TestTaskNoteBackfillExcludesHistoricalTriageNotes(t *testing.T) {
 		t.Fatalf("search otherprobe = %v, want [%s]", got, other)
 	}
 
-	// The note stays on the task, now carrying the marker.
+	// The note stays on the task, now carrying the marker, and the normal text
+	// view shows it: a note that left search is visibly distinct from one that
+	// did not.
 	got := r.run("task", "get", task, "-o", "json")
 	if !strings.Contains(got, "Triaged by agent: backfillprobe split the work") {
 		t.Fatalf("task get should retain the backfilled note:\n%s", got)
 	}
 	if !strings.Contains(got, `"system": true`) {
 		t.Fatalf("task get should expose the backfilled system marker:\n%s", got)
+	}
+	text := r.run("task", "get", task)
+	if !systemNoteHeader.MatchString(text) {
+		t.Fatalf("task get text should mark the backfilled note as system:\n%s", text)
+	}
+	if n := strings.Count(text, "[system]"); n != 1 {
+		t.Fatalf("task get text system-marked notes = %d, want only the backfilled note:\n%s", n, text)
 	}
 }

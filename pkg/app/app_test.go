@@ -1271,6 +1271,9 @@ func TestBackfillTriageNotes(t *testing.T) {
 		if ref.TaskID != task.ID {
 			t.Fatalf("marked note %s on %s, want only notes on %s", ref.NoteID, ref.TaskID, task.ID)
 		}
+		if ref.Body == "" {
+			t.Fatalf("marked note %s has no body; a backfill report must be reviewable", ref.NoteID)
+		}
 	}
 
 	stored, err := h.tasks.Get(ctx, task.ID)

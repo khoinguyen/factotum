@@ -218,10 +218,13 @@ func (s *TicketService) Promote(ctx context.Context, captureID core.TicketID, in
 	return task, nil
 }
 
-// promotedTask returns the executable task a capture already produced, if any.
-// The origin edge promotion writes is an executable dependent, so finding one
-// means the capture is already groomed into work. Candidates are ordered by id so
-// a capture with several dependents resolves deterministically.
+// promotedTask returns the task a capture already produced, if any. The origin
+// edge promotion writes makes it a dependent of the capture, so finding a task
+// one means the capture is already groomed into work. Only a task counts: a
+// milestone is a release gate that may depend on a capture without being
+// promoted work, so `promote` must still create the task (up.Controller.promoted
+// deliberately stays looser, where any executable dependent skips the pipeline).
+// Candidates are ordered by id so several dependents resolve deterministically.
 func (s *TicketService) promotedTask(ctx context.Context, capture *core.Ticket) (*core.Ticket, error) {
 	tasks, err := s.backend.Tickets().List(ctx, store.TicketFilter{
 		ProjectID: capture.ProjectID,
@@ -232,7 +235,7 @@ func (s *TicketService) promotedTask(ctx context.Context, capture *core.Ticket) 
 	}
 	sort.Slice(tasks, func(i, j int) bool { return tasks[i].ID < tasks[j].ID })
 	for _, task := range tasks {
-		if task.Kind.Executable() {
+		if task.Kind == core.KindTask {
 			return task, nil
 		}
 	}

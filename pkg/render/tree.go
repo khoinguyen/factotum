@@ -27,6 +27,13 @@ func (v View) BuildTree() *TreeModel {
 	children := make(map[core.TicketID][]core.TicketID)
 	hasParent := make(map[core.TicketID]bool)
 	for child, parent := range derived.forest {
+		// A capture is input, not an execution node: it is listed in its own
+		// section, and its dependents are roots. Nesting them under the capture
+		// (or, worse, onto whatever the capture itself depends on) would draw a
+		// gate the graph does not enforce.
+		if derived.tasks[parent].Kind.CapturedByHuman() {
+			continue
+		}
 		children[parent] = append(children[parent], child)
 		hasParent[child] = true
 	}
@@ -79,22 +86,17 @@ func (Tree) Format() string { return "tree" }
 func (Tree) Render(_ context.Context, w io.Writer, view View) error {
 	var b strings.Builder
 	model := view.BuildTree()
-	derived := view.info()
-	writeTreeNode(&b, model, derived)
+	writeTreeNode(&b, model)
 	// Captures are input, not execution nodes: they get the same section the
 	// agent snapshot has instead of appearing in the tree.
-	writeCaptureGroup(&b, derived)
+	writeCaptureGroup(&b, view.info())
 	return writeString(w, b.String())
 }
 
-func writeTreeNode(b *strings.Builder, model *TreeModel, derived *info) {
+func writeTreeNode(b *strings.Builder, model *TreeModel) {
 	var walk func(node *TreeNode, level int)
 	walk = func(node *TreeNode, level int) {
 		if node.Ticket.Kind.CapturedByHuman() {
-			// Keep a promoted task in the tree at the capture's level.
-			for _, child := range node.Children {
-				walk(child, level)
-			}
 			return
 		}
 		indent := strings.Repeat("  ", level)

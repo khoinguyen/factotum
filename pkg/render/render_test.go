@@ -136,7 +136,14 @@ func TestAgentRenderCaptureSection(t *testing.T) {
 	if !strings.Contains(out, "capture:") {
 		t.Fatalf("agent output should have a capture section:\n%s", out)
 	}
-	for _, want := range []string{"capture:", "i-1", "a spark", "b-1", "it crashes"} {
+	for _, want := range []string{"capture:", "i-1", "a spark", "b-1", "it crashes", "status=todo"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("capture section missing %q:\n%s", want, out)
+		}
+	}
+	// The shared line keeps the idea/bug distinction, so a text reader can tell
+	// input kinds apart in both formats.
+	for _, want := range []string{"kind=idea", "kind=bug"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("capture section missing %q:\n%s", want, out)
 		}
@@ -175,7 +182,7 @@ func promotedView(t *testing.T) View {
 func TestTreeRenderCaptureSection(t *testing.T) {
 	view := promotedView(t)
 	out := renderString(t, Tree{}, view)
-	for _, want := range []string{"capture:", "i-1", "a spark", "b-1", "it crashes", "status=todo"} {
+	for _, want := range []string{"capture:", "i-1", "a spark", "b-1", "it crashes", "status=todo", "kind=idea", "kind=bug"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tree output missing capture fact %q:\n%s", want, out)
 		}
@@ -185,6 +192,50 @@ func TestTreeRenderCaptureSection(t *testing.T) {
 	}
 	if !strings.Contains(out, "- p [") {
 		t.Fatalf("a task promoted from a capture must stay in the tree:\n%s", out)
+	}
+}
+
+// A capture nested under a blocked task must not pull its dependents into that
+// task's subtree: promotion makes ready work, not work gated by whatever the
+// capture itself depends on.
+func TestTreeRenderNestedCaptureDoesNotGateItsDependents(t *testing.T) {
+	policy := core.DefaultResolutionPolicy()
+	project := &core.Project{ID: "prj-1", Name: "Acme", Policy: policy}
+	blocker := task("a", core.StatusInProgress)
+	idea := &core.Ticket{
+		ID: "c-1", ProjectID: "prj-1", Kind: core.KindIdea, Title: "a spark",
+		Status: core.StatusTodo, Deps: []core.TicketID{"a"},
+	}
+	promoted := task("t-1", core.StatusTodo, "c-1")
+	tasks := []*core.Ticket{blocker, idea, promoted}
+	values := make([]core.Ticket, 0, len(tasks))
+	for _, pointer := range tasks {
+		values = append(values, *pointer)
+	}
+	built, err := graph.New(values, policy)
+	if err != nil {
+		t.Fatalf("graph.New() error = %v", err)
+	}
+	out := renderString(t, Tree{}, viewFor(project, tasks, built))
+
+	body := out[:strings.Index(out, "capture:")]
+	if !strings.Contains(body, "- a [blocked]") {
+		t.Fatalf("blocker should render as a root:\n%s", out)
+	}
+	if !strings.Contains(body, "- t-1 [ready-human]") || strings.Contains(body, "  - t-1") {
+		t.Fatalf("a promoted task must not nest under the capture's own blocker:\n%s", out)
+	}
+	if !strings.Contains(out, "capture:") || !strings.Contains(out, "c-1") {
+		t.Fatalf("the capture should still be listed:\n%s", out)
+	}
+}
+
+func viewFor(project *core.Project, tasks []*core.Ticket, built *graph.Graph) View {
+	return View{
+		Project: project,
+		Tasks:   tasks,
+		Graph:   built,
+		Ready:   built.ReadyByActor(nil),
 	}
 }
 

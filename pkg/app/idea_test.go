@@ -365,6 +365,31 @@ func TestPromoteRollsBackWhenTheCaptureNoteFails(t *testing.T) {
 	assertNothingPromoted(t, h, project, idea)
 }
 
+// A milestone is a release gate, not promoted work: a capture a milestone
+// depends on can still be promoted into a task.
+func TestPromoteIgnoresAMilestoneDependent(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := newIdea(t, h, project, "a spark")
+	agent := newAgent(t, h, "claude")
+	gate, err := h.tasks.Add(ctx, TicketInput{ProjectID: project.ID, Kind: core.KindMilestone, Title: "v1 gate"})
+	if err != nil {
+		t.Fatalf("Add(milestone) error = %v", err)
+	}
+	if _, err := h.tasks.AddDep(ctx, gate.ID, idea.ID); err != nil {
+		t.Fatalf("AddDep(milestone) error = %v", err)
+	}
+
+	task, err := h.tasks.Promote(ctx, idea.ID, groomedPromote(agent))
+	if err != nil {
+		t.Fatalf("Promote() error = %v", err)
+	}
+	if task.ID == gate.ID || task.Kind != core.KindTask {
+		t.Fatalf("Promote() = %s (%s), want a new task, not the milestone gate", task.ID, task.Kind)
+	}
+}
+
 func TestPromoteIsIdempotent(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

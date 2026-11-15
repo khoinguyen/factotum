@@ -142,7 +142,7 @@ carries a read-only `base` that `apply` three-way merges.
 ```sh
 ft task note create <task> -b "Decision: ..." --link issue=https://...
 ft task note create <task> -b "Triaged by agent: ..." --system  # generated note; hidden from search
-ft task note backfill -p <project> [--dry-run]  # mark older generated notes; one-way, no unmark
+ft task note backfill -p <project> [--dry-run]  # mark older generated notes; --help lists families; one-way, no unmark
 ft task create -p <project> -t "Short imperative title" -r <repo> \
   --body "Context and acceptance criteria." --dep <blocking-task>
 ```

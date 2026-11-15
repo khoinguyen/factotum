@@ -156,18 +156,27 @@ type Note struct {
 	System bool
 }
 
-// machineNoteOpenings are the openings of the machine-written notes the agent
-// loop, the triage flow, and the grooming flow write. Each entry is a family
-// prefix, not a whole template: "PR opened" covers "PR opened." and "PR opened
-// (base main).". Notes ft writes itself set System at creation; these openings
-// identify the ones written before the marker existed, when generated notes were
-// simply typed with no author.
+// machineNoteOpenings is the table of openings the machine-written notes use:
+// the agent loop, the triage flow, and the grooming flow write them. Each entry
+// is a family prefix, not a whole template: "PR opened" covers "PR opened." and
+// "PR opened (base main).". Notes ft writes itself set System at creation; these
+// openings identify the ones written before the marker existed, when generated
+// notes were simply typed with no author. This slice is the single source of
+// truth: the backfill predicate and the verb's help both read it.
 var machineNoteOpenings = []string{
 	"Triaged by agent:",
 	"Reassigned to you.",
-	"Groomed by agent",
 	"Needs human decision:",
+	"Needs human triage:",
+	"Needs human grooming:",
+	"Groomed by agent",
 	"PR opened",
+}
+
+// GeneratedNoteOpenings returns the recognized generated-note family prefixes,
+// so documentation renders from the same table the predicate uses.
+func GeneratedNoteOpenings() []string {
+	return append([]string(nil), machineNoteOpenings...)
 }
 
 // IsGeneratedNote reports whether n is an unmarked machine-written note: it

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/khoinguyen/factotum/internal/groom"
+	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
@@ -44,7 +45,9 @@ func seedGroomSession(t *testing.T, r *runner, projectID, cfgPath, producedTitle
 		docs.techDesign = "# Feature tech design - cache\n\n## Summary\n\n## Context\n\n## Design\n\n## Interfaces\n\n## Data\n\n## Cross-cutting impact\n\n## Risks\n"
 		stageGroomOutputs(t, base, prompt, docs)
 		if producedTitle != "" {
-			producedID = firstField(t, r.run("task", "create", "-p", projectID, "-t", producedTitle))
+			asSession(t, r, cmd.Env[harnesspkg.EnvSession], func() {
+				producedID = firstField(t, r.run("task", "create", "-p", projectID, "-t", producedTitle))
+			})
 		}
 	}}
 	r.runBackend = backend

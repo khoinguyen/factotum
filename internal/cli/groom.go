@@ -160,12 +160,9 @@ func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groo
 	// copies the staged files out to the durable session dir.
 	outputs := groomOutputs(dataDir, sessionID)
 
-	// Snapshot the graph and start time before the session runs, so the
-	// manifest can name the tasks the session produced.
-	before, err := projectTaskIDs(ctx, target.tasks, projectID)
-	if err != nil {
-		return groom.SessionRecord{}, err
-	}
+	// The session runs as its own ft session: the run injects this id, so every
+	// task the session's child ft creates is attributed to it and the
+	// completion guard judges that work alone.
 	started := d.Clock.Now()
 
 	// The session stages its outputs at the workspace-relative paths the kickoff
@@ -191,6 +188,7 @@ func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groo
 		Prompt:           prompt,
 		Capture:          capture,
 		StoreEnv:         d.storeEnvFor(target.store),
+		Session:          sessionID,
 		Interactive:      interactive,
 		OnResolve:        d.warnLocalPlan,
 	})
@@ -250,7 +248,7 @@ func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groo
 	report, deferred := artifacts["report"], artifacts["deferred"]
 	deferredBody := bodies["deferred"]
 
-	produced, err := producedTaskIDs(ctx, post.tasks, project.ID, before)
+	produced, err := producedTaskIDs(ctx, post.backend, post.tasks, project.ID, sessionID)
 	if err != nil {
 		return groom.SessionRecord{}, err
 	}

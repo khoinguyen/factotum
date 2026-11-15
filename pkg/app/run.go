@@ -238,6 +238,12 @@ type ProjectRunInput struct {
 	// keyed by the harness environment variable names (FACTOTUM_STORE,
 	// FACTOTUM_STORE_OPTS). Empty injects nothing.
 	StoreEnv map[string]string
+	// Session is the run's own session id. When set it is injected as
+	// FACTOTUM_SESSION, so the session's child ft attributes the tasks it
+	// creates to this session rather than to the caller's. A caller that must
+	// judge the run on its own work (a groom session's completion guard) names
+	// a fresh id here. Empty injects nothing.
+	Session string
 	// OnResolve, when non-nil, is called with the resolved workspace plan after
 	// resolution and before the harness runs, so a caller can observe how the
 	// repos were materialized. The callback returns nothing, so it cannot abort
@@ -306,7 +312,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		model:       in.Model,
 		args:        in.Args,
 		interactive: in.Interactive,
-		env:         mergeEnv(runEnv(project, nil, in.Actor, in.MsgURL, in.ServeToken), in.StoreEnv),
+		env:         mergeEnv(runEnv(project, nil, in.Actor, in.MsgURL, in.ServeToken), in.StoreEnv, sessionEnv(in.Session)),
 		labels:      map[string]string{"project": string(project.ID)},
 		capture:     in.Capture,
 	})
@@ -467,6 +473,15 @@ func runEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgUR
 		}
 	}
 	return env
+}
+
+// sessionEnv is the environment a run's own session identity rides in, or nil
+// when the run has none, so an unnamed run does not export an empty session.
+func sessionEnv(session string) map[string]string {
+	if session == "" {
+		return nil
+	}
+	return map[string]string{harnesspkg.EnvSession: session}
 }
 
 // mergeEnv layers environment maps left to right, later values winning, and

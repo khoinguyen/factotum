@@ -18,8 +18,9 @@ const SessionManifestFileName = "session.json"
 
 // SessionRecord is the durable summary of one grooming session: what it scoped,
 // which artifacts hold its outputs, and which tasks it produced. `ft groom`
-// writes it at capture; the read surface lists and shows it. Produced is a
-// window diff (tasks that appeared during the run), not strict authorship.
+// writes it at capture; the read surface lists and shows it. Produced is the
+// session's own work, attributed by the session id the run stamps on the tasks
+// its child ft creates, so a concurrent writer's task is never included.
 type SessionRecord struct {
 	ID        string      `json:"id" yaml:"id"`
 	Project   string      `json:"project" yaml:"project"`

@@ -272,6 +272,35 @@ func TestRunProjectCarriesStoreEnvAndPinsProject(t *testing.T) {
 	}
 }
 
+// TestRunProjectInjectsSession proves a task-less run hands the harness the
+// run's own session id, so the session's child ft attributes what it creates to
+// that session rather than to the caller's. The groom completion guard reads
+// those attributions, so a run without them cannot tell its own produced work
+// from another writer's.
+func TestRunProjectInjectsSession(t *testing.T) {
+	tests := []struct {
+		name    string
+		session string
+		want    string
+	}{
+		{name: "a named session is injected", session: "groom-abc", want: "groom-abc"},
+		{name: "no session injects nothing", session: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newProjectRunFixture(t)
+			f.backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+			if _, err := f.run(t, ProjectRunInput{Prompt: "groom", Session: tt.session}); err != nil {
+				t.Fatalf("RunProject() error = %v", err)
+			}
+			env := f.backend.Prepared()[0].Env
+			if env[harnesspkg.EnvSession] != tt.want {
+				t.Errorf("env %s = %q, want %q", harnesspkg.EnvSession, env[harnesspkg.EnvSession], tt.want)
+			}
+		})
+	}
+}
+
 // TestRunProjectCarriesHubReceiverEnv proves a task-less run with an actor and a
 // complete hub installs the same receiver identity and hub transport as a task
 // run, so a session launched by a task-less `ft run` can message peers over the

@@ -179,12 +179,12 @@ func recordReviewFindings(ctx context.Context, tasks *app.TicketService, session
 // applyReviewGate enforces the build gate. A needs-rework verdict re-asserts the
 // block on every task the session produced and returns the ids this review is
 // holding blocked now; an approving verdict unblocks exactly the tasks a prior
-// failing review blocked. Produced is a window diff, so it also names any
-// capture the session filed; captures are not buildable work and are skipped. It
-// re-evaluates each produced id every pass, so a task moved out of blocked
-// (started or reopened) is blocked again rather than reported blocked while the
-// gate is silently open. A task someone else blocked is never claimed, and a
-// task since deleted is dropped.
+// failing review blocked. Produced is the session's own work, so it also names
+// any capture the session filed; captures are not buildable work and are
+// skipped. It re-evaluates each produced id every pass, so a task moved out of
+// blocked (started or reopened) is blocked again rather than reported blocked
+// while the gate is silently open. A task someone else blocked is never claimed,
+// and a task since deleted is dropped.
 func applyReviewGate(ctx context.Context, tasks *app.TicketService, session groom.SessionRecord, verdict groom.ReviewVerdict) ([]string, error) {
 	previouslyBlocked := make(map[string]bool, len(session.Blocked))
 	for _, id := range session.Blocked {

@@ -15,6 +15,7 @@ import (
 	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/registry"
 	"github.com/khoinguyen/factotum/pkg/store"
 	"github.com/khoinguyen/factotum/pkg/version"
@@ -151,8 +152,9 @@ func NewRoot(deps *Deps) *cobra.Command {
 				deps.ActorRef = string(ref)
 			}
 			// FACTOTUM_SESSION is exported by loop-agent.sh so every ft call an
-			// agent makes is attributed to the chief session it inherited.
-			if session := deps.Getenv("FACTOTUM_SESSION"); session != "" {
+			// agent makes is attributed to the chief session it inherited, and
+			// by a groom run so the tasks a session creates are its own.
+			if session := deps.Getenv(harnesspkg.EnvSession); session != "" {
 				deps.Session = session
 			}
 			deps.OutputFormat = output

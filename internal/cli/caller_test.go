@@ -94,25 +94,32 @@ func TestUnregisteredCallerIsUnattributedWithWarning(t *testing.T) {
 	}
 }
 
-// TestUnregisteredActorFlagIsUnattributedWithWarning pins the --actor half of
-// the same rule: an explicit actor that names no registered record and is not a
-// loop role is warned about and left unattributed, never stamped verbatim on the
-// event or used as the auto-QA reminder target.
+// TestUnregisteredActorFlagIsUnattributedWithWarning pins the --actor rule: an
+// explicit actor that names no registered record and is not one of the four
+// loop-role prefixes (chief, builder-, reviewer-, qa-) is warned about and left
+// unattributed, never stamped verbatim on the event or used as the auto-QA
+// reminder target. A role-shaped name the loop only sets as a configured default
+// (grooming-agent-<artifact>, architecture-reviewer-<feature>) is not exempt
+// here: name it as the default, not as --actor.
 func TestUnregisteredActorFlagIsUnattributedWithWarning(t *testing.T) {
-	r := newRunner(t)
-	r.getenv = func(string) string { return "" }
+	for _, name := range []string{"ghostrider", "grooming-agent-art-7"} {
+		t.Run(name, func(t *testing.T) {
+			r := newRunner(t)
+			r.getenv = func(string) string { return "" }
 
-	_, stderr := r.runSplit("project", "create", "Acme", "--actor", "ghostrider")
+			_, stderr := r.runSplit("project", "create", "Acme", "--actor", name)
 
-	created := findEvent(t, listEvents(t, r), "project.created")
-	if created.By != nil {
-		t.Fatalf("project.created By = %v, want none for an unregistered actor", created.By)
-	}
-	if !strings.Contains(stderr, `actor "ghostrider" is not a registered actor`) {
-		t.Fatalf("stderr = %q, want an unregistered-actor warning naming ghostrider", stderr)
-	}
-	if actors := r.run("actor", "list"); strings.Contains(actors, "ghostrider") {
-		t.Fatalf("an unregistered actor was auto-created:\n%s", actors)
+			created := findEvent(t, listEvents(t, r), "project.created")
+			if created.By != nil {
+				t.Fatalf("project.created By = %v, want none for an unregistered actor", created.By)
+			}
+			if !strings.Contains(stderr, `actor "`+name+`" is not a registered actor`) {
+				t.Fatalf("stderr = %q, want an unregistered-actor warning naming %s", stderr, name)
+			}
+			if actors := r.run("actor", "list"); strings.Contains(actors, name) {
+				t.Fatalf("an unregistered actor was auto-created:\n%s", actors)
+			}
+		})
 	}
 }
 

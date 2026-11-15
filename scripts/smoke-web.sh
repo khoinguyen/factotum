@@ -53,7 +53,22 @@ cleanup() {
   wait 2>/dev/null || true
   rm -rf "$tmp"
 }
-trap cleanup EXIT INT TERM
+# An interrupt must clean up and *stop*. `trap cleanup EXIT INT TERM` runs the
+# handler and then resumes whatever it interrupted, so a Ctrl-C or a CI TERM
+# tore down the server and the throwaway database and then carried on against
+# them: the next `ft` call failed with a misleading "project acme: not found"
+# instead of reporting the interruption. Exit with the shell's conventional
+# 128+signal status, and drop the EXIT trap so the one cleanup already done is
+# not repeated.
+on_signal() {
+  echo "smoke-web: interrupted by $1, cleaning up" >&2
+  cleanup
+  trap - EXIT
+  exit "$2"
+}
+trap cleanup EXIT
+trap 'on_signal SIGINT 130' INT
+trap 'on_signal SIGTERM 143' TERM
 
 db="$tmp/ft.sqlite"
 ft() { "$bin" --store sqlite --store-opt "path=$db" --no-hints "$@"; }

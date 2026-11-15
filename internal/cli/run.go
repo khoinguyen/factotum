@@ -325,7 +325,7 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 		}
 		chosen.Harness = name
 	}
-	scope, err := promptRunScope(p)
+	scope, err := d.promptRunScope(p)
 	if err != nil {
 		return err
 	}
@@ -376,8 +376,15 @@ func promptRunChoice(p Prompter, dimension string, options []string) (string, er
 	return "", fmt.Errorf("unknown %s %q; available: %s", dimension, value, strings.Join(options, ", "))
 }
 
-// promptRunScope asks which config scope persists the chosen defaults.
-func promptRunScope(p Prompter) (string, error) {
+// promptRunScope asks which config scope persists the chosen defaults. A
+// project-scope write must pin the project it configures, so with no configured
+// project that scope is not offered at all: the pick falls to the machine
+// config, which always succeeds, and the run says why.
+func (d *Deps) promptRunScope(p Prompter) (string, error) {
+	if strings.TrimSpace(d.Config.Project) == "" {
+		_, _ = fmt.Fprintln(d.Err, "ft: project scope needs a configured project; saving run defaults to the machine config")
+		return "user", nil
+	}
 	scope, err := p.Input("save run defaults to (project/user)", "user")
 	if err != nil {
 		return "", err

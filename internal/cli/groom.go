@@ -78,7 +78,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 	if err := requireProject(cmd, projectID); err != nil {
 		return err
 	}
-	target, err := d.openGroomTarget(ctx, projectID)
+	target, err := d.openProjectTarget(ctx, projectID)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) er
 // session manifest. `ft groom` names a fresh session id and scopes to the chosen
 // items; the `ft up` groom stage names the controller's session id and scopes to
 // one capture, so the manifest is deterministic and resumable.
-func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groomTarget, project *core.Project, items []*core.Ticket, sessionID string, promptBytes []byte, unattended bool, sel *runSelection, interactive bool) (groom.SessionRecord, error) {
+func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target projectTarget, project *core.Project, items []*core.Ticket, sessionID string, promptBytes []byte, unattended bool, sel *runSelection, interactive bool) (groom.SessionRecord, error) {
 	projectID := project.ID
 	dataDir := target.dataDir
 	// Every session emits five deterministic documents. The session writes them
@@ -498,12 +498,13 @@ func addGroomArtifact(ctx context.Context, artifacts *app.ArtifactService, proje
 	return artifacts.Add(ctx, input)
 }
 
-// groomTarget is the project a grooming command acts on and the store its data
-// lives in. Its services are bound to that store, so a cross-project -p reads and
-// writes the named project's graph and data dir rather than the caller's
-// configured store. close releases a backend this target opened; it is a no-op
-// for the configured project, whose backend the caller owns.
-type groomTarget struct {
+// projectTarget is the project a project-scoped command (groom, run, up) acts on
+// and the store its data lives in. Its services are bound to that store, so a
+// cross-project -p reads and writes the named project's graph and data dir rather
+// than the caller's configured store. close releases a backend this target
+// opened; it is a no-op for the configured project, whose backend the caller
+// owns.
+type projectTarget struct {
 	store     config.Store
 	dataDir   string
 	backend   store.Backend
@@ -514,20 +515,20 @@ type groomTarget struct {
 	close     func()
 }
 
-// openGroomTarget resolves the project a grooming command acts on and binds its
-// services to that project's store. The configured project (or an unset -p)
-// reuses the caller's store; another project's store is opened from the machine
-// config (see groomProjectStore). The caller closes the returned target.
-func (d *Deps) openGroomTarget(ctx context.Context, projectID core.ProjectID) (groomTarget, error) {
-	st, own, err := d.groomProjectStore(projectID)
+// openProjectTarget resolves the project a project-scoped command acts on and
+// binds its services to that project's store. The configured project (or an
+// unset -p) reuses the caller's store; another project's store is opened from the
+// machine config (see projectStore). The caller closes the returned target.
+func (d *Deps) openProjectTarget(ctx context.Context, projectID core.ProjectID) (projectTarget, error) {
+	st, own, err := d.projectStore(projectID)
 	if err != nil {
-		return groomTarget{}, err
+		return projectTarget{}, err
 	}
 	dataDir, err := projectDataDir(st)
 	if err != nil {
-		return groomTarget{}, err
+		return projectTarget{}, err
 	}
-	target := groomTarget{store: st, dataDir: dataDir, close: func() {}}
+	target := projectTarget{store: st, dataDir: dataDir, close: func() {}}
 	if own {
 		target.backend = d.Backend
 		target.projects = d.Projects
@@ -538,7 +539,7 @@ func (d *Deps) openGroomTarget(ctx context.Context, projectID core.ProjectID) (g
 	}
 	backend, err := d.openBackend(ctx, st)
 	if err != nil {
-		return groomTarget{}, err
+		return projectTarget{}, err
 	}
 	target.backend = backend
 	target.projects = app.NewProjectService(backend, d.Clock, d.IDs)
@@ -549,14 +550,14 @@ func (d *Deps) openGroomTarget(ctx context.Context, projectID core.ProjectID) (g
 	return target, nil
 }
 
-// groomProjectStore resolves the store a project's data lives in: the caller's
+// projectStore resolves the store a project's data lives in: the caller's
 // configured store for the configured project (or an unset id), else the
 // project's store from the machine config via config.StoreFor - its
 // [projects.<id>] entry, or the file's top-level [store] when the project has no
 // entry. own reports that the caller's configured store is the one to use, which
 // is the fallback only when the machine config names no store for the project at
 // all.
-func (d *Deps) groomProjectStore(projectID core.ProjectID) (config.Store, bool, error) {
+func (d *Deps) projectStore(projectID core.ProjectID) (config.Store, bool, error) {
 	if projectID == "" || string(projectID) == d.Config.Project {
 		return d.Config.Store, true, nil
 	}
@@ -589,7 +590,7 @@ func (d *Deps) openBackend(ctx context.Context, st config.Store) (store.Backend,
 // process, so capture and the unattended guard see the graph the session
 // mutated. A store with no file path (memory) cannot be reopened and is returned
 // as-is. The caller closes the returned target; a reopened one owns its backend.
-func (d *Deps) postRun(ctx context.Context, target groomTarget) (groomTarget, error) {
+func (d *Deps) postRun(ctx context.Context, target projectTarget) (projectTarget, error) {
 	path := target.store.Options["path"]
 	if path == "" || path == ":memory:" {
 		post := target
@@ -598,7 +599,7 @@ func (d *Deps) postRun(ctx context.Context, target groomTarget) (groomTarget, er
 	}
 	backend, err := d.openBackend(ctx, target.store)
 	if err != nil {
-		return groomTarget{}, err
+		return projectTarget{}, err
 	}
 	post := target
 	post.backend = backend

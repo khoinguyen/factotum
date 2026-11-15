@@ -61,7 +61,7 @@ func (d *Deps) runGroomReview(cmd *cobra.Command, sessionID string, opts groomRe
 	}
 
 	resolved := d.resolveProject(opts.project)
-	target, err := d.openGroomTarget(ctx, resolved)
+	target, err := d.openProjectTarget(ctx, resolved)
 	if err != nil {
 		return err
 	}

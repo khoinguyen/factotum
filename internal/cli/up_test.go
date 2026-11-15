@@ -148,7 +148,7 @@ func TestUpGroomSessionAttachesOnlyWhenInteractive(t *testing.T) {
 
 			st := config.Store{Backend: "jsonfile", Options: map[string]string{"path": r.path}}
 			be := openTestStore(t, deps, st)
-			target := groomTarget{
+			target := projectTarget{
 				store:     st,
 				dataDir:   filepath.Dir(r.path),
 				backend:   be,

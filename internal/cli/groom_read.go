@@ -77,7 +77,7 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolved := deps.resolveProject(projectID)
-			target, err := deps.openGroomTarget(cmd.Context(), resolved)
+			target, err := deps.openProjectTarget(cmd.Context(), resolved)
 			if err != nil {
 				return err
 			}
@@ -180,10 +180,10 @@ func newGroomShowCommand(deps *Deps) *cobra.Command {
 }
 
 // groomDataDir resolves the data dir holding a project's grooming sessions,
-// through groomProjectStore's resolution, so list agrees with capture, show, and
+// through projectStore's resolution, so list agrees with capture, show, and
 // review on which store a project's data lives in.
 func (d *Deps) groomDataDir(projectFlag string) (string, error) {
-	st, _, err := d.groomProjectStore(d.resolveProject(projectFlag))
+	st, _, err := d.projectStore(d.resolveProject(projectFlag))
 	if err != nil {
 		return "", err
 	}

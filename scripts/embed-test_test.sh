@@ -85,7 +85,7 @@ if ! . "$script"; then
   bad "sourcing the script failed (is the source guard missing?)"
 fi
 if [ -s "$STUB_LOG" ]; then
-  bad "sourcing the script ran: $(tr '\n' ';' <"$STUB_LOG")"
+  bad "sourcing the helpers ran: $(tr '\n' ';' <"$STUB_LOG")"
 else
   ok
 fi
@@ -99,7 +99,11 @@ mkdir -p "$tmp/scripts"
 broken="$tmp/scripts/embed-test.sh"
 sed 's/^\(.*BASH_SOURCE\[0\].*then\) return 0; fi$/\1 exit 1; fi/' "$script" >"$broken"
 if cmp -s "$script" "$broken"; then
+  # Without the mutation the nested run would exercise the intact guard and
+  # nest again from its own copy, so stop here rather than recurse.
   bad "the broken-guard copy is unchanged (has the source guard moved?)"
+  echo "passed=$pass failed=$fail"
+  exit 1
 else
   ok
 fi
@@ -116,6 +120,26 @@ else
     *"passed="*"failed=1"*) ok ;;
     *) bad "the labelled guard failure printed no summary: $(tr '\n' ';' <<<"$nested")" ;;
   esac
+fi
+
+# A guard that is gone lets the body run, so the probe must be absorbing a
+# stubbed call: only the stubs stand between the probe and a real container.
+# This is also what pins the stubs above the probe - reorder the two and the
+# call goes to the real docker instead of the log.
+: >"$STUB_LOG"
+unguarded="$tmp/scripts/embed-test-unguarded.sh"
+grep -v 'BASH_SOURCE\[0\]' "$script" >"$unguarded"
+if cmp -s "$script" "$unguarded"; then
+  bad "the guard-less copy is unchanged (has the source guard moved?)"
+elif probe_source_guard "$unguarded"; then
+  bad "a script with no source guard was accepted as guarded"
+else
+  ok
+fi
+if grep -q '^docker ' "$STUB_LOG"; then
+  ok
+else
+  bad "the guard-less probe reached no stub: $(tr '\n' ';' <"$STUB_LOG")"
 fi
 
 # A default container name is per-run: it carries a pid and stays clear of the

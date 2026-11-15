@@ -84,4 +84,9 @@ func realRunSmoke(t *testing.T, harnessName, binary, doneFile string) {
 	if got := r.run("task", "get", taskID); !strings.Contains(got, "(ready_for_review)") {
 		t.Errorf("task was not moved to ready_for_review:\n%s", got)
 	}
+	// A clean exit and a reviewed task are not proof the agent worked: a no-op
+	// harness reaches both. The artifact it was asked to write is.
+	if err := runArtifactError(checkout, doneFile, "done"); err != nil {
+		t.Errorf("run did not deliver the agent's work: %v", err)
+	}
 }

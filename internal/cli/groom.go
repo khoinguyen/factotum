@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -249,26 +250,28 @@ func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groo
 	report, deferred := artifacts["report"], artifacts["deferred"]
 	deferredBody := bodies["deferred"]
 
+	produced, err := producedTaskIDs(ctx, post.tasks, project.ID, before)
+	if err != nil {
+		return groom.SessionRecord{}, err
+	}
+
 	// Unattended runs must not leave work silently stranded: every scoped item
 	// is either agent-ready or named in the deferred file by the time the
-	// session ends.
+	// session ends, and every executable task it produced is agent-ready or
+	// resolved.
 	if unattended {
-		unresolved, err := unattendedUnresolved(ctx, post.tasks, post.actors, project.ID, items, deferredBody)
+		unresolved, err := unattendedUnresolved(ctx, post.tasks, post.actors, project.ID, items, produced, deferredBody)
 		if err != nil {
 			return groom.SessionRecord{}, err
 		}
 		if len(unresolved) > 0 {
-			return groom.SessionRecord{}, fmt.Errorf("groom: unattended session %s left items neither agent-ready nor deferred: %s (see %s)",
+			return groom.SessionRecord{}, fmt.Errorf("groom: unattended session %s left work neither agent-ready nor deferred: %s (see %s)",
 				sessionID, joinTaskIDs(unresolved), groom.DeferredQuestionsPath(dataDir, sessionID))
 		}
 	}
 
 	mode := groomMode(unattended, interactive)
 
-	produced, err := producedTaskIDs(ctx, post.tasks, project.ID, before)
-	if err != nil {
-		return groom.SessionRecord{}, err
-	}
 	record := groom.SessionRecord{
 		ID:         sessionID,
 		Project:    string(project.ID),
@@ -623,16 +626,20 @@ type groomDoc struct {
 	Repo       string   `json:"repo" yaml:"repo"`
 }
 
-// unattendedUnresolved returns the scoped items an unattended session left
-// neither agent-ready nor named in the deferred-questions file. Agent-ready is
-// the completion contract: a task groomed and assigned to an agent, or - for an
-// idea - a promoted task that is. An item matching neither means the session
+// unattendedUnresolved returns the work an unattended session left neither
+// agent-ready nor deferred. A scoped item is handled when it is agent-ready,
+// resolved (the session judged it unnecessary), or named in the
+// deferred-questions file. A produced executable task is held to the stricter
+// contract the kickoff states: the session must leave it agent-ready or
+// resolved, because deferring a task it created still strands it. A produced
+// idea is a capture, not work. Anything matching neither means the session
 // stalled or lost work, which unattended mode must never do silently.
-func unattendedUnresolved(ctx context.Context, tasks *app.TicketService, actors *app.ActorService, projectID core.ProjectID, items []*core.Ticket, deferredBody string) ([]core.TicketID, error) {
+func unattendedUnresolved(ctx context.Context, tasks *app.TicketService, actors *app.ActorService, projectID core.ProjectID, items []*core.Ticket, produced []string, deferredBody string) ([]core.TicketID, error) {
+	deferred := deferredIDs(deferredBody)
 	var unresolved []core.TicketID
 	var projectTasks []*core.Ticket
 	for _, item := range items {
-		if strings.Contains(deferredBody, string(item.ID)) {
+		if deferred[item.ID] {
 			continue
 		}
 		task, err := tasks.Get(ctx, item.ID)
@@ -647,7 +654,48 @@ func unattendedUnresolved(ctx context.Context, tasks *app.TicketService, actors 
 			unresolved = append(unresolved, item.ID)
 		}
 	}
+	for _, id := range produced {
+		task, err := tasks.Get(ctx, core.TicketID(id))
+		if err != nil {
+			return nil, err
+		}
+		handled, err := producedHandled(ctx, actors, task)
+		if err != nil {
+			return nil, err
+		}
+		if !handled {
+			unresolved = append(unresolved, task.ID)
+		}
+	}
 	return unresolved, nil
+}
+
+// deferredIDPattern matches a ticket id as a whole token. The anchoring is the
+// point: a longer id that shares a prefix (t-abc1234 vs t-abc123) must not
+// excuse the shorter one, which a bare substring search did.
+var deferredIDPattern = regexp.MustCompile(`\bt-[a-z0-9]+\b`)
+
+// deferredIDs parses the ids named in a deferred-questions file. "Named" means a
+// whole token: the template's `- item: <id>` field, or an id inline in prose.
+func deferredIDs(body string) map[core.TicketID]bool {
+	ids := make(map[core.TicketID]bool)
+	for _, token := range deferredIDPattern.FindAllString(body, -1) {
+		ids[core.TicketID(token)] = true
+	}
+	return ids
+}
+
+// producedHandled reports whether a task the session produced is admissible: an
+// executable task must be agent-ready or resolved, while an idea is a capture
+// and needs nothing more.
+func producedHandled(ctx context.Context, actors *app.ActorService, task *core.Ticket) (bool, error) {
+	if !task.Kind.Executable() {
+		return true, nil
+	}
+	if task.Resolves(core.DefaultResolutionPolicy()) {
+		return true, nil
+	}
+	return agentReady(ctx, actors, task)
 }
 
 // itemHandled reports whether an unattended session handled one scoped item: an

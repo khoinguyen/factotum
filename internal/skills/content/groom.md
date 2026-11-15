@@ -116,8 +116,9 @@ kickoff tells the session to defer every product question to the
 deferred-questions file, record engineering calls as notes, and suspend the
 pre-answer timing guard so it still promotes, splits, and marks produced tasks
 groomed and assigned. After the run `ft groom` requires every scoped item to be
-agent-ready or named in the deferred-questions file; an item left neither fails
-the run. Use it for an automated loop; a human session omits the flag, runs
+agent-ready or named in the deferred-questions file, and every executable task
+the session produced to be agent-ready or resolved; work left neither fails the
+run. Use it for an automated loop; a human session omits the flag, runs
 attached on a terminal, and grills the PO as usual.
 
 ## Who decides what

@@ -13,6 +13,7 @@ import (
 	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/internal/groom"
 	"github.com/khoinguyen/factotum/pkg/app"
+	"github.com/khoinguyen/factotum/pkg/core"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
@@ -485,6 +486,18 @@ func TestGroomUnattendedCompletesOrDefers(t *testing.T) {
 			wantErr: "neither agent-ready nor deferred",
 		},
 		{
+			name: "a deferred id that only shares a prefix does not excuse the item",
+			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
+				ready := agentReadyTask(t, r, projectID, "Add widget")
+				open := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Add gadget"))
+				// A longer id naming a different item: a substring check would
+				// find open inside it and wrongly pass the session.
+				deferred := "# Deferred questions\n\n## Questions\n\n- [ ] Which scope?\n  - item: " + open + "9\n  - owner: PO\n\n## Resolved\n"
+				return []string{ready, open}, deferred
+			},
+			wantErr: "neither agent-ready nor deferred",
+		},
+		{
 			name: "a promoted idea is agent-ready",
 			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
 				ready := agentReadyTask(t, r, projectID, "Add widget")
@@ -590,5 +603,163 @@ func TestGroomUnattendedReadsSessionWrites(t *testing.T) {
 		"--prompt-file", promptPath, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
 	if err != nil {
 		t.Fatalf("groom did not see the session's writes: %v\n%s", err, out)
+	}
+}
+
+// TestGroomUnattendedProducedChildReadiness pins the produced-child half of the
+// unattended completion contract: every executable task the session creates must
+// be agent-ready (groomed and assigned to an agent) or resolved by the time it
+// ends, even when every scoped item is agent-ready, and naming it in the
+// deferred-questions file does not excuse it - a produced task left unready is
+// work the session itself created and stranded. A produced idea is a capture,
+// not work, so it needs nothing more.
+func TestGroomUnattendedProducedChildReadiness(t *testing.T) {
+	const report = "# Grooming report\n\n## Summary\n\n## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n"
+	tests := []struct {
+		name string
+		// produce creates the task the session leaves behind and returns its id.
+		produce func(t *testing.T, r *runner, projectID string) string
+		// deferred wraps produce's id in a deferred-questions body; nil leaves
+		// the file empty.
+		deferred func(id string) string
+		wantErr  bool
+	}{
+		{
+			name: "an unready produced child fails",
+			produce: func(t *testing.T, r *runner, projectID string) string {
+				return firstField(t, r.run("task", "create", "-p", projectID, "-t", "Split child"))
+			},
+			wantErr: true,
+		},
+		{
+			name: "an agent-ready produced child passes",
+			produce: func(t *testing.T, r *runner, projectID string) string {
+				return agentReadyTask(t, r, projectID, "Split child")
+			},
+		},
+		{
+			name: "a deferral does not excuse an unready produced child",
+			produce: func(t *testing.T, r *runner, projectID string) string {
+				return firstField(t, r.run("task", "create", "-p", projectID, "-t", "Split child"))
+			},
+			deferred: func(id string) string {
+				return "# Deferred questions\n\n## Questions\n\n- [ ] Which scope?\n  - item: " + id + "\n  - owner: PO\n\n## Resolved\n"
+			},
+			wantErr: true,
+		},
+		{
+			name: "a produced idea is a capture",
+			produce: func(t *testing.T, r *runner, projectID string) string {
+				return firstField(t, r.run("idea", "create", "-p", projectID, "-t", "Maybe cache"))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRunner(t)
+			projectID, cfgPath := tasklessContext(t, r)
+			r.run("actor", "create", "builder", "--kind", "agent")
+			scope := agentReadyTask(t, r, projectID, "Add widget")
+
+			promptPath := filepath.Join(t.TempDir(), "prompt.md")
+			mustWrite(t, promptPath, "# Grooming session prompt\n")
+
+			var child string
+			base := isofake.New("sandbox")
+			base.Program(isolation.ExecResult{Stdout: []byte("groomed\n"), ExitCode: 0})
+			backend := groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
+				prompt := cmd.Argv[len(cmd.Argv)-1]
+				child = tt.produce(t, r, projectID)
+				docs := defaultGroomDocs()
+				docs.report = report
+				if tt.deferred != nil {
+					docs.deferred = tt.deferred(child)
+				}
+				stageGroomOutputs(t, base, prompt, docs)
+			}}
+			r.runBackend = backend
+			r.runHarness = harnessfake.New("opencode")
+
+			out, err := runGroomCapture(r, "--config", cfgPath, "groom", "-p", projectID, "--unattended",
+				"--prompt-file", promptPath, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir(), scope)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("groom error = %v\n%s", err, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("unattended session left produced child %s unready and still completed:\n%s", child, out)
+			}
+			if !strings.Contains(err.Error(), "neither agent-ready nor deferred") || !strings.Contains(err.Error(), child) {
+				t.Fatalf("error = %v, want it to name the unready child %s", err, child)
+			}
+		})
+	}
+}
+
+// TestDeferredIDsWholeTokenMatch pins the anchored deferred detection: an id in
+// the deferred-questions file counts only as its own token, so a longer id that
+// shares a prefix cannot excuse an unresolved item.
+func TestDeferredIDsWholeTokenMatch(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want []core.TicketID
+		// notWant are ids the body must not be read as naming.
+		notWant []core.TicketID
+	}{
+		{
+			name: "the template item field",
+			body: "# Deferred questions\n\n## Questions\n\n- [ ] Which cache?\n  - item: t-abc123\n  - owner: PO\n\n## Resolved\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "an id inline in prose",
+			body: "# Deferred questions\n\n## Questions\n\n- Which cache? (item: t-abc123, owner: PO)\n",
+			want: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "a longer id sharing the prefix does not match",
+			body:    "# Deferred questions\n\n## Questions\n\n  - item: t-abc1234\n",
+			want:    []core.TicketID{"t-abc1234"},
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "a longer and an exact id on separate lines",
+			body: "# Deferred questions\n\n## Questions\n\n  - item: t-abc1234\n  - item: t-abc123\n",
+			want: []core.TicketID{"t-abc1234", "t-abc123"},
+		},
+		{
+			name:    "a suffixed token does not match",
+			body:    "# Deferred questions\n\n## Questions\n\n  - item: t-abc123_x\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name: "several ids",
+			body: "## Questions\n\n- item: t-aaa111\n- item: t-bbb222\n",
+			want: []core.TicketID{"t-aaa111", "t-bbb222"},
+		},
+		{
+			name: "an empty body",
+			body: "",
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deferredIDs(tt.body)
+			for _, id := range tt.want {
+				if !got[id] {
+					t.Errorf("deferredIDs(%q) is missing %s", tt.body, id)
+				}
+			}
+			for _, id := range tt.notWant {
+				if got[id] {
+					t.Errorf("deferredIDs(%q) wrongly matched %s", tt.body, id)
+				}
+			}
+		})
 	}
 }

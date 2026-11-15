@@ -118,7 +118,8 @@ stored on the entity, so `core` stays pure.
 - `delivered`: leased to exactly one run; `LeaseUntil` bounds ownership. Not terminal.
 - `read`: the success terminal ack; redelivery stops.
 - `failed`: terminal. Reached by an explicit `ack --failed`, or by lease expiry once `Attempts`
-  reaches `MaxAttempts`. An operator can requeue with `ft msg retry`.
+  reaches `MaxAttempts`. An operator can requeue it with the retry verb (proposed, not built —
+  section 11).
 
 `read` is idempotent: a repeat `ack --read` on an already-`read` message is a no-op success, so a
 receiver that crashes after injecting but before acking can safely retry.
@@ -146,8 +147,8 @@ type Address string // "actor:act-x", "run:run-y", "task:t-z"
 - `run:<run-id>` — deliver to exactly one session. Used for replies (`--reply-to` implies `run:`
   the original sender's run) and for the chief wiring a specific builder/reviewer session. A claim
   for `run:` targets only the run's own messages. If the run is gone, the message stays `queued`
-  (never silently dropped) and falls back to the actor mailbox at the operator's discretion via
-  `ft msg retry --to actor:`.
+  (never silently dropped) and falls back to the actor mailbox at the operator's discretion (the
+  proposed retry verb's re-address, section 11).
 - `task:<ticket-id>` — sugar, resolved **at enqueue time** by `ft msg send`. In every case the
   message records `Message.TaskID = t`, so the task link survives the rewrite:
   1. if a live run is registered with `Run.TaskID == t`, address `run:<that run>`;
@@ -202,7 +203,7 @@ type Run struct {
 
 - Registration is upsert-idempotent on `(ProjectID, ActorID, Host, PID)` so a plugin reconnect does
   not create a duplicate run; the returned `RunID` is stable for the session.
-- A run is **live** while `LeaseUntil > now` and **stale** otherwise. `ft msg inbox --runs` and the
+- A run is **live** while `LeaseUntil > now` and **stale** otherwise. `ft msg runs --live` and the
   dashboard show liveness; a claim addressed to a stale `run:` does not match (the message stays
   queued for actor fallback).
 - Deregister on clean shutdown; staleness is the crash path.
@@ -399,10 +400,10 @@ Endpoints (JSON, mirroring the CLI verbs; the CLI column names the command that 
 POST /api/msg/send       {from?, to, body, reply_to?, links?}      -> {id, state}   ft msg send
 GET  /api/msg/inbox      ?address=&state=&limit=                   -> {messages:[..]} ft msg inbox
 GET  /api/msg/get/<id>                                             -> {message}      ft msg get
-POST /api/msg/ack        {id, run_id, state, error?}               -> {ok}           ft msg ack / read
-POST /api/msg/nack       {id, run_id, reason}                      -> {ok}           ft msg nack
-POST /api/msg/retry      {id, to?}                                 -> {ok}           ft msg retry
-POST /api/msg/prune      {before, states?}                         -> {removed}      ft msg prune
+POST /api/msg/ack        {id, run_id, state, error?}               -> {ok}           ft msg agent ack / ft msg read
+POST /api/msg/nack       {id, run_id, reason}                      -> {ok}           ft msg agent nack
+POST /api/msg/retry      {id, to?}                                 -> {ok}           (proposed, section 11)
+POST /api/msg/prune      {before, states?}                         -> {removed}      (proposed, section 11)
 POST /api/msg/register   {actor, task?, harness, host, pid, ...}   -> {run_id, lease_until}
 POST /api/msg/claim      {run_id, wait?}                           -> {message?}
 POST /api/msg/heartbeat  {run_id}                                  -> {ok}
@@ -412,8 +413,8 @@ POST /api/msg/deregister {run_id}                                  -> {ok}
 The transport is a thin wrapper over the store port: each endpoint maps to one `MessageRepo`/`RunRepo`
 call (`send`→`Create`, `get`/`inbox`→`Get`/`List`, `ack`/`nack`/`retry`→`Ack`/`Nack`/`Update`+event,
 `claim`→`Claim`, `register`/`heartbeat`/`deregister`→`RunRepo`). The CLI verbs are the same calls, so
-there is one behavior with two transports; `ft msg get` is the non-mutating fetch and `ft msg read`/
-`ft msg ack` is the mutating mark-read.
+there is one behavior with two transports; `ft msg get` is the non-mutating fetch and `ft msg read`
+is the mutating mark-read (the transport's `ack` is `ft msg agent ack` for a receiver).
 
 Auth and trust:
 
@@ -476,12 +477,23 @@ ft msg send <address|ticket-id> [-b body | -] [--from <actor>] [--reply-to <id>]
 ft msg inbox [--state queued|delivered|read|failed] [--address X] [--for <actor>] [--run <id>] [--limit N]
 ft msg get <id>            # show without changing state
 ft msg read <id>           # show and ack read (marks terminal)
+ft msg runs [--live]       # list registered runs (adapter liveness)
+ft msg install [--harness opencode|opencode2|pi] [--dir <path>]   # stage a receiver for a harness
+ft msg agent <register|claim|ack|nack|heartbeat|deregister>   # hidden, stable adapter verbs
+```
+
+**Proposed, not built.** Four operator verbs were considered for the first slice and are kept here
+so the intent is not lost, but none of them exists yet: the fence is marked `design` for exactly
+that reason, and the drift check requires the mark. The store port already has the calls they need
+(`Nack`, `RequeueExpired`, `Prune`), so each is a thin CLI addition over an existing method; until
+one lands, a receiver uses the `agent` verbs and the lease sweep recovers expired deliveries with no
+operator command.
+
+```design
 ft msg ack <id> [--failed -e <reason>]     # explicit state ack for adapters/humans
 ft msg nack <id> [-e <reason>]             # requeue (or park failed past max attempts)
 ft msg retry <id> [--to <address>]         # requeue a failed message, optionally re-address
 ft msg prune [--before <time>] [--state read|failed]   # drop old terminal messages
-ft msg runs [--live]       # list registered runs (adapter liveness)
-ft msg agent <register|claim|ack|nack|heartbeat|deregister>   # hidden, stable adapter verbs
 ```
 
 - Output follows the repo shapes: single-result commands print `id/action/.../project/repo` yaml-
@@ -509,8 +521,9 @@ ft msg agent <register|claim|ack|nack|heartbeat|deregister>   # hidden, stable a
 - **Body limit:** default 16 KiB, machine-configurable. Enforced at send (`ErrInvalid`), never
   silently truncated — a sender must know.
 - **Retention:** terminal `read` messages pruned after 30 days; terminal `failed` after 90 days;
-  `queued`/`delivered` never auto-pruned. `ft msg prune` runs the sweep manually; `ft serve` runs
-  it on a slow timer. Reuses the `Prune` port method, so it is backend-uniform.
+  `queued`/`delivered` never auto-pruned. The proposed prune verb (section 11) runs the sweep
+  manually; `ft serve` runs it on a slow timer. Reuses the `Prune` port method, so it is
+  backend-uniform.
 - **No blobs:** large content is linked (a doc/artifact), not inlined.
 
 ### Security / trust

@@ -98,3 +98,37 @@ func TestRunSmokeRequiresTheAgentArtifact(t *testing.T) {
 		})
 	}
 }
+
+// TestRealRunSmokeChecksTheAgentArtifact pins the hookup the artifact helper's
+// own tests cannot see: that the opt-in real-harness smoke consults
+// runArtifactError at all. It drives realRunSmoke through fake adapters with the
+// gate satisfied, so a refactor that drops the check turns this red without a
+// model call or a network.
+func TestRealRunSmokeChecksTheAgentArtifact(t *testing.T) {
+	// Satisfy the opt-in gate; the fake harness never reaches a provider.
+	t.Setenv(realRunGate, "fake/model")
+
+	r := newRunner(t)
+	base := isofake.New("sandbox")
+	base.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = writingRunBackend{Backend: base, onExec: func(cmd isolation.Command) {
+		mustWrite(t, filepath.Join(cmd.Workdir, "DONE.md"), "done\n")
+	}}
+	r.runHarness = harnessfake.New("opencode")
+
+	checks := 0
+	original := runSmokeArtifactCheck
+	runSmokeArtifactCheck = func(checkout, name, want string) error {
+		checks++
+		return runArtifactError(checkout, name, want)
+	}
+	t.Cleanup(func() { runSmokeArtifactCheck = original })
+
+	// "sh" stands in for the harness binary the smoke only probes with
+	// exec.LookPath; the fake adapters never spawn it.
+	realRunSmoke(t, r, "sh", "DONE.md", "--sandbox", "fake", "--harness", "fake")
+
+	if checks != 1 {
+		t.Fatalf("realRunSmoke checked the agent artifact %d times, want 1", checks)
+	}
+}

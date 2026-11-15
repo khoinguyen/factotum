@@ -491,6 +491,15 @@ func TestRunReportsHarnessStderrOnSuccess(t *testing.T) {
 	if !strings.Contains(outcome.Stderr, "warning: deprecated model alias") {
 		t.Fatalf("outcome.Stderr = %q, want the harness's stderr", outcome.Stderr)
 	}
+
+	stored, err := f.tasks.Get(context.Background(), f.task.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	note := stored.Notes[len(stored.Notes)-1].Body
+	if !strings.Contains(note, "warning: deprecated model alias") {
+		t.Fatalf("completion note = %q, want it to record the harness stderr", note)
+	}
 }
 
 // TestRunKeepsOnlyStderrTail proves a chatty harness cannot flood the outcome or

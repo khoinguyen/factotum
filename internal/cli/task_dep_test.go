@@ -13,7 +13,9 @@ import (
 
 // runSplitErr executes a command against the runner's store and returns stdout,
 // stderr, and the error so a test can assert the exit code a caller branches on
-// without the helper swallowing the error.
+// without the helper swallowing the error. Like cmd/factotum's error path, it
+// flushes buffered stdout after Execute: cobra runs its post-run flush only on
+// success, and the real entrypoint flushes what a failing command printed.
 func (r *runner) runSplitErr(args ...string) (string, string, error) {
 	r.t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -25,6 +27,9 @@ func (r *runner) runSplitErr(args ...string) (string, string, error) {
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	err := root.Execute()
+	if flushErr := deps.FlushOutput(); flushErr != nil && err == nil {
+		err = flushErr
+	}
 	return stdout.String(), stderr.String(), err
 }
 

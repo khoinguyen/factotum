@@ -76,11 +76,22 @@ func actorIdentity(ctx context.Context, actors store.ActorRepo, id core.ActorID)
 	if err == nil || !errors.Is(err, core.ErrNotFound) {
 		return actor, err
 	}
-	if role, ok := LoopDefaultRole(string(id)); ok {
-		synthetic := RoleActor(role)
-		return &synthetic, nil
+	if identity, ok := RoleIdentity(id); ok {
+		return &identity, nil
 	}
 	return nil, err
+}
+
+// RoleIdentity reports whether id is a loop role and returns the agent identity
+// it acts as. It is the record-free half of the identity rule, so a surface with
+// only an actor id (a display label, a read-only filter) resolves a role without
+// opening the store.
+func RoleIdentity(id core.ActorID) (core.Actor, bool) {
+	role, ok := LoopDefaultRole(string(id))
+	if !ok {
+		return core.Actor{}, false
+	}
+	return RoleActor(role), true
 }
 
 // RoleActor is the identity a loop role acts as: an active agent named by its

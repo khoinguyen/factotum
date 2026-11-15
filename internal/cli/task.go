@@ -338,8 +338,20 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 					}
 				})
 			}
+			// The actor ids this view labels: a loop role must resolve even with
+			// no Actor record, so collect them for the identity map.
+			var labelIDs []core.ActorID
+			if task.AssigneeID != nil {
+				labelIDs = append(labelIDs, *task.AssigneeID)
+			}
+			labelIDs = append(labelIDs, task.WaitingOn...)
+			for _, note := range task.Notes {
+				if note.Author != "" {
+					labelIDs = append(labelIDs, note.Author)
+				}
+			}
 			return deps.emit(doc, func() {
-				actors := deps.actorResolver(cmd.Context())
+				actors := deps.actorResolver(cmd.Context(), labelIDs...)
 				deps.printf("(%s) %s: %s\n", task.Status, task.ID, task.Title)
 				deps.printf("project: %s\n", task.ProjectID)
 				if task.Kind != core.KindTask {
@@ -730,7 +742,7 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 
 			candidates := unionIDs(snapshot.Ready.Agent, snapshot.Ready.Human)
 			if forRef != "" {
-				actor, err := deps.resolveActorRef(cmd.Context(), forRef)
+				actor, err := deps.resolveFilterActor(cmd.Context(), forRef)
 				if err != nil {
 					return err
 				}
@@ -821,7 +833,7 @@ type notReadyFilter struct {
 func emitNotReady(cmd *cobra.Command, deps *Deps, snapshot *app.Snapshot, filter notReadyFilter) error {
 	ids := snapshot.Graph.IDs()
 	if filter.forRef != "" {
-		actor, err := deps.resolveActorRef(cmd.Context(), filter.forRef)
+		actor, err := deps.resolveFilterActor(cmd.Context(), filter.forRef)
 		if err != nil {
 			return err
 		}
@@ -959,9 +971,29 @@ func (d *Deps) resolveClaimActor(ctx context.Context, ref string, fromDefault bo
 	if parseErr != nil {
 		return nil, parseErr
 	}
-	if role, ok := app.LoopDefaultRole(string(id)); ok {
-		synthetic := app.RoleActor(role)
-		return &synthetic, nil
+	if identity, ok := app.RoleIdentity(id); ok {
+		return &identity, nil
+	}
+	return nil, err
+}
+
+// resolveFilterActor resolves a read-only actor filter (`task next --for` and its
+// `--explain`) by the identity rule readiness uses: an Actor record by id or name,
+// else a loop-role identity as an agent. Filtering neither attributes events nor
+// assigns work, so the strict record requirement claim and assign keep for an
+// explicit reference does not apply; a lookalike that is neither a record nor a
+// role still fails as an unknown actor.
+func (d *Deps) resolveFilterActor(ctx context.Context, ref string) (*core.Actor, error) {
+	actor, err := d.resolveActorRef(ctx, ref)
+	if err == nil || !errors.Is(err, core.ErrNotFound) {
+		return actor, err
+	}
+	id, parseErr := core.ParseActorRef(ref)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	if identity, ok := app.RoleIdentity(id); ok {
+		return &identity, nil
 	}
 	return nil, err
 }
@@ -1867,7 +1899,11 @@ func optionalString(value string) *string {
 	return &value
 }
 
-func (d *Deps) actorResolver(ctx context.Context) map[core.ActorID]core.Actor {
+// actorResolver is the identity map a view labels actors against: the registered
+// records, plus the loop-role identity of every id the view names. A role without
+// a record then reads as the agent it acts as, matching the bucket the task sits
+// in; a typo'd or lookalike id still prints bare.
+func (d *Deps) actorResolver(ctx context.Context, ids ...core.ActorID) map[core.ActorID]core.Actor {
 	actors, err := d.Actors.List(ctx)
 	if err != nil {
 		return map[core.ActorID]core.Actor{}
@@ -1875,6 +1911,14 @@ func (d *Deps) actorResolver(ctx context.Context) map[core.ActorID]core.Actor {
 	byID := make(map[core.ActorID]core.Actor, len(actors))
 	for _, actor := range actors {
 		byID[actor.ID] = *actor
+	}
+	for _, id := range ids {
+		if _, ok := byID[id]; ok {
+			continue
+		}
+		if identity, ok := app.RoleIdentity(id); ok {
+			byID[id] = identity
+		}
 	}
 	return byID
 }

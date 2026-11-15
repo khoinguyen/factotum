@@ -54,6 +54,7 @@ const (
 	ClassReview     Class = "review"
 	ClassReadyAgent Class = "ready-agent"
 	ClassReadyHuman Class = "ready-human"
+	ClassInProgress Class = "in-progress"
 	ClassBlocked    Class = "blocked"
 	ClassCycle      Class = "cycle"
 	ClassCapture    Class = "capture"
@@ -159,6 +160,8 @@ func (v View) Classify(task core.Ticket) Class {
 		return ClassDone
 	case task.Status == core.StatusReadyForReview:
 		return ClassReview
+	case task.Status == core.StatusInProgress:
+		return ClassInProgress
 	case derived.readyAgent[task.ID]:
 		return ClassReadyAgent
 	case derived.readyHuman[task.ID]:

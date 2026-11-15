@@ -6,6 +6,7 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/graph"
 	"github.com/khoinguyen/factotum/pkg/render"
 )
 
@@ -62,5 +63,42 @@ func TestBoardAndRenderAgreeOnRoleAssignee(t *testing.T) {
 	}
 	if got := view.Classify(*task); got != render.ClassReadyAgent {
 		t.Fatalf("render Classify(%s) = %q, want %q (the board says %q)", task.ID, got, render.ClassReadyAgent, "ready-agent")
+	}
+}
+
+// TestBoardAndRenderAgreeOnStatusClasses pins the status-class parity between
+// the web work board and the render view. The render classifier used to fold in
+// progress into "blocked", so `ft graph render --format json` disagreed with
+// the board; a status that either surface classifies on its own must not drift
+// again. Statuses whose board class depends on the ready bucket (todo ->
+// waiting) are out of scope: render has no waiting class yet.
+func TestBoardAndRenderAgreeOnStatusClasses(t *testing.T) {
+	tests := []struct {
+		status core.TicketStatus
+		want   string
+	}{
+		{core.StatusInProgress, "in-progress"},
+		{core.StatusReadyForReview, "review"},
+		{core.StatusDone, "done"},
+		{core.StatusCancelled, "cancelled"},
+		{core.StatusBlocked, "blocked"},
+	}
+	policy := core.DefaultResolutionPolicy()
+	project := &core.Project{ID: "prj-1", Name: "Acme", Policy: policy}
+	for _, tc := range tests {
+		t.Run(string(tc.status), func(t *testing.T) {
+			if got := classify(core.Ticket{Status: tc.status}, false, false, false); got != tc.want {
+				t.Fatalf("board classify(%s) = %q, want %q", tc.status, got, tc.want)
+			}
+			ticket := core.Ticket{ID: "t-1", ProjectID: project.ID, Kind: core.KindTask, Title: "work", Status: tc.status}
+			built, err := graph.New([]core.Ticket{ticket}, policy)
+			if err != nil {
+				t.Fatalf("graph.New() error = %v", err)
+			}
+			view := render.View{Project: project, Tasks: []*core.Ticket{&ticket}, Graph: built, Ready: built.ReadyByActor(nil)}
+			if got := string(view.Classify(ticket)); got != tc.want {
+				t.Fatalf("render Classify(%s) = %q, board says %q", tc.status, got, tc.want)
+			}
+		})
 	}
 }

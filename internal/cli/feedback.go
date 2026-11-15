@@ -26,7 +26,7 @@ func newFeedbackCommand(deps *Deps) *cobra.Command {
 		Annotations: map[string]string{annotationNoCallerStore: "true"},
 	}
 	cmd.AddCommand(newFeedbackCreateCommand(deps))
-	return cmd
+	return requireSubcommand(cmd)
 }
 
 func newFeedbackCreateCommand(deps *Deps) *cobra.Command {

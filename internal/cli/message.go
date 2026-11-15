@@ -246,7 +246,7 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 	runs.Flags().BoolVar(&runsLive, "live", false, "only runs whose lease is still valid")
 
 	cmd.AddCommand(send, inbox, get, read, runs, newMessageInstallCommand(deps), newMessageAgentCommand(deps))
-	return cmd
+	return requireSubcommand(cmd)
 }
 
 // messageRunEntryFrom renders one registered run for `ft msg runs`, resolving
@@ -616,7 +616,7 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 	deregister.Flags().StringVar(&dropRun, "run", "", "run id (required)")
 
 	cmd.AddCommand(register, claim, ack, nack, heartbeat, deregister)
-	return cmd
+	return requireSubcommand(cmd)
 }
 
 func agentMessageFrom(message *core.Message) *agentMessage {

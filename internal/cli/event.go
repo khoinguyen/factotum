@@ -47,5 +47,5 @@ func newEventCommand(deps *Deps) *cobra.Command {
 	list.Flags().IntVarP(&limit, "limit", "n", 20, "maximum number of events")
 
 	cmd.AddCommand(list)
-	return cmd
+	return requireSubcommand(cmd)
 }

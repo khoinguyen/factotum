@@ -61,7 +61,7 @@ func newConfigCommand(deps *Deps) *cobra.Command {
 	}
 
 	cmd.AddCommand(get)
-	return cmd
+	return requireSubcommand(cmd)
 }
 
 func (d *Deps) configView() configView {

@@ -46,5 +46,5 @@ func newActorCommand(deps *Deps) *cobra.Command {
 	}
 
 	cmd.AddCommand(create, list)
-	return cmd
+	return requireSubcommand(cmd)
 }

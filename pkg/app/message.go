@@ -93,6 +93,59 @@ func LoopRole(ref string) (core.ActorID, bool) {
 	return "", false
 }
 
+// loopDefaultRoles are the role names a chief-loop wrapper arms itself with
+// (loop-agent.sh <actor>). They are LoopRole's four plus grooming-agent and
+// architecture-reviewer, which the loop only ever sets as a configured default,
+// never as a bare send target.
+var loopDefaultRoles = []string{"builder", "reviewer", "qa", "grooming-agent", "architecture-reviewer"}
+
+// roleIDPrefixes are the id shapes this codebase mints that a role name may be
+// scoped by: a task (t-), an artifact (art-), and a grooming session (groom-).
+var roleIDPrefixes = []string{"t-", "art-", "groom-"}
+
+// LoopDefaultRole reports whether ref is a role-shaped identity a loop wrapper
+// exports as a configured default actor, and returns it as the actor id that
+// attributes the call. It is the default-path counterpart of LoopRole: the same
+// loop vocabulary widened to the grooming-agent and architecture-reviewer roles,
+// which are only ever configured, and narrowed so the role must carry a real ft
+// id. The id requirement is what keeps a token that merely starts with a role
+// name (builder-gpt-4, qa-bot, a truncated builder-t) from being trusted as a
+// role and attributed to a mailbox nobody claims.
+func LoopDefaultRole(ref string) (core.ActorID, bool) {
+	if ref == "chief" {
+		return core.ActorID(ref), true
+	}
+	for _, role := range loopDefaultRoles {
+		id, ok := strings.CutPrefix(ref, role+"-")
+		if ok && roleID(id) {
+			return core.ActorID(ref), true
+		}
+	}
+	return "", false
+}
+
+// roleID reports whether token has the shape of the ft id a role is scoped by:
+// an id prefix plus a non-empty run of the lowercase alphanumerics ids are
+// minted from.
+func roleID(token string) bool {
+	for _, prefix := range roleIDPrefixes {
+		rest, ok := strings.CutPrefix(token, prefix)
+		if !ok {
+			continue
+		}
+		if rest == "" {
+			return false
+		}
+		for _, r := range rest {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // ticketSugar reports whether ref is a bare ticket reference (the "t-..." shape
 // every generated task/idea/bug id has), the only bare token besides a loop role
 // that `ft msg send` accepts. Anything else bare is a mistake - a garbled role

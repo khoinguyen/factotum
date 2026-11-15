@@ -141,28 +141,96 @@ func TestLoopRoleActorFlagNeedsNoRecord(t *testing.T) {
 	}
 }
 
-// TestConfiguredDefaultActorIsTrustedAsARole pins the scope of the --actor
-// registration check: a configured default is set once by the loop to a
-// role-shaped identity (loop-agent.sh exports FACTOTUM_DEFAULT_ACTOR for the
-// builder, reviewer, qa, chief, and grooming-agent roles), so it is attributed
-// as given even without an Actor record.
-func TestConfiguredDefaultActorIsTrustedAsARole(t *testing.T) {
+// TestUnregisteredDefaultActorIsUnattributedWithWarning pins the default path to
+// the same rule as --actor, so a typo in FACTOTUM_DEFAULT_ACTOR / default_actor
+// cannot stamp events. A default is trusted only when it names a registered
+// actor or a loop role carrying a real ft id; a role typo or a token that merely
+// starts with a role name is warned about and dropped.
+func TestUnregisteredDefaultActorIsUnattributedWithWarning(t *testing.T) {
+	for _, name := range []string{"builer-t-1", "builder-gpt-4", "qa-bot", "ghostrider"} {
+		t.Run(name, func(t *testing.T) {
+			r := newRunner(t)
+			r.getenv = func(key string) string {
+				if key == "FACTOTUM_DEFAULT_ACTOR" {
+					return name
+				}
+				return ""
+			}
+
+			_, stderr := r.runSplit("project", "create", "Acme")
+
+			created := findEvent(t, listEvents(t, r), "project.created")
+			if created.By != nil {
+				t.Fatalf("project.created By = %v, want none for an unregistered default", created.By)
+			}
+			if !strings.Contains(stderr, `default actor "`+name+`" is not a registered actor`) {
+				t.Fatalf("stderr = %q, want a warning naming the default actor %s", stderr, name)
+			}
+			if actors := r.run("actor", "list"); strings.Contains(actors, name) {
+				t.Fatalf("an unregistered default was auto-created:\n%s", actors)
+			}
+		})
+	}
+}
+
+// TestConfiguredLoopDefaultActorIsAttributed pins the exemption that keeps the
+// loop attributed: the role shapes loop-agent.sh exports as
+// FACTOTUM_DEFAULT_ACTOR are trusted as given, with no Actor record and no
+// warning. That covers the four LoopRole roles and the grooming-agent and
+// architecture-reviewer roles, which the loop only ever sets as a default.
+func TestConfiguredLoopDefaultActorIsAttributed(t *testing.T) {
+	for _, name := range []string{
+		"chief",
+		"builder-t-1",
+		"reviewer-t-1",
+		"qa-t-1",
+		"grooming-agent-art-1",
+		"architecture-reviewer-groom-abcde",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRunner(t)
+			r.getenv = func(key string) string {
+				if key == "FACTOTUM_DEFAULT_ACTOR" {
+					return name
+				}
+				return ""
+			}
+
+			_, stderr := r.runSplit("project", "create", "Acme")
+
+			created := findEvent(t, listEvents(t, r), "project.created")
+			if created.By == nil || *created.By != name {
+				t.Fatalf("project.created By = %v, want %s", created.By, name)
+			}
+			if strings.Contains(stderr, "unattributed") {
+				t.Fatalf("a loop default role should not warn: %q", stderr)
+			}
+		})
+	}
+}
+
+// TestRegisteredActorBeatsTheRoleGrammar pins the order of the check: the store
+// record is tried first, so a default whose name looks role-shaped is attributed
+// because the actor exists, not because it matches a grammar.
+func TestRegisteredActorBeatsTheRoleGrammar(t *testing.T) {
 	r := newRunner(t)
+	r.getenv = func(string) string { return "" }
+	r.run("actor", "create", "builder-gpt-4")
+
 	r.getenv = func(key string) string {
 		if key == "FACTOTUM_DEFAULT_ACTOR" {
-			return "grooming-agent-art-1"
+			return "builder-gpt-4"
 		}
 		return ""
 	}
-
 	_, stderr := r.runSplit("project", "create", "Acme")
 
 	created := findEvent(t, listEvents(t, r), "project.created")
-	if created.By == nil || *created.By != "grooming-agent-art-1" {
-		t.Fatalf("project.created By = %v, want grooming-agent-art-1", created.By)
+	if created.By == nil || *created.By != "builder-gpt-4" {
+		t.Fatalf("project.created By = %v, want the registered actor builder-gpt-4", created.By)
 	}
 	if strings.Contains(stderr, "unattributed") {
-		t.Fatalf("a configured role should not warn: %q", stderr)
+		t.Fatalf("a registered default should not warn: %q", stderr)
 	}
 }
 

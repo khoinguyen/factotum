@@ -126,9 +126,9 @@ func NewRoot(deps *Deps) *cobra.Command {
 			// checked against the store's actors (bindCaller, after the store opens).
 			// Each is normalized so the canonical actor:<id> address and the bare id
 			// name the same actor, and an unresolvable reference is rejected here
-			// rather than attributed verbatim. bindCaller checks an --actor against
-			// the store's actors, so a typo there never becomes an attribution or a
-			// reminder target.
+			// rather than attributed verbatim. bindCaller checks both an --actor and
+			// a configured default against the store's actors, so a typo in either
+			// never becomes an attribution or a reminder target.
 			switch {
 			case actorRef != "":
 				ref, err := core.ParseActorRef(actorRef)
@@ -237,13 +237,14 @@ func NewRoot(deps *Deps) *cobra.Command {
 // then records the resulting actor and session on the command context so every
 // event this invocation appends is attributed. An unregistered caller is dropped
 // with a warning, never auto-created, and never fails the command. An explicit
-// --actor that names no Actor record and is not a loop role gets the same
+// --actor or configured default actor that names no Actor record takes the same
 // treatment, so a typo can neither stamp events nor become the auto-QA reminder
 // target. A loop role is the one exception: it is a mailbox a session registers
-// as a run, not a record, so it stays attributed. A configured default actor is
-// left as configured — it is the role-shaped identity a loop sets — and a
-// command that opens no caller store cannot check registration, so it attributes
-// nothing and stays quiet.
+// as a run, not a record, so it stays attributed — under each path's own role
+// grammar (app.LoopRole for --actor, app.LoopDefaultRole for a configured
+// default, which the loop also exports for the grooming and architecture roles).
+// A command that opens no caller store cannot check registration, so it stays
+// quiet.
 func (d *Deps) bindCaller(cmd *cobra.Command) {
 	if d.Actors != nil {
 		switch {
@@ -259,28 +260,34 @@ func (d *Deps) bindCaller(cmd *cobra.Command) {
 				d.warnf("could not resolve caller %q (%v); this invocation is unattributed", d.Caller, err)
 				d.ActorRef = ""
 			}
-		case d.ActorFlag && d.ActorRef != "":
-			actor, err := d.Actors.Resolve(cmd.Context(), d.ActorRef)
-			switch {
-			case err == nil:
-				d.ActorRef = string(actor.ID)
-			case !errors.Is(err, core.ErrNotFound):
-				d.warnf("could not resolve actor %q (%v); this invocation is unattributed", d.ActorRef, err)
-				d.ActorRef = ""
-			case !isLoopRole(d.ActorRef):
-				d.warnf("actor %q is not a registered actor; this invocation is unattributed", d.ActorRef)
-				d.ActorRef = ""
-			}
+		case d.ActorRef != "":
+			d.bindActor(cmd.Context())
 		}
 	}
 	cmd.SetContext(app.WithCaller(cmd.Context(), core.ActorID(d.ActorRef), d.Session))
 }
 
-// isLoopRole reports whether ref names a chief-loop role, which addresses a
-// mailbox without needing an Actor record.
-func isLoopRole(ref string) bool {
-	_, ok := app.LoopRole(ref)
-	return ok
+// bindActor resolves the actor this invocation names — an explicit --actor or a
+// configured default — against the store's actors, dropping it with a warning
+// when it names no record and is not a role its own path trusts.
+func (d *Deps) bindActor(ctx context.Context) {
+	source, role := "default actor", app.LoopDefaultRole
+	if d.ActorFlag {
+		source, role = "actor", app.LoopRole
+	}
+	actor, err := d.Actors.Resolve(ctx, d.ActorRef)
+	switch {
+	case err == nil:
+		d.ActorRef = string(actor.ID)
+	case !errors.Is(err, core.ErrNotFound):
+		d.warnf("could not resolve %s %q (%v); this invocation is unattributed", source, d.ActorRef, err)
+		d.ActorRef = ""
+	default:
+		if _, ok := role(d.ActorRef); !ok {
+			d.warnf("%s %q is not a registered actor; this invocation is unattributed", source, d.ActorRef)
+			d.ActorRef = ""
+		}
+	}
 }
 
 // resolveActorRef resolves a user-supplied actor reference the way the global

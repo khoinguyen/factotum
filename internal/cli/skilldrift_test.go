@@ -197,6 +197,9 @@ func TestDocFindingsChecksEveryFenceForm(t *testing.T) {
 		{name: "indented backtick fence", body: "    ```sh\n    ft msg retry t-1\n    ```\n"},
 		{name: "indented tilde fence", body: "    ~~~sh\n    ft msg retry t-1\n    ~~~\n"},
 		{name: "indented code block", body: "    ft msg retry t-1\n"},
+		{name: "tab-indented code block", body: "\tft msg retry t-1\n"},
+		{name: "second command on an indented line", body: "    echo x; ft msg retry t-1\n"},
+		{name: "wrapped inline span", body: "Prose `ft msg\nretry t-1` here.\n"},
 	}
 	dir := filepath.Join(t.TempDir(), "docs")
 	for _, tc := range cases {
@@ -252,9 +255,9 @@ func TestDocFindingsScopesTheDesignExemption(t *testing.T) {
 			want: []string{`unknown command "retry"`, "unterminated code fence"},
 		},
 		{
-			name: "an unclosed fence after a design block still fails",
-			body: "```design\nft msg retry t-1\n```\n\n```sh\nft task next\n",
-			want: []string{"unterminated code fence"},
+			name: "the design exemption does not carry into an unclosed block",
+			body: "```design\nft msg retry t-1\n```\n\n```sh\nft msg frobnicate t-1\n",
+			want: []string{`unknown command "frobnicate"`, "unterminated code fence"},
 		},
 		{
 			name: "tilde design fence is exempt",

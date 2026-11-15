@@ -436,10 +436,18 @@ func skillCommandLines(body string) []string {
 func ftCommandLines(snippets []string) []string {
 	var out []string
 	for _, snippet := range snippets {
-		for _, part := range strings.Split(snippet, ";") {
-			if command, ok := asFTCommand(strings.TrimSpace(part)); ok {
-				out = append(out, command)
-			}
+		out = append(out, ftCommandsIn(snippet)...)
+	}
+	return out
+}
+
+// ftCommandsIn splits one snippet or line on the `;` a skill uses to pack several
+// commands together and keeps the parts that begin with ft.
+func ftCommandsIn(line string) []string {
+	var out []string
+	for _, part := range strings.Split(line, ";") {
+		if command, ok := asFTCommand(strings.TrimSpace(part)); ok {
+			out = append(out, command)
 		}
 	}
 	return out
@@ -465,15 +473,27 @@ func skillCodeSnippets(body string) []string {
 // place a stale command hides and passes. A fence may use ``` or ~~~, be indented
 // (as inside a list), and be longer than three markers; it closes only on its own
 // marker repeated at least as many times, so a shorter fence inside a longer one
-// does not end it early. Four-space indentation is also code, but it is the same
-// indentation markdown gives a list continuation, so only a line that reads as an
-// ft invocation is taken from it — prose that merely mentions ft stays out of the
-// walk, and no ft command can hide in an indented block.
+// does not end it early. An inline span may wrap across lines, so a command is
+// read whole from the paragraph it is written in. Indentation is also code, but
+// four spaces (or a tab) is the same indentation markdown gives a list
+// continuation, so an indented line contributes the ft invocations it holds
+// rather than all of its text: prose that merely mentions ft stays out of the
+// walk, while prose that opens with `ft` is read as a command. That errs toward a
+// false positive rather than a silent miss, which is the right way to be wrong.
 func scanCode(body string, skipFence func(info string) bool) (snippets []string, unterminated bool) {
 	var out, pending []string
 	var marker byte
 	var run int
+	var span string
 	exempt := false
+	// A span left open at the end of its paragraph is still checked: an
+	// unterminated one is malformed, and dropping it would hide its text.
+	flush := func() {
+		if span != "" {
+			out = append(out, span)
+			span = ""
+		}
+	}
 	for _, raw := range strings.Split(body, "\n") {
 		line := strings.TrimSpace(raw)
 		if marker != 0 {
@@ -487,25 +507,38 @@ func scanCode(body string, skipFence func(info string) bool) (snippets []string,
 			pending = append(pending, line)
 			continue
 		}
+		if line == "" {
+			flush()
+			continue
+		}
 		if m, n, info, ok := fenceOpen(line); ok {
+			flush()
 			marker, run = m, n
 			exempt = skipFence != nil && skipFence(info)
 			continue
 		}
-		if strings.HasPrefix(raw, "    ") {
-			if command, ok := asFTCommand(line); ok {
-				out = append(out, command)
-			}
-			out = append(out, inlineCode(line)...)
-			continue
+		text := line
+		if span != "" {
+			text, span = "`"+span+" "+line, ""
+		} else if indented(raw) {
+			out = append(out, ftCommandsIn(text)...)
 		}
-		out = append(out, inlineCode(line)...)
+		spans, open := inlineSpans(text)
+		out = append(out, spans...)
+		span = open
 	}
+	flush()
 	// An unterminated design fence is not exempt.
 	if marker != 0 {
 		out = append(out, pending...)
 	}
 	return out, marker != 0
+}
+
+// indented reports whether a line is indented as an indented code block: four
+// spaces, or the tab markdown counts as four.
+func indented(raw string) bool {
+	return strings.HasPrefix(raw, "    ") || strings.HasPrefix(raw, "\t")
 }
 
 // fenceOpen reports whether line opens a fenced code block, returning its marker
@@ -552,21 +585,29 @@ func asFTCommand(line string) (string, bool) {
 	return line, true
 }
 
-func inlineCode(line string) []string {
-	var out []string
+// inlineSpans returns the inline code spans in line and the text left open when
+// the line ends inside an unclosed span, so the caller can carry it into the next
+// line: a command wrapped across lines is still a command.
+func inlineSpans(line string) (spans []string, open string) {
 	for {
 		start := strings.IndexByte(line, '`')
 		if start < 0 {
-			return out
+			return spans, ""
 		}
 		rest := line[start+1:]
 		end := strings.IndexByte(rest, '`')
 		if end < 0 {
-			return out
+			return spans, rest
 		}
-		out = append(out, rest[:end])
+		spans = append(spans, rest[:end])
 		line = rest[end+1:]
 	}
+}
+
+// inlineCode returns the inline code spans of one line.
+func inlineCode(line string) []string {
+	spans, _ := inlineSpans(line)
+	return spans
 }
 
 func findChild(cmd *cobra.Command, name string) *cobra.Command {

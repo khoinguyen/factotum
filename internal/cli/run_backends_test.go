@@ -727,6 +727,90 @@ func TestRunHarnessesForwardConfiguredUser(t *testing.T) {
 	}
 }
 
+// dockerArgvRunner records the docker CLI invocations a backend makes and
+// reports the container as running, so a run's argv can be asserted without a
+// daemon. Start is unused by Prepare and returns an error if a test reaches it.
+type dockerArgvRunner struct {
+	runs [][]string
+}
+
+func (r *dockerArgvRunner) Run(_ context.Context, args []string, _ map[string]string) ([]byte, error) {
+	r.runs = append(r.runs, append([]string(nil), args...))
+	if len(args) > 0 && args[0] == "inspect" {
+		return []byte("true\n"), nil
+	}
+	return nil, nil
+}
+
+func (r *dockerArgvRunner) Start(context.Context, []string, docker.StartInput) (docker.Process, error) {
+	return nil, errors.New("dockerArgvRunner.Start is not used by Prepare")
+}
+
+// dockerRun returns the recorded `docker run` invocation, failing when the
+// backend never made one.
+func (r *dockerArgvRunner) dockerRun(t *testing.T) []string {
+	t.Helper()
+	for _, args := range r.runs {
+		if len(args) > 0 && args[0] == "run" {
+			return args
+		}
+	}
+	t.Fatalf("no docker run invocation recorded; calls = %v", r.runs)
+	return nil
+}
+
+// TestRunHarnessCustomImageKeepsImageUserInDockerArgv pins the exact
+// combination the identity default hinges on: OpenCode (V1 and V2) with a
+// caller-supplied image and no configured user. The harness must hand the
+// backend an empty identity, so the docker run argv carries no --user and stays
+// identical to the argv from before the identity knob existed — the image's own
+// USER applies. Emitting the shipped 1000:1000 here would silently override it.
+func TestRunHarnessCustomImageKeepsImageUserInDockerArgv(t *testing.T) {
+	const image = "ghcr.io/acme/agent:1"
+	for _, name := range []string{opencode.Name, opencode.NameV2} {
+		t.Run(name, func(t *testing.T) {
+			factory, err := runHarnesses().MustLookup(name)
+			if err != nil {
+				t.Fatalf("lookup %q: %v", name, err)
+			}
+			h, err := factory(config.Run{Sandbox: docker.Name, Image: image})
+			if err != nil {
+				t.Fatalf("build harness: %v", err)
+			}
+			workdir := t.TempDir()
+			spec, err := h.Spec(harness.Request{Workdir: workdir})
+			if err != nil {
+				t.Fatalf("Spec() error = %v", err)
+			}
+
+			runner := &dockerArgvRunner{}
+			backend := docker.New(docker.Options{
+				Runner:  runner,
+				NewName: func() string { return "fttest" },
+			})
+			if _, err := backend.Prepare(context.Background(), spec); err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+
+			got := runner.dockerRun(t)
+			if slices.Contains(got, "--user") {
+				t.Fatalf("docker run argv = %q, want no --user so the image's own USER applies", got)
+			}
+			want := []string{
+				"run",
+				"--detach",
+				"--name", "fttest",
+				"--workdir", workdir,
+				"--mount", "type=bind,source=" + workdir + ",target=" + workdir,
+				"--entrypoint", "sh", image, "-c", docker.KeepAlive,
+			}
+			if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+				t.Fatalf("docker run argv = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // TestPrepareRunForwardsUserFlag pins that --user reaches the harness factory as
 // run.user, so one run can force a container identity without a config edit.
 func TestPrepareRunForwardsUserFlag(t *testing.T) {

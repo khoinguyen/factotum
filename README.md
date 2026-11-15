@@ -178,16 +178,19 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   probes the installed binary's `--version` and drives V2 automatically after an in-place upgrade;
   `--harness opencode2` forces V2 (npm alias or pinned V2 image). Model and credentials come from
   the configured provider, never hardcoded (a backend-resolved provider reference). An isolating
-  backend runs the harness's image under its policy: `openshell` runs it as the policy's non-root
-  uid (1000:1000 by default, and refuses a root request), while `docker` runs as the identity ft
-  passes it. That identity defaults to **empty**, so the image's own `USER` applies unchanged: a
-  caller-supplied `--image` whose `USER` is root writes root-owned files into the bind-mounted
-  checkout, and ft adds none for `pi` (OpenCode's default uid is not applied to a custom image
-  either). Set `--user`, or `run.user`/`FACTOTUM_RUN_USER`, to `$(id -u):$(id -g)` to run as the
-  host user and keep the checkout's files yours; `local` ignores it. A configured credential is
-  attached as a provider placeholder, never placed in the sandbox. Supply or override the image
-  with `--image`, `FACTOTUM_RUN_IMAGE`, or `run.image`; one image applies to whichever harness
-  runs, so it must match (a `pi` image has no `opencode2`, an OpenCode image has no `pi`).
+  backend runs the harness's image under its policy: `openshell` resolves a non-root identity from
+  the run's `--user`/`run.user` (seeded into the policy as `run_as_user`/`run_as_group`), keeps
+  its hardened `1000:1000` default when the run sets none, and refuses a root request either way;
+  `docker` runs as the identity ft passes it. For `docker` that identity defaults to **empty**, so
+  the image's own `USER` applies unchanged: a caller-supplied `--image` whose `USER` is root
+  writes root-owned files into the bind-mounted checkout, and ft adds none for `pi` (OpenCode's
+  default uid is not applied to a custom image either). Set `--user`, or
+  `run.user`/`FACTOTUM_RUN_USER`, to `$(id -u):$(id -g)` to run as the host user and keep the
+  checkout's files yours; it also seeds `openshell`'s sandbox identity, and `local` ignores it.
+  A configured credential is attached as a provider placeholder, never placed in the
+  sandbox. Supply or override the image with `--image`, `FACTOTUM_RUN_IMAGE`, or
+  `run.image`; one image applies to whichever harness runs, so it must match (a `pi`
+  image has no `opencode2`, an OpenCode image has no `pi`).
 - `pi` ships as an npm package rather than a published container image, so it has no image of its
   own: an isolating run needs one named with `--image`/`run.image` (it must have `pi` on PATH, and
   `ft` too when the run carries an actor and no `FACTOTUM_MSG_URL` hub). Without one, `ft run`

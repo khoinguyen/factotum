@@ -779,9 +779,14 @@ func TestRunCommandGoalPrintsHarnessStderrOnFailure(t *testing.T) {
 	if !errors.Is(err, app.ErrRunFailed) {
 		t.Fatalf("loop run error = %v, want ErrRunFailed", err)
 	}
-	for _, want := range []string{"stop: failed", prereq, "stderr:", "No API key found for opencode-go"} {
+	for _, want := range []string{"stop: failed", prereq, "No API key found for opencode-go"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("loop output missing %q:\n%s", want, out)
 		}
+	}
+	// The step's stderr is a block, not another field: a blank line separates it
+	// from the fields, like the task and task-less run blocks.
+	if !strings.Contains(out, "remaining: 2\n\nstderr:\n") {
+		t.Fatalf("loop step stderr is not a separated block:\n%s", out)
 	}
 }

@@ -914,7 +914,7 @@ func (d *Deps) printLoopStep(step app.LoopStep) {
 		f("remaining", step.Remaining),
 	)
 	if stderr := strings.TrimSpace(step.Stderr); stderr != "" {
-		d.printf("stderr:\n%s\n", stderr)
+		d.printf("\nstderr:\n%s\n", stderr)
 	}
 	d.printf("\n")
 }

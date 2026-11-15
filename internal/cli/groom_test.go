@@ -504,6 +504,18 @@ func TestGroomUnattendedCompletesOrDefers(t *testing.T) {
 			wantErr: "neither agent-ready nor deferred",
 		},
 		{
+			name: "an id quoted in an indented code block does not excuse the item",
+			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
+				ready := agentReadyTask(t, r, projectID, "Add widget")
+				open := firstField(t, r.run("task", "create", "-p", projectID, "-t", "Add gadget"))
+				// The id appears only as a quoted sample, the way a session
+				// copying a command into its notes would write it.
+				deferred := "# Deferred questions\n\n## Questions\n\n    ft task get " + open + "\n\n## Resolved\n"
+				return []string{ready, open}, deferred
+			},
+			wantErr: "neither agent-ready nor deferred",
+		},
+		{
 			name: "a promoted idea is agent-ready",
 			build: func(t *testing.T, r *runner, projectID string) ([]string, string) {
 				ready := agentReadyTask(t, r, projectID, "Add widget")
@@ -920,6 +932,27 @@ func TestDeferredIDsWholeTokenMatch(t *testing.T) {
 			name:    "an id in a tilde fenced block does not count",
 			body:    "## Questions\n\n~~~sh\nft task get t-abc123\n~~~\n",
 			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "an id in an indented code block does not count",
+			body:    "## Questions\n\n    ft task get t-abc123\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "an id in a tab-indented code block does not count",
+			body:    "## Questions\n\n\tft task get t-abc123\n",
+			notWant: []core.TicketID{"t-abc123"},
+		},
+		{
+			name:    "an indented code block does not swallow a prose deferral",
+			body:    "## Questions\n\n- Which cache? (item: t-abc123, owner: PO)\n\n    ft task get t-def456\n",
+			want:    []core.TicketID{"t-abc123"},
+			notWant: []core.TicketID{"t-def456"},
+		},
+		{
+			name: "an indented code block does not open a section",
+			body: "## Questions\n\n    ## Resolved\n\n- item: t-abc123\n",
+			want: []core.TicketID{"t-abc123"},
 		},
 		{
 			name:    "an id in an HTML comment does not count",

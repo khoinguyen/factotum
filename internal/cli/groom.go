@@ -719,8 +719,8 @@ func deferredIDs(body string) map[core.TicketID]bool {
 }
 
 // openDeferredQuestions drops the parts of a deferred-questions file that defer
-// nothing: fenced code blocks (backtick or tilde fences; an indented code block
-// is not recognized), HTML comments, and the Resolved section.
+// nothing: fenced code blocks (backtick or tilde fences, at any indentation),
+// indented code blocks, HTML comments, and the Resolved section.
 func openDeferredQuestions(body string) string {
 	var b strings.Builder
 	fence, inResolved := "", false
@@ -740,6 +740,12 @@ func openDeferredQuestions(body string) string {
 			fence = "~~~"
 			continue
 		}
+		// An indented code block is the indentation-only form of a quoted sample:
+		// an id there defers nothing, and an indented "## Resolved" stays code
+		// rather than opening a section.
+		if isIndentedCode(line) {
+			continue
+		}
 		if inResolved {
 			continue
 		}
@@ -751,6 +757,14 @@ func openDeferredQuestions(body string) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// isIndentedCode reports whether line is part of a markdown indented code block:
+// a tab or at least four leading spaces. The deferred-questions template keeps
+// its fields at two spaces, so the format's real content is never indented this
+// far.
+func isIndentedCode(line string) bool {
+	return strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "    ")
 }
 
 // producedHandled reports whether a task the session produced is admissible: an

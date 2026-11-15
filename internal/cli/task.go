@@ -645,14 +645,24 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 
 	backfill := &cobra.Command{
 		Use:   "backfill",
-		Short: "Mark historical auto-generated triage notes (they leave search)",
-		Args:  exactArgs(0),
+		Short: "Mark historical generated notes (they leave search)",
+		Long: "Mark the machine-written notes recorded before notes carried a system marker,\n" +
+			"so task search stops indexing them. A note is a candidate only when it has no\n" +
+			"author and opens with a recognized generated-note family:\n\n" +
+			"  Triaged by agent:        triage verdict\n" +
+			"  Reassigned to you.       triage reassignment\n" +
+			"  Groomed by agent         grooming report, incl. \"Groomed by agent (auto):\"\n" +
+			"  Needs human decision:    triage escalation to the owner\n" +
+			"  PR opened                loop progress report\n\n" +
+			"An authored note is never marked, whatever its body. The mark is one-way:\n" +
+			"there is no unmark, and a second pass marks nothing.",
+		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			project := deps.resolveProject(projectID)
 			if err := requireProject(cmd, project); err != nil {
 				return err
 			}
-			result, err := deps.Tasks.BackfillTriageNotes(cmd.Context(), store.TicketFilter{ProjectID: project}, dryRun)
+			result, err := deps.Tasks.BackfillGeneratedNotes(cmd.Context(), store.TicketFilter{ProjectID: project}, dryRun)
 			if err != nil {
 				return err
 			}

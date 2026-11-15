@@ -794,41 +794,41 @@ func (s *TicketService) AddNote(ctx context.Context, id core.TicketID, in NoteIn
 	return task, nil
 }
 
-// TriageNoteRef identifies a note a triage-note backfill marked, or would mark
-// in a dry run. Body carries the note text so the command can quote it: with the
-// author guard inert on old data, the body is what a reviewer checks.
-type TriageNoteRef struct {
+// GeneratedNoteRef identifies a note a generated-note backfill marked, or would
+// mark in a dry run. Body carries the note text so the command can quote it: with
+// the author guard inert on old data, the body is what a reviewer checks.
+type GeneratedNoteRef struct {
 	TaskID core.TicketID
 	NoteID string
 	Body   string
 }
 
-// TriageNoteBackfill is the outcome of one backfill pass: the tickets inspected
-// and the notes that now carry the system marker (or, in a dry run, the notes
-// that would).
-type TriageNoteBackfill struct {
+// GeneratedNoteBackfill is the outcome of one backfill pass: the tickets
+// inspected and the notes that now carry the system marker (or, in a dry run,
+// the notes that would).
+type GeneratedNoteBackfill struct {
 	Scanned int
-	Marked  []TriageNoteRef
+	Marked  []GeneratedNoteRef
 }
 
-// BackfillTriageNotes marks historical auto-generated triage notes with the
-// System provenance flag, so task search stops indexing them. A note is a
-// candidate only when core.IsTriageTemplateNote reports it: authorless, matching
-// a triage template, and not already marked. Only tickets whose notes changed
+// BackfillGeneratedNotes marks historical machine-written notes with the System
+// provenance flag, so task search stops indexing them. A note is a candidate
+// only when core.IsGeneratedNote reports it: authorless, opening with a known
+// generated-note family, and not already marked. Only tickets whose notes changed
 // are written, so a second pass writes nothing.
-func (s *TicketService) BackfillTriageNotes(ctx context.Context, filter store.TicketFilter, dryRun bool) (TriageNoteBackfill, error) {
+func (s *TicketService) BackfillGeneratedNotes(ctx context.Context, filter store.TicketFilter, dryRun bool) (GeneratedNoteBackfill, error) {
 	tasks, err := s.backend.Tickets().List(ctx, filter)
 	if err != nil {
-		return TriageNoteBackfill{}, err
+		return GeneratedNoteBackfill{}, err
 	}
-	result := TriageNoteBackfill{Scanned: len(tasks)}
+	result := GeneratedNoteBackfill{Scanned: len(tasks)}
 	for _, task := range tasks {
 		changed := false
 		for i := range task.Notes {
-			if !core.IsTriageTemplateNote(task.Notes[i]) {
+			if !core.IsGeneratedNote(task.Notes[i]) {
 				continue
 			}
-			result.Marked = append(result.Marked, TriageNoteRef{TaskID: task.ID, NoteID: task.Notes[i].ID, Body: task.Notes[i].Body})
+			result.Marked = append(result.Marked, GeneratedNoteRef{TaskID: task.ID, NoteID: task.Notes[i].ID, Body: task.Notes[i].Body})
 			task.Notes[i].System = true
 			changed = true
 		}
@@ -837,7 +837,7 @@ func (s *TicketService) BackfillTriageNotes(ctx context.Context, filter store.Ti
 		}
 		task.UpdatedAt = s.clock.Now()
 		if err := s.backend.Tickets().Update(ctx, task); err != nil {
-			return TriageNoteBackfill{}, err
+			return GeneratedNoteBackfill{}, err
 		}
 	}
 	return result, nil

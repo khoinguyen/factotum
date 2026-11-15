@@ -156,26 +156,31 @@ type Note struct {
 	System bool
 }
 
-// triageNoteTemplates are the openings of the triage notes the agent loop and
-// the grooming flow write automatically. Notes ft writes itself set System at
-// creation; these templates identify the ones written before the marker
-// existed, when triage notes were typed by hand with no author.
-var triageNoteTemplates = []string{
+// machineNoteOpenings are the openings of the machine-written notes the agent
+// loop, the triage flow, and the grooming flow write. Each entry is a family
+// prefix, not a whole template: "PR opened" covers "PR opened." and "PR opened
+// (base main).". Notes ft writes itself set System at creation; these openings
+// identify the ones written before the marker existed, when generated notes were
+// simply typed with no author.
+var machineNoteOpenings = []string{
 	"Triaged by agent:",
 	"Reassigned to you.",
+	"Groomed by agent",
+	"Needs human decision:",
+	"PR opened",
 }
 
-// IsTriageTemplateNote reports whether n is an unmarked auto-generated triage
-// note: it carries no author and opens with a known triage template. An authored
-// note is never a template, whatever its body, so a backfill driven by this
+// IsGeneratedNote reports whether n is an unmarked machine-written note: it
+// carries no author and opens with a known generated-note family. An authored
+// note is never generated, whatever its body, so a backfill driven by this
 // predicate cannot touch a note a human or agent wrote.
-func IsTriageTemplateNote(n Note) bool {
+func IsGeneratedNote(n Note) bool {
 	if n.System || n.Author != "" {
 		return false
 	}
 	body := strings.TrimSpace(n.Body)
-	for _, template := range triageNoteTemplates {
-		if strings.HasPrefix(body, template) {
+	for _, opening := range machineNoteOpenings {
+		if strings.HasPrefix(body, opening) {
 			return true
 		}
 	}

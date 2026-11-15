@@ -882,8 +882,77 @@ func TestGroomUnattendedProducedChildReadiness(t *testing.T) {
 			if err == nil {
 				t.Fatalf("unattended session left produced child %s unready and still completed:\n%s", child, out)
 			}
-			if !strings.Contains(err.Error(), "neither agent-ready nor deferred") || !strings.Contains(err.Error(), child) {
-				t.Fatalf("error = %v, want it to name the unready child %s", err, child)
+			msg := err.Error()
+			if !strings.Contains(msg, "neither agent-ready nor resolved") || !strings.Contains(msg, child) {
+				t.Fatalf("error = %v, want it to name the unready child %s as neither agent-ready nor resolved", err, child)
+			}
+			// A produced task has no deferred escape, so the message must not
+			// offer the scoped item's remedy or point at its file: a session
+			// following it would defer a child that deferral cannot excuse.
+			if strings.Contains(msg, "deferred") || strings.Contains(msg, "deferred-questions") {
+				t.Fatalf("error = %v, want no deferral remedy for a produced child", err)
+			}
+		})
+	}
+}
+
+// TestUnattendedIncompleteErrorNamesTheRightContract pins the two remedies the
+// unattended completion guard reports. A scoped item may be deferred, so its
+// message says so and points at the deferred-questions file; a task the session
+// produced may only be agent-ready or resolved, so its message says that and
+// names no deferral at all. When both kinds are unresolved the run reports each
+// under its own contract.
+func TestUnattendedIncompleteErrorNamesTheRightContract(t *testing.T) {
+	const deferredPath = "/data/groom/sess-1/deferred-questions.md"
+	tests := []struct {
+		name     string
+		scoped   []core.TicketID
+		produced []core.TicketID
+		want     []string
+		notWant  []string
+	}{
+		{
+			name:    "a scoped item may be deferred",
+			scoped:  []core.TicketID{"t-scope1", "t-scope2"},
+			want:    []string{"left work neither agent-ready nor deferred: t-scope1, t-scope2", deferredPath},
+			notWant: []string{"resolved"},
+		},
+		{
+			name:     "a produced task may not",
+			produced: []core.TicketID{"t-child1"},
+			want:     []string{"produced work neither agent-ready nor resolved: t-child1"},
+			notWant:  []string{"deferred", deferredPath},
+		},
+		{
+			name:     "both kinds are reported under their own contract",
+			scoped:   []core.TicketID{"t-scope1"},
+			produced: []core.TicketID{"t-child1"},
+			want: []string{
+				"left work neither agent-ready nor deferred: t-scope1",
+				deferredPath,
+				"produced work neither agent-ready nor resolved: t-child1",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := unattendedIncompleteError("sess-1", tt.scoped, tt.produced, deferredPath)
+			if err == nil {
+				t.Fatal("unresolved work produced no error")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "groom: unattended session sess-1") {
+				t.Errorf("error = %q, want it to name the session", msg)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(msg, want) {
+					t.Errorf("error = %q, want it to contain %q", msg, want)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(msg, notWant) {
+					t.Errorf("error = %q, want it not to contain %q", msg, notWant)
+				}
 			}
 		})
 	}

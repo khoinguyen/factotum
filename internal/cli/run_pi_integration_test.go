@@ -50,6 +50,26 @@ func TestPiRunThroughLocalBackend(t *testing.T) {
 	if !strings.Contains(out, "--approve --print --model openai/gpt-5") {
 		t.Errorf("captured output did not come from the pi invocation:\n%s", out)
 	}
+
+	// The local backend ignores a supplied image: the run still executes the
+	// host pi binary, so an isolating image never leaks into a local run.
+	imageTask := firstField(t, r.run("task", "create", "-p", project, "-r", "repo",
+		"-t", "Do the thing with an image", "-b", "An instruction"))
+	imageOut := r.run("--full", "run", imageTask,
+		"--sandbox", "local",
+		"--harness", "pi",
+		"--allow-host",
+		"--image", "ghcr.io/acme/pi:ignored",
+		"--model", "openai/gpt-5",
+		"--workspace", t.TempDir(),
+	)
+	t.Logf("ft run with --image output:\n%s", imageOut)
+	if !strings.Contains(imageOut, "run: finished") {
+		t.Errorf("local run with an image did not finish cleanly:\n%s", imageOut)
+	}
+	if !strings.Contains(imageOut, "--approve --print --model openai/gpt-5") {
+		t.Errorf("local run with an image did not execute the host pi:\n%s", imageOut)
+	}
 }
 
 // TestPiRunGoalThroughLocalBackend drives `ft run --goal` end to end through the

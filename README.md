@@ -162,9 +162,13 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   preferred), `opencode` (OpenCode V1), and `pi`. On the local backend `--harness opencode`
   probes the installed binary's `--version` and drives V2 automatically after an in-place upgrade;
   `--harness opencode2` forces V2 (npm alias or pinned V2 image). An isolating backend runs the
-  harness's image as a non-root user under its policy; a configured credential is attached as a
-  provider placeholder, never placed in the sandbox. Supply or override that image with
-  `--image`, `FACTOTUM_RUN_IMAGE`, or `run.image`.
+  harness's image under its policy: `openshell` runs it as the policy's non-root uid, while
+  `docker` uses the harness identity, so a caller-supplied `--image` runs as that image's own
+  `USER` (set one in the image: ft adds none for `pi`, and OpenCode's default uid is not applied
+  then). A configured credential is attached as a provider placeholder, never placed in the
+  sandbox. Supply or override the image with `--image`, `FACTOTUM_RUN_IMAGE`, or `run.image`; one
+  image applies to whichever harness runs, so it must match (a `pi` image has no `opencode2`, an
+  OpenCode image has no `pi`).
 - `pi` ships as an npm package rather than a published container image, so it has no image of its
   own: an isolating run needs one named with `--image`/`run.image` (it must have `pi` on PATH, and
   `ft` too when the run carries an actor and no `FACTOTUM_MSG_URL` hub). Without one, `ft run`
@@ -184,7 +188,8 @@ The machine-scoped `[run]` table holds the launcher settings (`sandbox`, `harnes
 [run]
 sandbox = "openshell"       # or docker; local is unsandboxed and needs allow_host
 harness = "opencode2"       # OpenCode V2; "opencode" is V1, "pi" is the pi agent
-image = "ghcr.io/acme/pi:1" # optional override; required for pi, which publishes no image
+# image = "ghcr.io/acme/pi:1"   # one image for the selected harness; required for pi
+#                               # (an OpenCode harness would need an image with opencode2)
 provider = "openrouter"
 credential_env = "OPENROUTER_API_KEY"
 ```

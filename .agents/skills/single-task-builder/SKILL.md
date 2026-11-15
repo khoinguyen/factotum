@@ -38,9 +38,10 @@ Message peers over **`ft msg`**, not cmux targets. The chief launched this sessi
   `From reviewer-<task-id>, regarding PR #N: ...`.
 - **After sending, stop and wait.** The receiver long-polls and wakes the peer; do not poll for the
   reply, and do not shell into cmux to nudge.
-- Confirm the channel is live with `ft msg runs` (your run shows `builder-<task-id>`) and check a
-  message landed with `ft msg get <id>` (state goes `read` once the peer's receiver injected it).
-- **Fallback (rollout).** If `ft msg runs` shows no run for your actor, or a peer is unreachable over
+- Confirm the channel is live with `ft msg runs --live` (your run shows `builder-<task-id>`); `--live`
+  keeps the list short enough that a busy project cannot bury your own run. Check a message landed
+  with `ft msg get <id>` (state goes `read` once the peer's receiver injected it).
+- **Fallback (rollout).** If `ft msg runs --live` shows no run for your actor, or a peer is unreachable over
   ft msg, fall back to the cmux wrapper (from your worktree root):
   `CMUX_MSG_FROM=builder-<task-id> .agents/skills/chief/scripts/cmux-msg.sh <target> "<text>"`
   where `<target>` is the peer's tab/workspace title (e.g. `reviewer-<task-id>`, `chief`) or a

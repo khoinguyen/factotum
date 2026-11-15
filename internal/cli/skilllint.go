@@ -413,6 +413,19 @@ func isIdentifier(token string) bool {
 // block lines and inline code spans that begin with ft.
 func skillCommandLines(body string) []string {
 	var out []string
+	for _, snippet := range skillCodeSnippets(body) {
+		if command, ok := asFTCommand(snippet); ok {
+			out = append(out, command)
+		}
+	}
+	return out
+}
+
+// skillCodeSnippets returns the code a skill presents as shell: every fenced
+// block line and every inline code span. It is the raw material both the
+// invocation parser and the drift guard's blind-spot check read.
+func skillCodeSnippets(body string) []string {
+	var out []string
 	inFence := false
 	for _, raw := range strings.Split(body, "\n") {
 		line := strings.TrimSpace(raw)
@@ -421,16 +434,10 @@ func skillCommandLines(body string) []string {
 			continue
 		}
 		if inFence {
-			if command, ok := asFTCommand(line); ok {
-				out = append(out, command)
-			}
+			out = append(out, line)
 			continue
 		}
-		for _, span := range inlineCode(line) {
-			if command, ok := asFTCommand(span); ok {
-				out = append(out, command)
-			}
-		}
+		out = append(out, inlineCode(line)...)
 	}
 	return out
 }
@@ -439,10 +446,13 @@ func asFTCommand(line string) (string, bool) {
 	if comment := strings.Index(line, " #"); comment >= 0 {
 		line = strings.TrimSpace(line[:comment])
 	}
-	if line == "ft" || strings.HasPrefix(line, "ft ") {
-		return line, true
+	// A skill may show a command transcript-style, with the shell prompt.
+	line = strings.TrimPrefix(line, "$ ")
+	fields := strings.Fields(line)
+	if len(fields) == 0 || fields[0] != "ft" {
+		return "", false
 	}
-	return "", false
+	return line, true
 }
 
 func inlineCode(line string) []string {

@@ -47,8 +47,9 @@ evidence" below, which you file yourself.
 - Prefix every message with `From reviewer-<task-id>, regarding PR #N: ...`. The builder writes
   `From builder-<task-id>: ...`.
 - **After sending, stop and wait.** The receiver long-polls and wakes the peer; do not poll for a
-  reply. Confirm the channel with `ft msg runs` (your run shows `reviewer-<task-id>`).
-- **Fallback (rollout).** If `ft msg runs` shows no run for your actor, or the builder/chief is
+  reply. Confirm the channel with `ft msg runs --live` (your run shows `reviewer-<task-id>`); `--live`
+  keeps the list short enough that a busy project cannot bury your own run.
+- **Fallback (rollout).** If `ft msg runs --live` shows no run for your actor, or the builder/chief is
   unreachable over ft msg, fall back to the cmux wrapper (from your worktree root):
   `CMUX_MSG_FROM=reviewer-<task-id> .agents/skills/chief/scripts/cmux-msg.sh <target> "<text>"`
   where `<target>` is the peer's tab/workspace title or a `surface:N` ref. Structural cmux commands

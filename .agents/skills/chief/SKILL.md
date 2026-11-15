@@ -88,7 +88,7 @@ resolve your own refs once and pass them explicitly.
   handoff silently misrouted is exactly the failure this avoids. The receiver long-polls and wakes
   an idle agent, so a subagent "reporting to the chief" is it messaging `actor:chief`. **Launch
   yourself through `loop-agent.sh chief <project> - <dir> "<kickoff>"`** so you load the receiver and
-  are addressable as `actor:chief`; confirm with `ft msg runs`. **Fallback (rollout):** only when a
+  are addressable as `actor:chief`; confirm with `ft msg runs --live`. **Fallback (rollout):** only when a
   peer is unreachable over ft msg, use the shared wrapper
   `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (the peer's tab/workspace title or a
   `surface:N` ref); it calls `cmux agent message`, or pastes once into the surface when the recipient

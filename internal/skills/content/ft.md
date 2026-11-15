@@ -331,12 +331,13 @@ machine `[run]`; on a terminal an unset one prompts once and saves to the chosen
 while non-interactively it is an error. A committed project `[run]` may set only those
 two; the machine table holds the rest (workspace/model/image/user/args/allow_host/
 credential_env), and `--image` names an isolating backend's base image (`pi` needs one).
-`--user`/`run.user`/`FACTOTUM_RUN_USER` sets the container identity (uid, uid:gid, or
-name); on `docker` the default is empty, so the image's own `USER` applies — a
+`--user`/`run.user`/`FACTOTUM_RUN_USER` sets the container identity. On `docker` that is
+a uid, uid:gid, or name, defaulting to empty so the image's own `USER` applies — a
 root-`USER` image writes root-owned files into the bind-mounted checkout, so set
-`$(id -u):$(id -g)`. On `openshell` the same knob seeds the sandbox identity
-(`run_as_user`/`run_as_group`); unset, the hardened `1000:1000` still applies, and a
-root request is refused either way. `local` ignores it. `provider` + `credential_env`
+`$(id -u):$(id -g)`. On `openshell` it seeds the sandbox identity
+(`run_as_user`/`run_as_group`), where only a numeric id or `sandbox` is accepted, so a
+name fails when the sandbox is prepared; unset, the hardened `1000:1000` still applies,
+and a root request is refused either way. `local` ignores it. `provider` + `credential_env`
 name the credential a harness may use; the value is read from the host environment and
 handed to the backend, never placed in the sandbox. Only an isolating backend receives
 it: `local` runs the host binary, which already has the host's own credentials, so a

@@ -223,7 +223,9 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   checkout; a changed origin URL fails.
 
 The machine-scoped `[run]` table holds the launcher settings (`sandbox`, `harness`, `workspace`,
-`model`, `image`, `user`, `args`, `refresh`, `allow_host`, `provider`, `credential_env`):
+`model`, `image`, `user`, `args`, `refresh`, `allow_host`, `provider`, `credential_env`).
+`provider`/`credential_env` reach an isolating backend only: a `local` run uses the host binary and
+ignores the configured credential.
 
 ```toml
 # ~/.factotum/config.toml — machine-scoped.
@@ -234,7 +236,7 @@ harness = "opencode2"       # OpenCode V2; "opencode" is V1, "pi" is the pi agen
 #                               # (an OpenCode harness would need an image with opencode2)
 # user = "501:20"             # your $(id -u):$(id -g); default keeps the image's USER
 provider = "openrouter"
-credential_env = "OPENROUTER_API_KEY"
+credential_env = "OPENROUTER_API_KEY"   # isolating backends only; local ignores it
 ```
 
 Only `sandbox` and `harness` are read from a committed project `[run]` (project intent); host-scoped

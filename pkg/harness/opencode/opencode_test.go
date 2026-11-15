@@ -286,9 +286,9 @@ func TestCommandBuildsInteractiveInvocation(t *testing.T) {
 }
 
 // TestCommandBuildsV2HeadlessInvocation pins V2's one-shot invocation: the
-// `opencode2` binary with the same `run`/`--model`/`--` shape V1 uses. The shape
-// is verified against a real V2 run (opencode v2.0.27); V2's `run` accepts
-// `--model` and the `--` separator exactly as V1 does.
+// `opencode2` binary launched on its own private server (`--standalone`) with
+// the same `run`/`--model`/`--` shape V1 uses. The shape is verified against a
+// real V2 run (opencode v2.3.0).
 func TestCommandBuildsV2HeadlessInvocation(t *testing.T) {
 	tests := []struct {
 		name string
@@ -299,13 +299,13 @@ func TestCommandBuildsV2HeadlessInvocation(t *testing.T) {
 		{
 			name: "request model",
 			req:  harness.Request{Prompt: "do the thing", Model: "opencode-go/deepseek-v4.1-flash"},
-			want: []string{"opencode2", "run", "--model", "opencode-go/deepseek-v4.1-flash", "--", "do the thing"},
+			want: []string{"opencode2", "run", "--standalone", "--model", "opencode-go/deepseek-v4.1-flash", "--", "do the thing"},
 		},
 		{
 			name: "configured args pass through and no model flag when unset",
 			opts: opencode.Options{Args: []string{"--agent", "build"}},
 			req:  harness.Request{Prompt: "hi", Args: []string{"--auto"}},
-			want: []string{"opencode2", "run", "--agent", "build", "--auto", "--", "hi"},
+			want: []string{"opencode2", "run", "--standalone", "--agent", "build", "--auto", "--", "hi"},
 		},
 	}
 	for _, tc := range tests {
@@ -326,22 +326,84 @@ func TestCommandBuildsV2HeadlessInvocation(t *testing.T) {
 }
 
 // TestCommandBuildsV2InteractiveInvocation pins V2's conversational mode: the
-// `opencode2` TUI with the kickoff on `--prompt`. V2's top-level command has no
-// `--model` flag (it lives only on `run`/`mini`), so the interactive invocation
-// omits it rather than emitting a flag V2 rejects; the TUI then uses its
-// configured default model.
+// `opencode2` TUI on its own private server (`--standalone`) with the kickoff on
+// `--prompt`. V2's top-level command has no `--model` flag (it lives only on
+// `run`/`mini`), so the interactive invocation omits it rather than emitting a
+// flag V2 rejects; the TUI then uses its configured default model.
 func TestCommandBuildsV2InteractiveInvocation(t *testing.T) {
 	req := harness.Request{Prompt: "groom these items", Interactive: true, Model: "opencode-go/deepseek-v4.1-flash"}
 	cmd, err := opencode.New(opencode.Options{Variant: opencode.V2, Args: []string{"--auto"}}).Command(req)
 	if err != nil {
 		t.Fatalf("Command() error = %v", err)
 	}
-	want := []string{"opencode2", "--auto", "--prompt", "groom these items"}
+	want := []string{"opencode2", "--standalone", "--auto", "--prompt", "groom these items"}
 	if strings.Join(cmd.Argv, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("argv = %q, want %q", cmd.Argv, want)
 	}
 	if !cmd.TTY {
 		t.Error("TTY = false, want true for an interactive request")
+	}
+}
+
+// TestV2CommandKeepsAPrivateServer is the regression guard for the receiver V2
+// never activated: V2 loads plugin code in a shared background service whose
+// environment carries no FACTOTUM_*, so a plugin it loads is inert. Only a
+// private server (`--standalone`) inherits the run's environment — and therefore
+// the FACTOTUM_PROJECT/FACTOTUM_ACTOR the staged receiver registers with. Drop
+// the flag and a `ft run --harness opencode2 --actor` session stops registering.
+//
+// Both modes are pinned because both go through this Command: the headless
+// one-shot (`run`) and the interactive TUI.
+func TestV2CommandKeepsAPrivateServer(t *testing.T) {
+	tests := []struct {
+		name string
+		req  harness.Request
+		// after indexes the argument the flag must follow. A headless launch
+		// carries it after the `run` subcommand (V2 2.0.x accepts it only
+		// there), the TUI directly after the binary.
+		after int
+	}{
+		{name: "headless", req: harness.Request{Prompt: "do the thing", Model: "p/m"}, after: 1},
+		{name: "interactive", req: harness.Request{Prompt: "groom", Interactive: true}, after: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := opencode.New(opencode.Options{Variant: opencode.V2, Model: "p/m"}).Command(tc.req)
+			if err != nil {
+				t.Fatalf("Command() error = %v", err)
+			}
+			want := tc.after + 1
+			if len(cmd.Argv) <= want || cmd.Argv[want] != "--standalone" {
+				t.Fatalf("argv = %q, want %q at argv[%d]", cmd.Argv, "--standalone", want)
+			}
+			if got := strings.Count(strings.Join(cmd.Argv, " "), "--standalone"); got != 1 {
+				t.Fatalf("argv = %q, want --standalone exactly once", cmd.Argv)
+			}
+		})
+	}
+}
+
+// TestV1CommandHasNoPrivateServerFlag pins that the private-server flag stays
+// V2-only: V1 runs plugin code in the launched process, and an unknown global
+// flag would make the V1 binary reject the whole invocation.
+func TestV1CommandHasNoPrivateServerFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		req  harness.Request
+	}{
+		{name: "headless", req: harness.Request{Prompt: "do the thing"}},
+		{name: "interactive", req: harness.Request{Prompt: "groom", Interactive: true}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := opencode.New(opencode.Options{}).Command(tc.req)
+			if err != nil {
+				t.Fatalf("Command() error = %v", err)
+			}
+			if strings.Contains(strings.Join(cmd.Argv, " "), "--standalone") {
+				t.Fatalf("argv = %q, want no --standalone for V1", cmd.Argv)
+			}
+		})
 	}
 }
 

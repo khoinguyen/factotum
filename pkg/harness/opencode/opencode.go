@@ -7,7 +7,9 @@
 // vocabulary: Spec names the base image and working identity;
 // Command builds the headless invocation (opencode run with the model flag and
 // the prompt as the final positional) or, for an interactive request, the
-// terminal-attached TUI invocation; Done and Result read the agent's output.
+// terminal-attached TUI invocation; Done and Result read the agent's output. V2
+// launches on its own private server in both modes, so the receiver plugin it
+// loads inherits the run's environment.
 //
 // The model and its credentials are never hardcoded. The model comes from the
 // configured provider (Options.Model, overridden by Request.Model) and is passed
@@ -57,7 +59,8 @@ const (
 	// host-installed V2 resolves as `opencode2` only via npm; a pinned V2
 	// image covers the container path. V2's TUI has no top-level --model
 	// (the flag lives only on `run`/`mini`), so the interactive invocation
-	// omits it.
+	// omits it; and V2 is launched --standalone in both modes, because its
+	// shared background service cannot see a run's receiver environment.
 	V2
 )
 
@@ -86,6 +89,16 @@ func (v Variant) image() string {
 // --model flag. V1 does; V2 rejects it (it is a `run`/`mini` flag only), so the
 // interactive invocation omits it and the TUI uses its configured default.
 func (v Variant) interactiveModel() bool { return v != V2 }
+
+// privateServer reports whether the variant must be launched on its own server
+// instead of attaching to the shared background service. V2 loads plugin code in
+// that shared service, whose process environment carries none of the run's
+// FACTOTUM_* variables, so a receiver it loads is inert. `--standalone` gives
+// the launch a private server that inherits the run's environment, which is what
+// makes `ft run --harness opencode2 --actor` register a live run. V1 runs plugin
+// code in the launched process itself, so it needs no such flag (and would
+// reject one).
+func (v Variant) privateServer() bool { return v == V2 }
 
 // versionPattern is the first dotted version in an `opencode --version` banner,
 // which is either bare ("1.19.0") or prefixed ("opencode v2.0.25").
@@ -203,6 +216,7 @@ type Harness struct {
 	sentinel         string
 	args             []string
 	interactiveModel bool
+	standalone       bool
 }
 
 // New returns an OpenCode harness for the configured variant with defaults
@@ -220,6 +234,7 @@ func New(opts Options) *Harness {
 		sentinel:         opts.Sentinel,
 		args:             append([]string(nil), opts.Args...),
 		interactiveModel: v.interactiveModel(),
+		standalone:       v.privateServer(),
 	}
 	if opts.User == "" && opts.Image == "" {
 		h.user = DefaultUser
@@ -268,6 +283,11 @@ func (h *Harness) Spec(req harness.Request) (isolation.Spec, error) {
 // parsed as an option. An interactive run drops `run`, delivers the kickoff
 // through `--prompt`, and marks the command as needing a terminal so the backend
 // attaches the OpenCode TUI to it.
+//
+// V2 is launched with --standalone in both modes, so the run gets its own server
+// rather than attaching to the shared background service: only a private server
+// inherits the run's FACTOTUM_* environment, which the staged receiver plugin
+// needs to register.
 func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 	if req.Prompt == "" {
 		return isolation.Command{}, ErrNoPrompt
@@ -275,6 +295,7 @@ func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 	if req.Interactive {
 		argv := make([]string, 0, len(h.args)+len(req.Args)+5)
 		argv = append(argv, h.binary)
+		argv = h.appendStandalone(argv)
 		// V2's TUI has no top-level --model, so only emit it for a variant that
 		// accepts it; V2 falls back to its configured default model.
 		if h.interactiveModel {
@@ -296,6 +317,7 @@ func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 
 	argv := make([]string, 0, len(h.args)+len(req.Args)+5)
 	argv = append(argv, h.binary, "run")
+	argv = h.appendStandalone(argv)
 	if model := firstNonEmpty(req.Model, h.model); model != "" {
 		argv = append(argv, "--model", model)
 	}
@@ -308,6 +330,18 @@ func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 		Env:     clone(req.Env),
 		Workdir: req.Workdir,
 	}, nil
+}
+
+// appendStandalone adds the private-server flag when the variant needs one. A
+// headless launch carries it after the `run` subcommand: V2 2.0.x accepts it
+// only as a run flag, while 2.3.x accepts it there and at top level, so the
+// post-subcommand placement is the one every V2 build takes. The TUI has no
+// subcommand, so there the flag follows the binary directly.
+func (h *Harness) appendStandalone(argv []string) []string {
+	if h.standalone {
+		argv = append(argv, "--standalone")
+	}
+	return argv
 }
 
 // Done reports whether ev is the configured completion sentinel. It matches

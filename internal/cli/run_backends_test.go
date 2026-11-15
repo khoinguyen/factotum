@@ -258,13 +258,19 @@ func TestRunHarnessesIncludeOpenCodeV2(t *testing.T) {
 	if cmd.Argv[0] != "opencode2" {
 		t.Fatalf("argv[0] = %q, want the V2 binary opencode2", cmd.Argv[0])
 	}
+	// The registry must hand a run the private-server argv: without it the run
+	// attaches to V2's shared service, whose env has no FACTOTUM_*, and the
+	// receiver ft staged never registers.
+	if len(cmd.Argv) < 3 || cmd.Argv[1] != "run" || cmd.Argv[2] != "--standalone" {
+		t.Fatalf("argv = %q, want run --standalone (private server)", cmd.Argv)
+	}
 }
 
 // TestRunHarnessOpenCodeDetectsInPlaceV2 pins the in-place upgrade: `brew
 // install opencode` moves V1 to V2 without renaming the binary, so the local
 // backend must detect the installed `opencode`'s major version and drive V2
-// argv (no top-level --model) under the `opencode` key, while an isolating
-// backend runs the pinned image and is never probed.
+// argv (no top-level --model, private server) under the `opencode` key, while an
+// isolating backend runs the pinned image and is never probed.
 func TestRunHarnessOpenCodeDetectsInPlaceV2(t *testing.T) {
 	writeOpencode := func(t *testing.T, banner string) string {
 		t.Helper()
@@ -291,7 +297,7 @@ func TestRunHarnessOpenCodeDetectsInPlaceV2(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Command() error = %v", err)
 		}
-		wantInteractive := []string{"opencode", "--prompt", "groom"}
+		wantInteractive := []string{"opencode", "--standalone", "--prompt", "groom"}
 		if strings.Join(interactive.Argv, "\x00") != strings.Join(wantInteractive, "\x00") {
 			t.Fatalf("interactive argv = %q, want %q", interactive.Argv, wantInteractive)
 		}
@@ -299,7 +305,7 @@ func TestRunHarnessOpenCodeDetectsInPlaceV2(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Command() error = %v", err)
 		}
-		wantHeadless := []string{"opencode", "run", "--model", "provider/model", "--", "go"}
+		wantHeadless := []string{"opencode", "run", "--standalone", "--model", "provider/model", "--", "go"}
 		if strings.Join(headless.Argv, "\x00") != strings.Join(wantHeadless, "\x00") {
 			t.Fatalf("headless argv = %q, want %q", headless.Argv, wantHeadless)
 		}

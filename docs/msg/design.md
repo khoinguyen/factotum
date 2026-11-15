@@ -207,13 +207,17 @@ type Run struct {
   dashboard show liveness. Liveness gates **send resolution**, not claimability: `ft msg send`
   resolves a task to a live run, else the assignee actor, else `task:` (section 4; `resolveTask` in
   `pkg/app/message.go`), while `Claim` is a store-local compare-and-swap on the stored address with
-  no liveness check. A run may therefore always drain its own mailbox, including with a lease that
-  lapsed a moment ago, and a claim for a stale `run:` does still match. The cost is the other side: a
-  message addressed to a run that dies before claiming stays `queued` under `run:<id>` — nothing
-  sweeps queued messages — until that session re-registers (registration is upsert on `(project,
-  actor, host, pid)`, so it keeps its run id) or an operator re-addresses it with the proposed `retry`
-  verb (section 11). Gating claim on liveness instead would need the store to read the registry inside
-  the claim, and would strand a live receiver whose lease merely lapsed.
+  no liveness check. So a run always drains its own mailbox, even with a lease that lapsed a moment
+  ago, and a claim for a stale `run:` does still match. Gating claim on liveness instead would need
+  the store to read the registry inside the claim, and would strand a live receiver whose lease
+  merely lapsed.
+- The cost is the other side: a message addressed to a run that dies before claiming stays `queued`
+  under `run:<id>`, and nothing sweeps queued messages. It is recoverable only while the run row
+  exists: registration upserts on `(project, actor, host, pid)`, so the same process re-registering
+  after a stale lease keeps its id and drains the mailbox. A clean `deregister` deletes the row, and
+  a restarted process has a new pid, so either way the next registration mints a new run id and the
+  old `run:` message has no claimant; nothing refuses a deregister with queued mail either. An
+  operator then re-addresses it with the proposed `retry` verb (section 11).
 - Deregister on clean shutdown; staleness is the crash path.
 
 ## 6. Store port and conformance

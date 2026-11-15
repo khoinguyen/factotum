@@ -90,7 +90,7 @@ func writeCaptureGroup(b *strings.Builder, derived *info) {
 			b.WriteString("capture:\n")
 			found = true
 		}
-		fmt.Fprintf(b, "  - %s status=%s%s %s\n", id, task.Status, repoTag(task.Repo), task.Title)
+		fmt.Fprintf(b, "  - %s status=%s kind=%s%s %s\n", id, task.Status, task.Kind, repoTag(task.Repo), task.Title)
 	}
 }
 

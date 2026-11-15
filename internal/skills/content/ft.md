@@ -335,13 +335,13 @@ credential_env), and `--image` names an isolating backend's base image (`pi` nee
 a uid, uid:gid, or name, defaulting to empty so the image's own `USER` applies — a
 root-`USER` image writes root-owned files into the bind-mounted checkout, so set
 `$(id -u):$(id -g)`. On `openshell` it seeds the sandbox identity
-(`run_as_user`/`run_as_group`), where only a numeric id or `sandbox` is accepted, so a
-name fails when the sandbox is prepared; unset, the hardened `1000:1000` still applies,
-and a root request is refused either way. `local` ignores it. `provider` + `credential_env`
-name the credential a harness may use; the value is read from the host environment and
-handed to the backend, never placed in the sandbox. Only an isolating backend receives
-it: `local` runs the host binary, which already has the host's own credentials, so a
-configured credential is ignored there.
+(`run_as_user`/`run_as_group`), where only numeric ids - a uid, or uid:gid - or the
+literal `sandbox` are accepted, so a name fails when the sandbox is prepared; unset, the
+hardened `1000:1000` still applies, and a root request is refused either way. `local`
+ignores it. `provider` + `credential_env` name the credential a harness may use; the
+value is read from the host environment and handed to the backend, never placed in the
+sandbox. Only an isolating backend receives it: `local` runs the host binary, which
+already has the host's own credentials, so a configured credential is ignored there.
 
 An isolating backend imposes a deny-by-default policy: the sandbox reaches no host until
 the project opts in, except the model provider endpoint the credential attaches. A

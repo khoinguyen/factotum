@@ -24,9 +24,10 @@ func TestMessageRunsListsRegisteredRuns(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	actorID := firstField(t, r.run("actor", "create", "builder-t-1", "--kind", "agent"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "work"))
 
 	registered := runJSON(t, r, "msg", "agent", "register", "--actor", actorID,
-		"--harness", "opencode", "--host", "host-a", "--pid", "42", "--project", projectID)
+		"--harness", "opencode", "--host", "host-a", "--pid", "42", "--task", taskID, "--project", projectID)
 	runID, _ := registered["run_id"].(string)
 	if runID == "" {
 		t.Fatalf("register json missing run_id: %v", registered)
@@ -40,6 +41,9 @@ func TestMessageRunsListsRegisteredRuns(t *testing.T) {
 	if entry.ID != runID || entry.Actor != actorID || entry.Project != projectID {
 		t.Fatalf("run entry = %+v, want id %s actor %s project %s", entry, runID, actorID, projectID)
 	}
+	if entry.TaskID != taskID {
+		t.Fatalf("run entry TaskID = %q, want the registered task %s", entry.TaskID, taskID)
+	}
 	if !entry.Live {
 		t.Fatalf("run entry Live = false, want a fresh registration live: %+v", entry)
 	}
@@ -48,7 +52,7 @@ func TestMessageRunsListsRegisteredRuns(t *testing.T) {
 	}
 
 	table := r.run("msg", "runs", "--project", projectID)
-	for _, want := range []string{"ID", "ACTOR", "LIVE", "PROJECT", runID, actorID, projectID} {
+	for _, want := range []string{"ID", "ACTOR", "TASK", "LIVE", "PROJECT", runID, actorID, taskID, projectID} {
 		if !strings.Contains(table, want) {
 			t.Fatalf("runs table missing %q:\n%s", want, table)
 		}
@@ -98,5 +102,16 @@ func TestMessageRunsLiveFiltersExpiredRuns(t *testing.T) {
 	liveID, _ := live["run_id"].(string)
 	if liveEntries[0].ID != liveID {
 		t.Fatalf("runs --live = %+v, want the live run %s", liveEntries, liveID)
+	}
+
+	// With every lease expired --live is empty (an empty array, not null), and
+	// the table keeps its header so the output stays a table.
+	runJSON(t, r, "msg", "agent", "deregister", "--run", liveID, "--project", projectID)
+	if none := runsJSON(t, r, "msg", "runs", "--live", "--project", projectID); len(none) != 0 {
+		t.Fatalf("runs --live = %+v, want none once the only lease is gone", none)
+	}
+	table := r.run("msg", "runs", "--live", "--project", projectID)
+	if !strings.Contains(table, "ID") || strings.Contains(table, "run-") {
+		t.Fatalf("empty runs --live table should be the header only:\n%s", table)
 	}
 }

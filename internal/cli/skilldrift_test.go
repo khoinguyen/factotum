@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -77,25 +79,94 @@ func TestAgentSkillsReferenceRealCommandsAndFlags(t *testing.T) {
 		if err != nil {
 			t.Fatalf("rel path %s: %v", path, err)
 		}
-		body := readFile(t, path)
-		if parsed := len(skillCommandLines(body)); parsed == 0 {
-			// A skill that names no ft command (typesafe-ai) is fine; one that
-			// does but parses empty means the checker is blind to it.
-			if strings.Contains(body, "`ft ") || strings.Contains(body, "\nft ") {
-				t.Errorf("%s names ft commands but parsed none; the checker is not seeing the skill", rel)
-			}
-			continue
-		}
-		for _, stale := range staleSkillReferences(root, body) {
-			t.Errorf("%s: %s", rel, stale)
+		for _, finding := range roleSkillFindings(root, rel, readFile(t, path)) {
+			t.Error(finding)
 		}
 	}
 }
 
+// ftMentionPattern matches the ft binary as a standalone word in a skill's
+// code, so the drift guard notices a skill whose commands the parser cannot see.
+var ftMentionPattern = regexp.MustCompile(`\bft\b`)
+
+// roleSkillFindings returns the drift findings for one role skill: a stale
+// reference for every `ft ...` invocation the command tree does not know, or a
+// blind-spot finding when the skill's code names ft but yields no invocation for
+// the checker to inspect. A skill whose code never names ft (typesafe-ai) has
+// nothing to drift.
+func roleSkillFindings(root *cobra.Command, rel, body string) []string {
+	if len(skillCommandLines(body)) == 0 {
+		for _, snippet := range skillCodeSnippets(body) {
+			if ftMentionPattern.MatchString(snippet) {
+				return []string{fmt.Sprintf("%s names ft commands but parsed none; the checker is not seeing the skill", rel)}
+			}
+		}
+		return nil
+	}
+	findings := make([]string, 0)
+	for _, stale := range staleSkillReferences(root, body) {
+		findings = append(findings, fmt.Sprintf("%s: %s", rel, stale))
+	}
+	return findings
+}
+
+func TestRoleSkillFindingsCoversTranscriptAndBlindSpot(t *testing.T) {
+	root := skillDriftRoot(t)
+	cases := []struct {
+		name      string
+		body      string
+		want      []string
+		wantEmpty bool
+	}{
+		{
+			name:      "prose mention only",
+			body:      "The ft binary lives on PATH.\n",
+			wantEmpty: true,
+		},
+		{
+			name:      "transcript prompt parses",
+			body:      "```sh\n$ ft msg runs --live\n```\n",
+			wantEmpty: true,
+		},
+		{
+			name:      "inline transcript prompt parses",
+			body:      "Run `$ ft task next`.\n",
+			wantEmpty: true,
+		},
+		{
+			name: "stale transcript command",
+			body: "```sh\n$ ft task frobnicate\n```\n",
+			want: []string{"unknown command"},
+		},
+		{
+			name: "code naming ft without an invocation is a blind spot",
+			body: "```sh\ntool ft task next\n```\n",
+			want: []string{"parsed none"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings := roleSkillFindings(root, "SKILL.md", tc.body)
+			if tc.wantEmpty {
+				if len(findings) != 0 {
+					t.Fatalf("findings = %v, want none", findings)
+				}
+				return
+			}
+			joined := strings.Join(findings, "\n")
+			for _, want := range tc.want {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("findings = %v, want %q", findings, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSkillCommandLinesExtractsFencedAndInline(t *testing.T) {
-	body := "```sh\nft task next\n```\n\nRun `ft memory search terra` and `ft done <task>`.\n"
+	body := "```sh\nft task next\n$ ft msg runs --live\nft\ttask list\n```\n\nRun `ft memory search terra` and `ft done <task>`.\n"
 	got := skillCommandLines(body)
-	want := []string{"ft task next", "ft memory search terra", "ft done <task>"}
+	want := []string{"ft task next", "ft msg runs --live", "ft\ttask list", "ft memory search terra", "ft done <task>"}
 	if len(got) != len(want) {
 		t.Fatalf("skillCommandLines() = %v, want %v", got, want)
 	}

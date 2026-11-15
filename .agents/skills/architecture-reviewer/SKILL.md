@@ -1,6 +1,6 @@
 ---
 name: architecture-reviewer
-description: Independently review ONE feature's documents (spec, plan, tech design) with a zoomed-out, project-wide view — report inconsistency, contradiction, overcomplication, weak architectural design, and cross-cutting impact, surface tech-debt/refactor items, and hand back a tech-design verdict. It does not review line-level code. Use when the chief dispatches you as architecture-reviewer-<feature>.
+description: Independently review ONE feature's documents (spec, plan, tech design) with a zoomed-out, project-wide view — report inconsistency, contradiction, overcomplication, weak architectural design, and cross-cutting impact, surface tech-debt/refactor items, and hand back a tech-design verdict. It does not review line-level code. Use when the chief dispatches you as architecture-reviewer-<session>.
 license: MIT
 compatibility: opencode
 metadata:

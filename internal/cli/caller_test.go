@@ -99,7 +99,7 @@ func TestUnregisteredCallerIsUnattributedWithWarning(t *testing.T) {
 // loop-role prefixes (chief, builder-, reviewer-, qa-) is warned about and left
 // unattributed, never stamped verbatim on the event or used as the auto-QA
 // reminder target. A role-shaped name the loop only sets as a configured default
-// (grooming-agent-<artifact>, architecture-reviewer-<feature>) is not exempt
+// (grooming-agent-<artifact>, architecture-reviewer-<session>) is not exempt
 // here: name it as the default, not as --actor.
 func TestUnregisteredActorFlagIsUnattributedWithWarning(t *testing.T) {
 	for _, name := range []string{"ghostrider", "grooming-agent-art-7"} {

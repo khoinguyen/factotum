@@ -20,6 +20,30 @@ func promoteTask(t *testing.T, h *harness, capture *core.Ticket, agent *core.Act
 	return task
 }
 
+// splitTask adds the second executable task of a split under the capture, linked
+// as its origin. Promotion is idempotent (one task per capture), so a second task
+// is created the way a split creates it: an explicit add carrying the same edge.
+func splitTask(t *testing.T, h *harness, capture *core.Ticket, agent *core.Actor) *core.Ticket {
+	t.Helper()
+	ctx := context.Background()
+	task, err := h.tasks.Add(ctx, TicketInput{
+		ProjectID:          capture.ProjectID,
+		Kind:               core.KindTask,
+		Title:              "split work",
+		AssigneeID:         &agent.ID,
+		Groomed:            true,
+		AcceptanceCriteria: []string{"it works"},
+	})
+	if err != nil {
+		t.Fatalf("Add(split task) error = %v", err)
+	}
+	task, err = h.tasks.AddDep(ctx, task.ID, capture.ID)
+	if err != nil {
+		t.Fatalf("AddDep(split task) error = %v", err)
+	}
+	return task
+}
+
 func qaReadyIDs(t *testing.T, h *harness, project *core.Project) []core.TicketID {
 	t.Helper()
 	ready, err := h.qa.Ready(context.Background(), project.ID)
@@ -40,7 +64,7 @@ func TestQAReadyListsFeatureWithEveryTaskDone(t *testing.T) {
 	agent := newAgent(t, h, "claude")
 	idea := newIdea(t, h, project, "a feature")
 	first := promoteTask(t, h, idea, agent)
-	second := promoteTask(t, h, idea, agent)
+	second := splitTask(t, h, idea, agent)
 
 	if ready := qaReadyIDs(t, h, project); len(ready) != 0 {
 		t.Fatalf("Ready with open tasks = %v, want none", ready)

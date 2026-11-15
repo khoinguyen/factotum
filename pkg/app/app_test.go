@@ -34,6 +34,7 @@ func (s *seqIDs) NewID(prefix string) string {
 type harness struct {
 	backend   store.Backend
 	clock     Clock
+	ids       IDGen
 	projects  *ProjectService
 	tasks     *TicketService
 	actors    *ActorService
@@ -54,6 +55,7 @@ func newHarnessWithClock(t *testing.T, clock Clock) *harness {
 	h := &harness{
 		backend:   backend,
 		clock:     clock,
+		ids:       ids,
 		projects:  NewProjectService(backend, clock, ids),
 		tasks:     NewTicketService(backend, clock, ids),
 		actors:    NewActorService(backend, clock, ids),

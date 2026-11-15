@@ -25,7 +25,8 @@ func TestResolvingLastTaskRemindsTheChiefToPlanQA(t *testing.T) {
 	ideaID := firstField(t, r.run("idea", "create", "-p", projectID, "-t", "a feature"))
 	r.run("actor", "create", "claude", "-k", "agent")
 	first := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
-	second := firstField(t, r.run("idea", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+	// Promotion is idempotent, so a split's second task is an explicit linked add.
+	second := firstField(t, r.run("task", "create", "-p", projectID, "-t", "second slice", "--dep", ideaID))
 
 	r.run("task", "done", first, "--actor", "chief")
 	if entries := inboxEntries(t, r, projectID, "chief"); len(entries) != 0 {

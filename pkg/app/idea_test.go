@@ -270,3 +270,140 @@ func TestPromoteRejectsNonAgentAssignee(t *testing.T) {
 		t.Fatalf("Promote(human assignee) error = %v, want ErrInvalid", err)
 	}
 }
+
+// errInjectedFault is the store error a test injects mid-promote.
+var errInjectedFault = errors.New("injected store fault")
+
+// faultyTickets fails Update for the tickets reject selects, so a test can drive
+// a mid-promote store fault without a real backend failure.
+type faultyTickets struct {
+	store.TicketRepo
+	reject func(*core.Ticket) bool
+}
+
+func (r faultyTickets) Update(ctx context.Context, task *core.Ticket) error {
+	if r.reject(task) {
+		return errInjectedFault
+	}
+	return r.TicketRepo.Update(ctx, task)
+}
+
+// faultyBackend exposes the wrapped backend's repositories with a ticket update
+// fault injected.
+type faultyBackend struct {
+	store.Backend
+	reject func(*core.Ticket) bool
+}
+
+func (b faultyBackend) Tickets() store.TicketRepo {
+	return faultyTickets{TicketRepo: b.Backend.Tickets(), reject: b.reject}
+}
+
+// assertNothingPromoted asserts a failed promotion left no task behind and the
+// capture as it was, i.e. no half-promoted state.
+func assertNothingPromoted(t *testing.T, h *harness, project *core.Project, capture *core.Ticket) {
+	t.Helper()
+	ctx := context.Background()
+	stored, err := h.tasks.Get(ctx, capture.ID)
+	if err != nil {
+		t.Fatalf("Get(capture) error = %v", err)
+	}
+	if stored.Kind != capture.Kind || stored.Status != capture.Status {
+		t.Fatalf("capture after a failed promote = kind %q status %q, want it unchanged", stored.Kind, stored.Status)
+	}
+	if len(stored.Notes) != 0 {
+		t.Fatalf("capture notes after a failed promote = %+v, want none", stored.Notes)
+	}
+	tasks, err := h.tasks.List(ctx, store.TicketFilter{ProjectID: project.ID})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	for _, candidate := range tasks {
+		if candidate.ID != capture.ID {
+			t.Fatalf("a failed promote left %s behind; want only the capture", candidate.ID)
+		}
+	}
+}
+
+func TestPromoteRollsBackWhenLinkingFails(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := newIdea(t, h, project, "a spark")
+	agent := newAgent(t, h, "claude")
+
+	// The task is created and then updated to add the origin edge; failing that
+	// update is the first mid-promote fault.
+	faulty := NewTicketService(faultyBackend{
+		Backend: h.backend,
+		reject:  func(task *core.Ticket) bool { return task.Kind == core.KindTask },
+	}, h.clock, h.ids)
+
+	if _, err := faulty.Promote(ctx, idea.ID, groomedPromote(agent)); !errors.Is(err, errInjectedFault) {
+		t.Fatalf("Promote() error = %v, want the injected store fault", err)
+	}
+	assertNothingPromoted(t, h, project, idea)
+}
+
+func TestPromoteRollsBackWhenTheCaptureNoteFails(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := newIdea(t, h, project, "a spark")
+	agent := newAgent(t, h, "claude")
+
+	// The note on the capture is the last write; failing it must undo the task
+	// and leave the capture itself untouched.
+	faulty := NewTicketService(faultyBackend{
+		Backend: h.backend,
+		reject:  func(task *core.Ticket) bool { return task.ID == idea.ID },
+	}, h.clock, h.ids)
+
+	if _, err := faulty.Promote(ctx, idea.ID, groomedPromote(agent)); !errors.Is(err, errInjectedFault) {
+		t.Fatalf("Promote() error = %v, want the injected store fault", err)
+	}
+	assertNothingPromoted(t, h, project, idea)
+}
+
+func TestPromoteIsIdempotent(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	project := h.newProject(t)
+	idea := newIdea(t, h, project, "a spark")
+	agent := newAgent(t, h, "claude")
+
+	first, err := h.tasks.Promote(ctx, idea.ID, groomedPromote(agent))
+	if err != nil {
+		t.Fatalf("Promote() first error = %v", err)
+	}
+	second, err := h.tasks.Promote(ctx, idea.ID, groomedPromote(agent))
+	if err != nil {
+		t.Fatalf("Promote() second error = %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("Promote() second = %s, want the already-promoted %s", second.ID, first.ID)
+	}
+
+	// Exactly one task carries the origin edge, and the capture recorded the
+	// promotion once.
+	dependents, err := h.tasks.List(ctx, store.TicketFilter{ProjectID: project.ID, DependsOn: &idea.ID})
+	if err != nil {
+		t.Fatalf("List(dependents) error = %v", err)
+	}
+	if len(dependents) != 1 || dependents[0].ID != first.ID {
+		t.Fatalf("dependents of the capture = %v, want only %s", dependents, first.ID)
+	}
+	stored, err := h.tasks.Get(ctx, idea.ID)
+	if err != nil {
+		t.Fatalf("Get(capture) error = %v", err)
+	}
+	notes := 0
+	for _, note := range stored.Notes {
+		if strings.Contains(note.Body, "Promoted to") {
+			notes++
+		}
+	}
+	if notes != 1 {
+		t.Fatalf("capture has %d promotion notes, want exactly 1: %+v", notes, stored.Notes)
+	}
+}

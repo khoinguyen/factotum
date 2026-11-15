@@ -71,6 +71,23 @@ func TestTaskPromoteCreatesLinkedTask(t *testing.T) {
 	}
 }
 
+func TestTaskPromoteIsIdempotent(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	ideaID := firstField(t, r.run("task", "create", "-p", projectID, "-k", "idea", "-t", "a spark"))
+	r.run("actor", "create", "claude", "-k", "agent")
+
+	first := firstField(t, r.run("task", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+	second := firstField(t, r.run("task", "promote", ideaID, "--actor", "claude", "--acceptance", "it works"))
+	if second != first {
+		t.Fatalf("re-promoting %s made %s, want the existing %s", ideaID, second, first)
+	}
+	// Exactly one promoted task, so the graph does not gain duplicate work.
+	if list := r.run("task", "list", "-p", projectID, "-k", "task"); strings.Count(list, "a spark") != 1 {
+		t.Fatalf("re-promoting duplicated the task:\n%s", list)
+	}
+}
+
 func TestTaskPromoteRejectsTask(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

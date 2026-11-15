@@ -782,7 +782,10 @@ func producedHandled(ctx context.Context, actors *app.ActorService, task *core.T
 
 // itemHandled reports whether an unattended session handled one scoped item: an
 // executable task is handled when it is agent-ready or resolved (the session
-// judged it unnecessary), an idea when a promoted task of it is agent-ready.
+// judged it unnecessary), an idea when the task promoted from it is agent-ready.
+// The promoted task is the one the store's promotion rule names
+// (store.PromotedTask), so a milestone gate depending on the idea does not make
+// the session look like it refined the idea.
 func itemHandled(ctx context.Context, tasks *app.TicketService, actors *app.ActorService, projectID core.ProjectID, item *core.Ticket, cache *[]*core.Ticket) (bool, error) {
 	if item.Kind.Executable() {
 		if item.Resolves(core.DefaultResolutionPolicy()) {
@@ -797,19 +800,11 @@ func itemHandled(ctx context.Context, tasks *app.TicketService, actors *app.Acto
 		}
 		*cache = listed
 	}
-	for _, candidate := range *cache {
-		if !candidate.Kind.Executable() || !dependsOn(candidate, item.ID) {
-			continue
-		}
-		ready, err := agentReady(ctx, actors, candidate)
-		if err != nil {
-			return false, err
-		}
-		if ready {
-			return true, nil
-		}
+	promoted := store.PromotedTask(*cache, item.ID)
+	if promoted == nil {
+		return false, nil
 	}
-	return false, nil
+	return agentReady(ctx, actors, promoted)
 }
 
 // agentReady is the agent-bucket rule: groomed and assigned to an agent
@@ -824,15 +819,6 @@ func agentReady(ctx context.Context, actors *app.ActorService, task *core.Ticket
 		return false, err
 	}
 	return actor.Kind == core.ActorAgent, nil
-}
-
-func dependsOn(task *core.Ticket, dep core.TicketID) bool {
-	for _, id := range task.Deps {
-		if id == dep {
-			return true
-		}
-	}
-	return false
 }
 
 func joinTaskIDs(ids []core.TicketID) string {

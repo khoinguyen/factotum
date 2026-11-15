@@ -115,8 +115,8 @@ func actorIdentities(actors []*core.Actor, tasks []*core.Ticket) map[core.ActorI
 		if _, ok := out[id]; ok {
 			continue
 		}
-		if role, ok := LoopDefaultRole(string(id)); ok {
-			out[role] = RoleActor(role)
+		if identity, ok := RoleIdentity(id); ok {
+			out[id] = identity
 		}
 	}
 	return out

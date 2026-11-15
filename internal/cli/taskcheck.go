@@ -271,7 +271,13 @@ func newTaskCheckCommand(deps *Deps) *cobra.Command {
 			// Report the checks that ran before surfacing a failure, so one
 			// failing check does not hide the others.
 			if err := deps.emit(docs, func() {
-				actors := deps.actorResolver(cmd.Context())
+				decided := make([]core.ActorID, 0, len(results))
+				for _, result := range results {
+					if result.DecidedBy != "" {
+						decided = append(decided, core.ActorID(result.DecidedBy))
+					}
+				}
+				actors := deps.actorResolver(cmd.Context(), decided...)
 				for i, result := range results {
 					if i > 0 {
 						deps.printf("\n")

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -53,6 +54,40 @@ func TestEmbeddedSkillsReferenceRealCommandsAndFlags(t *testing.T) {
 		}
 		for _, stale := range staleSkillReferences(root, skill.Body) {
 			t.Errorf("skill %q: %s", skill.Name, stale)
+		}
+	}
+}
+
+// TestAgentSkillsReferenceRealCommandsAndFlags extends the drift guard from
+// the embedded skills to the committed role skills (.agents/skills/*/SKILL.md).
+// Those skills drive unattended agents, so a command they name that does not
+// exist fails the run it was meant to serve, and nobody is watching to correct
+// it. The checker is the same cobra walk the embedded skills use.
+func TestAgentSkillsReferenceRealCommandsAndFlags(t *testing.T) {
+	root := skillDriftRoot(t)
+	paths, err := filepath.Glob(filepath.Join(repoRoot(t), ".agents", "skills", "*", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("glob agent skills: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no agent skills found under .agents/skills")
+	}
+	for _, path := range paths {
+		rel, err := filepath.Rel(repoRoot(t), path)
+		if err != nil {
+			t.Fatalf("rel path %s: %v", path, err)
+		}
+		body := readFile(t, path)
+		if parsed := len(skillCommandLines(body)); parsed == 0 {
+			// A skill that names no ft command (typesafe-ai) is fine; one that
+			// does but parses empty means the checker is blind to it.
+			if strings.Contains(body, "`ft ") || strings.Contains(body, "\nft ") {
+				t.Errorf("%s names ft commands but parsed none; the checker is not seeing the skill", rel)
+			}
+			continue
+		}
+		for _, stale := range staleSkillReferences(root, body) {
+			t.Errorf("%s: %s", rel, stale)
 		}
 	}
 }

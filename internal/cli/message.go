@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/harness/opencode"
 	"github.com/khoinguyen/factotum/pkg/harness/pi"
+	"github.com/khoinguyen/factotum/pkg/store"
 )
 
 // messageSendResult is the single-result shape of `ft msg send`.
@@ -35,6 +37,21 @@ type messageReadResult struct {
 	To      string `json:"to" yaml:"to"`
 	State   string `json:"state" yaml:"state"`
 	Project string `json:"project" yaml:"project"`
+}
+
+// messageRunEntry is one row of `ft msg runs`.
+type messageRunEntry struct {
+	ID         string `json:"id" yaml:"id"`
+	Actor      string `json:"actor" yaml:"actor"`
+	TaskID     string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+	Session    string `json:"session,omitempty" yaml:"session,omitempty"`
+	Harness    string `json:"harness,omitempty" yaml:"harness,omitempty"`
+	Host       string `json:"host,omitempty" yaml:"host,omitempty"`
+	PID        int    `json:"pid,omitempty" yaml:"pid,omitempty"`
+	Live       bool   `json:"live" yaml:"live"`
+	SeenAt     string `json:"seen_at" yaml:"seen_at"`
+	LeaseUntil string `json:"lease_until" yaml:"lease_until"`
+	Project    string `json:"project" yaml:"project"`
 }
 
 // messageEntry is one row of `ft msg inbox`.
@@ -195,8 +212,62 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(send, inbox, get, read, newMessageInstallCommand(deps), newMessageAgentCommand(deps))
+	var runsProject string
+	var runsLive bool
+	runs := &cobra.Command{
+		Use:   "runs",
+		Short: "List registered receiver runs",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			now := deps.Clock.Now()
+			filter := store.RunFilter{ProjectID: deps.resolveProject(runsProject), Now: now}
+			if runsLive {
+				live := true
+				filter.Live = &live
+			}
+			list, err := deps.Messages.ListRuns(cmd.Context(), filter)
+			if err != nil {
+				return err
+			}
+			entries := make([]messageRunEntry, 0, len(list))
+			for _, run := range list {
+				entries = append(entries, messageRunEntryFrom(run, now))
+			}
+			return deps.emit(entries, func() {
+				rows := make([][]string, 0, len(entries))
+				for _, entry := range entries {
+					rows = append(rows, []string{entry.ID, entry.Actor, entry.TaskID, entry.Harness, strconv.FormatBool(entry.Live), entry.SeenAt, entry.Project})
+				}
+				deps.printTable([]string{"ID", "ACTOR", "TASK", "HARNESS", "LIVE", "SEEN", "PROJECT"}, rows)
+			})
+		},
+	}
+	runs.Flags().StringVarP(&runsProject, "project", "p", "", "filter by project id")
+	runs.Flags().BoolVar(&runsLive, "live", false, "only runs whose lease is still valid")
+
+	cmd.AddCommand(send, inbox, get, read, runs, newMessageInstallCommand(deps), newMessageAgentCommand(deps))
 	return cmd
+}
+
+// messageRunEntryFrom renders one registered run for `ft msg runs`, resolving
+// liveness against the caller's clock.
+func messageRunEntryFrom(run *core.Run, now time.Time) messageRunEntry {
+	entry := messageRunEntry{
+		ID:         string(run.ID),
+		Actor:      string(run.ActorID),
+		Session:    run.Session,
+		Harness:    run.Harness,
+		Host:       run.Host,
+		PID:        run.PID,
+		Live:       run.Live(now),
+		SeenAt:     run.SeenAt.UTC().Format(time.RFC3339),
+		LeaseUntil: run.LeaseUntil.UTC().Format(time.RFC3339),
+		Project:    string(run.ProjectID),
+	}
+	if run.TaskID != nil {
+		entry.TaskID = string(*run.TaskID)
+	}
+	return entry
 }
 
 // receiverFile is the receiver source filename both harnesses load from their

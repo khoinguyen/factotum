@@ -168,6 +168,24 @@ func TestEnqueueSkipsExcludedCaptures(t *testing.T) {
 		t.Fatalf("Enqueue(promoted) = %v, %v; want nil, nil", pipeline, err)
 	}
 
+	// A milestone dependent is a release gate, not promoted work, so the capture
+	// still needs the pipeline that will refine it into a task.
+	gated := f.capture(t, core.KindIdea)
+	milestone, err := f.tasks.Add(ctx, app.TicketInput{
+		ProjectID: f.project.ID,
+		Kind:      core.KindMilestone,
+		Title:     "release gate",
+	})
+	if err != nil {
+		t.Fatalf("Add(milestone) error = %v", err)
+	}
+	if _, err := f.tasks.AddDep(ctx, milestone.ID, gated.ID); err != nil {
+		t.Fatalf("AddDep(milestone) error = %v", err)
+	}
+	if pipeline, err := f.controller.Enqueue(ctx, gated); err != nil || pipeline == nil {
+		t.Fatalf("Enqueue(gated capture) = %v, %v; want a pipeline", pipeline, err)
+	}
+
 	fresh := f.capture(t, core.KindIdea)
 	first, err := f.controller.Enqueue(ctx, fresh)
 	if err != nil || first == nil {

@@ -122,7 +122,8 @@ Config and opt-out (t-ywh4btshch's acceptance).
 - `[up] auto_groom` (default **true** under `ft up`) enables the trigger; `--no-auto-groom` or
   `auto_groom = false` disables it, so capture stays a pure store write and the pipeline is started
   by hand (`ft up start <capture>`).
-- A capture is skipped when it is already promoted (a linked executable task exists), already in a
+- A capture is skipped when it is already promoted (a linked task exists; a milestone gate depending
+  on the capture is a release gate, not promoted work, so it does not count), already in a
   pipeline, or carries the `no-auto` label. The daemon records why it skipped.
 
 The pipeline is keyed by **capture id**, so the trigger, the backstop, and a manual start all

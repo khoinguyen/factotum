@@ -425,23 +425,16 @@ func (c *Controller) save(ctx context.Context, pipeline *core.Pipeline) error {
 	return c.backend.Pipelines().Update(ctx, pipeline)
 }
 
-// promoted reports whether an executable task already depends on the capture
-// (the origin edge), so the capture is already groomed into work.
+// promoted reports whether the capture has already been promoted into work. It
+// uses the store's promotion rule — the capture's first task-kind dependent —
+// the same rule `ft task promote` enforces, so a milestone gate depending on a
+// capture does not make the capture look promoted and the pipeline still runs.
 func (c *Controller) promoted(ctx context.Context, capture core.TicketID) (bool, error) {
-	dependsOn := capture
-	tasks, err := c.backend.Tickets().List(ctx, store.TicketFilter{
-		ProjectID: c.project,
-		DependsOn: &dependsOn,
-	})
+	task, err := c.backend.Tickets().Promoted(ctx, capture)
 	if err != nil {
 		return false, err
 	}
-	for _, task := range tasks {
-		if task.Kind.Executable() {
-			return true, nil
-		}
-	}
-	return false, nil
+	return task != nil, nil
 }
 
 // hasLabel reports whether the ticket carries label.

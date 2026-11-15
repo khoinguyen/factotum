@@ -1562,7 +1562,7 @@ func (d *Deps) warnDuplicateTitle(ctx context.Context, task *core.Ticket) {
 	if err != nil || verdict.Action == "none" || verdict.Candidate == nil {
 		return
 	}
-	d.warnf("a related task may already exist: %s (score %.2f); consider `ft task dep %s %s`",
+	d.warnf("a related task may already exist: %s (score %.2f); consider `ft task dep create %s %s`",
 		verdict.Candidate.ID, verdict.Rating, task.ID, verdict.Candidate.ID)
 }
 
@@ -1763,7 +1763,7 @@ func (d *Deps) referenceHints(ctx context.Context, task *core.Ticket, text strin
 		return nil
 	}
 	return []hint{{
-		Command: fmt.Sprintf("ft task dep %s %s", task.ID, ref.Ticket.ID),
+		Command: fmt.Sprintf("ft task dep create %s %s", task.ID, ref.Ticket.ID),
 		About:   fmt.Sprintf("link the referenced task %q", ref.Ticket.Title),
 	}}
 }

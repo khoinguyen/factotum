@@ -297,22 +297,17 @@ fails, so a script can gate on it.
 (`task -r`), or all the project's repos when none is declared — an exclusive or, never a union.
 A task that needs another repo must declare it, or the agent clones it manually; `ft run` runs
 the harness with the task as its prompt. A capture (idea or bug) runs the goal loop below over
-every task that belongs to it, in DAG order.
-A repo registered with a local `Path` (not a `URL`) is used **in place** — it is not
-copied into the workspace, so a backend on the workdir (`local`, `docker`) can modify
-that checkout; `ft run` warns on stderr naming it, and registering a `URL` runs in an
-isolated copy. `ft groom` resolves the same way and warns the same way. The launched
-session inherits the run's project and store (`FACTOTUM_PROJECT`, `FACTOTUM_STORE`,
-`FACTOTUM_STORE_OPTS`), so the `ft` it runs reads and writes that store, never a store
-the checkout's config would resolve (for example your real `~/.factotum` database);
-`FACTOTUM_STORE_OPTS` is a comma-separated `key=value` list, so a value cannot hold a
-comma. A run with an actor also exports the receiver identity (`FACTOTUM_ACTOR`,
-`FACTOTUM_TASK_ID`), and every run exports `FACTOTUM_HARNESS`, the harness it drives,
-so a registered run reports `opencode2` for a V2 run rather than the receiver's
-`opencode` default. A run whose named actor resolves to no record and no loop role
-registers no receiver, so it warns and names `ft actor create <name>` instead of
-launching a session nobody can reach over `ft msg`; a loop role needs no record and
-still registers.
+every task that belongs to it, in DAG order. A repo registered with a local `Path` (not a `URL`)
+is used **in place** — not copied into the workspace — so a backend on the workdir (`local`,
+`docker`) can modify that checkout; `ft run` warns on stderr naming it, while a `URL` repo runs
+in an isolated copy (`ft groom` resolves and warns the same way). The launched session inherits
+the run's project and store (`FACTOTUM_PROJECT`/`FACTOTUM_STORE`/`FACTOTUM_STORE_OPTS`), so the
+`ft` it runs never resolves the checkout's config (your real `~/.factotum`, say). A run with an
+actor exports the receiver identity (`FACTOTUM_ACTOR`, `FACTOTUM_TASK_ID`), and every run
+exports `FACTOTUM_HARNESS`, so a registered run reports `opencode2` rather than the receiver's
+`opencode` default. A run whose named actor resolves to no record and no loop role registers no
+receiver, so it warns and names `ft actor create <name>` instead of launching a session nobody
+can reach over `ft msg`; a loop role needs no record and still registers.
 
 ```sh
 ft run t-abc123 --sandbox local --harness opencode2 --allow-host   # dev-only opt-in
@@ -334,24 +329,20 @@ machine `[run]`; on a terminal an unset one prompts once and saves to the chosen
 while non-interactively it is an error. A committed project `[run]` may set only those
 two; the machine table holds the rest (workspace/model/image/user/args/allow_host/
 credential_env), and `--image` names an isolating backend's base image (`pi` needs one).
-`--user`/`run.user`/`FACTOTUM_RUN_USER` sets the container identity. On `docker` that is
-a uid, uid:gid, or name, defaulting to empty so the image's own `USER` applies — a
-root-`USER` image writes root-owned files into the bind-mounted checkout, so set
-`$(id -u):$(id -g)`. On `openshell` it seeds the sandbox identity
-(`run_as_user`/`run_as_group`), where only numeric ids - a uid, or uid:gid - or the
-literal `sandbox` are accepted, so a name fails when the sandbox is prepared; unset, the
-hardened `1000:1000` still applies, and a root request is refused either way. `local`
-ignores it. `provider` + `credential_env` name the credential a harness may use; the
-value is read from the host environment and handed to the backend, never placed in the
-sandbox. Only an isolating backend receives it: `local` runs the host binary, which
-already has the host's own credentials, so a configured credential is ignored there.
+`--user`/`run.user`/`FACTOTUM_RUN_USER` sets the container identity: on `docker` a uid, uid:gid,
+or name, defaulting to empty so the image's own `USER` applies (a root `USER` writes root-owned
+files into the bind-mounted checkout, so set `$(id -u):$(id -g)`); on `openshell` numeric ids or
+the literal `sandbox`, seeding `run_as_user`/`run_as_group` and otherwise keeping the hardened
+`1000:1000` (a root request is refused); `local` ignores it. `provider` + `credential_env` name
+the credential a harness may use, read from the host environment and handed to an isolating
+backend, never placed in the sandbox, and ignored by `local`, which runs the host binary with
+the host's own credentials.
 
-An isolating backend imposes a deny-by-default policy: the sandbox reaches no host until
-the project opts in, except the model provider endpoint the credential attaches. A
-project opts in by committing `.factotum/openshell-policy.yaml` with `allow_hosts` and
-nothing else, so it can widen egress but never weaken the identity, filesystem, or
-credential defaults; with no policy file `ft run` warns that egress is deny-all. The
-README's "Run agents" section carries the policy, image, and per-backend detail.
+An isolating backend is deny-by-default: no host is reachable until the project opts in, except
+the model provider endpoint the credential attaches. Committing `.factotum/openshell-policy.yaml`
+with `allow_hosts` and nothing else widens egress but never weakens the identity, filesystem, or
+credential defaults; with no policy file `ft run` warns egress is deny-all. The README's "Run
+agents" and "Isolation policy" sections carry the rest.
 
 - `--prompt-file <path>` or `--prompt-artifact <id>` supplies a stored prompt: with a task
   it replaces the task prompt, and with no task id it runs the prompt once over every

@@ -16,6 +16,7 @@ import (
 	"github.com/khoinguyen/factotum/internal/groom"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/isolation/local"
 	"github.com/khoinguyen/factotum/pkg/store"
 )
@@ -256,8 +257,19 @@ func (d *Deps) groomSession(ctx context.Context, cmd *cobra.Command, target groo
 	// Unattended runs must not leave work silently stranded: every scoped item
 	// is either agent-ready or named in the deferred file by the time the
 	// session ends, and every executable task it produced is agent-ready or
-	// resolved.
+	// resolved. Both judgements rest on attribution, so the session must have
+	// acknowledged the id the run injected: without the ack an empty produced
+	// set is indistinguishable from a child ft that never carried the id, and
+	// the run would pass over work it cannot see.
 	if unattended {
+		acked, err := sessionAcked(ctx, post.backend, project.ID, sessionID)
+		if err != nil {
+			return groom.SessionRecord{}, err
+		}
+		if !acked {
+			return groom.SessionRecord{}, fmt.Errorf("groom: unattended session %s never acknowledged its session id, so the run cannot attribute the work it produced: its child ft did not carry %s (the session must run ft session ack)",
+				sessionID, harnesspkg.EnvSession)
+		}
 		unresolved, err := unattendedUnresolved(ctx, post.tasks, post.actors, project.ID, items, produced, deferredBody)
 		if err != nil {
 			return groom.SessionRecord{}, err
@@ -666,6 +678,23 @@ func unattendedUnresolved(ctx context.Context, tasks *app.TicketService, actors 
 		}
 	}
 	return unresolved, nil
+}
+
+// sessionAcked reports whether the session acknowledged the id the run injected.
+// It is the guard's fail-closed anchor: an ack event attributed to the session
+// proves its child ft carried the session id, so an empty produced set means the
+// session created nothing rather than that attribution never worked.
+func sessionAcked(ctx context.Context, backend store.Backend, projectID core.ProjectID, sessionID string) (bool, error) {
+	events, err := backend.Events().List(ctx, store.EventFilter{
+		ProjectID: projectID,
+		Kinds:     []core.EventKind{core.EventSessionAcked},
+		Session:   sessionID,
+		Limit:     1,
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(events) > 0, nil
 }
 
 // deferredIDPattern matches a ticket id as a whole token. The anchoring is the

@@ -113,19 +113,32 @@ attributed to its own (or no) session, so it is never counted as the session's
 produced work. The manifest and `ft event list --session <session>` show the
 same attribution.
 
+Because attribution decides the guard, an unattended run fails closed: the
+session must acknowledge the id the run injected with `ft session ack` (the
+kickoff says so), which records a `session.acked` event from the child's own
+environment. Without it an empty produced set is indistinguishable from a child
+`ft` that never carried the id - an older binary, or an environment that dropped
+the variable - so the run fails loudly instead of passing over work it cannot
+see. The acknowledgement reads the id from `FACTOTUM_SESSION`, never from an
+argument or the prompt text, so naming a session is not enough to satisfy it.
+Attribution itself stays advisory: `FACTOTUM_*` is spoofable and a session that
+unsets the variable can create work the guard will not judge, so treat the guard
+as a safety net rather than a boundary.
+
 ## Unattended mode
 
 `ft groom --unattended` runs with no product owner and no interactive channel. The
-kickoff tells the session to defer every product question to the
-deferred-questions file, record engineering calls as notes, and suspend the
-pre-answer timing guard so it still promotes, splits, and marks produced tasks
-groomed and assigned. After the run `ft groom` requires every scoped item to be
-agent-ready or named in the deferred-questions file, and every executable task
-the session produced to be agent-ready or resolved. The deferred file does not
-excuse a task the session created: capture human-only follow-up as an idea, or
-defer the scoped item it came from. Work left neither fails the run. Use it for
-an automated loop; a human session omits the flag, runs attached on a terminal,
-and grills the PO as usual.
+kickoff tells the session to acknowledge its session id with `ft session ack`, defer
+every product question to the deferred-questions file, record engineering calls as
+notes, and suspend the pre-answer timing guard so it still promotes, splits, and
+marks produced tasks groomed and assigned. After the run `ft groom` requires the
+acknowledgement (or it fails, since it cannot attribute the session's work), every
+scoped item to be agent-ready or named in the deferred-questions file, and every
+executable task the session produced to be agent-ready or resolved. The deferred
+file does not excuse a task the session created: capture human-only follow-up as
+an idea, or defer the scoped item it came from. Work left neither fails the run.
+Use it for an automated loop; a human session omits the flag, runs attached on a
+terminal, and grills the PO as usual.
 
 ## Who decides what
 

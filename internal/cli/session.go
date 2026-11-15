@@ -73,7 +73,36 @@ func newSessionCommand(deps *Deps) *cobra.Command {
 	retire.Flags().StringVar(&retireSID, "session", "", "session id (default: FACTOTUM_SESSION)")
 	retire.Flags().StringVar(&successor, "successor", "", "the session id that replaces this one")
 
-	cmd.AddCommand(start, retire)
+	var ackProject string
+	ack := &cobra.Command{
+		Use:   "ack",
+		Short: "Acknowledge the session this ft invocation carries",
+		Long: "Record that the session this ft invocation carries reached it. The id comes from the\n" +
+			"environment (`FACTOTUM_SESSION`), never from an argument, so the acknowledgement proves the\n" +
+			"session id was picked up rather than that the prompt named it. `ft groom --unattended`\n" +
+			"launches its session with its own id and requires this acknowledgement: without it the run\n" +
+			"cannot tell a session that created nothing from a child ft that attributed nothing to it,\n" +
+			"and fails instead of passing silently.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if deps.Session == "" {
+				return usageError(cmd, "session ack needs a session: set FACTOTUM_SESSION (or run it from a launched session)")
+			}
+			project := deps.resolveProject(ackProject)
+			if err := requireProject(cmd, project); err != nil {
+				return err
+			}
+			if _, err := deps.Sessions.Ack(cmd.Context(), project); err != nil {
+				return err
+			}
+			return deps.emit(sessionResult{SessionID: deps.Session, Project: project, Acked: true}, func() {
+				deps.printFields(f("session_id", deps.Session), f("acked", true), f("project", string(project)))
+			})
+		},
+	}
+	ack.Flags().StringVarP(&ackProject, "project", "p", "", "project id")
+
+	cmd.AddCommand(start, retire, ack)
 	return requireSubcommand(cmd)
 }
 
@@ -82,5 +111,6 @@ type sessionResult struct {
 	Project   core.ProjectID `json:"project" yaml:"project"`
 	Started   bool           `json:"started,omitempty" yaml:"started,omitempty"`
 	Retired   bool           `json:"retired,omitempty" yaml:"retired,omitempty"`
+	Acked     bool           `json:"acked,omitempty" yaml:"acked,omitempty"`
 	Successor string         `json:"successor,omitempty" yaml:"successor,omitempty"`
 }

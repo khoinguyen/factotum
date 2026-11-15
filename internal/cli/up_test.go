@@ -13,6 +13,7 @@ import (
 	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
@@ -134,6 +135,11 @@ func TestUpGroomSessionAttachesOnlyWhenInteractive(t *testing.T) {
 				deferred = "# Deferred questions\n\n## Questions\n\n- [ ] " + ideaID + ": which entry point?\n\n## Resolved\n"
 			}
 			backend := upGroomBackend(t, deferred)
+			stage := backend.onExec
+			backend.onExec = func(cmd isolation.Command) {
+				stage(cmd)
+				ackSession(t, r, cmd.Env[harnesspkg.EnvSession], projectID)
+			}
 			r.runBackend = backend
 			r.runHarness = harnessfake.New("opencode")
 

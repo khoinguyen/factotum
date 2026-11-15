@@ -71,3 +71,26 @@ func (s *SessionService) Retire(ctx context.Context, project core.ProjectID, sid
 	}
 	return event, nil
 }
+
+// Ack records the caller's acknowledgement of the session its environment
+// carries. The event is deliberately given no session of its own: appendEvent
+// stamps it from the caller context (FACTOTUM_SESSION), so an ft invocation that
+// does not carry a session is refused instead of recording an ack that names a
+// session it never had. A run that judges a child's work by attribution
+// requires the ack, which is what keeps an empty produced set from being
+// indistinguishable from a child that never picked up the id.
+func (s *SessionService) Ack(ctx context.Context, project core.ProjectID) (*core.Event, error) {
+	_, sid, ok := Caller(ctx)
+	if !ok || sid == "" {
+		return nil, fmt.Errorf("%w: session ack needs a session: set FACTOTUM_SESSION", core.ErrInvalid)
+	}
+	event := &core.Event{
+		ProjectID: project,
+		Kind:      core.EventSessionAcked,
+		Summary:   fmt.Sprintf("acknowledged session %s", sid),
+	}
+	if err := appendEvent(ctx, s.backend, s.clock, s.ids, event); err != nil {
+		return nil, err
+	}
+	return event, nil
+}

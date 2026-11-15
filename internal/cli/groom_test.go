@@ -332,6 +332,11 @@ func TestGroomInteractiveOnTerminalAttachesAgent(t *testing.T) {
 			mustWrite(t, promptPath, "# Grooming session prompt\n")
 
 			backend := writingGroomBackend(t)
+			stage := backend.onExec
+			backend.onExec = func(cmd isolation.Command) {
+				stage(cmd)
+				ackSession(t, r, cmd.Env[harnesspkg.EnvSession], projectID)
+			}
 			r.runBackend = backend
 			r.runHarness = harnessfake.New("opencode")
 
@@ -546,6 +551,7 @@ func TestGroomUnattendedCompletesOrDefers(t *testing.T) {
 				if !strings.Contains(prompt, "## Unattended mode") {
 					t.Errorf("unattended kickoff is missing the override:\n%s", prompt)
 				}
+				ackSession(t, r, cmd.Env[harnesspkg.EnvSession], projectID)
 				docs := defaultGroomDocs()
 				docs.report, docs.deferred = reportBody, deferredBody
 				stageGroomOutputs(t, base, prompt, docs)
@@ -592,6 +598,7 @@ func TestGroomUnattendedReadsSessionWrites(t *testing.T) {
 	backend := groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
 		prompt := cmd.Argv[len(cmd.Argv)-1]
 		// The session edits the graph through its own ft process.
+		ackSession(t, r, cmd.Env[harnesspkg.EnvSession], projectID)
 		groomAssign(t, r, taskID)
 		docs := defaultGroomDocs()
 		docs.report = "# Grooming report\n\n## Summary\n\n## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n"
@@ -720,6 +727,7 @@ func TestGroomUnattendedProducedChildReadiness(t *testing.T) {
 				if session == "" {
 					t.Fatalf("the run injected no session id; env = %v", cmd.Env)
 				}
+				ackSession(t, r, session, projectID)
 				child = tt.produce(t, r, projectID, session)
 				docs := defaultGroomDocs()
 				docs.report = report
@@ -773,6 +781,92 @@ func asSession(t *testing.T, r *runner, session string, fn func()) {
 	}
 	defer func() { r.getenv = prev }()
 	fn()
+}
+
+// ackSession stands in for the child's `ft session ack`: it acknowledges the
+// session the run injected, as the launched session must.
+func ackSession(t *testing.T, r *runner, session, projectID string) {
+	t.Helper()
+	asSession(t, r, session, func() {
+		r.run("session", "ack", "-p", projectID)
+	})
+}
+
+// TestGroomUnattendedRequiresSessionAck pins the guard's fail-closed anchor: an
+// unattended run refuses to complete unless the session acknowledged the id the
+// run injected. Without the acknowledgement an empty produced set is
+// indistinguishable from a child ft that never carried the id, so the run would
+// pass silently over work it cannot see. A session that names the id without
+// carrying it in its environment does not count.
+func TestGroomUnattendedRequiresSessionAck(t *testing.T) {
+	const report = "# Grooming report\n\n## Summary\n\n## Per item\n\n## Product questions (grill)\n\n## Deferred (for stakeholders)\n\n## DAG changes\n"
+	tests := []struct {
+		name string
+		// ack runs in the session; nil leaves the session unacknowledged.
+		ack     func(t *testing.T, r *runner, session, projectID string)
+		wantErr bool
+	}{
+		{
+			name: "the session acknowledges its id",
+			ack:  ackSession,
+		},
+		{
+			name:    "a session that never acknowledges its id fails",
+			wantErr: true,
+		},
+		{
+			name: "an acknowledgement under another session does not count",
+			ack: func(t *testing.T, r *runner, _, projectID string) {
+				ackSession(t, r, "groom-other", projectID)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRunner(t)
+			projectID, cfgPath := tasklessContext(t, r)
+			r.run("actor", "create", "builder", "--kind", "agent")
+			scope := agentReadyTask(t, r, projectID, "Add widget")
+
+			promptPath := filepath.Join(t.TempDir(), "prompt.md")
+			mustWrite(t, promptPath, "# Grooming session prompt\n")
+
+			base := isofake.New("sandbox")
+			base.Program(isolation.ExecResult{Stdout: []byte("groomed\n"), ExitCode: 0})
+			backend := groomBackend{Backend: base, onExec: func(cmd isolation.Command) {
+				prompt := cmd.Argv[len(cmd.Argv)-1]
+				session := cmd.Env[harnesspkg.EnvSession]
+				if session == "" {
+					t.Fatalf("the run injected no session id; env = %v", cmd.Env)
+				}
+				if tt.ack != nil {
+					tt.ack(t, r, session, projectID)
+				}
+				docs := defaultGroomDocs()
+				docs.report = report
+				stageGroomOutputs(t, base, prompt, docs)
+			}}
+			r.runBackend = backend
+			r.runHarness = harnessfake.New("opencode")
+
+			out, err := runGroomCapture(r, "--config", cfgPath, "groom", "-p", projectID, "--unattended",
+				"--prompt-file", promptPath, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir(), scope)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("groom error = %v\n%s", err, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("an unattended run passed without the session acknowledging its id:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), "acknowledged") || !strings.Contains(err.Error(), harnesspkg.EnvSession) {
+				t.Fatalf("error = %v, want it to name the missing acknowledgement and %s", err, harnesspkg.EnvSession)
+			}
+		})
+	}
 }
 
 // TestDeferredIDsWholeTokenMatch pins the anchored deferred detection: an id in

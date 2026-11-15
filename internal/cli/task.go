@@ -870,14 +870,22 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ref := forRef
+			fromDefault := false
 			if ref == "" {
 				ref = deps.Config.DefaultActor
+				fromDefault = true
 			}
 			if ref == "" {
 				return usageError(cmd, "provide --for <actor>, or set default_actor")
 			}
-			actor, err := deps.resolveActorRef(cmd.Context(), ref)
+			actor, err := deps.resolveClaimActor(cmd.Context(), ref, fromDefault)
 			if err != nil {
+				if fromDefault && errors.Is(err, core.ErrNotFound) {
+					// bindCaller already warned that this default is neither a
+					// registered actor nor a loop role, so a claim that names no
+					// actor is the same usage failure as having no default.
+					return usageError(cmd, "provide --for <actor>, or set default_actor")
+				}
 				return err
 			}
 			project := deps.resolveProject(projectID)
@@ -927,6 +935,29 @@ func newTaskClaimCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&forRef, "for", "", "actor to claim for (id, actor:<id>, or name; defaults to default_actor)")
 	cmd.Flags().BoolVar(&start, "start", false, "also move the claimed task to in_progress")
 	return cmd
+}
+
+// resolveClaimActor resolves the actor a claim assigns. An explicit --for names
+// an Actor record, like every other actor flag. A configured default follows the
+// rule bindCaller applies to attribution — the record first, then a loop-default
+// role (app.LoopDefaultRole) — because the loop sets the default to a role
+// (builder-<task>, reviewer-<task>, qa-<task>, grooming-agent-<artifact>,
+// architecture-reviewer-<session>, chief) that a session registers as a mailbox
+// rather than an Actor record. A role is an agent session, so it claims under
+// the same groomed-only rule as any other agent.
+func (d *Deps) resolveClaimActor(ctx context.Context, ref string, fromDefault bool) (*core.Actor, error) {
+	actor, err := d.resolveActorRef(ctx, ref)
+	if err == nil || !fromDefault || !errors.Is(err, core.ErrNotFound) {
+		return actor, err
+	}
+	id, parseErr := core.ParseActorRef(ref)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	if role, ok := app.LoopDefaultRole(string(id)); ok {
+		return &core.Actor{ID: role, Kind: core.ActorAgent, Name: string(role), Active: true}, nil
+	}
+	return nil, err
 }
 
 // claimable keeps only unassigned candidates, so repeated claims take new work

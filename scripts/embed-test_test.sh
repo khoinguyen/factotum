@@ -4,7 +4,9 @@
 # fixed ft-embed-test container made the second run's `docker rm -f` delete the
 # first run's container, and a fixed port 18080 made it die with "port is
 # already allocated". FACTOTUM_EMBED_TEST_CONTAINER/PORT must still pin both for
-# anyone who needs a predictable one.
+# anyone who needs a predictable one. A source-guard regression is labelled
+# instead of surfacing as a bare non-zero exit: the guard is probed in a
+# subshell before the helpers are sourced.
 #
 # Run: bash scripts/embed-test_test.sh
 set -euo pipefail
@@ -22,6 +24,19 @@ bad() { echo "FAIL $1"; fail=$((fail + 1)); }
 # check <name> <want> <got>
 check() {
   if [ "$2" = "$3" ]; then ok; else bad "$1: got '$3', want '$2'"; fi
+}
+
+# probe_source_guard <script> sources <script> in a subshell and reports whether
+# it stopped at its own source guard. The subshell matters: a guard that `exit`s
+# fails only the probe instead of ending this suite before it can say why.
+probe_source_guard() {
+  ( . "$1" ) >/dev/null 2>&1
+}
+
+# guard_label <script> names a source-guard regression, so the run reads as a
+# labelled failure rather than an unexplained non-zero exit.
+guard_label() {
+  printf 'embed test guard: sourcing %s did not stop at the source guard' "$1"
 }
 
 tmp="$(mktemp -d)"
@@ -50,8 +65,21 @@ export STUB_LOG="$tmp/stub.log"
 : >"$STUB_LOG"
 export PATH="$tmp/bin:$PATH"
 
-# The helpers are the unit under test. Sourcing stops at the script's source
-# guard, so no container is started and no test runs.
+# A regressed source guard is the one failure that can kill this suite before it
+# reports: a guard that `exit`s takes the shell with it and leaves a bare status
+# and no FAIL/passed= line. Probe the guard in a subshell first, so the
+# regression is labelled and counted here; the stubs above keep the probe
+# offline even when a guard-less script gets past the guard and starts the body.
+if probe_source_guard "$script"; then
+  ok
+else
+  bad "$(guard_label "$script")"
+  echo "passed=$pass failed=$fail"
+  exit 1
+fi
+
+# The helpers are the unit under test. The probe above proved the guard returns
+# before the body, so this source only defines them.
 # shellcheck source=scripts/embed-test.sh
 if ! . "$script"; then
   bad "sourcing the script failed (is the source guard missing?)"
@@ -60,6 +88,34 @@ if [ -s "$STUB_LOG" ]; then
   bad "sourcing the script ran: $(tr '\n' ';' <"$STUB_LOG")"
 else
   ok
+fi
+
+# The guard check itself must be labelled. Run this suite against a copy whose
+# source guard `exit`s instead of returning - the regression that used to end
+# the run with a bare non-zero status and no FAIL/passed= line - and require a
+# labelled failure plus the summary. The nested run stops at its own guard
+# check, so it cannot recurse.
+mkdir -p "$tmp/scripts"
+broken="$tmp/scripts/embed-test.sh"
+sed 's/^\(.*BASH_SOURCE\[0\].*then\) return 0; fi$/\1 exit 1; fi/' "$script" >"$broken"
+if cmp -s "$script" "$broken"; then
+  bad "the broken-guard copy is unchanged (has the source guard moved?)"
+else
+  ok
+fi
+cp "$mise" "$tmp/mise.toml"
+cp "$here/embed-test_test.sh" "$tmp/scripts/embed-test_test.sh"
+if nested="$(bash "$tmp/scripts/embed-test_test.sh" 2>&1)"; then
+  bad "a source guard that exits was reported as a pass"
+else
+  case "$nested" in
+    *"FAIL embed test guard"*) ok ;;
+    *) bad "a source guard that exits was not labelled: $(tr '\n' ';' <<<"$nested")" ;;
+  esac
+  case "$nested" in
+    *"passed="*"failed=1"*) ok ;;
+    *) bad "the labelled guard failure printed no summary: $(tr '\n' ';' <<<"$nested")" ;;
+  esac
 fi
 
 # A default container name is per-run: it carries a pid and stays clear of the

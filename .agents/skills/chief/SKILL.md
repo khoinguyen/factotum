@@ -51,16 +51,34 @@ pair, merging an approved PR, and filing follow-ups. Everything substantive goes
 
   **Never pass a long charter as an inline `--prompt`.** A multi-hundred-character `--command` gets
   truncated at the terminal/cmux layer and the agent never starts (observed: the command cut mid-text
-  and no process spawned). Keep every kickoff — builder, reviewer, QA — to a single short line; the
-  substance lives in the skill and the task body.
+  and no process spawned). Keep every kickoff — builder, reviewer, QA, architecture reviewer — to a
+  single short line; the substance lives in the skill and the task body.
+
+- **Design review → an `architecture-reviewer-<session>` agent**, on a groomed feature's docs before
+  any of it is built (see **After grooming**). It is a loop agent like the rest: launch it through
+  the same wrapper, in its **own worktree**, with a **short kickoff**, so it registers as its own
+  actor and reports its verdict to you over ft msg:
+
+  ```sh
+  .agents/skills/chief/scripts/loop-agent.sh architecture-reviewer-<session> <project> - \
+    /tmp/arch-<session> "load the architecture-reviewer skill; you are architecture-reviewer-<session>"
+  ```
+
+  Run it in its own cmux workspace like a QA (anchor the `new-workspace` with an explicit
+  `--cwd <repo-root>`). The wrapper stages the receiver and exports
+  `FACTOTUM_ACTOR=architecture-reviewer-<session>`, so the reviewer is addressable as
+  `actor:architecture-reviewer-<session>`; a bare `opencode --prompt` would instead inherit your
+  default actor, leave the role with no receiver and make it unaddressable — the reason the role
+  grammar added in #325 was unused. Confirm it is live with `ft msg runs --live`.
 
 **Any new team-member role works the same way.** When a task needs a specialist the loop doesn't have
 yet, first **create that role's skill** at `.agents/skills/<role>/SKILL.md` — its charter: when it is
 used, its ground rules, what it produces, how it reports and to whom (ship that skill through a PR
-like any other change). Then **dispatch using the skill** with the short kickoff
-`opencode --prompt "load the <role> skill; you are <role>-<task-id>"`. Builder, reviewer, and QA all
-follow this shape; a security reviewer, a docs writer, a perf prober would each get a skill first,
-then a dispatch. Never invent a role by inlining its instructions in the command.
+like any other change). Then **dispatch that role through the loop wrapper**, exactly as
+builder/reviewer/QA and the architecture reviewer are launched, with its own worktree and a short
+kickoff: `.agents/skills/chief/scripts/loop-agent.sh <role>-<id> <project> - <dir> "load the <role>
+skill; you are <role>-<id>"`. The wrapper is what gives the role its own actor and receiver.
+Never invent a role by inlining its instructions in the command.
 
 If you catch yourself running a feature, reading a diff, or hand-testing a flow, stop and dispatch it
 instead. Never do the work yourself except a trivial mechanical step.
@@ -253,9 +271,24 @@ grooming agent reports the capture ids back over ft msg; file any follow-ups you
 ## After grooming: dispatch the architecture review
 
 A grooming session ends with a feature's spec, plan, and tech design. Before any of the feature is
-built, dispatch the **architecture reviewer** on those docs — it is a role like any other, so use
-the short kickoff `opencode --prompt "load the architecture-reviewer skill; you are
-architecture-reviewer-<session>" --auto`. The reviewer reads the session's docs
+built, dispatch the **architecture reviewer** on those docs — it is a loop agent like a builder,
+reviewer, or QA, so launch it through the same wrapper, in **its own worktree**, with a **short**
+kickoff:
+
+```sh
+git worktree add --detach /tmp/arch-<session> origin/main
+.agents/skills/chief/scripts/loop-agent.sh architecture-reviewer-<session> <project> - \
+  /tmp/arch-<session> "load the architecture-reviewer skill; you are architecture-reviewer-<session>"
+```
+
+Then wire it over ft msg, one short line naming the session, the docs, and your chief role:
+
+```sh
+ft msg send actor:architecture-reviewer-<session> -b "review groom session <session>; chief is actor:chief"
+```
+
+The wrapper stages the receiver, so the reviewer reports its verdict to `actor:chief` and you can
+wake it with `ft msg send`; no cmux target is involved. The reviewer reads the session's docs
 (`ft groom show <session>`), records its findings on the origin idea, and records one verdict with
 `ft groom review <session> --verdict ...`.
 

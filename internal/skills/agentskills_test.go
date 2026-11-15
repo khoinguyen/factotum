@@ -83,6 +83,9 @@ func TestLoopSkillsMessageOverFtMsg(t *testing.T) {
 		{".agents/skills/chief/SKILL.md", []string{
 			"ft msg send actor:builder-", "ft msg send actor:reviewer-", "loop-agent.sh", "cmux-msg.sh",
 		}},
+		{".agents/skills/architecture-reviewer/SKILL.md", []string{
+			"ft msg send actor:chief", "actor:architecture-reviewer-<session>", "cmux-msg.sh",
+		}},
 	}
 	for _, tc := range cases {
 		body := agentSkill(t, tc.skill)
@@ -385,6 +388,57 @@ func TestChiefSkillDispatchesGroomingAgent(t *testing.T) {
 	for _, req := range required {
 		if !strings.Contains(body, req.text) {
 			t.Errorf("chief skill must %s (missing %q)", req.why, req.text)
+		}
+	}
+}
+
+// TestChiefSkillDispatchesArchitectureReviewThroughLoopWrapper guards the
+// residual from the #325 review: the architecture reviewer must be launched
+// through the same loop wrapper as builders/reviewers/QA, in its own worktree,
+// so it registers as its own actor (architecture-reviewer-<session>) with an ft
+// msg receiver. A bare `opencode --prompt` inherits the chief's default actor,
+// leaving the role unaddressable and the role grammar unused.
+func TestChiefSkillDispatchesArchitectureReviewThroughLoopWrapper(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/chief/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"launch it through the loop wrapper", "loop-agent.sh architecture-reviewer-"},
+		{"give it its own worktree", "own worktree"},
+		{"keep the kickoff to one short line", "short kickoff"},
+		{"name the address it is reachable at", "actor:architecture-reviewer-<session>"},
+		{"say a bare opencode prompt would inherit the chief's actor", "bare `opencode --prompt`"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("chief skill must %s (missing %q)", req.why, req.text)
+		}
+	}
+	if strings.Contains(body, `opencode --prompt "load the architecture-reviewer`) {
+		t.Errorf("chief skill still dispatches the architecture reviewer with a bare `opencode --prompt`; it has no receiver and inherits the chief's default actor")
+	}
+}
+
+// TestArchitectureReviewerSkillIsAddressableOverFtMsg guards the reviewer's
+// side of that dispatch: launched through the wrapper it is a first-class ft msg
+// peer, so it must message the chief as actor:architecture-reviewer-<session>
+// over ft msg, keeping the cmux wrapper only as a rollout fallback.
+func TestArchitectureReviewerSkillIsAddressableOverFtMsg(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/architecture-reviewer/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"name the wrapper that gives it the receiver", "loop-agent.sh"},
+		{"name its own role as the sender", "actor:architecture-reviewer-<session>"},
+		{"message the chief over ft msg", "ft msg send actor:chief"},
+		{"keep the cmux wrapper as a fallback", "cmux-msg.sh"},
+		{"stop after sending instead of polling", "stop and wait"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("architecture-reviewer skill must %s (missing %q)", req.why, req.text)
 		}
 	}
 }

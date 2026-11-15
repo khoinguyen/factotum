@@ -76,13 +76,25 @@ product decision needs a human, do **not** open a prompt: report the blocker to 
 
 ## Channel
 
-Your shell does **not** inherit `CMUX_*`. Agent-to-agent messaging goes through the shared wrapper
-`.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (run from your worktree root): it
-resolves a tab or workspace title, or takes a `surface:N`/`workspace:N` ref, and calls
-`cmux agent message`. Set `CMUX_MSG_FROM=architecture-reviewer-<session>` to identify yourself.
-**Do not use `set-buffer`/`paste-buffer`/`send-key` to message the chief**; keep `paste-buffer` only
-for input that genuinely needs a terminal. You may start with a detached worktree at the feature's
-commit; the docs live in the repo, so `git fetch` and check out the branch under review.
+The chief launches you through `.agents/skills/chief/scripts/loop-agent.sh` as
+`architecture-reviewer-<session>`, which stages the ft msg receiver and exports
+`FACTOTUM_ACTOR`/`FACTOTUM_DEFAULT_ACTOR`. You are therefore addressable as
+`actor:architecture-reviewer-<session>` and your shell sends as that role. Message the chief over
+**`ft msg`**, not a cmux target:
+
+```sh
+ft msg send actor:chief -b "From architecture-reviewer-<session>: <verdict + findings>"
+```
+
+Use the canonical `actor:<role>` address, and after sending stop and wait — the receiver wakes the
+chief; do not poll. **Fallback (rollout):** only when ft msg is not delivering, use the shared
+wrapper `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (run from your worktree root)
+with `CMUX_MSG_FROM=architecture-reviewer-<session>`. **Do not use
+`set-buffer`/`paste-buffer`/`send-key` to message the chief**; keep `paste-buffer` only for input
+that genuinely needs a terminal.
+
+You start in a detached worktree at the feature's commit (or `origin/main`); the docs live in the
+repo, so `git fetch` and check out the branch under review.
 
 ## What you review for
 
@@ -123,11 +135,10 @@ items.
 
 ## Report to the chief and stop
 
-Send the verdict to the chief:
+Send the verdict to the chief over ft msg:
 
 ```sh
-CMUX_MSG_FROM=architecture-reviewer-<session> \
-  bash .agents/skills/chief/scripts/cmux-msg.sh surface:<chief-surface> "<verdict + findings>"
+ft msg send actor:chief -b "From architecture-reviewer-<session>: <verdict + findings>"
 ```
 
 Report the feature, the docs you reviewed (paths or `ft doc` ids), the verdict, the numbered

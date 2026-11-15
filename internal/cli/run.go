@@ -516,31 +516,36 @@ func (d *Deps) warnLocalPlan(plan *workspace.Plan) {
 }
 
 // runActor resolves the identity the run's message receiver registers as, or
-// says that this run will launch without one. bindCaller has already held a
-// named actor to the registration rule, so a surviving reference only needs the
-// identity rule: a loop role is a mailbox, not a record, and still resolves.
-// A reference that resolves to nothing names no mailbox a receiver could claim,
-// so the session is unreachable over ft msg - say so and name the fix, but keep
-// launching: the work is still worth doing and the actor can be registered while
-// it runs. A reference bindCaller already dropped gets the same warning, because
-// its attribution warning does not say the session cannot be messaged.
+// says this run will launch without one. A surviving reference only needs the
+// identity rule: a loop role is a mailbox, not a record, and still resolves. A
+// reference bindCaller dropped is not revisited - one reference cannot be
+// unusable for attribution and usable as a mailbox - and its attribution
+// warning does not say the session will be unreachable, so the run says that.
+// Either way the run keeps launching without a receiver: the work is still
+// worth doing and the actor can be registered while it runs.
 func (d *Deps) runActor(ctx context.Context) *core.ActorID {
-	ref := d.ActorRef
-	if ref == "" {
-		ref = d.ActorDropped
-	}
-	if ref == "" {
+	if d.ActorRef == "" {
+		if d.ActorDropped != "" {
+			d.warnNoReceiver(d.ActorDropped)
+		}
 		return nil
 	}
-	actor, err := d.Actors.Identity(ctx, core.ActorID(ref))
+	actor, err := d.Actors.Identity(ctx, core.ActorID(d.ActorRef))
 	if err != nil {
 		if !errors.Is(err, core.ErrNotFound) {
-			d.warnf("could not resolve actor %q (%v)", ref, err)
+			d.warnf("could not resolve actor %q (%v)", d.ActorRef, err)
 		}
-		d.warnf("no message receiver will register for actor %q; the run launches unreachable over ft msg (create it with ft actor create %q, or pass a registered actor or loop role)", ref, ref)
+		d.warnNoReceiver(d.ActorRef)
 		return nil
 	}
 	return &actor.ID
+}
+
+// warnNoReceiver names the receiver consequence and its fix for a run whose
+// named actor resolves to no mailbox, so a launched session nobody can reach is
+// never silent.
+func (d *Deps) warnNoReceiver(ref string) {
+	d.warnf("no message receiver will register for actor %q; the run launches unreachable over ft msg (create it with ft actor create %q, or pass a registered actor or loop role)", ref, ref)
 }
 
 func (d *Deps) runTask(cmd *cobra.Command, taskID, prompt string, opts runOptions) error {

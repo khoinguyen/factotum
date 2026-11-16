@@ -73,6 +73,45 @@ function deferred() {
   return { promise, resolve };
 }
 
+// STALL_WAIT_MS is the long-poll window the stall-then-resume tests hand the
+// receiver, so the lease gate samples 2 * it (the stall bound).
+//
+// These tests used to run with waitMs 10 - a 20ms bound chosen only to make the
+// stall cheap - and lost the resume assertion under load. The bound is wall-clock
+// and it is sampled, so it has to absorb the gap between the receiver recording a
+// round trip and the next statement reading the clock. Under a storm of four
+// concurrent race suites plus 16 CPU hogs that gap reached 145ms between two
+// adjacent statements, and the 20ms bound missed 2 of 1500 samples while 100ms
+// and every bound above it missed none. 600ms is ~4x the measured worst gap.
+const STALL_WAIT_MS = 300;
+// STALL_PAST_MS clears 2 * STALL_WAIT_MS by a margin. A real sleep only ever runs
+// long, so this side of the race is safe at any load.
+const STALL_PAST_MS = 700;
+
+// resumeRenewal is the log sink for a stall-then-resume test: it runs one
+// heartbeat tick in the same turn the receiver records the resumed round trip,
+// which is the moment the lease gate must see progress.
+//
+// The tick is driven by the event rather than by a manual tick after
+// waitFor(...) because waitFor polls every 5ms and a starved event loop then
+// lands 200ms past the resume (measured p100 under the same storm) - the stall
+// bound would have to absorb a hop the test does not need to take.
+function resumeRenewal(logs, getTick) {
+  let renew;
+  const renewed = new Promise((resolve) => { renew = resolve; });
+  return {
+    log(entry) {
+      logs.push(entry);
+      if (!/resumed/.test(entry)) return;
+      // A getter, not the tick: the receiver arms its interval during start(),
+      // after the test has handed this sink over.
+      const tick = getTick();
+      renew(tick());
+    },
+    renewed,
+  };
+}
+
 function receiverFor(claimResults, injected, { inject, loadSession, saveSession } = {}) {
   const { run, calls } = fakeRun(claimResults);
   let intervalCleared = false;
@@ -579,6 +618,7 @@ test("a claim round trip that never returns stops renewing the lease", async (t)
   const hung = deferred();
   let tick = null;
   let claimed = false;
+  const resume = resumeRenewal(logs, () => tick);
   const run = async (argv) => {
     calls.push(argv.join(" "));
     switch (argv[2]) {
@@ -594,23 +634,23 @@ test("a claim round trip that never returns stops renewing the lease", async (t)
         return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
     }
   };
-  const config = { ...BASE_CONFIG, waitMs: 10 };
+  const config = { ...BASE_CONFIG, waitMs: STALL_WAIT_MS };
   const receiver = createFactotumReceiver({
     config,
     call: cliCall(config, run),
     inject: async () => {},
     setIntervalFn: (fn) => { tick = fn; return 1; },
     clearIntervalFn: () => {},
-    log: (entry) => logs.push(entry),
+    log: resume.log,
   });
   t.after(() => receiver.dispose());
   receiver.onEvent({ properties: { sessionID: "ses-1" } });
   await receiver.start();
   await waitFor(() => calls.some((c) => c.includes("msg agent claim")));
 
-  // Well past twice the long-poll window (2 * waitMs) with no completed round
-  // trip: the lease must stop being renewed, and the receiver must say why once.
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  // Past the stall bound (2 * waitMs) with no completed round trip: the lease
+  // must stop being renewed, and the receiver must say why once.
+  await new Promise((resolve) => setTimeout(resolve, STALL_PAST_MS));
   await tick();
   assert.equal(calls.some((c) => c.includes("msg agent heartbeat")), false, "a wedged claim must stop the heartbeat");
   const stalls = () => logs.filter((entry) => /round trip/.test(entry)).length;
@@ -622,9 +662,12 @@ test("a claim round trip that never returns stops renewing the lease", async (t)
 
   // When the round trip finally completes, the lease is renewed again.
   hung.resolve({ code: 0, stdout: JSON.stringify({ found: false }), stderr: "" });
-  await waitFor(() => logs.some((entry) => /resumed/.test(entry)), 1000);
-  await tick();
-  await waitFor(() => calls.some((c) => c.includes("msg agent heartbeat")), 500);
+  await waitFor(() => logs.some((entry) => /resumed/.test(entry)), 2000);
+  await resume.renewed;
+  assert.ok(
+    calls.some((c) => c.includes("msg agent heartbeat")),
+    `calls = ${JSON.stringify(calls)}; want the lease renewed once a round trip settles again`,
+  );
 });
 
 test("an injection that never returns stops renewing the lease", async (t) => {
@@ -775,7 +818,9 @@ test("the V2 entrypoint logs receiver state so an inert session leaves evidence"
 // heartbeatReceiver wires a receiver whose single claim never returns, so the
 // only traffic a test steers is the heartbeat tick. The long window keeps manual
 // ticks well inside the stall bound; a test that wants a stall shortens waitMs.
-function heartbeatReceiver({ run, config = {}, logs = [] } = {}) {
+// log replaces the default collect-into-logs sink (a stall/resume test passes
+// resumeRenewal's).
+function heartbeatReceiver({ run, config = {}, logs = [], log } = {}) {
   let tick = null;
   const receiverConfig = { ...BASE_CONFIG, waitMs: 1000, ...config };
   const receiver = createFactotumReceiver({
@@ -784,7 +829,7 @@ function heartbeatReceiver({ run, config = {}, logs = [] } = {}) {
     inject: async () => {},
     setIntervalFn: (fn) => { tick = fn; return 1; },
     clearIntervalFn: () => {},
-    log: (entry) => logs.push(entry),
+    log: log || ((entry) => logs.push(entry)),
   });
   return { receiver, tick: () => tick() };
 }
@@ -940,14 +985,19 @@ test("a run of failing claims is no progress: the stall line fires and the lease
         return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
     }
   };
-  const { receiver, tick } = heartbeatReceiver({ run, config: { retryMs: 5, waitMs: 10 }, logs });
+  const resume = resumeRenewal(logs, () => tick);
+  const { receiver, tick } = heartbeatReceiver({
+    run,
+    config: { retryMs: 5, waitMs: STALL_WAIT_MS },
+    log: resume.log,
+  });
   t.after(() => receiver.dispose());
   receiver.onEvent({ properties: { sessionID: "ses-1" } });
   await receiver.start();
   await waitFor(() => claims >= 2);
 
-  // Twice the long-poll window (the stall bound) of consecutive failures.
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  // Past the stall bound (2 * waitMs) of consecutive failures.
+  await new Promise((resolve) => setTimeout(resolve, STALL_PAST_MS));
   await tick();
   assert.equal(calls.some((c) => c.includes("msg agent heartbeat")), false, "a failing claim must not keep the lease fresh");
   assert.equal(
@@ -958,9 +1008,12 @@ test("a run of failing claims is no progress: the stall line fires and the lease
 
   // A claim that completes again is progress: the lease is renewed, once.
   broken = false;
-  await waitFor(() => logs.some((entry) => /resumed/.test(entry)), 1000);
-  await tick();
-  await waitFor(() => calls.some((c) => c.includes("msg agent heartbeat")), 500);
+  await waitFor(() => logs.some((entry) => /resumed/.test(entry)), 2000);
+  await resume.renewed;
+  assert.ok(
+    calls.some((c) => c.includes("msg agent heartbeat")),
+    `calls = ${JSON.stringify(calls)}; want the lease renewed once a claim completes again`,
+  );
 });
 
 test("a single failed claim inside the stall window still renews the lease", async (t) => {

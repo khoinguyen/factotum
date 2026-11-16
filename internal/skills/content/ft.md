@@ -361,7 +361,9 @@ agents" and "Isolation policy" sections carry the rest.
   children are milestones.
 - A failed run leaves the task's status untouched and stops the loop for a human. The
   stop reason is `stop:` (`goal_reached`, `no_ready_work`, `blocked`, `budget_exhausted`,
-  or `failed`), and each iteration prints a compact `step:` block.
+  or `failed`), and each iteration prints a compact `step:` block. Every task the loop runs
+  shares one `session:` (the caller's when inherited, else one the loop mints and retires);
+  a loop that runs no task reports none.
 - A successful run moves the task to `ready_for_review` (`session: <id>`, `run: finished`,
   `exit_code: 0`, `complete: true`, a note of the output and the run events); a failed one is
   `run: failed`/`complete: false` with only a failure note. Either prints the harness's stderr

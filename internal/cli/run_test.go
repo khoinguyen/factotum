@@ -637,6 +637,68 @@ func TestRunCommandLoopReportsUngroomedTaskNotRun(t *testing.T) {
 	}
 }
 
+// loopField returns a `key: value` line's value from a loop's single-result
+// output, if the loop printed that field.
+func loopField(out, key string) (string, bool) {
+	for _, line := range strings.Split(out, "\n") {
+		if value, ok := strings.CutPrefix(line, key+": "); ok {
+			return strings.TrimSpace(value), true
+		}
+	}
+	return "", false
+}
+
+// TestRunCommandLoopSelectingNoWorkReportsNoSession pins that a loop which runs
+// no task reports no session: it mints an id when it starts, but nothing was
+// ever recorded for it, so printing that id would name a session that resolves
+// to no events and no row on the sessions page. Every id the loop reports is
+// one a reader can follow.
+func TestRunCommandLoopSelectingNoWorkReportsNoSession(t *testing.T) {
+	r := newRunner(t)
+	goal := goalWithNoReadyWork(t, r)
+	backend := isofake.New("sandbox")
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("run", "--goal", goal, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !strings.Contains(out, "iterations: 0") || !strings.Contains(out, "stop: no_ready_work") {
+		t.Fatalf("expected a zero-iteration loop:\n%s", out)
+	}
+	if got := backend.Commands(); len(got) != 0 {
+		t.Fatalf("ran %d tasks, want 0", len(got))
+	}
+	for _, event := range listEvents(t, r) {
+		if event.Kind == "session.started" || event.Kind == "session.retired" {
+			t.Fatalf("a no-work loop recorded %s for session %q, want no session lifecycle", event.Kind, event.Session)
+		}
+	}
+	if sid, ok := loopField(out, "session"); ok {
+		t.Fatalf("a no-work loop reported session %q, which resolves to no recorded session:\n%s", sid, out)
+	}
+}
+
+// TestRunCommandLoopSelectingNoWorkOmitsSessionFromStructuredOutput pins the
+// same rule in `-o json`: a zero-iteration loop carries no session field, so a
+// machine reader never follows an id that resolves to nothing.
+func TestRunCommandLoopSelectingNoWorkOmitsSessionFromStructuredOutput(t *testing.T) {
+	r := newRunner(t)
+	goal := goalWithNoReadyWork(t, r)
+	r.runBackend = isofake.New("sandbox")
+	r.runHarness = harnessfake.New("opencode")
+
+	out := r.run("run", "--goal", goal, "-o", "json", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("decode loop output: %v\n%s", err, out)
+	}
+	if _, ok := doc["session"]; ok {
+		t.Fatalf("a no-work loop reported a session field, want none:\n%s", out)
+	}
+	if doc["iterations"] != float64(0) {
+		t.Fatalf("iterations = %v, want 0\n%s", doc["iterations"], out)
+	}
+}
+
 // captureLoopContext creates a project with an idea capture and two groomed,
 // agent-assigned tasks that belong to it (a two-task chain), so `ft run <idea>`
 // can be exercised. Both tasks carry the idea as their origin edge.

@@ -170,10 +170,10 @@ func TestSkillBoundFindingsSeesStructuredRenderings(t *testing.T) {
 	})
 
 	t.Run("yaml envelope lines", func(t *testing.T) {
-		// 389 lines fits the text budget (390); yaml adds its envelope and
-		// renders three lines over it, still under the 400-line bound. A guard
-		// that counts only the text would call this doc fit and let the yaml
-		// budget erode.
+		// A 389-line body fits the text budget (390); yaml adds its three-line
+		// envelope and renders 392, two over the budget, while the text count is
+		// still fine. A guard that counted only the text would call this doc fit
+		// and let the yaml budget erode.
 		doc := skillDoc{Name: "probe", Body: strings.Repeat("line\n", maxOutputLines-skillLineHeadroom-1)}
 		findings := skillBoundFindings(doc)
 		joined := strings.Join(findings, "\n")

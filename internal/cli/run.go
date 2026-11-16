@@ -69,12 +69,13 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			"writes, defaulting to the configured project; the target must belong to it,\n" +
 			"and the launched session inherits that store. The sandbox and harness\n" +
 			"resolve from --sandbox and --harness, then FACTOTUM_RUN_*, then the [run]\n" +
-			"config table (project over user); on a terminal an unset one prompts once\n" +
-			"and is saved, while a non-interactive unset one is an error. Whenever the\n" +
-			"resolved sandbox is local and run.allow_host is unset, an interactive run\n" +
-			"asks to opt in (default no) and records run.allow_host in the user config,\n" +
-			"however local was chosen; the local backend is unsandboxed and otherwise\n" +
-			"requires --allow-host (or run.allow_host).\n" +
+			"config table (project over user); with stdin and stdout both on a terminal\n" +
+			"an unset one prompts once and is saved, while a non-interactive unset one\n" +
+			"is an error. Whenever the resolved sandbox is local and run.allow_host is\n" +
+			"unset, an interactive run asks to opt in (default no) and records\n" +
+			"run.allow_host in the user config, however local was chosen; the local\n" +
+			"backend is unsandboxed and otherwise requires --allow-host (or\n" +
+			"run.allow_host).\n" +
 			"On a terminal, a single-task run or a task-less prompt run attaches the agent\n" +
 			"to the terminal (for example the OpenCode TUI) so a human can answer it, and\n" +
 			"its output stays live and is not captured, so a task run's note records the\n" +
@@ -338,10 +339,11 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 }
 
 // resolveRunSelection fills an unset sandbox or harness. Config (env > project
-// > user) and flags have already been merged into cfg. A non-interactive session
-// with a missing selection is a usage error naming the available options; an
-// interactive one prompts once from them, persists the pick to the project or
-// user config the user selects, and uses it so the next run needs no flag.
+// > user) and flags have already been merged into cfg. An interactive session
+// (a terminal on both stdin and stdout) prompts once from the available
+// options, persists the pick to the project or user config the user selects,
+// and uses it so the next run needs no flag. A non-interactive one with a
+// missing selection is a usage error naming the available options.
 func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 	// The local backend's host opt-in belongs to the resolved sandbox, not to
 	// choosing it here: local pinned by config or a flag is just as unsandboxed
@@ -350,7 +352,7 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 	if cfg.Sandbox != "" && cfg.Harness != "" && !needsOptIn {
 		return nil
 	}
-	if !d.interactive() {
+	if !d.selectionInteractive(cmd) {
 		if cfg.Sandbox == "" {
 			return usageError(cmd, "--sandbox is required; set run.sandbox (project or user config), FACTOTUM_RUN_SANDBOX, or run on a terminal to choose; available: %s", strings.Join(d.RunBackends.Names(), ", "))
 		}
@@ -525,6 +527,22 @@ func (d *Deps) userConfigPath() (string, error) {
 		return "", errors.New("cannot locate the machine config; set $HOME or pass --user-config")
 	}
 	return path, nil
+}
+
+// selectionInteractive reports whether the run selection may prompt: an
+// injected prompter (tests), or a terminal on both stdout and stdin. stdout
+// alone is not enough: with stdin redirected the prompts read EOF, accept every
+// default, and persist a config nobody chose, so such a run is non-interactive
+// and gets the usage error instead. This is the same rule runInteractive uses
+// for attaching the agent to the terminal.
+func (d *Deps) selectionInteractive(cmd *cobra.Command) bool {
+	if d.Prompt != nil {
+		return true
+	}
+	if d.IsTerminal == nil || !d.IsTerminal(d.Out) {
+		return false
+	}
+	return d.stdinTerminal(cmd.InOrStdin())
 }
 
 // runInteractive reports whether a run should attach the agent to the terminal:

@@ -156,7 +156,7 @@ prints the harness's stderr (its final 4 KiB) as a `stderr:` block after the out
 stderr explains itself instead of reporting only an exit code.
 
 A harness describes one agent CLI end to end (image, invocation, model flag, prompt delivery,
-completion, output parsing); each builds a headless invocation that passes the prompt as the final
+output parsing); each builds a headless invocation that passes the prompt as the final
 message and reads stdout. The launched session inherits the run's project and store
 (`FACTOTUM_PROJECT`, `FACTOTUM_STORE`, `FACTOTUM_STORE_OPTS`), so the `ft` it runs reads and writes
 that store, never a store the checkout's config would resolve — your real `~/.factotum` database,

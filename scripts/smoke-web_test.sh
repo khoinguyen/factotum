@@ -38,8 +38,8 @@ check "a pinned port wins" "127.0.0.1:18999" \
 log_a="$(mktemp)"
 log_b="$(mktemp)"
 trap 'rm -rf "${interrupt_dir:-}"; rm -f "$log_a" "$log_b"' EXIT
-printf 'factotum dashboard: http://127.0.0.1:53121 (reads live; capture on at /capture; Ctrl-C to stop)\n' >"$log_a"
-printf 'factotum dashboard: http://127.0.0.1:53122 (reads live; capture on at /capture; Ctrl-C to stop)\n' >"$log_b"
+printf 'factotum dashboard: http://127.0.0.1:53121 (reads live; capture on via the dashboard Capture button; /capture fallback; Ctrl-C to stop)\n' >"$log_a"
+printf 'factotum dashboard: http://127.0.0.1:53122 (reads live; capture on via the dashboard Capture button; /capture fallback; Ctrl-C to stop)\n' >"$log_b"
 check "concurrent run A reads back its own port" "53121" "$(smoke_announced_port "$log_a")"
 check "concurrent run B reads back its own port" "53122" "$(smoke_announced_port "$log_b")"
 check "an unannounced address yields no port" "" "$(smoke_announced_port /dev/null)"
@@ -60,7 +60,7 @@ cat >"$interrupt_dir/bin/ft" <<'STUB'
 printf 'ft %s\n' "$*" >>"$STUB_LOG"
 case "$*" in
   *serve*)
-    printf 'factotum dashboard: http://127.0.0.1:53121 (reads live; capture on at /capture; Ctrl-C to stop)\n'
+    printf 'factotum dashboard: http://127.0.0.1:53121 (reads live; capture on via the dashboard Capture button; /capture fallback; Ctrl-C to stop)\n'
     printf '%s\n' "$$" >"$STUB_SERVER_PID"
     exec sleep 300
     ;;

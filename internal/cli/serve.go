@@ -31,8 +31,9 @@ func newServeCommand(deps *Deps) *cobra.Command {
 		Short: "Serve the live PO dashboard, token-gated capture, and the message transport",
 		Long: "Serve a local dashboard of project and task graph state, with a capture write side.\n" +
 			"The read side reloads itself over Server-Sent Events as tasks change; the read pages\n" +
-			"have no mutating endpoints. The app's /capture page turns a natural-language sentence\n" +
-			"into a stored idea or bug, gated by a shared token sent as 'Authorization: Bearer <token>'.\n" +
+			"have no mutating endpoints. The dashboard's Capture button turns a natural-language\n" +
+			"sentence into a stored idea or bug (the standalone /capture page remains as a\n" +
+			"fallback), gated by a shared token sent as 'Authorization: Bearer <token>'.\n" +
 			"The token is resolved from --token, then FACTOTUM_SERVE_TOKEN, then serve.token in the\n" +
 			"machine config; when none is set, a fresh random token is generated for each start and\n" +
 			"printed to the console for you to copy (the same header authenticates /api/prompt and\n" +
@@ -143,6 +144,11 @@ func serveAnnouncement(addr string, all bool, token string, generated bool) []st
 // token reports capture off rather than implying it is reachable. `ft serve`
 // mints a random token when none is configured (scoped), so the empty-token
 // branch is what `ft up` reports when it runs with no token.
+//
+// The capture-on branch names the app's real capture entry: the dashboard's
+// Capture button opens the token-gated prompt modal in place. The standalone
+// /capture page is kept as a fallback, so it is named as one rather than as the
+// entry point.
 func serveMode(allProjects bool, token string) string {
 	switch {
 	case allProjects:
@@ -150,6 +156,6 @@ func serveMode(allProjects bool, token string) string {
 	case token == "":
 		return "capture off (set serve.token)"
 	default:
-		return "capture on at /capture"
+		return "capture on via the dashboard Capture button; /capture fallback"
 	}
 }

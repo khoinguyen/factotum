@@ -22,8 +22,10 @@ client router reads the id from the path. The data comes from `/api/snapshot`
 (dashboard), `/api/sessions` (the chief-session timeline: each session alive or
 retired, when it started and stopped and why, and the work it delivered), and
 `/api/<kind>/<id>` (drill-downs), and the app refetches on the `/events` SSE
-stream, so a mutation appears live. `/capture` renders the capture form, which
-posts to `/api/capture`.
+stream, so a mutation appears live. The dashboard's Capture button (a floating
+button on desktop, a sticky bar on mobile) opens the capture modal in place;
+`/capture` renders the same form as a fallback page. Both post to
+`/api/capture`.
 
 Go tests inject a small in-memory asset tree (`Options.Assets`) so they do not
 depend on a frontend build. The app's own render path is covered in `web/` by

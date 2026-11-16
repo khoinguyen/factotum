@@ -131,6 +131,22 @@ func TestServeAnnouncementPrintsOnlyGeneratedToken(t *testing.T) {
 	}
 }
 
+// TestServeModeNamesTheDashboardCaptureEntry proves the startup line points at
+// the capture entry a user can actually see - the dashboard's Capture button
+// (a floating button on desktop, a sticky bar on mobile) - instead of sending
+// them to the orphaned /capture page, which survives only as a fallback.
+func TestServeModeNamesTheDashboardCaptureEntry(t *testing.T) {
+	got := serveMode(false, "s3cret")
+	for _, want := range []string{"capture on", "dashboard", "Capture button", "/capture fallback"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("serveMode(false, token) = %q, want it to name %q", got, want)
+		}
+	}
+	if strings.Contains(got, "on at /capture") {
+		t.Fatalf("serveMode(false, token) = %q, still points capture at the /capture page", got)
+	}
+}
+
 func TestServeModeReportsCaptureState(t *testing.T) {
 	cases := []struct {
 		name        string

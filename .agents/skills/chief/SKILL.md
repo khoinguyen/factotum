@@ -111,7 +111,9 @@ resolve your own refs once and pass them explicitly.
   peer is unreachable over ft msg, use the shared wrapper
   `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (the peer's tab/workspace title or a
   `surface:N` ref); it calls `cmux agent message`, or pastes once into the surface when the recipient
-  has no agent hook. **Do not use `set-buffer`/`paste-buffer`/`send-key` to message an agent**; keep
+  has no agent hook. A title shared by several surfaces resolves to the live agent (current
+  window/workspace) and fails loudly if none has one, so pass a ref when you know it. **Do not use
+  `set-buffer`/`paste-buffer`/`send-key` to message an agent**; keep
   `paste-buffer` only for input that genuinely needs a terminal.
 - Waking: the ft msg receiver wakes an idle peer at its next poll, exactly as `cmux agent message`
   did. You wake them the same way; do not poll after sending.

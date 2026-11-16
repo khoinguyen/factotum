@@ -15,6 +15,15 @@
 # messages; reserve paste-buffer for input that genuinely needs a terminal. Note
 # the fallback does type into the terminal (once, submitted), unlike the hook
 # path.
+#
+# TITLE RESOLUTION. A restored session can leave duplicate titles behind: the
+# stale surfaces sit in an old window while the live pair is in the current one.
+# First-match-wins therefore risks pasting into a dead shell. When a title
+# matches more than one surface (or, failing that, workspace), the candidates
+# are ranked by liveness - current window, active window, active workspace,
+# active surface - and probed in that order for `recipient_has_agent: true`; a
+# bare surface is never pasted into. If no candidate has a live agent the
+# wrapper fails loudly and asks for an explicit ref instead of guessing.
 set -euo pipefail
 
 usage() { echo "usage: cmux-msg.sh <target> <text...>" >&2; exit 2; }
@@ -24,51 +33,149 @@ target="${1:-}"; shift || true
 [ "$#" -gt 0 ] || { echo "cmux-msg: empty message" >&2; exit 2; }
 text="$*"
 
+# resolve_title <title> prints one tab-separated row per matching surface; only
+# when no surface matches does it print matching workspaces instead. Columns:
+#   score, tree-order, kind, ref, cleanup-surface, display
+# Surfaces outrank workspaces as before (a tab title resolves to the tab). The
+# score encodes liveness; tree-order keeps ties deterministic.
+resolve_title() {
+  cmux tree --all | awk -v n="$1" '
+    function title_of(line) {
+      if (match(line, /"[^"]*"/)) return substr(line, RSTART + 1, RLENGTH - 2)
+      return ""
+    }
+    function emit(kind, ref, cleanup, score, display) {
+      order++
+      print score "\t" order "\t" kind "\t" ref "\t" cleanup "\t" display
+    }
+    /^window window:/ {
+      win_ref = ""
+      if (match($0, /window:[0-9]+/)) win_ref = substr($0, RSTART, RLENGTH)
+      win_base = (index($0, "[current]") ? 16 : 0) + (index($0, "◀ active") ? 8 : 0)
+      ws_ref = ""; ws_title = ""; ws_base = 0
+      next
+    }
+    /workspace workspace:/ {
+      if (match($0, /workspace:[0-9]+/)) ws_ref = substr($0, RSTART, RLENGTH)
+      ws_title = title_of($0)
+      ws_base = (index($0, "◀ active") ? 4 : 0)
+      if (ws_title == n)
+        emit("workspace", ws_ref, "", win_base + ws_base,
+             "workspace \"" n "\" (" win_ref ")")
+      next
+    }
+    /surface surface:/ {
+      if (title_of($0) != n) next
+      if (match($0, /surface:[0-9]+/)) sref = substr($0, RSTART, RLENGTH)
+      score = win_base + ws_base + (index($0, "◀ active") ? 2 : 0)
+      emit("surface", sref, sref, score,
+           "surface " sref " (workspace \"" ws_title "\", " win_ref ")")
+      next
+    }
+  '
+}
+
+# parse_json <json> <key> prints the string/bool value of key, or nothing.
+parse_json() {
+  printf '%s\n' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",]*\)\"\{0,1\}.*/\1/p" | head -1
+}
+
+send_json() { # <ref>; prints cmux agent message's JSON
+  local ref="$1"
+  local -a send=(cmux agent message "$ref")
+  if [ -n "${CMUX_MSG_FROM:-}" ]; then
+    send+=(--from "$CMUX_MSG_FROM")
+  fi
+  send+=(--json -- "$text")
+  "${send[@]}"
+}
+
+# paste_fallback <surface> <json> - deliver to a known bare surface (a single,
+# unambiguous match only), then mark the stray queued copy read.
+paste_fallback() {
+  local surface="$1" json="$2" paste_out
+  # Keep paste's confirmation out of stdout and fail loudly if the submit key was
+  # not sent (cmux pastes the text but exits 0 with a warning). Only mark the
+  # queued copy read once the text actually submitted.
+  paste_out="$(cmux paste --surface "$surface" --submit -- "$text" 2>&1)" || {
+    printf 'cmux-msg: paste failed for %s: %s\n' "$surface" "$paste_out" >&2
+    exit 1
+  }
+  case "$paste_out" in
+    *"submit key was not sent"*)
+      printf 'cmux-msg: %s\n' "$paste_out" >&2
+      exit 1 ;;
+  esac
+  cmux agent inbox --surface "$surface" --state queued --mark-read >/dev/null 2>&1 || true
+  printf '%s\n' "$json"
+}
+
 case "$target" in
   surface:*|workspace:*|tab:*)
-    ref="$target" ;;
-  *)
-    # resolve a tab title to its surface ref
-    ref="$(cmux tree --all | awk -v n="$target" '
-      /surface:/ && index($0, "\"" n "\"")>0 { match($0,/surface:[0-9]+/); print substr($0,RSTART,RLENGTH); exit }')"
-    if [ -z "$ref" ]; then
-      # fall back to a workspace title (match the quoted title literally)
-      ref="$(cmux tree --all | awk -v n="$target" '
-        /workspace / && index($0, "\"" n "\"")>0 { match($0,/workspace:[0-9]+/); print substr($0,RSTART,RLENGTH); exit }')"
+    ref="$target"
+    json="$(send_json "$ref")"
+    has_agent="$(parse_json "$json" recipient_has_agent)"
+    if [ "$has_agent" != "false" ]; then
+      printf '%s\n' "$json"
+      exit 0
     fi
-    [ -n "$ref" ] || { echo "cmux-msg: no surface/workspace named '$target'" >&2; exit 1; }
+    surface="$(parse_json "$json" recipient_surface_ref)"
+    [ -n "$surface" ] || surface="$ref"
+    paste_fallback "$surface" "$json"
+    exit 0
     ;;
 esac
 
-send=(cmux agent message "$ref")
-if [ -n "${CMUX_MSG_FROM:-}" ]; then
-  send+=(--from "$CMUX_MSG_FROM")
+rows="$(resolve_title "$target")"
+surfaces="$(printf '%s\n' "$rows" | awk -F'\t' 'NF && $3 == "surface"')"
+candidates="$surfaces"
+[ -n "$candidates" ] || candidates="$(printf '%s\n' "$rows" | awk -F'\t' 'NF && $3 == "workspace"')"
+
+if [ -z "$candidates" ]; then
+  echo "cmux-msg: no surface/workspace named '$target'" >&2
+  exit 1
 fi
-send+=(--json -- "$text")
 
-json="$("${send[@]}")"
+count="$(printf '%s\n' "$candidates" | wc -l | tr -d '[:space:]')"
+ordered="$(printf '%s\n' "$candidates" | sort -t "$(printf '\t')" -k1,1nr -k2,2n)"
+first="$(printf '%s\n' "$ordered" | head -1)"
+ref="$(printf '%s' "$first" | cut -f4)"
 
-has_agent="$(printf '%s\n' "$json" | sed -n 's/.*"recipient_has_agent"[[:space:]]*:[[:space:]]*\([a-z]*\).*/\1/p' | head -1)"
-
-if [ "$has_agent" != "false" ]; then
-  printf '%s\n' "$json"
+if [ "$count" -eq 1 ]; then
+  json="$(send_json "$ref")"
+  has_agent="$(parse_json "$json" recipient_has_agent)"
+  if [ "$has_agent" != "false" ]; then
+    printf '%s\n' "$json"
+    exit 0
+  fi
+  surface="$(parse_json "$json" recipient_surface_ref)"
+  [ -n "$surface" ] || surface="$(printf '%s' "$first" | cut -f5)"
+  paste_fallback "$surface" "$json"
   exit 0
 fi
 
-surface="$(printf '%s\n' "$json" | sed -n 's/.*"recipient_surface_ref"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-[ -n "$surface" ] || surface="$ref"
+# The title is ambiguous. Deliver only to a candidate that reports a live agent;
+# probing a bare surface only queues a copy there, which is marked read so a
+# later attach does not replay it. Never paste when the title was ambiguous.
+tried=""
+while IFS=$'\t' read -r _score _order _kind cand cleanup display; do
+  [ -n "$cand" ] || continue
+  if ! json="$(send_json "$cand")"; then
+    printf 'cmux-msg: cannot message %s: ambiguous target %s\n' "$cand" "'$target'" >&2
+    exit 1
+  fi
+  has_agent="$(parse_json "$json" recipient_has_agent)"
+  if [ "$has_agent" != "false" ]; then
+    printf '%s\n' "$json"
+    exit 0
+  fi
+  surface="$(parse_json "$json" recipient_surface_ref)"
+  [ -n "$surface" ] || surface="$cleanup"
+  [ -n "$surface" ] && cmux agent inbox --surface "$surface" --state queued --mark-read >/dev/null 2>&1 || true
+  tried="${tried}  ${display}"$'\n'
+done <<<"$ordered"
 
-# Keep paste's confirmation out of stdout and fail loudly if the submit key was
-# not sent (cmux pastes the text but exits 0 with a warning). Only mark the
-# queued copy read once the text actually submitted.
-paste_out="$(cmux paste --surface "$surface" --submit -- "$text" 2>&1)" || {
-  printf 'cmux-msg: paste failed for %s: %s\n' "$surface" "$paste_out" >&2
-  exit 1
-}
-case "$paste_out" in
-  *"submit key was not sent"*)
-    printf 'cmux-msg: %s\n' "$paste_out" >&2
-    exit 1 ;;
-esac
-cmux agent inbox --surface "$surface" --state queued --mark-read >/dev/null 2>&1 || true
-printf '%s\n' "$json"
+printf "cmux-msg: ambiguous target '%s': %s matched and none has a live agent\n" "$target" "$count" >&2
+printf '%s' "$tried" >&2
+printf 'pass an explicit ref instead (e.g. cmux-msg.sh surface:<n> ...)\n' >&2
+exit 1

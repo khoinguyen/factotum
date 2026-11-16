@@ -24,10 +24,22 @@ if [ "${1:-}" = tree ]; then
 fi
 printf '%s\n' "$*" >>"$CMUX_STUB_LOG"
 if [ "${1:-}" = agent ] && [ "${2:-}" = message ]; then
-  if [ "${CMUX_STUB_HAS_AGENT:-true}" = "false" ]; then
-    printf '%s\n' '{"recipient_has_agent" : false, "recipient_surface_ref" : "surface:463"}'
+  target="${3:-}"
+  case "$target" in
+    surface:*) surf="$target" ;;
+    workspace:52) surf=surface:463 ;;
+    workspace:61) surf=surface:461 ;;
+    workspace:71) surf=surface:471 ;;
+    *) surf="$target" ;;
+  esac
+  no_agent=false
+  for t in ${CMUX_STUB_NO_AGENT:-}; do
+    [ "$t" = "$target" ] && no_agent=true
+  done
+  if [ "$no_agent" = true ] || [ "${CMUX_STUB_HAS_AGENT:-true}" = "false" ]; then
+    printf '{"recipient_has_agent" : false, "recipient_surface_ref" : "%s"}\n' "$surf"
   else
-    printf '%s\n' '{"recipient_has_agent" : true, "recipient_surface_ref" : "surface:463"}'
+    printf '{"recipient_has_agent" : true, "recipient_surface_ref" : "%s"}\n' "$surf"
   fi
 elif [ "${1:-}" = paste ]; then
   if [ -n "${CMUX_STUB_PASTE_WARN:-}" ]; then
@@ -102,6 +114,59 @@ assert_fail() {
   esac
 }
 
+# assert_log <name> <expected-call-log> -- <script args...>
+assert_log() {
+  local name="$1" want="$2"; shift 3
+  : >"$CMUX_STUB_LOG"
+  local out
+  if ! out="$("$script" "$@" 2>&1)"; then
+    echo "FAIL $name: script exited non-zero: $out"
+    fail=$((fail + 1))
+    return
+  fi
+  local got
+  got="$(cat "$CMUX_STUB_LOG")"
+  if [ "$got" != "$want" ]; then
+    echo "FAIL $name"
+    echo "  want: $want"
+    echo "  got:  $got"
+    fail=$((fail + 1))
+    return
+  fi
+  pass=$((pass + 1))
+}
+
+# assert_ambiguous_fail <name> <grep> <expected-call-log> -- <script args...>
+# An ambiguous title may be probed (and the stale copies marked read) while it
+# looks for a live agent, but it must fail loudly and never paste.
+assert_ambiguous_fail() {
+  local name="$1" grepfor="$2" want="$3"; shift 4
+  : >"$CMUX_STUB_LOG"
+  local out rc=0
+  out="$("$script" "$@" 2>&1)" || rc=$?
+  local got
+  got="$(cat "$CMUX_STUB_LOG")"
+  if [ "$rc" -eq 0 ]; then
+    echo "FAIL $name: expected non-zero exit"
+    fail=$((fail + 1))
+    return
+  fi
+  case "$got" in
+    *paste*) echo "FAIL $name: pasted into a surface: $got"; fail=$((fail + 1)); return ;;
+  esac
+  if [ "$got" != "$want" ]; then
+    echo "FAIL $name"
+    echo "  want: $want"
+    echo "  got:  $got"
+    fail=$((fail + 1))
+    return
+  fi
+  case "$out" in
+    *"$grepfor"*) pass=$((pass + 1)) ;;
+    *) echo "FAIL $name: stderr lacks '$grepfor': $out"; fail=$((fail + 1)) ;;
+  esac
+}
+
 assert_run "explicit surface ref" \
   "agent message surface:999 --json -- hello world" \
   -- surface:999 hello world
@@ -165,6 +230,122 @@ unset CMUX_MSG_FROM
 assert_fail "unknown target errors" \
   "no surface/workspace named" \
   -- nobody-here ping
+
+# A restored session can leave two surfaces with the same title: the stale one
+# in an old window, the live pair in the current window. Prefer the current
+# window instead of first-match-wins.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1
+├── workspace workspace:10 "restored"
+│   └── pane pane:21
+│       └── surface surface:37 [terminal] "builder-t-demo" [selected]
+window window:2 [current] ◀ active
+├── workspace workspace:20 "live" [selected] ◀ active
+│   └── pane pane:22 [focused] ◀ active
+│       └── surface surface:38 [terminal] "builder-t-demo" [selected] ◀ active
+TREE
+
+assert_run "duplicate titles prefer the current window" \
+  "agent message surface:38 --json -- ping" \
+  -- builder-t-demo ping
+
+# The current window can still hold two same-titled surfaces (two panes, no
+# active surface). Rank is tied, so the recipient's agent decides: probe until
+# one reports a hook-capable agent, and never paste into the bare one.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1 [current] ◀ active
+├── workspace workspace:20 "live" [selected] ◀ active
+│   ├── pane pane:21 [focused] ◀ active
+│   │   └── surface surface:37 [terminal] "builder-t-demo" [selected]
+│   └── pane pane:22
+│       └── surface surface:38 [terminal] "builder-t-demo" [selected]
+TREE
+
+export CMUX_STUB_NO_AGENT="surface:37"
+assert_log "tied duplicates pick the surface with a live agent" \
+"agent message surface:37 --json -- ping
+agent inbox --surface surface:37 --state queued --mark-read
+agent message surface:38 --json -- ping" \
+  -- builder-t-demo ping
+unset CMUX_STUB_NO_AGENT
+
+# When the ranking points at a bare surface but a lower-ranked one has the
+# agent, the agent still wins; a bare shell is never pasted into.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1
+├── workspace workspace:10 "restored"
+│   └── pane pane:21
+│       └── surface surface:37 [terminal] "builder-t-demo" [selected]
+window window:2 [current] ◀ active
+├── workspace workspace:20 "live" [selected] ◀ active
+│   └── pane pane:22 [focused] ◀ active
+│       └── surface surface:38 [terminal] "builder-t-demo" [selected] ◀ active
+TREE
+
+export CMUX_STUB_NO_AGENT="surface:38"
+assert_log "a lower-ranked surface with the agent still wins" \
+"agent message surface:38 --json -- ping
+agent inbox --surface surface:38 --state queued --mark-read
+agent message surface:37 --json -- ping" \
+  -- builder-t-demo ping
+unset CMUX_STUB_NO_AGENT
+
+# Ambiguity with no live agent anywhere fails loudly instead of first-match-wins
+# (and never pastes into a bare shell).
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1 [current] ◀ active
+├── workspace workspace:20 "live" [selected] ◀ active
+│   ├── pane pane:21 [focused] ◀ active
+│   │   └── surface surface:37 [terminal] "builder-t-demo" [selected]
+│   └── pane pane:22
+│       └── surface surface:38 [terminal] "builder-t-demo" [selected]
+TREE
+
+export CMUX_STUB_NO_AGENT="surface:37 surface:38"
+assert_ambiguous_fail "ambiguous titles with no live agent fail loudly" \
+  "ambiguous target 'builder-t-demo'" \
+"agent message surface:37 --json -- ping
+agent inbox --surface surface:37 --state queued --mark-read
+agent message surface:38 --json -- ping
+agent inbox --surface surface:38 --state queued --mark-read" \
+  -- builder-t-demo ping
+unset CMUX_STUB_NO_AGENT
+
+# Duplicate workspace titles follow the same rule.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1
+└── workspace workspace:61 "chief"
+    └── pane pane:21
+        └── surface surface:461 [terminal] "restored bare" [selected]
+window window:2 [current] ◀ active
+└── workspace workspace:71 "chief" [selected] ◀ active
+    └── pane pane:22 [focused] ◀ active
+        └── surface surface:471 [terminal] "ft serve" [selected] ◀ active
+TREE
+
+assert_run "duplicate workspace titles prefer the current window" \
+  "agent message workspace:71 --json -- ping" \
+  -- chief ping
+
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1
+├── workspace workspace:61 "chief"
+│   └── pane pane:21
+│       └── surface surface:461 [terminal] "restored bare" [selected]
+└── workspace workspace:71 "chief"
+    └── pane pane:22 [focused]
+        └── surface surface:471 [terminal] "ft serve" [selected]
+TREE
+
+export CMUX_STUB_NO_AGENT="workspace:61 workspace:71"
+assert_ambiguous_fail "ambiguous workspace titles with no live agent fail loudly" \
+  "ambiguous target 'chief'" \
+"agent message workspace:61 --json -- ping
+agent inbox --surface surface:461 --state queued --mark-read
+agent message workspace:71 --json -- ping
+agent inbox --surface surface:471 --state queued --mark-read" \
+  -- chief ping
+unset CMUX_STUB_NO_AGENT
 
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

@@ -577,6 +577,7 @@ func TestGreenfieldDir(t *testing.T) {
 		{name: "go workspace", setup: []string{"README.md", "go.work"}},
 		{name: "python manifest", setup: []string{"README.md", "pyproject.toml"}},
 		{name: "cargo manifest", setup: []string{"README.md", "Cargo.toml"}},
+		{name: "meson manifest", setup: []string{"README.md", "meson.build"}},
 		{name: "nested source", setup: []string{"README.md", "src/main.go"}},
 		{name: "unknown directory", setup: []string{"cmd/"}},
 	}

@@ -490,7 +490,7 @@ var sourceExtensions = map[string]bool{
 	".lock": true, ".gradle": true, ".sbt": true, ".csproj": true, ".fsproj": true,
 	".vbproj": true, ".sln": true, ".cabal": true, ".gemspec": true, ".podspec": true,
 	".nimble": true, ".rockspec": true, ".bzl": true, ".bazel": true, ".mk": true,
-	".cmake": true, ".props": true, ".targets": true, ".nuspec": true,
+	".cmake": true, ".build": true, ".props": true, ".targets": true, ".nuspec": true,
 	// Schema and generated source definitions.
 	".proto": true, ".thrift": true, ".graphql": true, ".gql": true, ".tf": true,
 	".hcl": true, ".sql": true,

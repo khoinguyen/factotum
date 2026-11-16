@@ -794,17 +794,29 @@ func (d *Deps) driveLoop(cmd *cobra.Command, target projectTarget, targetID stri
 	// One session for the whole loop: the caller's when this invocation inherited
 	// one, else a fresh id, so every task the loop runs lands on one timeline
 	// instead of each run minting its own. A minted session is the loop's to
-	// close: it is bracketed with session.started/session.retired so a finished
-	// goal run does not leave a permanently alive session. An inherited session
-	// belongs to the caller and is never retired here.
+	// close: it is started when the first task is actually about to run - a loop
+	// refused in preflight or selecting no work never starts one, so it leaves no
+	// empty row - and retired on the way out. An inherited session belongs to the
+	// caller and is never started or retired here.
 	session := d.Session
-	mintedSession := session == ""
-	if mintedSession {
+	var startSession func(context.Context) error
+	if session == "" {
 		session = d.Sessions.NewID()
-		if _, err := d.Sessions.Start(cmd.Context(), goal.ProjectID, session); err != nil {
-			return err
+		started := false
+		startSession = func(ctx context.Context) error {
+			if started {
+				return nil
+			}
+			if _, err := d.Sessions.Start(ctx, goal.ProjectID, session); err != nil {
+				return err
+			}
+			started = true
+			return nil
 		}
 		defer func() {
+			if !started {
+				return
+			}
 			// The loop is over whether or not it finished cleanly. `ft run`
 			// turns an operator's INT/TERM into cancellation of this context, so
 			// an interrupted loop unwinds through here too; the context is
@@ -841,6 +853,7 @@ func (d *Deps) driveLoop(cmd *cobra.Command, target projectTarget, targetID stri
 			ServeToken:       d.Config.Serve.Token,
 			StoreEnv:         d.storeEnvFor(target.store),
 			Session:          session,
+			OnPrepared:       startSession,
 			OnResolve:        d.warnLocalPlan,
 		})
 	}

@@ -37,6 +37,15 @@ if [ "${1:-}" = agent ] && [ "${2:-}" = message ]; then
     [ "$t" = "$target" ] && no_agent=true
   done
   if [ "$no_agent" = true ] || [ "${CMUX_STUB_HAS_AGENT:-true}" = "false" ]; then
+    has=false
+  else
+    has=true
+  fi
+  if [ "${CMUX_STUB_NO_SURFACE_REF:-}" = "true" ]; then
+    printf '{"recipient_has_agent" : %s}\n' "$has"
+  elif [ "${CMUX_STUB_AGENT_LAST:-}" = "true" ]; then
+    printf '{"recipient_surface_ref" : "%s", "recipient_has_agent" : %s}\n' "$surf" "$has"
+  elif [ "$has" = "false" ]; then
     printf '{"recipient_has_agent" : false, "recipient_surface_ref" : "%s"}\n' "$surf"
   else
     printf '{"recipient_has_agent" : true, "recipient_surface_ref" : "%s"}\n' "$surf"
@@ -136,10 +145,10 @@ assert_log() {
   pass=$((pass + 1))
 }
 
-# assert_ambiguous_fail <name> <grep> <expected-call-log> -- <script args...>
-# An ambiguous title may be probed (and the stale copies marked read) while it
-# looks for a live agent, but it must fail loudly and never paste.
-assert_ambiguous_fail() {
+# assert_fail_log <name> <grep> <expected-call-log> -- <script args...>
+# A failing resolution may probe candidates (and mark the stale copies read), but
+# it must fail loudly, never paste, and never leak a raw column separator.
+assert_fail_log() {
   local name="$1" grepfor="$2" want="$3"; shift 4
   : >"$CMUX_STUB_LOG"
   local out rc=0
@@ -305,7 +314,7 @@ window window:1 [current] ◀ active
 TREE
 
 export CMUX_STUB_NO_AGENT="surface:37 surface:38"
-assert_ambiguous_fail "ambiguous titles with no live agent fail loudly" \
+assert_fail_log "ambiguous titles with no live agent fail loudly" \
   "ambiguous target 'builder-t-demo'" \
 "agent message surface:37 --json -- ping
 agent inbox --surface surface:37 --state queued --mark-read
@@ -341,7 +350,7 @@ window window:1
 TREE
 
 export CMUX_STUB_NO_AGENT="workspace:61 workspace:71"
-assert_ambiguous_fail "ambiguous workspace titles with no live agent fail loudly" \
+assert_fail_log "ambiguous workspace titles with no live agent fail loudly" \
   "ambiguous target 'chief'" \
 "agent message workspace:61 --json -- ping
 agent inbox --surface surface:461 --state queued --mark-read
@@ -384,7 +393,7 @@ window window:2 [current] ◀ active
 TREE
 
 export CMUX_STUB_NO_AGENT="surface:38 workspace:61"
-assert_ambiguous_fail "a bare surface plus a bare same-titled workspace fails loudly" \
+assert_fail_log "a bare surface plus a bare same-titled workspace fails loudly" \
   "ambiguous target 'chief'" \
 "agent message surface:38 --json -- ping
 agent inbox --surface surface:38 --state queued --mark-read
@@ -429,6 +438,63 @@ TREE
 assert_run "a live workspace joins several same-titled surfaces" \
   "agent message workspace:71 --json -- ping" \
   -- chief ping
+
+# cmux may serialize recipient_has_agent last, so its value must not swallow the
+# trailing brace: "false}" would read as a live agent and skip the probe.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1 [current] ◀ active
+└── workspace workspace:20 "live" [selected] ◀ active
+    ├── pane pane:21 [focused] ◀ active
+    │   └── surface surface:37 [terminal] "builder-t-demo" [selected]
+    └── pane pane:22
+        └── surface surface:38 [terminal] "builder-t-demo" [selected]
+TREE
+
+export CMUX_STUB_AGENT_LAST=true
+export CMUX_STUB_NO_AGENT="surface:37"
+assert_log "a bare candidate with has_agent last still probes on" \
+"agent message surface:37 --json -- ping
+agent inbox --surface surface:37 --state queued --mark-read
+agent message surface:38 --json -- ping" \
+  -- builder-t-demo ping
+
+# ... and a unique bare surface must still take the paste fallback, not report a
+# false success.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1 [current] ◀ active
+└── workspace workspace:20 "live" [selected] ◀ active
+    └── pane pane:21 [focused] ◀ active
+        └── surface surface:37 [terminal] "builder-t-demo" [selected] ◀ active
+TREE
+
+export CMUX_STUB_HAS_AGENT=false
+assert_log "a unique bare surface with has_agent last still pastes" \
+"agent message surface:37 --json -- ping
+paste --surface surface:37 --submit -- ping
+agent inbox --surface surface:37 --state queued --mark-read" \
+  -- builder-t-demo ping
+unset CMUX_STUB_HAS_AGENT
+unset CMUX_STUB_AGENT_LAST
+
+# A workspace with no recipient_surface_ref has nowhere to paste; the "-"
+# sentinel must not become `paste --surface -`.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1 [current] ◀ active
+└── workspace workspace:52 "solo" [selected] ◀ active
+    └── pane pane:21
+        └── surface surface:99 [terminal] "shell" [selected]
+TREE
+
+export CMUX_STUB_NO_SURFACE_REF=true
+export CMUX_STUB_AGENT_LAST=true
+export CMUX_STUB_NO_AGENT="workspace:52"
+assert_fail_log "a workspace with no surface to paste into fails loudly" \
+  "no surface to paste into" \
+"agent message workspace:52 --json -- ping" \
+  -- solo ping
+unset CMUX_STUB_NO_AGENT
+unset CMUX_STUB_AGENT_LAST
+unset CMUX_STUB_NO_SURFACE_REF
 
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

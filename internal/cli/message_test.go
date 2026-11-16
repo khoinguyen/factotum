@@ -2,8 +2,11 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -246,7 +249,7 @@ func TestMessageSendInboxRead(t *testing.T) {
 	}
 
 	read := r.run("msg", "read", messageID)
-	if !strings.Contains(read, "read: true") || !strings.Contains(read, "state: read") {
+	if !strings.Contains(read, "read: true") || !strings.Contains(read, "hello there") {
 		t.Fatalf("read output:\n%s", read)
 	}
 
@@ -269,6 +272,59 @@ func TestMessageReadJSONCarriesReadNotSent(t *testing.T) {
 	readJSON := r.run("msg", "read", messageID, "-o", "json")
 	if !strings.Contains(readJSON, `"read": true`) || strings.Contains(readJSON, `"sent"`) {
 		t.Fatalf("read json should carry read:true and no sent:\n%s", readJSON)
+	}
+}
+
+// TestMessageReadShowsMessageAndAcks pins the shape of `ft msg read`: it shows
+// the message `ft msg get` shows (from, task, reply_to, body) behind the `read`
+// ack line, in both text and -o json, so a caller that acks a message never has
+// to follow up with `ft msg get` to see what it said.
+func TestMessageReadShowsMessageAndAcks(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "work"))
+	first := firstField(t, r.run("msg", "send", "task:"+taskID, "first", "--project", projectID, "--from", "builder-t-1"))
+	second := firstField(t, r.run("msg", "send", "task:"+taskID, "the body text", "--project", projectID, "--from", "builder-t-1", "--reply-to", first))
+
+	stamp := regexp.MustCompile(`(?m)^created_at: .+$`)
+	gotText := stamp.ReplaceAllString(strings.TrimSpace(r.run("msg", "read", second)), "created_at: <ts>")
+	wantText := fmt.Sprintf(`read: true
+(message) %s: read
+from: builder-t-1
+to: task:%s
+task: %s
+reply_to: %s
+project: %s
+created_at: <ts>
+
+=== Body ===
+the body text`, second, taskID, taskID, first, projectID)
+	if gotText != wantText {
+		t.Fatalf("read text output:\n%s\nwant:\n%s", gotText, wantText)
+	}
+
+	var gotJSON map[string]any
+	out := r.run("msg", "read", second, "-o", "json")
+	if err := json.Unmarshal([]byte(out), &gotJSON); err != nil {
+		t.Fatalf("read -o json is not JSON: %v\n%s", err, out)
+	}
+	if _, err := time.Parse(time.RFC3339, fmt.Sprint(gotJSON["created_at"])); err != nil {
+		t.Fatalf("read -o json created_at = %v, want an RFC3339 timestamp", gotJSON["created_at"])
+	}
+	delete(gotJSON, "created_at")
+	wantJSON := map[string]any{
+		"id":       second,
+		"read":     true,
+		"from":     "builder-t-1",
+		"to":       "task:" + taskID,
+		"task_id":  taskID,
+		"reply_to": first,
+		"state":    "read",
+		"body":     "the body text",
+		"project":  projectID,
+	}
+	if !reflect.DeepEqual(gotJSON, wantJSON) {
+		t.Fatalf("read -o json:\n%#v\nwant:\n%#v", gotJSON, wantJSON)
 	}
 }
 

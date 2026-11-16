@@ -570,9 +570,15 @@ func runTargetCheck(id core.TicketID, projectID core.ProjectID, task *core.Ticke
 
 // warnNoReceiver names the receiver consequence and its fix for a run whose
 // named actor resolves to no mailbox, so a launched session nobody can reach is
-// never silent.
+// never silent. The fix is path-specific: the --actor path accepts a loop role,
+// which needs no record, but a caller is only ever resolved as a record, so
+// offering it there would name a fix the caller path cannot take.
 func (d *Deps) warnNoReceiver(ref string) {
-	d.warnf("no message receiver will register for actor %q; the run launches unreachable over ft msg (create it with ft actor create %q, or pass a registered actor or loop role)", ref, ref)
+	if d.Caller != "" {
+		d.warnf("no message receiver will register for actor %q; the run launches unreachable over ft msg (register the caller with ft actor create %q)", ref, ref)
+		return
+	}
+	d.warnf("no message receiver will register for actor %q; the run launches unreachable over ft msg (create the actor with ft actor create %q, or pass a loop role)", ref, ref)
 }
 
 func (d *Deps) runTask(cmd *cobra.Command, taskID string, opts runOptions) error {
@@ -588,8 +594,6 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID string, opts runOptions) error
 		return err
 	}
 
-	actor := d.runActor(cmd.Context(), target.actors)
-	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
@@ -605,9 +609,11 @@ func (d *Deps) runTask(cmd *cobra.Command, taskID string, opts runOptions) error
 		if prompt != "" {
 			return usageError(cmd, "--prompt-file and --prompt-artifact apply to a single task or task-less run, not a capture (%s %s)", task.Kind, task.ID)
 		}
-		return d.driveLoop(cmd, target, taskID, opts, sel, actor)
+		return d.driveLoop(cmd, target, taskID, opts, sel)
 	}
 
+	actor := d.runActor(cmd.Context(), target.actors)
+	d.warnIncompleteHubForRun(actor)
 	interactive := d.runInteractive(cmd, opts.unattended)
 
 	progress := d.startRunProgress(runProgressLabel("run "+taskID, sel.backendName, sel.harness.Name()), interactive)
@@ -719,18 +725,19 @@ func (d *Deps) runGoal(cmd *cobra.Command, goalID string, opts runOptions) error
 	}
 	defer target.close()
 
-	actor := d.runActor(cmd.Context(), target.actors)
-	d.warnIncompleteHubForRun(actor)
 	sel, err := d.prepareRun(cmd, opts)
 	if err != nil {
 		return err
 	}
-	return d.driveLoop(cmd, target, goalID, opts, sel, actor)
+	return d.driveLoop(cmd, target, goalID, opts, sel)
 }
 
 // driveLoop runs the loop target - a task, milestone, or capture - through the
-// single-task service, reusing an already-resolved run selection.
-func (d *Deps) driveLoop(cmd *cobra.Command, target projectTarget, targetID string, opts runOptions, sel *runSelection, actor *core.ActorID) error {
+// single-task service, reusing an already-resolved run selection. It resolves
+// the receiver actor on the first iteration, not up front: a goal that selects
+// no work launches no session and installs no receiver, so warning about one
+// would be a false alarm.
+func (d *Deps) driveLoop(cmd *cobra.Command, target projectTarget, targetID string, opts runOptions, sel *runSelection) error {
 	goal, err := target.tasks.Get(cmd.Context(), core.TicketID(targetID))
 	if err := runTargetCheck(core.TicketID(targetID), d.resolveProject(opts.project), goal, err); err != nil {
 		return err
@@ -748,7 +755,17 @@ func (d *Deps) driveLoop(cmd *cobra.Command, target projectTarget, targetID stri
 	if session == "" {
 		session = d.Sessions.NewID()
 	}
+	// The actor (and the receiver it installs) is resolved when the loop first
+	// launches a task, so a run that selects no work never warns about a
+	// receiver it never starts.
+	var actor *core.ActorID
+	actorResolved := false
 	runner := func(ctx context.Context, taskID core.TicketID) (*app.RunOutcome, error) {
+		if !actorResolved {
+			actor = d.runActor(ctx, target.actors)
+			d.warnIncompleteHubForRun(actor)
+			actorResolved = true
+		}
 		progress := d.startRunProgress(runProgressLabel("run "+string(taskID), sel.backendName, sel.harness.Name()), false)
 		defer progress.stop()
 		return svc.Run(ctx, app.RunInput{

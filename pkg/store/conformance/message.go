@@ -640,6 +640,7 @@ func testMessagePrune(t *testing.T, repo store.MessageRepo, ctx context.Context)
 	const project = core.ProjectID("prj-prune")
 	// Prune is global (no project scope), so these timestamps sit far from the
 	// other subtests' messages to keep the count deterministic.
+	ancient := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	young := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 	cutoff := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -652,6 +653,16 @@ func testMessagePrune(t *testing.T, repo store.MessageRepo, ctx context.Context)
 		queuedMessage("p-read-young", project, core.ActorAddress("act-1"), young),
 		queuedMessage("p-read-acked-recently", project, core.ActorAddress("act-1"), old),
 		queuedMessage("p-read-acked-long-ago", project, core.ActorAddress("act-1"), young),
+		// Live work survives no matter how old it is: a mixed-state sweep that
+		// names its state may still never reclaim queued or in-flight rows.
+		queuedMessage("p-queued-ancient", project, core.ActorAddress("act-1"), ancient),
+		queuedMessage("p-delivered-ancient", project, core.ActorAddress("act-1"), ancient),
+		// The cutoff is exclusive: a terminal row updated exactly at it stays.
+		queuedMessage("p-read-at-cutoff", project, core.ActorAddress("act-1"), old),
+		queuedMessage("p-failed-at-cutoff", project, core.ActorAddress("act-1"), old),
+		// Age comes from UpdatedAt alone: created at the cutoff but terminal
+		// long before is already stale.
+		queuedMessage("p-read-created-at-cutoff", project, core.ActorAddress("act-1"), cutoff),
 	}
 	messages[1].State = core.MessageDelivered
 	messages[2].State = core.MessageRead
@@ -664,6 +675,13 @@ func testMessagePrune(t *testing.T, repo store.MessageRepo, ctx context.Context)
 	messages[5].UpdatedAt = young
 	messages[6].State = core.MessageRead
 	messages[6].UpdatedAt = old
+	messages[8].State = core.MessageDelivered
+	messages[9].State = core.MessageRead
+	messages[9].UpdatedAt = cutoff
+	messages[10].State = core.MessageFailed
+	messages[10].UpdatedAt = cutoff
+	messages[11].State = core.MessageRead
+	messages[11].UpdatedAt = old
 	for _, message := range messages {
 		if err := repo.Create(ctx, message); err != nil {
 			t.Fatalf("Create(%s) error = %v", message.ID, err)
@@ -680,21 +698,39 @@ func testMessagePrune(t *testing.T, repo store.MessageRepo, ctx context.Context)
 		t.Fatalf("Prune(non-terminal states) = (%d, %v), want (0, nil)", moved, err)
 	}
 
-	moved, err := repo.Prune(ctx, cutoff, []core.MessageState{core.MessageRead, core.MessageFailed})
+	// A mixed request — terminal and live states in the same slice — still
+	// prunes only the stale terminal rows: queued/delivered rows survive at any
+	// age, which is what an unfiltered DELETE would get wrong.
+	allStates := []core.MessageState{core.MessageRead, core.MessageFailed, core.MessageQueued, core.MessageDelivered}
+	moved, err := repo.Prune(ctx, cutoff, allStates)
 	if err != nil {
-		t.Fatalf("Prune() error = %v", err)
+		t.Fatalf("Prune(mixed states) error = %v", err)
 	}
-	if moved != 3 {
-		t.Fatalf("Prune() moved = %d, want 3", moved)
+	if moved != 4 {
+		t.Fatalf("Prune(mixed states) moved = %d, want 4", moved)
 	}
-	for _, gone := range []core.MessageID{"p-read-old", "p-failed-old", "p-read-acked-long-ago"} {
+	for _, gone := range []core.MessageID{"p-read-old", "p-failed-old", "p-read-acked-long-ago", "p-read-created-at-cutoff"} {
 		if _, err := repo.Get(ctx, gone); !errors.Is(err, core.ErrNotFound) {
 			t.Fatalf("Get(%s) after prune error = %v, want ErrNotFound", gone, err)
 		}
 	}
-	for _, kept := range []core.MessageID{"p-queued", "p-delivered", "p-read-young", "p-read-acked-recently"} {
+	for _, kept := range []core.MessageID{
+		"p-queued", "p-delivered", "p-queued-ancient", "p-delivered-ancient",
+		"p-read-young", "p-read-acked-recently", "p-read-at-cutoff", "p-failed-at-cutoff",
+	} {
 		if _, err := repo.Get(ctx, kept); err != nil {
 			t.Fatalf("Get(%s) after prune error = %v, want kept", kept, err)
+		}
+	}
+
+	// A second sweep over the terminal states removes nothing: everything left
+	// is either live or updated at or after the exclusive cutoff.
+	if moved, err := repo.Prune(ctx, cutoff, []core.MessageState{core.MessageRead, core.MessageFailed}); err != nil || moved != 0 {
+		t.Fatalf("Prune(terminal states again) = (%d, %v), want (0, nil)", moved, err)
+	}
+	for _, kept := range []core.MessageID{"p-queued", "p-delivered", "p-queued-ancient", "p-delivered-ancient"} {
+		if _, err := repo.Get(ctx, kept); err != nil {
+			t.Fatalf("Get(%s) after terminal sweep error = %v, want kept", kept, err)
 		}
 	}
 }

@@ -18,6 +18,16 @@
 // deliver. The poll loop runs off the agent's turn, so injection never blocks
 // tool execution.
 //
+// Health means "claiming", not "the process is up". The hub reads a renewed run
+// lease as a working peer, so a receiver that cannot claim while still
+// heartbeating is an inert agent that quietly queues every handoff behind a
+// live-looking TUI. This receiver therefore renews its lease only while its
+// claim loop is running and it has a session to inject into; while parked it lets
+// the lease lapse, so `ft msg runs --live` reports the peer as gone instead of
+// healthy. Neither a failed registration nor a failed claim may end the
+// receiver silently: registration is retried, the claim loop catches every
+// error and keeps polling, and both transitions are logged.
+//
 // OpenCode reloads a plugin when its staged file changes, which restarts the
 // receiver with no session. Persisting the session in the V2 context's storage
 // lets the reloaded receiver resume it instead of waiting for an event: an idle
@@ -39,6 +49,7 @@
 //	FACTOTUM_MSG_WAIT_MS  long-poll window (default 25000)
 //	FACTOTUM_MSG_TTL_MS   run lease (default 90000)
 //	FACTOTUM_MSG_SESSION_WAIT_MS  how long to wait for a session (default 10000)
+//	FACTOTUM_MSG_RETRY_MS  delay before retrying a failed register or claim (default 1000)
 //
 // With no project/actor configured the plugin is inert, so it is safe to load
 // in an ordinary OpenCode session.
@@ -47,6 +58,7 @@ import { spawn } from "node:child_process";
 
 export const DEFAULT_WAIT_MS = 25000;
 export const DEFAULT_TTL_MS = 90000;
+export const DEFAULT_RETRY_MS = 1000;
 const SESSION_WAIT_MS = 10000;
 const SESSION_POLL_MS = 50;
 
@@ -81,6 +93,7 @@ export function configFromEnv(env) {
     pid: num(env.FACTOTUM_PID, process.pid),
     waitMs: num(env.FACTOTUM_MSG_WAIT_MS, DEFAULT_WAIT_MS),
     ttlMs: num(env.FACTOTUM_MSG_TTL_MS, DEFAULT_TTL_MS),
+    retryMs: num(env.FACTOTUM_MSG_RETRY_MS, DEFAULT_RETRY_MS),
     sessionWaitMs: num(env.FACTOTUM_MSG_SESSION_WAIT_MS, SESSION_WAIT_MS),
     msgUrl: normalizeMsgURL(env.FACTOTUM_MSG_URL),
     token: (env.FACTOTUM_SERVE_TOKEN || "").trim(),
@@ -245,10 +258,33 @@ export function createFactotumReceiver({
   if (typeof inject !== "function") throw new Error("factotum receiver: inject is required");
   if (typeof call !== "function") throw new Error("factotum receiver: call is required");
 
+  // Both delays come from config, with the module defaults when a caller builds
+  // its own config: a zero retry delay would spin on a persistent failure, and a
+  // zero restore interval would hammer storage while parked.
+  const retryMs = num(config.retryMs, DEFAULT_RETRY_MS);
+  const restoreEveryMs = Math.max(SESSION_POLL_MS, num(config.sessionWaitMs, SESSION_WAIT_MS));
+
   let runID = "";
   let sessionID = "";
   let stopped = false;
   let heartbeatTimer = null;
+  // loopRunning and parked describe what the receiver can do right now, not
+  // whether the process is up. healthy() is the lease gate and parked drives the
+  // one-shot log line; both exist so an inert receiver is visible from outside.
+  let loopRunning = false;
+  let parked = false;
+  let lastRestoreAt = 0;
+
+  // healthy reports whether this receiver can actually deliver a message: it is
+  // not disposing, its claim loop is running, and it has a session to inject
+  // into. A receiver that fails this must not renew its lease - the hub reads a
+  // renewed lease as a working peer, and `ft msg runs --live` would otherwise
+  // report a healthy agent while every handoff sat queued behind an inert
+  // plugin. Letting the lease lapse makes the failure detectable without a
+  // screen.
+  function healthy() {
+    return !stopped && loopRunning && !!sessionID;
+  }
 
   async function register() {
     const out = await call({
@@ -257,6 +293,25 @@ export function createFactotumReceiver({
     });
     runID = out?.run_id || "";
     if (!runID) throw new Error("ft msg agent register returned no run_id");
+  }
+
+  // registerWithRetry keeps trying until the receiver is disposed. Registration
+  // used to be a single attempt: a transient store or lock error rejected
+  // start(), which both entrypoints swallow, leaving an agent with a live TUI,
+  // no run and no claim loop for as long as it lived. Retrying turns that silent
+  // death into a slow start.
+  async function registerWithRetry() {
+    for (let attempt = 1; !stopped; attempt += 1) {
+      try {
+        await register();
+        log(`factotum msg: registered actor ${config.actor} as run ${runID}`);
+        return true;
+      } catch (error) {
+        log(`factotum msg: register attempt ${attempt} failed: ${error?.message || error}; retrying in ${retryMs}ms`);
+        await sleep(retryMs);
+      }
+    }
+    return false;
   }
 
   async function claim() {
@@ -299,6 +354,7 @@ export function createFactotumReceiver({
   function rememberSession(sid) {
     if (sid === sessionID) return;
     sessionID = sid;
+    parked = false;
     if (typeof saveSession === "function") {
       void Promise.resolve(saveSession(sid)).catch(() => {});
     }
@@ -310,10 +366,27 @@ export function createFactotumReceiver({
     if (sessionID || typeof loadSession !== "function") return;
     try {
       const sid = await loadSession();
-      if (sid) sessionID = sid;
+      if (sid) rememberSession(sid);
     } catch (error) {
       log(`factotum msg session restore failed: ${error?.message || error}`);
     }
+  }
+
+  // park waits for a session to inject into, retrying the persisted-session
+  // lookup on the way. A reload's save is fire-and-forget and storage can become
+  // readable after the first read, so one failed lookup must not strand the
+  // receiver: an idle agent gets no event to announce a session, and without
+  // this it would park for the life of the process. The transition is logged
+  // once, and the lease lapses meanwhile (see healthy()).
+  async function park() {
+    if (!parked) {
+      parked = true;
+      log("factotum msg: no opencode session to inject into yet; not claiming, so this run's lease lapses until a session appears");
+    }
+    await sleep(SESSION_POLL_MS);
+    if (Date.now() - lastRestoreAt < restoreEveryMs) return;
+    lastRestoreAt = Date.now();
+    await restoreSession();
   }
 
   async function deliver(message) {
@@ -338,28 +411,35 @@ export function createFactotumReceiver({
     }
   }
 
+  // poll runs one claim step: with no session there is nowhere to inject, so it
+  // parks rather than claiming (a claimed message it cannot inject would be
+  // dropped or burn an attempt); otherwise it claims and delivers.
+  async function poll() {
+    if (!sessionID) {
+      await park();
+      return;
+    }
+    const message = await claim();
+    if (!message) return;
+    await deliver(message);
+  }
+
+  // The loop never ends on an error. A rejection here would otherwise stop
+  // claiming for the life of the process while the heartbeat kept renewing the
+  // run, which is exactly the inert receiver this receiver must not become.
   async function loop() {
-    while (!stopped) {
-      if (!sessionID) {
-        // With no OpenCode session there is nowhere to inject a claimed
-        // message, and releasing it consumes a delivery attempt. So wait for
-        // the session before claiming (start() restores a persisted one; else an
-        // event announces it): the message stays queued and is delivered once
-        // this receiver learns its session, rather than being claimed and
-        // dropped while the agent idles.
-        await sleep(SESSION_POLL_MS);
-        continue;
+    loopRunning = true;
+    try {
+      while (!stopped) {
+        try {
+          await poll();
+        } catch (error) {
+          log(`factotum msg: claim failed: ${error?.message || error}`);
+          await sleep(retryMs);
+        }
       }
-      let message;
-      try {
-        message = await claim();
-      } catch (error) {
-        log(`factotum msg claim failed: ${error?.message || error}`);
-        await sleep(1000);
-        continue;
-      }
-      if (!message) continue;
-      await deliver(message);
+    } finally {
+      loopRunning = false;
     }
   }
 
@@ -372,11 +452,17 @@ export function createFactotumReceiver({
       if (typeof sid === "string" && sid) rememberSession(sid);
     },
     async start() {
-      await register();
+      if (!(await registerWithRetry())) return;
       if (stopped) return;
       await restoreSession();
       if (stopped) return;
-      heartbeatTimer = setIntervalFn(() => { heartbeat().catch(() => {}); }, Math.max(1000, Math.floor(config.ttlMs / 3)));
+      lastRestoreAt = Date.now();
+      heartbeatTimer = setIntervalFn(() => {
+        // Renew only while the receiver can claim (see healthy()). An inert
+        // receiver lets its lease lapse so the hub sees the peer as gone.
+        if (!healthy()) return;
+        heartbeat().catch((error) => log(`factotum msg: heartbeat failed: ${error?.message || error}`));
+      }, Math.max(1000, Math.floor(config.ttlMs / 3)));
       void loop();
     },
     async dispose() {
@@ -510,12 +596,26 @@ export function subscribeContextEvents(ctx, onEvent, { controller = new AbortCon
 }
 
 /**
+ * pluginLog writes a receiver diagnostic to OpenCode's log stream. The observed
+ * inert-receiver failures had to be diagnosed off a screen; the receiver's own
+ * state transitions (registered, parked, retrying, failed) must be readable in
+ * the log instead.
+ */
+export function pluginLog(message) {
+  try {
+    console.error(`[factotum.msg] ${message}`);
+  } catch (_) {
+    // A host without console must not break the receiver.
+  }
+}
+
+/**
  * setupV2 is the V2 entrypoint: it wires the shared receiver to the context's
  * session and event domains and returns the cleanup OpenCode calls on unload.
- * The `env`/`call` seams exist only so the protocol is testable without a live
- * OpenCode runtime.
+ * The `env`/`call`/`log` seams exist only so the protocol is testable without a
+ * live OpenCode runtime.
  */
-export function setupV2(ctx, { env = process.env, call, loadSession, saveSession } = {}) {
+export function setupV2(ctx, { env = process.env, call, loadSession, saveSession, log = pluginLog } = {}) {
   const config = configFromEnv(env);
   if (!config) return undefined;
   const store = msgSessionStore(ctx, config);
@@ -525,11 +625,12 @@ export function setupV2(ctx, { env = process.env, call, loadSession, saveSession
     inject: makeContextInjector(ctx?.session),
     loadSession: loadSession || store.load,
     saveSession: saveSession || store.save,
+    log,
   });
   const stop = subscribeContextEvents(ctx, (event) => receiver.onEvent(event));
   // Registration and the claim loop run off the load path so the plugin never
   // blocks OpenCode startup.
-  receiver.start().catch(() => {});
+  receiver.start().catch((error) => log(`factotum msg: receiver start failed: ${error?.message || error}`));
   return () => {
     stop();
     void receiver.dispose();
@@ -557,6 +658,7 @@ export default {
       config,
       call: selectCall(config),
       inject: makeInjector(input?.client),
+      log: pluginLog,
     });
     const hooks = {
       event: async ({ event }) => receiver.onEvent(event),
@@ -564,7 +666,7 @@ export default {
     };
     // Registration and the claim loop run off the load path so the plugin never
     // blocks OpenCode startup.
-    receiver.start().catch(() => {});
+    receiver.start().catch((error) => pluginLog(`factotum msg: receiver start failed: ${error?.message || error}`));
     return hooks;
   },
   ...(v2plugin || {}),

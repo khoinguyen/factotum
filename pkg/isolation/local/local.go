@@ -168,9 +168,16 @@ type environment struct {
 	procs map[*process]struct{}
 }
 
-// process is one running command, tracked so Stop can cancel it.
+// process is one command the environment ran, tracked for the run's lifetime so
+// the run's teardown can end what the command left behind: a command that exited
+// on its own has no direct child left to signal, but a worker it forked is still
+// in the process group the command owned.
 type process struct {
+	// cancel stops the command while it is still running.
 	cancel context.CancelFunc
+	// end ends the command's tree, and is safe once the direct child has exited.
+	// It is what a command's own exit and the environment's Stop/Delete share.
+	end func() error
 }
 
 // handle is the opaque isolation.Handle for a prepared local environment.
@@ -297,12 +304,18 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 		return nil, fmt.Errorf("isolation/local: start %q: %w", cmd.Argv[0], err)
 	}
 
-	proc := &process{cancel: cancel}
+	proc := &process{cancel: cancel, end: func() error { return procgroup.KillGroup(c) }}
 	env.track(proc)
 	go func() {
 		waitErr := c.Wait()
 		exited.Store(true)
-		env.untrack(proc)
+		// The command is gone; the run is not. The group the command was isolated
+		// into outlives its leader, so a worker it forked is still in it: end the
+		// group before the result is reported, or a command that exits on its own
+		// leaves that worker running. A group with no survivors makes this a
+		// no-op. The process stays tracked so the environment's Stop and Delete
+		// can signal the group again if something forked into it late.
+		_ = proc.end()
 		cancel()
 		ex.finish(c.ProcessState, waitErr)
 	}()
@@ -338,7 +351,7 @@ func (b *Backend) execAttached(c *exec.Cmd, env *environment, cmd isolation.Comm
 	c.WaitDelay = orphanDrainGrace
 
 	var exited atomic.Bool
-	c.Cancel = func() error {
+	stop := func() error {
 		if exited.Load() {
 			return nil
 		}
@@ -350,6 +363,7 @@ func (b *Backend) execAttached(c *exec.Cmd, env *environment, cmd isolation.Comm
 		_ = procgroup.KillTree(c.Process.Pid)
 		return c.Process.Kill()
 	}
+	c.Cancel = stop
 
 	ex := newExecution()
 	if err := c.Start(); err != nil {
@@ -357,11 +371,17 @@ func (b *Backend) execAttached(c *exec.Cmd, env *environment, cmd isolation.Comm
 		return nil, fmt.Errorf("isolation/local: start %q: %w", cmd.Argv[0], err)
 	}
 
-	proc := &process{cancel: cancel}
+	proc := &process{cancel: cancel, end: stop}
 	env.track(proc)
 	go func() {
 		waitErr := c.Wait()
 		exited.Store(true)
+		// Unlike the detached path there is no group of the run's own to end
+		// here: the child stayed in ft's group so the terminal kept working, and
+		// a worker it forked was reparented away from it at its exit, so the walk
+		// that serves Stop cannot find it afterwards either. Tearing that down
+		// needs the child to own a session and become the terminal's foreground
+		// group - a design change, not a local fix.
 		env.untrack(proc)
 		cancel()
 		ex.finish(c.ProcessState, waitErr)
@@ -583,9 +603,22 @@ func (e *environment) untrack(p *process) {
 
 func (e *environment) stop() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	procs := make([]*process, 0, len(e.procs))
 	for p := range e.procs {
+		procs = append(procs, p)
+	}
+	e.procs = map[*process]struct{}{}
+	e.mu.Unlock()
+
+	// Both halves run for every tracked command: cancel stops one still running,
+	// and end reaches what a command that already exited left in its group. The
+	// entries are dropped here because stopping is what the run's teardown is:
+	// there is nothing left to track once the group has been signalled.
+	for _, p := range procs {
 		p.cancel()
+		// A group that is already gone is not a teardown failure - the intended
+		// state holds - so ending it stays best-effort, like the tree walk.
+		_ = p.end()
 	}
 }
 

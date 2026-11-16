@@ -16,7 +16,10 @@ func Isolate(cmd *exec.Cmd) {
 
 // KillGroup SIGKILLs cmd's process group. A group that is already gone is not an
 // error: cancellation races a command that exited on its own, and the intended
-// state - nothing left running - already holds.
+// state - nothing left running - already holds. That makes it the teardown a
+// command's own exit also needs: its pid remains the group id while a worker it
+// forked is still in the group, so the same call reaches that worker after Wait
+// has reaped the direct child.
 func KillGroup(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil

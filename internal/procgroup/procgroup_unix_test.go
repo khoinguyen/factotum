@@ -37,6 +37,34 @@ func TestKillGroupKillsDescendants(t *testing.T) {
 	}
 }
 
+// TestKillGroupAfterLeaderExitKillsDescendants pins the trigger a leader's own
+// exit creates: the group outlives its leader, so a worker the command forked is
+// still in it after Wait has reaped the direct child. The group kill is what
+// tears that worker down; without it the worker outlives the run that owns it.
+func TestKillGroupAfterLeaderExitKillsDescendants(t *testing.T) {
+	dir := t.TempDir()
+	// The worker writes its pid and then leaves the inherited stdout alone, so
+	// the leader's exit does not wait on the pipe it would otherwise hold.
+	cmd := exec.Command("sh", "-c", "sleep 30 >/dev/null 2>&1 & echo $! > child.pid")
+	cmd.Dir = dir
+	procgroup.Isolate(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	pid := waitForPID(t, filepath.Join(dir, "child.pid"))
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("Wait() error = %v, want the leader to exit on its own", err)
+	}
+
+	if err := procgroup.KillGroup(cmd); err != nil {
+		t.Fatalf("KillGroup() error = %v", err)
+	}
+	if !waitGone(pid) {
+		t.Fatalf("descendant pid %d survived a group kill after the leader exited", pid)
+	}
+}
+
 // TestKillGroupIgnoresGoneGroup pins that killing a group that no longer exists
 // is a no-op, not an error: cancellation races a command that exited on its own,
 // and the intended state (nothing left running) already holds.

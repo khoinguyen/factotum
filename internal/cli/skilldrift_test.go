@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"io/fs"
@@ -24,17 +25,31 @@ func skillDriftRoot(t *testing.T) *cobra.Command {
 	return NewRoot(deps)
 }
 
-// skillHeadroom is the free space every embedded skill keeps under the output
-// bound. With no headroom, the next one-line addition to any skill turns an
-// unrelated PR red and the cheapest fix is an arbitrary trim; ten lines absorbs
-// a small edit while the bound still fails a skill that keeps growing.
-const skillHeadroom = 10
+// skillLineHeadroom is the free space every embedded skill keeps under the
+// output bound's line limit. With no headroom, the next one-line addition to any
+// skill turns an unrelated PR red and the cheapest fix is an arbitrary trim; ten
+// lines absorbs a small edit while the bound still fails a skill that keeps
+// growing.
+const skillLineHeadroom = 10
+
+// skillByteHeadroom is the same idea on the byte axis, which is the one that
+// actually truncated: a skill at the ceiling has room for a sentence, not an
+// edit, so one added word reds an unrelated PR. Both axes are budgets, not
+// ceilings — each rendering must stay skillByteHeadroom bytes under the bound.
+const skillByteHeadroom = 1024
+
+// skillFormats are the shapes `ft skill get` can print. Each is measured: json
+// escapes and quotes the body and yaml indents it, so the format that fits is
+// never proof the others do.
+var skillFormats = []string{"text", "json", "yaml"}
 
 // TestEmbeddedSkillsFitOutputBound guards `ft skill get` against the output
 // bound silently truncating a skill: when stdout is not a terminal the printed
-// window keeps only a head and tail, so a piped skill must stay under
-// maxOutputLines with headroom and at or below maxOutputBytes. The guard fails
-// before truncation can reach an agent.
+// window keeps only a head and tail, so every rendering of a skill must stay
+// under maxOutputLines (lines) and maxOutputBytes (bytes) with headroom. The
+// guard renders each skill through the command's own renderer, so it measures
+// what a caller gets in text, json, and yaml alike; the guard fails before
+// truncation can reach an agent.
 func TestEmbeddedSkillsFitOutputBound(t *testing.T) {
 	all, err := skills.All()
 	if err != nil {
@@ -44,108 +59,185 @@ func TestEmbeddedSkillsFitOutputBound(t *testing.T) {
 		t.Fatal("no embedded skills to check")
 	}
 	for _, skill := range all {
-		for _, finding := range skillBoundFindings(skill.Name, skill.Body) {
+		doc := skillDoc{Name: skill.Name, Description: skill.Description, Body: skill.Body}
+		for _, finding := range skillBoundFindings(doc) {
 			t.Error(finding)
 		}
 	}
 }
 
-// TestSkillBoundFindingKeepsHeadroom pins the line half of the guard: a skill at
-// the allowed size passes, one line over fails naming the budget, and a skill at
-// the raw output bound still fails, so the bound cannot quietly become the
-// budget.
-func TestSkillBoundFindingKeepsHeadroom(t *testing.T) {
-	budget := maxOutputLines - skillHeadroom
+// TestSkillBoundFindingKeepsLineHeadroom pins the line half of the guard: a
+// skill at the allowed size passes, one line over fails naming the budget, and a
+// skill at the raw output bound still fails, so the bound cannot quietly become
+// the budget.
+func TestSkillBoundFindingKeepsLineHeadroom(t *testing.T) {
+	budget := maxOutputLines - skillLineHeadroom
 	body := func(lines int) string { return strings.Repeat("line\n", lines) }
 	cases := []struct {
 		name     string
 		lines    int
 		wantFail bool
 	}{
-		{name: "well under", lines: skillHeadroom, wantFail: false},
+		{name: "well under", lines: skillLineHeadroom, wantFail: false},
 		{name: "exactly the budget", lines: budget, wantFail: false},
 		{name: "one line over the budget", lines: budget + 1, wantFail: true},
 		{name: "at the output bound", lines: maxOutputLines, wantFail: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			findings := skillBoundFindings("probe", body(tc.lines))
+			findings := skillBoundFindings(skillDoc{Name: "probe", Body: body(tc.lines)})
 			if !tc.wantFail {
 				if len(findings) != 0 {
 					t.Fatalf("skillBoundFindings(%d lines) = %v, want it to fit", tc.lines, findings)
 				}
 				return
 			}
-			if !strings.Contains(strings.Join(findings, "\n"), fmt.Sprintf("at or below %d", budget)) {
+			joined := strings.Join(findings, "\n")
+			if !strings.Contains(joined, fmt.Sprintf("at or below %d", budget)) || !strings.Contains(joined, " lines") {
 				t.Fatalf("skillBoundFindings(%d lines) = %v, want the %d-line budget named", tc.lines, findings, budget)
 			}
 		})
 	}
 }
 
-// TestSkillBoundFindingChecksByteBudget pins the byte half of the guard, which
-// the line count cannot see: the body is rendered verbatim, so one byte over
-// maxOutputBytes truncates `ft skill get`. The probe bodies are a single line,
-// so every case is line-neutral and only the byte budget can fail it.
-func TestSkillBoundFindingChecksByteBudget(t *testing.T) {
-	// body returns a one-line body of exactly size bytes, ending in a newline
-	// like the embedded skills do.
-	body := func(size int) string { return strings.Repeat("x", size-1) + "\n" }
+// TestSkillBoundFindingChecksByteBudgetPerFormat pins the byte half of the
+// guard, which the line count cannot see: the body is printed (text) or
+// serialized (json/yaml) whole, so a rendering over the byte budget truncates
+// `ft skill get`. Each format is probed directly so the envelope of the other
+// shapes cannot mask the axis under test, and the budget — the bound less
+// skillByteHeadroom — is what passes, not the raw bound.
+func TestSkillBoundFindingChecksByteBudgetPerFormat(t *testing.T) {
+	budget := maxOutputBytes - skillByteHeadroom
+	// A one-line rendering of exactly size bytes, so only the byte axis is in
+	// play.
+	rendering := func(size int) []byte { return []byte(strings.Repeat("x", size-1) + "\n") }
 	cases := []struct {
 		name     string
-		body     string
+		size     int
 		wantFail bool
 	}{
-		{name: "well under", body: body(maxOutputBytes / 2), wantFail: false},
-		{name: "one byte under the budget", body: body(maxOutputBytes - 1), wantFail: false},
-		{name: "exactly the byte budget", body: body(maxOutputBytes), wantFail: false},
-		{name: "one byte over the budget", body: body(maxOutputBytes + 1), wantFail: true},
-		{name: "the newline the command adds pushes it over", body: strings.Repeat("x", maxOutputBytes), wantFail: true},
+		{name: "well under", size: budget / 2, wantFail: false},
+		{name: "one byte under the budget", size: budget - 1, wantFail: false},
+		{name: "exactly the byte budget", size: budget, wantFail: false},
+		{name: "one byte over the budget", size: budget + 1, wantFail: true},
+		{name: "at the raw output bound", size: maxOutputBytes, wantFail: true},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			findings := skillBoundFindings("probe", tc.body)
-			if !tc.wantFail {
-				if len(findings) != 0 {
-					t.Fatalf("skillBoundFindings(%d bytes) = %v, want it to fit", len(tc.body), findings)
+	for _, format := range skillFormats {
+		for _, tc := range cases {
+			t.Run(format+"/"+tc.name, func(t *testing.T) {
+				findings := skillRenderFindings("probe", format, rendering(tc.size))
+				if !tc.wantFail {
+					if len(findings) != 0 {
+						t.Fatalf("skillRenderFindings(%s, %d bytes) = %v, want it to fit", format, tc.size, findings)
+					}
+					return
 				}
-				return
+				joined := strings.Join(findings, "\n")
+				if !strings.Contains(joined, fmt.Sprintf("at or below %d", budget)) {
+					t.Fatalf("skillRenderFindings(%s, %d bytes) = %v, want the %d-byte budget named", format, tc.size, findings, budget)
+				}
+				if !strings.Contains(joined, format+" output") {
+					t.Fatalf("skillRenderFindings(%s, %d bytes) = %v, want the rendered format named", format, tc.size, findings)
+				}
+			})
+		}
+	}
+}
+
+// TestSkillBoundFindingsSeesStructuredRenderings pins the regression this guard
+// exists for: a body that fits as text can still serialize past the byte budget,
+// and the guard must say so rather than pass on the text rendering alone. json
+// doubles every newline and yaml indents every line, so a newline-heavy body is
+// the case the old text-only measurement missed.
+func TestSkillBoundFindingsSeesStructuredRenderings(t *testing.T) {
+	// 15k one-byte lines: 30000 bytes of text, which fits, but json escapes
+	// each newline and yaml indents each line.
+	doc := skillDoc{Name: "probe", Body: strings.Repeat("x\n", 15000)}
+	findings := skillBoundFindings(doc)
+	joined := strings.Join(findings, "\n")
+	for _, format := range []string{"json", "yaml"} {
+		if !strings.Contains(joined, format+" output") {
+			t.Fatalf("skillBoundFindings() = %v, want the over-budget %s rendering reported", findings, format)
+		}
+	}
+	if strings.Contains(joined, "text output") {
+		t.Fatalf("skillBoundFindings() = %v, want the text rendering that fits not reported", findings)
+	}
+}
+
+// TestSkillRenderingsMatchSkillGet pins that the guard measures the real
+// command: each rendering it checks is byte-identical to what `ft skill get`
+// prints for that format, so a change to the command cannot slip past a guard
+// that renders something else.
+func TestSkillRenderingsMatchSkillGet(t *testing.T) {
+	r := newRunner(t)
+	skill, err := skills.Get(skills.DefaultName)
+	if err != nil {
+		t.Fatalf("skills.Get(%q) error = %v", skills.DefaultName, err)
+	}
+	doc := skillDoc{Name: skill.Name, Description: skill.Description, Body: skill.Body}
+	for _, format := range skillFormats {
+		t.Run(format, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := renderSkillDoc(&buf, format, doc); err != nil {
+				t.Fatalf("renderSkillDoc(%s) error = %v", format, err)
 			}
-			joined := strings.Join(findings, "\n")
-			if !strings.Contains(joined, fmt.Sprintf("at or below %d", maxOutputBytes)) {
-				t.Fatalf("skillBoundFindings(%d bytes) = %v, want the %d-byte budget named", len(tc.body), findings, maxOutputBytes)
+			args := []string{"skill", "get", skills.DefaultName, "--full"}
+			if format != "text" {
+				args = append(args, "-o", format)
 			}
-			if strings.Contains(joined, " lines;") {
-				t.Fatalf("skillBoundFindings(%d bytes) = %v, want only the byte budget to fire on a one-line body", len(tc.body), findings)
+			if got := r.run(args...); got != buf.String() {
+				t.Fatalf("skill get %s = %d bytes, guard renders %d; the guard is not measuring the command", format, len(got), buf.Len())
 			}
 		})
 	}
 }
 
-// skillBoundFindings reports every way a skill's body breaks the output bound,
-// or nil when it fits with the required headroom. Both limits come from the
-// runtime's own constants. Lines are coarse, so the budget keeps skillHeadroom
-// lines free for a small edit. Bytes are exact — the body is printed verbatim
-// and the bound truncates the first byte past its limit — so the byte budget is
-// the bound itself, and a line-count-neutral edit that only lengthens a word
-// cannot slip past it.
-func skillBoundFindings(name, body string) []string {
+// skillBoundFindings reports every way a skill breaks the output bound in any
+// format `ft skill get` prints, or nil when every rendering fits with the
+// required headroom. Both limits come from the runtime's own constants, so the
+// guard cannot drift from the bound it protects. The text rendering is the body
+// verbatim and its line count is the doc's own length, so it carries the line
+// axis; json and yaml only add a fixed few envelope lines. Bytes are measured
+// per format, because json escaping and yaml indentation each inflate the body
+// differently - which is why a body that fits as text can still truncate as json.
+func skillBoundFindings(doc skillDoc) []string {
 	var findings []string
-	if lines, budget := countLines([]byte(body)), maxOutputLines-skillHeadroom; lines > budget {
-		findings = append(findings, fmt.Sprintf("skill %q is %d lines; keep it at or below %d (the %d-line output bound less %d lines of headroom) so a small edit cannot trip the bound and `ft skill get %s` is never truncated",
-			name, lines, budget, maxOutputLines, skillHeadroom, name))
-	}
-	// Count what `ft skill get` prints: the body plus the newline the command
-	// adds when the body does not end in one.
-	size := len(body)
-	if !strings.HasSuffix(body, "\n") {
-		size++
-	}
-	if size > maxOutputBytes {
-		findings = append(findings, fmt.Sprintf("skill %q is %d bytes when printed; keep it at or below %d (the output bound's byte limit) so `ft skill get %s` is never truncated",
-			name, size, maxOutputBytes, name))
+	for _, format := range skillFormats {
+		var buf bytes.Buffer
+		if err := renderSkillDoc(&buf, format, doc); err != nil {
+			findings = append(findings, fmt.Sprintf("skill %q does not render as %s output: %v", doc.Name, format, err))
+			continue
+		}
+		if format == "text" {
+			findings = append(findings, skillLineFindings(doc.Name, buf.Bytes())...)
+		}
+		findings = append(findings, skillRenderFindings(doc.Name, format, buf.Bytes())...)
 	}
 	return findings
+}
+
+// skillLineFindings reports how the text rendering breaks the line budget. Lines
+// are coarse, so the budget keeps skillLineHeadroom free for a small edit.
+func skillLineFindings(name string, rendered []byte) []string {
+	lines, budget := countLines(rendered), maxOutputLines-skillLineHeadroom
+	if lines <= budget {
+		return nil
+	}
+	return []string{fmt.Sprintf("skill %q is %d lines; keep it at or below %d (the %d-line output bound less %d lines of headroom) so a small edit cannot trip the bound and `ft skill get %s` is never truncated",
+		name, lines, budget, maxOutputLines, skillLineHeadroom, name)}
+}
+
+// skillRenderFindings reports how one rendering of a skill breaks the byte
+// budget. The body is printed or serialized verbatim, so bytes are exact and
+// the budget keeps skillByteHeadroom free for a small edit.
+func skillRenderFindings(name, format string, rendered []byte) []string {
+	budget := maxOutputBytes - skillByteHeadroom
+	if len(rendered) <= budget {
+		return nil
+	}
+	return []string{fmt.Sprintf("skill %q renders as %d bytes of %s output; keep it at or below %d (the %d-byte output bound less %d bytes of headroom) so `ft skill get %s` is never truncated in that format",
+		name, len(rendered), format, budget, maxOutputBytes, skillByteHeadroom, name)}
 }
 
 func TestEmbeddedSkillsReferenceRealCommandsAndFlags(t *testing.T) {

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/khoinguyen/factotum/internal/skills"
 	"github.com/khoinguyen/factotum/pkg/core"
 )
@@ -50,5 +52,42 @@ func TestSkillGetUnknown(t *testing.T) {
 	err := r.runErr("skill", "get", "nope")
 	if !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("skill get nope error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestSkillGetStructuredOutputCarriesWholeBody pins the truncation that the
+// text-only byte guard missed: serializing the doc inflates the body past the
+// output bound, so `ft skill get ft -o json|yaml` used to print the
+// truncated-envelope instead of the skill. Each format must decode back to the
+// whole body.
+func TestSkillGetStructuredOutputCarriesWholeBody(t *testing.T) {
+	r := newRunner(t)
+	raw, err := skills.Get(skills.DefaultName)
+	if err != nil {
+		t.Fatalf("skills.Get(%q) error = %v", skills.DefaultName, err)
+	}
+	for _, format := range skillFormats {
+		if format == "text" {
+			continue
+		}
+		t.Run(format, func(t *testing.T) {
+			out := r.run("skill", "get", skills.DefaultName, "-o", format)
+			if strings.Contains(out, "truncated:") || strings.Contains(out, "full_output_path") {
+				t.Fatalf("skill get -o %s printed the truncation envelope; the skill does not fit the output bound:\n%s", format, out[:min(len(out), 400)])
+			}
+			var doc skillDoc
+			var err error
+			if format == "json" {
+				err = json.Unmarshal([]byte(out), &doc)
+			} else {
+				err = yaml.Unmarshal([]byte(out), &doc)
+			}
+			if err != nil {
+				t.Fatalf("decode skill get -o %s: %v", format, err)
+			}
+			if doc.Name != raw.Name || doc.Description != raw.Description || doc.Body != raw.Body {
+				t.Fatalf("skill get -o %s lost the document: name %q, %d body bytes, want %q and %d", format, doc.Name, len(doc.Body), raw.Name, len(raw.Body))
+			}
+		})
 	}
 }

@@ -8,8 +8,9 @@
 // knowing the other by name.
 //
 // Harnesses are registrations, not a hardcoded switch: concrete adapters live in
-// subpackages (for example pkg/harness/opencode, pkg/harness/claude) and
-// register into a Registry. No harness-specific type appears in this package.
+// subpackages (for example pkg/harness/opencode, pkg/harness/pi; pkg/harness/fake
+// is the test double) and register into a Registry. No harness-specific type
+// appears in this package.
 //
 // The dependency is one way, harness -> isolation: a harness builds an
 // isolation.Spec for Prepare and an isolation.Command for Exec. isolation never

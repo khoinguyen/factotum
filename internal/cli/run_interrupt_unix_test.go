@@ -133,3 +133,145 @@ func TestRunCommandInterruptRetiresItsSession(t *testing.T) {
 		})
 	}
 }
+
+// sandboxBackend stands in for an isolating backend whose environment is real
+// state on disk: Prepare creates the scratch directory a container's writable
+// layer amounts to here, and Delete is the only thing that removes it. An
+// interrupted run that skipped its teardown would leave that directory behind,
+// where the test can see it.
+type sandboxBackend struct {
+	*isofake.Backend
+	root    string
+	started chan struct{}
+	once    sync.Once
+
+	mu        sync.Mutex
+	dirs      []string
+	dirByID   map[string]string
+	deletes   int
+	cancelled int
+}
+
+func newSandboxBackend(root string) *sandboxBackend {
+	return &sandboxBackend{
+		Backend: isofake.New("sandbox"),
+		root:    root,
+		started: make(chan struct{}),
+		dirByID: map[string]string{},
+	}
+}
+
+func (b *sandboxBackend) Prepare(ctx context.Context, spec isolation.Spec) (isolation.Handle, error) {
+	h, err := b.Backend.Prepare(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(b.root, "sandbox-")
+	if err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	b.dirs = append(b.dirs, dir)
+	b.dirByID[h.ID()] = dir
+	b.mu.Unlock()
+	return h, nil
+}
+
+// Exec blocks for the run's context the way a containerised harness does, so an
+// interrupt reaches the backend while the environment is still prepared.
+func (b *sandboxBackend) Exec(ctx context.Context, _ isolation.Handle, _ isolation.Command) (isolation.Execution, error) {
+	b.once.Do(func() { close(b.started) })
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// Delete removes the environment's state. It records a Delete that arrived on an
+// already-cancelled context: a backend that shells out to remove a container
+// cannot do so on a dead context, so a teardown that ignored that detail would
+// be unreliable even though it was called.
+func (b *sandboxBackend) Delete(ctx context.Context, h isolation.Handle) error {
+	b.mu.Lock()
+	dir := b.dirByID[h.ID()]
+	b.deletes++
+	if ctx.Err() != nil {
+		b.cancelled++
+	}
+	b.mu.Unlock()
+
+	if dir != "" {
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+	}
+	return b.Backend.Delete(ctx, h)
+}
+
+// sandboxes returns the environment directories Prepare created, in order.
+func (b *sandboxBackend) sandboxes() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.dirs...)
+}
+
+// teardown reports how many Deletes ran and how many of those arrived on a
+// cancelled context.
+func (b *sandboxBackend) teardown() (deletes, cancelled int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.deletes, b.cancelled
+}
+
+// TestRunCommandInterruptRemovesItsSandbox pins that an interrupt tears down the
+// isolation environment, not just the session: the run unwinds through its
+// normal path, so the backend Delete that removes the container and its scratch
+// state still runs - once, on a live context - even though the run's own context
+// is already cancelled by then. An interrupt that skipped it would leave an
+// orphan container behind on the operator's machine.
+func TestRunCommandInterruptRemovesItsSandbox(t *testing.T) {
+	r := newRunner(t)
+	_, taskID := runContext(t, r)
+	workspace := t.TempDir()
+	backend := newSandboxBackend(t.TempDir())
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	errs := make(chan error, 1)
+	go func() {
+		_, _, err := r.runSplitErr("run", taskID, "--sandbox", "fake", "--harness", "fake", "--workspace", workspace)
+		errs <- err
+	}()
+	select {
+	case <-backend.started:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the run never reached its harness")
+	}
+
+	sandboxes := backend.sandboxes()
+	if len(sandboxes) != 1 {
+		t.Fatalf("prepared sandboxes = %v, want exactly the one the run is using", sandboxes)
+	}
+	if _, err := os.Stat(sandboxes[0]); err != nil {
+		t.Fatalf("the running sandbox %s is not on disk: %v", sandboxes[0], err)
+	}
+
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatalf("send SIGINT: %v", err)
+	}
+	select {
+	case err := <-errs:
+		if !errors.Is(err, errRunInterrupted) {
+			t.Fatalf("interrupted run error = %v, want the interruption reported", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the interrupted run did not return")
+	}
+
+	for _, dir := range backend.sandboxes() {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("interrupt left the sandbox %s behind (stat error %v)", dir, err)
+		}
+	}
+	if deletes, cancelled := backend.teardown(); deletes != 1 || cancelled != 0 {
+		t.Fatalf("sandbox Delete ran %d times (%d on a cancelled context), want exactly one on a live context", deletes, cancelled)
+	}
+}

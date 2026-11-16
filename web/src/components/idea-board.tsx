@@ -37,11 +37,14 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
       className="group/card flex flex-col gap-1 rounded-lg border bg-card px-2 py-1.5 hover:bg-accent"
     >
       <span className="truncate text-sm font-medium">{idea.title}</span>
-      <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
         <Chip label={kindLabel(idea.kind)} toneKey={idea.kind} />
         {/* Each count carries its own label: the tooltip alone left the five
-            bare numbers unreadable at a glance and to touch input. */}
-        <span className="group relative flex items-start gap-1.5 tabular-nums">
+            bare numbers unreadable at a glance and to touch input. The labelled
+            blocks are as wide as their words, so at 320 and in the 4-column
+            grid the row cannot share a line with the kind chip: both wrap
+            instead of pushing the trailing total past the card border. */}
+        <span className="group relative flex flex-wrap items-start gap-1.5 tabular-nums">
           <Count
             name="done"
             label="done"
@@ -72,7 +75,9 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
             value={human}
             tone="text-violet-700 dark:text-violet-300"
           />
-          <span className="leading-none text-muted-foreground">of {idea.total}</span>
+          <span data-count-total className="leading-none text-muted-foreground">
+            of {idea.total}
+          </span>
           <span
             role="tooltip"
             className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-popover-foreground shadow-md group-hover:block group-focus-within/card:block"

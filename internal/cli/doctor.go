@@ -33,8 +33,9 @@ func newDoctorCommand(deps *Deps) *cobra.Command {
 		Long: "Diagnose the optional subsystems that fail softly: an embedding provider that\n" +
 			"cannot be reached, a model that is missing, a vector index left on an old model,\n" +
 			"or a judge without a key. Each check reports what it observed and the concrete\n" +
-			"fix. Doctor is read-only unless --fix is passed, and it never starts a process or\n" +
-			"downloads anything on its own.",
+			"fix, and only a fix it was asked to run touches the machine: it never starts a\n" +
+			"server on its own. --fix applies every fix without prompting. Without --fix, a\n" +
+			"terminal asks before each fix, and a non-terminal stays read-only.",
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			project := string(deps.resolveProject(projectID))

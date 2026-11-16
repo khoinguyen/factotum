@@ -411,9 +411,10 @@ func projectDir(cwd string, repo gitRepo, inRepo bool) string {
 }
 
 // greenfieldDir reports whether dir looks like a fresh project with no source
-// files yet: it holds no visible entries. A missing or unreadable directory is
-// treated as greenfield, so a git root that does not exist locally still offers
-// the setup question.
+// files yet: it holds nothing but repository scaffolding (dotfiles such as
+// .gitignore, README/LICENSE files, and a docs directory). A missing or
+// unreadable directory is treated as greenfield, so a git root that does not
+// exist locally still offers the setup question.
 func greenfieldDir(dir string) bool {
 	if dir == "" {
 		return true
@@ -423,12 +424,28 @@ func greenfieldDir(dir string) bool {
 		return true
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
+		if !scaffoldingEntry(entry) {
+			return false
 		}
-		return false
 	}
 	return true
+}
+
+// scaffoldingEntry reports whether entry is repository scaffolding a checkout
+// can plausibly start with (`gh repo create --add-readme` yields README.md plus
+// dotfiles) rather than project source.
+func scaffoldingEntry(entry os.DirEntry) bool {
+	name := entry.Name()
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name))) {
+	case "readme", "license", "licence":
+		return true
+	case "docs":
+		return entry.IsDir()
+	}
+	return false
 }
 
 // ensureProject opens the project's store and creates the project entity when it

@@ -438,8 +438,10 @@ func TestPageProjectsReadinessAndRank(t *testing.T) {
 	if !ok {
 		t.Fatalf("Waiting = %v, want %s", taskIDs(page.Waiting), second.ID)
 	}
-	if waiting.Reason != ReasonDepUnresolved {
-		t.Fatalf("waiting reason = %q, want %q", waiting.Reason, ReasonDepUnresolved)
+	// The blocker is an unowned task, which readiness buckets as human work, so
+	// the waiting task names that human-next item instead of a generic dep.
+	if waiting.Reason != ReasonNeedsHuman {
+		t.Fatalf("waiting reason = %q, want %q", waiting.Reason, ReasonNeedsHuman)
 	}
 }
 

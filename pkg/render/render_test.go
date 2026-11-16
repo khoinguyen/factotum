@@ -489,6 +489,61 @@ func TestClassifyStatuses(t *testing.T) {
 // only waiting on an unmet dependency is "waiting" on the web board, not
 // "blocked". A ready todo still gets a ready class, so the waiting case must not
 // swallow ordinary ready work.
+// TestClassifyNeedsHuman pins that a task gated by a ready-human dependency is
+// classified "needs-human", not "waiting" or a generic "blocked": the human-next
+// item is what unblocks it, so the class names that person's work. The human
+// item itself keeps its own ready-human class.
+func TestClassifyNeedsHuman(t *testing.T) {
+	agentID := core.ActorID("act-1")
+	human := task("human", core.StatusTodo)
+	gated := task("gated", core.StatusTodo, "human")
+	gated.AssigneeID = &agentID
+	gated.Groomed = true
+	gated.AcceptanceCriteria = []string{"done"}
+	view := statusView(t, human, gated)
+
+	if got := view.Classify(*gated); got != ClassNeedsHuman {
+		t.Fatalf("Classify(human-gated agent task) = %q, want %q", got, ClassNeedsHuman)
+	}
+	if got := view.Classify(*human); got != ClassReadyHuman {
+		t.Fatalf("Classify(human next) = %q, want %q", got, ClassReadyHuman)
+	}
+}
+
+// TestNeedsHumanRendersAcrossFormats proves the class reaches every format with
+// its human label, the way the web board's "needs human" chip does.
+func TestNeedsHumanRendersAcrossFormats(t *testing.T) {
+	human := task("human", core.StatusTodo)
+	gated := task("gated", core.StatusTodo, "human")
+	view := statusView(t, human, gated)
+
+	var doc struct {
+		Tasks []struct {
+			ID    string `json:"id"`
+			Class string `json:"class"`
+		} `json:"tasks"`
+	}
+	out := renderString(t, JSON{}, view)
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("json render invalid: %v\n%s", err, out)
+	}
+	classes := map[string]string{}
+	for _, entry := range doc.Tasks {
+		classes[entry.ID] = entry.Class
+	}
+	if got := classes["gated"]; got != "needs-human" {
+		t.Fatalf("json class for human-gated task = %q, want %q\n%s", got, "needs-human", out)
+	}
+
+	html := renderString(t, HTML{}, view)
+	if !strings.Contains(html, `class="chip needs-human"`) {
+		t.Fatalf("html output missing needs-human chip class:\n%s", html)
+	}
+	if !strings.Contains(html, ">needs human</span>") {
+		t.Fatalf("html output missing 'needs human' chip label:\n%s", html)
+	}
+}
+
 func TestClassifyWaiting(t *testing.T) {
 	blocker := task("blocker", core.StatusInProgress)
 	waiting := task("waiting", core.StatusTodo, "blocker")

@@ -49,6 +49,11 @@ export type IdeaView = {
   todo: number
   active: number
   blocked: number
+  // human counts promoted tasks whose next action is a person's: a ready-human
+  // task or one gated by a human-next item. human_tasks names those tasks so the
+  // card can point at the blocker, not only count it.
+  human?: number
+  human_tasks?: TaskLink[]
   tasks?: TaskLink[]
   artifacts?: ArtifactView[]
 }

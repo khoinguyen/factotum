@@ -301,7 +301,7 @@ func (s *Server) depEdge(ctx context.Context, id core.TicketID, vs viewSet) (tas
 
 // taskRefLink resolves a task fetched outside the loaded snapshot into a link.
 func taskRefLink(task *core.Ticket) taskLink {
-	class := classify(*task, false, false, false)
+	class := classify(*task, taskFacts{})
 	return taskLink{
 		ID:    task.ID,
 		Title: task.Title,

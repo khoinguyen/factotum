@@ -5,6 +5,9 @@ import type { IdeaView, Snapshot } from "@/lib/api"
 
 function IdeaCard({ idea }: { idea: IdeaView }) {
   const artifacts = idea.artifacts?.length ?? 0
+  const human = idea.human ?? 0
+  const humanTasks = idea.human_tasks ?? []
+  const humanTitles = humanTasks.map((task) => task.title).join(", ")
   return (
     <AppLink
       href={idea.url}
@@ -26,13 +29,20 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
           <span data-count="blocked" className="font-medium text-red-700 dark:text-red-300">
             {idea.blocked}
           </span>
+          <span
+            data-count="human"
+            className="font-medium text-violet-700 dark:text-violet-300"
+          >
+            {human}
+          </span>
           <span className="text-muted-foreground">of {idea.total}</span>
           <span
             role="tooltip"
             className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-popover-foreground shadow-md group-hover:block group-focus-within/card:block"
           >
             {idea.done} done · {idea.todo} todo · {idea.active} active ·{" "}
-            {idea.blocked} blocked
+            {idea.blocked} blocked · {human} human
+            {humanTitles ? ` (${humanTitles})` : ""}
             {artifacts > 0
               ? ` · ${artifacts} artifact${artifacts === 1 ? "" : "s"}`
               : ""}

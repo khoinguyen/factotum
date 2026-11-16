@@ -56,6 +56,11 @@ const (
 	ClassReadyHuman Class = "ready-human"
 	ClassInProgress Class = "in-progress"
 	ClassBlocked    Class = "blocked"
+	// ClassNeedsHuman is an unresolved task whose remaining blocker is a
+	// human-next item: a ready task that needs a person. The human is the next
+	// action, so the task names that work rather than reading as a generic
+	// blocked or waiting task.
+	ClassNeedsHuman Class = "needs-human"
 	// ClassWaiting is an unresolved task that is neither ready nor explicitly
 	// blocked, such as a todo still waiting on an unmet dependency. It mirrors
 	// the web board's waiting column, which both surfaces must agree on.
@@ -165,6 +170,12 @@ func (v View) depBlocked(derived *info, id core.TicketID) bool {
 	return len(v.blockers(id)) > 0
 }
 
+// humanBlockers names the ready-human tasks a task waits on: the dependencies
+// that are themselves ready human work, so completing one is what unblocks it.
+func (v View) humanBlockers(derived *info, id core.TicketID) []core.TicketID {
+	return v.Graph.HumanBlockers(id, derived.readyHuman)
+}
+
 func (v View) Classify(task core.Ticket) Class {
 	derived := v.info()
 	switch {
@@ -184,6 +195,8 @@ func (v View) Classify(task core.Ticket) Class {
 		return ClassReadyAgent
 	case derived.readyHuman[task.ID]:
 		return ClassReadyHuman
+	case len(v.humanBlockers(derived, task.ID)) > 0:
+		return ClassNeedsHuman
 	case task.Status == core.StatusBlocked:
 		return ClassBlocked
 	default:

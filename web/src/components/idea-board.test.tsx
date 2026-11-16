@@ -133,6 +133,48 @@ test("the idea card counts unstarted tasks so the buckets sum to the total", () 
   expect(screen.getByText(/of 3/)).toBeTruthy()
 })
 
+// Khoi 2026-10-14: a capture left with a human-next task reads as blocked and
+// names that task, so the card says a person must act rather than counting the
+// work as unstarted backlog (or nowhere at all).
+test("the idea card counts human-next work and names the blocking task", () => {
+  const humanNext = {
+    id: "t-human",
+    title: "Decide the rollout",
+    class: "needs-human",
+    chip: "needs human",
+    url: "/task/t-human",
+  }
+  const blocked: IdeaView = {
+    ...idea,
+    state: "blocked",
+    chip: "needs-human",
+    total: 4,
+    done: 3,
+    todo: 0,
+    active: 0,
+    blocked: 0,
+    human: 1,
+    human_tasks: [humanNext],
+    tasks: [humanNext],
+  }
+  render(<IdeaBoard ideas={{ ...ideas, active: [], blocked: [blocked] }} />)
+
+  const card = screen.getByText("Spark of a plan").closest("a")!
+  const counts = card.querySelector('[role="tooltip"]')!.parentElement!
+  const read = (name: string) =>
+    Number(counts.querySelector(`[data-count="${name}"]`)!.textContent)
+  expect(read("done")).toBe(3)
+  expect(read("human")).toBe(1)
+  expect(read("todo") + read("active") + read("blocked")).toBe(0)
+  expect(
+    read("done") + read("todo") + read("active") + read("blocked") + read("human"),
+  ).toBe(blocked.total)
+
+  const tooltip = card.querySelector('[role="tooltip"]')!
+  expect(tooltip.textContent).toContain("1 human")
+  expect(tooltip.textContent).toContain("Decide the rollout")
+})
+
 // Khoi 2026-10-08: hovering the counts spells them out in a floating tooltip,
 // e.g. "0 done", "7 active", "0 blocked".
 test("the counts carry a hover tooltip spelling them out", () => {

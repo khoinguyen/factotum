@@ -204,6 +204,46 @@ func TestReadinessAgreesWithReadySet(t *testing.T) {
 	}
 }
 
+// TestHumanBlockers names the human-next item gating a task. A ready task that
+// needs a human is the next action for that person, and while it is unfinished
+// it blocks the work depending on it. Only a dependency that is itself ready
+// human work is a human blocker: a resolved, missing, or non-ready dependency is
+// not, and neither is a ready agent task's.
+func TestHumanBlockers(t *testing.T) {
+	human := task("human", core.KindTask, core.StatusTodo)
+	agent := task("agent", core.KindTask, core.StatusTodo)
+	doing := task("doing", core.KindTask, core.StatusInProgress)
+	done := task("done", core.KindTask, core.StatusDone)
+	readyHuman := map[core.TicketID]bool{human.ID: true}
+
+	tests := []struct {
+		name string
+		deps []string
+		want []core.TicketID
+	}{
+		{name: "ready human dependency", deps: []string{"human"}, want: []core.TicketID{"human"}},
+		{name: "ready agent dependency", deps: []string{"agent"}},
+		{name: "in progress dependency", deps: []string{"doing"}},
+		{name: "resolved dependency", deps: []string{"done"}},
+		{name: "unknown dependency", deps: []string{"ghost"}},
+		{name: "mixed dependencies name only the human", deps: []string{"doing", "human", "agent"}, want: []core.TicketID{"human"}},
+		{name: "no dependencies"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subject := task("subject", core.KindTask, core.StatusTodo, tt.deps...)
+			g, err := New([]core.Ticket{human, agent, doing, done, subject}, core.DefaultResolutionPolicy())
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			got := g.HumanBlockers(subject.ID, readyHuman)
+			if !equalIDs(got, tt.want) {
+				t.Fatalf("HumanBlockers(%s) = %v, want %v", subject.ID, got, tt.want)
+			}
+		})
+	}
+}
+
 func snoozedTask(id string, snooze core.Snooze) core.Ticket {
 	t := task(id, core.KindTask, core.StatusTodo)
 	t.Snooze = &snooze

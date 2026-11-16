@@ -7,11 +7,25 @@
 // promotion child, and a test calls one of the scenarios, which starts one child
 // process per promotion — one at a time, so the machine never has a burst of
 // forks in flight (the contention under test is at promotion, not at start) —
-// releases them together, and then starts every promotion with a single write.
-// The start is a gate, not a poll: a polled go-file woke the children over its
-// own backoff, up to 10ms apart, which was long enough for one promotion to
-// finish before its siblings looked, so a store with no cross-process lock
-// passed four runs in ten.
+// releases them together, and then starts every promotion in one write.
+//
+// A same-capture wave is also run with the parent holding the store as a reader,
+// and that is what makes the wave a proof rather than a hope. A promotion's
+// lookup and insert take the store's exclusive lock, so a writer queues behind a
+// reader: holding it across the release puts every child at its promotion —
+// queued at the store's begin() — before any of them is let in, and a promotion
+// that takes the shared lock instead runs straight through the reader and
+// finishes inside the hold. That is the mutation, and it is the one thing timing
+// cannot show: whole-call spans overlap even when a straggler reaches its stamp
+// check after the winner's write, so the wave looks raced while the race never
+// ran. (Starting the children together was tried first and caught the mutation
+// only 6 runs in 10, when a polled go-file woke them up to 10ms apart.)
+//
+// Holding the *exclusive* lock as the start instead was measured and rejected:
+// the host wakes flock's queued waiters one at a time — a probe saw twelve of
+// them granted 0.5ms apart, the first 5ms after the release — which serialized
+// the wave so thoroughly that the shared-lock mutation survived 10 runs in 10.
+// The harness would have certified the OS's queue as the guard.
 package promotetest
 
 import (
@@ -20,7 +34,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,13 +48,19 @@ import (
 // same opener, so both exercise the backend's real Open and snapshot.
 type Open func(ctx context.Context, path string) (store.Backend, error)
 
+// ReadLock takes the store's shared cross-process lock at path — the lock its
+// reads hold — and returns its release. Holding it is how the harness tells a
+// promotion that takes the exclusive lock (it queues, as a writer must) from one
+// that takes the shared lock (it runs straight through): a reader lock never
+// excludes another reader.
+type ReadLock func(path string) (func(), error)
+
 const (
 	childEnv     = "FACTOTUM_PROMOTETEST_CHILD"
 	dirEnv       = "FACTOTUM_PROMOTETEST_DIR"
 	pathEnv      = "FACTOTUM_PROMOTETEST_PATH"
 	jobEnv       = "FACTOTUM_PROMOTETEST_JOB"
 	releaseByEnv = "FACTOTUM_PROMOTETEST_RELEASE_BY"
-	gateEnv      = "FACTOTUM_PROMOTETEST_GATE"
 
 	// childStartBound bounds one child's start: fork, exec, open its handle and
 	// signal ready. Children opened their handles in 8-18ms idle and tailed at
@@ -61,6 +80,15 @@ const (
 	// release. It only matters when the parent died mid-phase: without it an
 	// orphaned child would poll forever.
 	releaseSlack = time.Minute
+
+	// readerHeld is how long the parent holds the store as a reader while a
+	// wave proves that promotions are writers. A promotion that takes the
+	// shared lock finishes inside it — the twelve-caller wave measured 70-89µs
+	// from the last door at load average 56 — and a promotion that takes the
+	// exclusive lock waits the whole hold out, which is what the clean tree
+	// pays to prove it. Like startBudget it is sized for a broken machine, not
+	// a loaded one.
+	readerHeld = 500 * time.Millisecond
 )
 
 // Job is one child process's promotion: capture is promoted into task.
@@ -112,10 +140,11 @@ func Child(open Open) (ran bool, code int) {
 	return true, 0
 }
 
-// child opens the store, signals ready and promotes only after the parent
-// releases it. Opening before the signal matters: the parent writes through
-// another handle while the children wait, so each promotion runs on a handle
-// whose snapshot deliberately predates that write.
+// child opens the store, signals ready and promotes only after the parent has
+// released the promotions, which it does with the store held as a reader.
+// Opening before the signal matters: the parent writes through another handle
+// while the children wait, so each promotion runs on a handle whose snapshot
+// deliberately predates that write.
 func child(open Open) {
 	dir := os.Getenv(dirEnv)
 	var job Job
@@ -134,10 +163,6 @@ func child(open Open) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "door-"+string(job.Task)), nil, 0o644); err != nil {
 		writeResult(dir, job.Task, Result{Err: "signal door: " + err.Error()})
-		return
-	}
-	if err := awaitGate(os.Stdin); err != nil {
-		writeResult(dir, job.Task, Result{Err: err.Error()})
 		return
 	}
 	result := Result{}
@@ -180,7 +205,7 @@ func writeResult(dir string, task core.TicketID, result Result) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(filepath.Join(dir, "result-"+string(task)+".json"), data, 0o644)
+	_ = os.WriteFile(resultPath(dir, task), data, 0o644)
 }
 
 // releaseDeadline is when this child gives up waiting for the parent's release.
@@ -192,23 +217,6 @@ func releaseDeadline() time.Time {
 		return deadline
 	}
 	return time.Now().Add(startBudget + releaseSlack)
-}
-
-// awaitGate blocks until the parent starts the promotions together. It reads one
-// byte from the pipe the parent handed this child as stdin: polling a file would
-// wake the children over the poll's own backoff (up to 10ms apart, which let one
-// promotion finish before its siblings looked), whereas the parent's one write
-// wakes every blocked reader at once. Gated only when the harness set the gate: a
-// child the tests run in-process has no such pipe on stdin.
-func awaitGate(gate io.Reader) error {
-	if os.Getenv(gateEnv) == "" {
-		return nil
-	}
-	var one [1]byte
-	if _, err := io.ReadFull(gate, one[:]); err != nil {
-		return fmt.Errorf("wait for the promotions to start together: %w", err)
-	}
-	return nil
 }
 
 // waitForFile reports whether path exists before deadline. Polling backs off to
@@ -230,31 +238,54 @@ func waitForFile(path string, deadline time.Time) bool {
 }
 
 // starter starts one child for job, returning its handle and captured output.
-// gate is the child's stdin: the parent writes one byte per child to start them
-// all together.
-type starter func(dir, path string, job Job, releaseBy time.Time, gate *os.File) (*exec.Cmd, *bytes.Buffer, error)
+type starter func(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error)
 
-// promote starts one process per job, waits until every child has opened its
-// handle, runs beforeRelease, releases them together, starts every promotion in
-// one write and returns each child's result in job order.
+// wave is one run of the promotion children: what starts them, what the parent
+// holds while they run, and the bounds it judges them by.
+type wave struct {
+	start starter
+	// reader is the store's shared lock, held by the parent for the length of the
+	// wave; nil means the wave races on its own. Holding it queues every child
+	// that promotes (a writer) at the store's begin(), and lets a promotion that
+	// takes the shared lock run.
+	reader ReadLock
+	// holds is how long the parent keeps the reader while it waits for the
+	// promotions to prove they were not queued behind it.
+	holds time.Duration
+	// bound is how long one child may take to open its handle.
+	bound time.Duration
+	// budget bounds the readiness phase: the machine-is-broken backstop.
+	budget time.Duration
+}
+
+// promote runs the wave the way the scenarios do: real processes, the harness's
+// bounds, and the store held as a reader when reader is not nil. It returns each
+// child's result in job order and how many promotions finished while the store
+// was held as a reader — 0 when reader is nil, because nothing was held.
+func promote(t *testing.T, path string, jobs []Job, reader ReadLock, beforeRelease func(t *testing.T)) ([]Result, int) {
+	return promoteWith(t, wave{start: startChild, reader: reader, holds: readerHeld, bound: childStartBound, budget: startBudget}, path, jobs, beforeRelease)
+}
+
+// promoteWith is promote with the wave injected, so the tests here can drive a
+// child that never signals, or a hold that ends early, without waiting out the
+// real bounds.
 //
 // Children start one at a time: a burst of forks only adds scheduling pressure
 // to a machine already running the rest of the suite, and the cross-process
 // claim is made when the children promote together after the release, not when
 // they start. All of them still hold a handle opened before the release.
 //
-// The last step is the one that makes the race happen: each child signals that
-// it has reached its promotion and then blocks on its own stdin pipe, so once
-// every child is at the door the parent hands them all their first byte in a
-// single write and they enter the promotion within microseconds of each other.
-func promote(t *testing.T, path string, jobs []Job, beforeRelease func(t *testing.T)) []Result {
-	return promoteWith(t, startChild, path, jobs, beforeRelease, childStartBound, startBudget)
-}
-
-// promoteWith is promote with its starter and bounds injected, so the tests
-// here can drive a child that never signals without waiting out the real bound.
-func promoteWith(t *testing.T, start starter, path string, jobs []Job, beforeRelease func(t *testing.T), bound, budget time.Duration) []Result {
+// The start itself is one write to a file every child is waiting on, so they
+// enter CreatePromoted within microseconds of each other. What makes that a race
+// on the store is the reader lock: the parent takes it before the release and
+// drops it only after every child has reached its promotion, so a promotion that
+// takes the exclusive lock cannot run its stamp check until all of its siblings
+// are waiting at the same place.
+func promoteWith(t *testing.T, w wave, path string, jobs []Job, beforeRelease func(t *testing.T)) ([]Result, int) {
 	t.Helper()
+	if w.reader != nil && w.holds <= 0 {
+		t.Fatal("the wave was asked to hold the store as a reader without a bound: a promotion that waits on it would hold the phase forever")
+	}
 	dir := t.TempDir()
 	outputs := make([]*bytes.Buffer, len(jobs))
 	cmds := make([]*exec.Cmd, len(jobs))
@@ -267,18 +298,10 @@ func promoteWith(t *testing.T, start starter, path string, jobs []Job, beforeRel
 			}
 		}
 	})
-	gateRead, gateWrite, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("open the promotion gate: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = gateRead.Close()
-		_ = gateWrite.Close()
-	})
-	deadline := time.Now().Add(budget)
+	deadline := time.Now().Add(w.budget)
 	releaseBy := deadline.Add(releaseSlack)
 	for i, job := range jobs {
-		cmd, output, attempts, err := startReady(start, dir, path, job, releaseBy, gateRead, bound, deadline)
+		cmd, output, attempts, err := startReady(w.start, dir, path, job, releaseBy, w.bound, deadline)
 		outputs[i] = output
 		if err != nil {
 			t.Fatalf("promotion %d of %s: %v", i, job.Capture, err)
@@ -292,25 +315,54 @@ func promoteWith(t *testing.T, start starter, path string, jobs []Job, beforeRel
 	if beforeRelease != nil {
 		beforeRelease(t)
 	}
+	// Held after the parent's own writes, which would otherwise wait on a lock
+	// this process never drops until the children are done.
+	var releaseRead func()
+	if w.reader != nil {
+		release, err := w.reader(path)
+		if err != nil {
+			t.Fatalf("hold the store as a reader at %s: %v", path, err)
+		}
+		if release == nil {
+			release = func() {}
+		}
+		releaseRead = release
+	}
+	readHeld := releaseRead != nil
+	t.Cleanup(func() {
+		if readHeld {
+			releaseRead()
+		}
+	})
 	if err := os.WriteFile(filepath.Join(dir, "release"), nil, 0o644); err != nil {
 		t.Fatalf("release promotions: %v", err)
 	}
+	// Every child is now at its promotion: a child that dies on the way there
+	// fails the phase by name rather than being silently left out of the start.
 	if err := awaitDoors(dir, jobs, deadline); err != nil {
 		t.Fatal(err)
 	}
-	// Every child is now blocked on its own gate read, so this hands them all
-	// their first byte at once: one write per child, no other work in between.
-	if _, err := gateWrite.Write(make([]byte, len(jobs))); err != nil {
-		t.Fatalf("start the promotions together: %v", err)
+	ranWhileRead := 0
+	if readHeld {
+		// A promotion that finished inside the hold ran past a reader, which only
+		// a shared lock allows. A writer is still queued, so the hold runs out:
+		// that bound is what the clean tree pays to prove it.
+		until := time.Now().Add(w.holds)
+		for _, job := range jobs {
+			if waitForFile(resultPath(dir, job.Task), until) {
+				ranWhileRead++
+			}
+		}
+		releaseRead()
+		readHeld = false
 	}
-	_ = gateWrite.Close()
 	results := make([]Result, len(jobs))
 	for i, cmd := range cmds {
 		if err := cmd.Wait(); err != nil {
 			t.Fatalf("promotion %d of %s failed: %v; output:\n%s", i, jobs[i].Capture, err, outputText(outputs[i]))
 		}
 		waited[i] = true
-		data, err := os.ReadFile(filepath.Join(dir, "result-"+string(jobs[i].Task)+".json"))
+		data, err := os.ReadFile(resultPath(dir, jobs[i].Task))
 		if err != nil {
 			t.Fatalf("promotion %d of %s wrote no result: %v", i, jobs[i].Capture, err)
 		}
@@ -318,7 +370,12 @@ func promoteWith(t *testing.T, start starter, path string, jobs []Job, beforeRel
 			t.Fatalf("promotion %d of %s: decode result: %v", i, jobs[i].Capture, err)
 		}
 	}
-	return results
+	return results, ranWhileRead
+}
+
+// resultPath is where a child hands the parent its outcome.
+func resultPath(dir string, task core.TicketID) string {
+	return filepath.Join(dir, "result-"+string(task)+".json")
 }
 
 // awaitDoors waits until every child has reached its promotion. A child that
@@ -340,10 +397,10 @@ func awaitDoors(dir string, jobs []Job, deadline time.Time) error {
 // Every attempt draws on the same deadline: a machine that cannot start a
 // process at all fails within the phase budget instead of retrying forever. It
 // returns how many children it started.
-func startReady(start starter, dir, path string, job Job, releaseBy time.Time, gate *os.File, bound time.Duration, deadline time.Time) (*exec.Cmd, *bytes.Buffer, int, error) {
+func startReady(start starter, dir, path string, job Job, releaseBy time.Time, bound time.Duration, deadline time.Time) (*exec.Cmd, *bytes.Buffer, int, error) {
 	ready := filepath.Join(dir, "ready-"+string(job.Task))
 	for attempts := 1; ; attempts++ {
-		cmd, output, err := start(dir, path, job, releaseBy, gate)
+		cmd, output, err := start(dir, path, job, releaseBy)
 		if err != nil {
 			return nil, output, attempts, fmt.Errorf("start a child after %d attempt(s): %w", attempts, err)
 		}
@@ -381,7 +438,7 @@ func outputText(output *bytes.Buffer) string {
 }
 
 // startChild re-executes this test binary as a promotion child for job.
-func startChild(dir, path string, job Job, releaseBy time.Time, gate *os.File) (*exec.Cmd, *bytes.Buffer, error) {
+func startChild(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error) {
 	encoded, err := json.Marshal(job)
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode promotion of %s into %s: %w", job.Capture, job.Task, err)
@@ -394,10 +451,8 @@ func startChild(dir, path string, job Job, releaseBy time.Time, gate *os.File) (
 		pathEnv+"="+path,
 		jobEnv+"="+string(encoded),
 		releaseByEnv+"="+releaseBy.Format(time.RFC3339Nano),
-		gateEnv+"=1",
 	)
 	cmd.Stdout, cmd.Stderr = output, output
-	cmd.Stdin = gate
 	if err := cmd.Start(); err != nil {
 		return nil, output, err
 	}
@@ -433,7 +488,7 @@ func DistinctCaptures(t *testing.T, open Open, path string) {
 		jobs[i] = Job{Capture: capture, Task: core.TicketID(fmt.Sprintf("t-%02d", i))}
 	}
 
-	results := promote(t, path, jobs, nil)
+	results, _ := promote(t, path, jobs, nil, nil)
 
 	fresh, err := open(ctx, path)
 	if err != nil {
@@ -469,14 +524,21 @@ func DistinctCaptures(t *testing.T, open Open, path string) {
 // caller is handed that same id, the store keeps one task and one origin edge,
 // and no loser's candidate id exists.
 //
-// It also requires the promotions to have actually overlapped. Every child
-// reaches its promotion behind one gate and the parent starts them with a single
-// write, so the window is as wide as the harness can make it — but "wide" is not
-// "proven": if no two promotions were ever in flight together, a duplicate would
-// be impossible no matter how broken the guard is, and passing would certify
-// nothing. The child stamps its promotion's start and end, so this fails rather
-// than reporting green on a store it never raced.
-func SameCapture(t *testing.T, open Open, path string) {
+// The promotions are queued, not just started together: the parent holds the
+// store's exclusive lock while every child arrives, so dropping it is the only
+// way any of them reaches the stamp check the guard's decision runs under. Each
+// child also stamps the start and end of its promotion, which this requires to
+// share an instant — supporting evidence that the wave raced at all, but not the
+// proof: whole-call spans overlap even when a straggler starts after the winner's
+// write, so a run can look overlapped and never have raced the guard.
+// The wave also proves the promotion is a writer: the parent holds the store as
+// a reader from before the release until every child has reached its promotion,
+// so a promotion that takes the store's exclusive lock cannot run — let alone
+// reach its stamp check — until all of its siblings are queued at the same place,
+// and one that takes the shared lock finishes inside the hold. Whole-call spans
+// are kept as supporting evidence that the wave raced, but they are not the
+// proof: they overlap even when a straggler starts after the winner's write.
+func SameCapture(t *testing.T, open Open, reader ReadLock, path string) {
 	t.Helper()
 	ctx := context.Background()
 	seed, err := open(ctx, path)
@@ -495,7 +557,7 @@ func SameCapture(t *testing.T, open Open, path string) {
 		jobs[i] = Job{Capture: capture.ID, Task: core.TicketID(fmt.Sprintf("t-c%02d", i))}
 	}
 
-	results := promote(t, path, jobs, nil)
+	results, ranWhileRead := promote(t, path, jobs, reader, nil)
 
 	if !overlapped(results) {
 		t.Fatalf("no two of the %d promotions were ever in flight together, so this run never raced the guard: %s spanned %d..%d and %s spanned %d..%d (host clock, ns). A host that cannot run two promotions at once cannot test a cross-process one.",
@@ -522,6 +584,9 @@ func SameCapture(t *testing.T, open Open, path string) {
 	}
 	if winners != 1 {
 		t.Fatalf("%d promotions reported created; want exactly one", winners)
+	}
+	if ranWhileRead != 0 {
+		t.Fatalf("%d of the %d promotions finished while another handle held the store as a reader; a promotion's lookup and insert take the store's exclusive lock, so a reader must block every one of them until it lets go", ranWhileRead, len(jobs))
 	}
 	won := results[0].ID
 	if _, err := fresh.Tickets().Get(ctx, won); err != nil {
@@ -572,7 +637,7 @@ func KeepsAnotherWritersWrite(t *testing.T, open Open, path string) {
 		UpdatedAt: now,
 	}
 	jobs := []Job{{Capture: capture.ID, Task: "t-promoted"}}
-	results := promote(t, path, jobs, func(t *testing.T) {
+	results, _ := promote(t, path, jobs, nil, func(t *testing.T) {
 		t.Helper()
 		writer, err := open(ctx, path)
 		if err != nil {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
 )
 
@@ -33,18 +33,21 @@ printf '{"id":"%s","created":true,"err":""}' "$3" > "$2/result-$3.json"
 // stubChild is a starter that runs script as the child, handing it its ready
 // path, the shared directory and the task id.
 func stubChild(script string) starter {
-	return func(dir, path string, job Job, releaseBy time.Time, gate *os.File) (*exec.Cmd, *bytes.Buffer, error) {
+	return func(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error) {
 		output := &bytes.Buffer{}
 		cmd := exec.Command("/bin/sh", "-c", script, "sh",
 			filepath.Join(dir, "ready-"+string(job.Task)), dir, string(job.Task))
 		cmd.Stdout, cmd.Stderr = output, output
-		cmd.Stdin = gate
 		if err := cmd.Start(); err != nil {
 			return nil, output, err
 		}
 		return cmd, output, nil
 	}
 }
+
+// noLock stands in for the store's reader lock where the test is about the
+// wave's counting rather than the store itself: it holds nothing.
+func noLock(string) (func(), error) { return func() {}, nil }
 
 // TestPromoteReplacesAChildThatNeverSignals is the regression guard for the
 // flake: a child that does not open its handle is replaced, and the promotions
@@ -55,18 +58,18 @@ func TestPromoteReplacesAChildThatNeverSignals(t *testing.T) {
 	var stalled *exec.Cmd
 	starts := 0
 	working := stubChild(signalsReadyThenPromotes)
-	start := func(dir, path string, job Job, releaseBy time.Time, gate *os.File) (*exec.Cmd, *bytes.Buffer, error) {
+	start := func(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error) {
 		starts++
 		if starts == 1 {
-			cmd, output, err := stubChild(neverSignals)(dir, path, job, releaseBy, gate)
+			cmd, output, err := stubChild(neverSignals)(dir, path, job, releaseBy)
 			stalled = cmd
 			return cmd, output, err
 		}
-		return working(dir, path, job, releaseBy, gate)
+		return working(dir, path, job, releaseBy)
 	}
 
-	results := promoteWith(t, start, t.TempDir(),
-		[]Job{{Capture: "cap-1", Task: "t-1"}}, nil, 2*time.Second, 10*time.Second)
+	results, _ := promoteWith(t, wave{start: start, bound: 2 * time.Second, budget: 10 * time.Second}, t.TempDir(),
+		[]Job{{Capture: "cap-1", Task: "t-1"}}, nil)
 
 	if starts != 2 {
 		t.Fatalf("started %d children, want a stalled one and its replacement", starts)
@@ -89,7 +92,7 @@ func TestStartReadyStopsAtThePhaseBudget(t *testing.T) {
 	dir := t.TempDir()
 	begin := time.Now()
 	_, _, attempts, err := startReady(stubChild(neverSignals), dir, t.TempDir(),
-		Job{Capture: "cap-1", Task: "t-1"}, begin.Add(time.Minute), nil, 50*time.Millisecond, begin.Add(300*time.Millisecond))
+		Job{Capture: "cap-1", Task: "t-1"}, begin.Add(time.Minute), 50*time.Millisecond, begin.Add(300*time.Millisecond))
 	if err == nil {
 		t.Fatal("startReady reported a ready child although none ever signalled")
 	}
@@ -152,49 +155,104 @@ func TestOverlappedNeedsTheSpansToShareTime(t *testing.T) {
 	}
 }
 
-// TestAwaitGateHoldsUntilOneByteArrives pins the child half of the start: the
-// promotion begins only once the parent's byte reaches it. The reader reports
-// that it has been entered and then blocks, so the check needs no timeout.
-func TestAwaitGateHoldsUntilOneByteArrives(t *testing.T) {
-	t.Setenv(gateEnv, "1")
-	entered := make(chan struct{})
-	open := make(chan struct{})
-	gate := readerFunc(func(p []byte) (int, error) {
-		close(entered)
-		<-open
-		p[0] = 0
-		return 1, nil
-	})
-	done := make(chan error, 1)
-	go func() { done <- awaitGate(gate) }()
-	<-entered
-	select {
-	case err := <-done:
-		t.Fatalf("awaitGate returned %v while the gate was still closed", err)
-	default:
+// TestWaveHoldsTheStoreUntilEveryChildIsAtItsDoor is the guard on the gate
+// itself. The store is held as a reader for the whole wave and dropped only once
+// every child has reached its promotion, because that queue at the store's lock
+// is what makes the wave one race rather than twelve unrelated calls: a writer
+// that is released earlier runs its stamp check while its siblings are still
+// arriving, which is exactly the miss the gate exists to close.
+func TestWaveHoldsTheStoreUntilEveryChildIsAtItsDoor(t *testing.T) {
+	markers := t.TempDir()
+	jobs := []Job{{Capture: "cap-1", Task: "t-1"}, {Capture: "cap-1", Task: "t-2"}}
+	// The marker file is written in a directory the parent can name, at the same
+	// instant the child reaches its promotion: only the harness knows its own
+	// working directory, and the release has to be able to look.
+	atTheDoor := `
+: > "$1"
+while [ ! -e "$2/release" ]; do sleep 0.01; done
+: > "$4"
+: > "$2/door-$3"
+printf '{"id":"%s","created":false,"err":""}' "$3" > "$2/result-$3.json"
+`
+	start := func(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error) {
+		output := &bytes.Buffer{}
+		cmd := exec.Command("/bin/sh", "-c", atTheDoor, "sh",
+			filepath.Join(dir, "ready-"+string(job.Task)), dir, string(job.Task),
+			filepath.Join(markers, "at-"+string(job.Task)))
+		cmd.Stdout, cmd.Stderr = output, output
+		if err := cmd.Start(); err != nil {
+			return nil, output, err
+		}
+		return cmd, output, nil
 	}
-	close(open)
-	if err := <-done; err != nil {
-		t.Fatalf("awaitGate() error = %v after the parent's byte", err)
+
+	wrote := false
+	readHeld := false
+	var early []core.TicketID
+	reader := func(string) (func(), error) {
+		readHeld = true
+		if !wrote {
+			t.Error("the parent held the store before its own write, so that write would wait on the lock it holds")
+		}
+		return func() {
+			for _, job := range jobs {
+				if _, err := os.Stat(filepath.Join(markers, "at-"+string(job.Task))); err != nil {
+					early = append(early, job.Task)
+				}
+			}
+		}, nil
+	}
+
+	promoteWith(t, wave{start: start, reader: reader, holds: 5 * time.Second, bound: 2 * time.Second, budget: 10 * time.Second},
+		t.TempDir(), jobs, func(*testing.T) { wrote = true })
+
+	if !readHeld {
+		t.Fatal("the parent never held the store, so nothing queued the children at the store's begin()")
+	}
+	if len(early) > 0 {
+		t.Fatalf("the parent released the store before %v reached its promotion; a child released that early runs its stamp check while its siblings are still arriving, which is the miss the gate exists to close", early)
 	}
 }
 
-// TestAwaitGateIsOpenOutsideTheHarness keeps the in-process child (the deadline
-// test runs one) from reading whatever stdin the test process happens to have.
-func TestAwaitGateIsOpenOutsideTheHarness(t *testing.T) {
-	t.Setenv(gateEnv, "")
-	if err := awaitGate(readerFunc(func([]byte) (int, error) {
-		t.Error("awaitGate read its gate although the harness did not set one")
-		return 0, io.EOF
-	})); err != nil {
-		t.Fatalf("awaitGate() without the gate = %v, want no read at all", err)
+// TestWaveCountsThePromotionsThatFinishWhileTheStoreIsRead pins the deterministic
+// half of the guard: holding the store as a reader is how the parent tells a
+// promotion that takes the exclusive lock (it waits, as a writer must) from one
+// that takes the shared lock (it runs straight through). The count is what
+// SameCapture fails on, so a promotion that finishes inside the hold must be
+// counted.
+func TestWaveCountsThePromotionsThatFinishWhileTheStoreIsRead(t *testing.T) {
+	_, ranWhileRead := promoteWith(t,
+		wave{start: stubChild(signalsReadyThenPromotes), reader: noLock, holds: 10 * time.Second, bound: 2 * time.Second, budget: 10 * time.Second},
+		t.TempDir(), []Job{{Capture: "cap-1", Task: "t-1"}, {Capture: "cap-1", Task: "t-2"}}, nil)
+
+	if ranWhileRead != 2 {
+		t.Fatalf("counted %d of 2 promotions finishing while the store was held as a reader; a promotion that got past the reader ran its lookup and insert under the shared lock", ranWhileRead)
 	}
 }
 
-// readerFunc lets a test stand in a reader that reports what it is asked to do.
-type readerFunc func([]byte) (int, error)
+// TestWaveDoesNotCountAPromotionThatWaitsForTheReader is the other half: a
+// promotion that is still running when the hold runs out is a writer waiting for
+// its turn, and the wave must go on to run it and return its result rather than
+// counting it or hanging.
+func TestWaveDoesNotCountAPromotionThatWaitsForTheReader(t *testing.T) {
+	const slow = `
+: > "$1"
+while [ ! -e "$2/release" ]; do sleep 0.01; done
+: > "$2/door-$3"
+sleep 0.3
+printf '{"id":"%s","created":true,"err":""}' "$3" > "$2/result-$3.json"
+`
+	results, ranWhileRead := promoteWith(t,
+		wave{start: stubChild(slow), reader: noLock, holds: 100 * time.Millisecond, bound: 2 * time.Second, budget: 10 * time.Second},
+		t.TempDir(), []Job{{Capture: "cap-1", Task: "t-1"}}, nil)
 
-func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+	if ranWhileRead != 0 {
+		t.Fatalf("counted %d promotions that had not finished inside the hold", ranWhileRead)
+	}
+	if len(results) != 1 || results[0].Err != "" || results[0].ID != "t-1" {
+		t.Fatalf("promotion behind the reader = %+v, want its result once the hold ended", results)
+	}
+}
 
 // TestAwaitDoorsFailsWhenAChildNeverArrives keeps the barrier honest: a child
 // that opens its handle and then dies instead of reaching its promotion fails

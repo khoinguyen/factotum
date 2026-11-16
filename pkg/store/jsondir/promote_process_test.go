@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/store"
+	"github.com/khoinguyen/factotum/pkg/store/internal/filelock"
 	"github.com/khoinguyen/factotum/pkg/store/internal/promotetest"
 )
 
@@ -14,6 +15,12 @@ import (
 func openPromotionStore(ctx context.Context, path string) (store.Backend, error) {
 	return Open(ctx, store.Config{Backend: "jsondir", Options: map[string]string{"path": path}})
 }
+
+// readPromotionStore holds the store as a reader at path — the shared lock a
+// read takes, on the directory root its handle is opened with. The harness holds
+// it across the children's arrival, which queues every promotion (a writer) at
+// the store's begin(), and lets a promotion that took the shared lock run.
+func readPromotionStore(path string) (func(), error) { return filelock.Acquire(path, false) }
 
 // TestMain runs a promotion child when the cross-process tests re-execute this
 // binary, rather than running any test.
@@ -37,7 +44,7 @@ func TestPromotionAcrossProcessesKeepsEveryTask(t *testing.T) {
 // child saw no promotion in its own index and wrote its own task, leaving
 // duplicate tasks and origin edges (the residual #350 left on jsondir).
 func TestPromotionAcrossProcessesAgreesOnOneTask(t *testing.T) {
-	promotetest.SameCapture(t, openPromotionStore, t.TempDir())
+	promotetest.SameCapture(t, openPromotionStore, readPromotionStore, t.TempDir())
 }
 
 // TestPromotionAcrossProcessesKeepsAnotherWritersWrite writes a message from

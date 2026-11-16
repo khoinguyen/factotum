@@ -336,6 +336,44 @@ test("the dashboard fits 320px with a long counts tooltip", async () => {
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(320)
 })
 
+// PR #411 made the five counts always labelled, but the stacked label blocks
+// are as wide as their words and pushed the trailing "of N" past the card
+// border: at 320px the card was 252 wide with 271 of content, and the desktop
+// 4-column grid left only 250. A document-level scrollWidth check cannot see
+// that (the page still fit), so measure the card's own box at every width the
+// acceptance criteria name.
+for (const width of [320, 360, 390, 1280]) {
+  test(`capture cards hold their counts inside the card at ${width}px`, async () => {
+    stubRoutes()
+    await page.viewport(width, 900)
+    render(<Dashboard />)
+    await screen.findByRole("heading", { name: /Factotum dashboard/ })
+    await screen.findByText(/Work board/)
+
+    const cards = Array.from(document.querySelectorAll('[data-count-label="done"]')).map(
+      (label) => label.closest("a")!,
+    )
+    // Guard the premise: the measurement must cover a real capture card.
+    expect(cards.length).toBeGreaterThan(0)
+
+    for (const card of cards) {
+      expect(card.scrollWidth).toBe(card.clientWidth)
+
+      const total = card.querySelector("[data-count-total]")!
+      expect(total.textContent).toMatch(/^of \d+$/)
+      const cardBox = card.getBoundingClientRect()
+      expect(total.getBoundingClientRect().right).toBeLessThanOrEqual(cardBox.right)
+
+      // Labels stay visible and legible: text-xs (12px), never an arbitrary size.
+      for (const label of card.querySelectorAll("[data-count-label]")) {
+        expect(getComputedStyle(label).fontSize).toBe("12px")
+        expect(getComputedStyle(label).display).not.toBe("none")
+        expect(getComputedStyle(label).visibility).not.toBe("hidden")
+      }
+    }
+  })
+}
+
 // Desktop must not regress: the widest route stays within a wide viewport.
 test("the dashboard still fits a desktop viewport", async () => {
   stubRoutes()

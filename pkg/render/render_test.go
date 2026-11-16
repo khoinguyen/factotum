@@ -544,6 +544,44 @@ func TestNeedsHumanRendersAcrossFormats(t *testing.T) {
 	}
 }
 
+// cssRule returns the first declaration block rendered for selector, so a test
+// can assert a tone without pinning the whole stylesheet.
+func cssRule(html, selector string) string {
+	start := strings.Index(html, selector+" {")
+	if start < 0 {
+		return ""
+	}
+	rule := html[start:]
+	if end := strings.Index(rule, "}"); end >= 0 {
+		return rule[:end+1]
+	}
+	return ""
+}
+
+// TestNeedsHumanToneMatchesWebBoard pins the parity fix: the web board tints a
+// needs-human chip violet, while the rendered graph tinted the same state as an
+// alert (red, the cycle tone). One state, one tone: violet reads as "waiting on
+// a person", red is reserved for a cycle.
+func TestNeedsHumanToneMatchesWebBoard(t *testing.T) {
+	human := task("human", core.StatusTodo)
+	gated := task("gated", core.StatusTodo, "human")
+	view := statusView(t, human, gated)
+
+	html := renderString(t, HTML{}, view)
+	for _, selector := range []string{".chip.needs-human", ".node.needs-human"} {
+		rule := cssRule(html, selector)
+		if rule == "" {
+			t.Fatalf("html output missing %s style:\n%s", selector, html)
+		}
+		if !strings.Contains(rule, "var(--prod") {
+			t.Fatalf("%s does not use the violet --prod tone: %s", selector, rule)
+		}
+		if strings.Contains(rule, "var(--alert") {
+			t.Fatalf("%s still uses the red alert tone: %s", selector, rule)
+		}
+	}
+}
+
 func TestClassifyWaiting(t *testing.T) {
 	blocker := task("blocker", core.StatusInProgress)
 	waiting := task("waiting", core.StatusTodo, "blocker")

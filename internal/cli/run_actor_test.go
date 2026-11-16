@@ -209,6 +209,36 @@ func TestRunGoalZeroIterationsWarnsNoReceiver(t *testing.T) {
 	}
 }
 
+// TestRunGoalZeroIterationsQuietForCaller pins the same no-false-alarm rule on
+// the caller path, which has no role exemption: an unregistered FACTOTUM_CALLER
+// is warned about at attribution, but a zero-iteration goal launches no session,
+// so the run must not add a receiver warning for one it never installed.
+func TestRunGoalZeroIterationsQuietForCaller(t *testing.T) {
+	r := newRunner(t)
+	goal := goalWithNoReadyWork(t, r)
+	r.runBackend = isofake.New("sandbox")
+	r.runHarness = harnessfake.New("opencode")
+	r.getenv = func(key string) string {
+		if key == "FACTOTUM_CALLER" {
+			return "ghost"
+		}
+		return ""
+	}
+
+	out, stderr := r.runSplit("run", "--goal", goal,
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+
+	if !strings.Contains(out, "stop: no_ready_work") {
+		t.Fatalf("the loop should have run zero iterations:\n%s", out)
+	}
+	if !strings.Contains(stderr, `caller "ghost" is not a registered actor`) {
+		t.Fatalf("the caller should still be warned about at attribution:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "no message receiver will register") {
+		t.Fatalf("a zero-iteration caller run launched no session, but warned:\n%s", stderr)
+	}
+}
+
 // TestRunGoalWarnsNoReceiverForLaunchedSession is the other side of the same
 // rule: once the loop does launch a task under an unregistered actor, the run
 // says the launched session is unreachable.

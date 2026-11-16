@@ -342,14 +342,23 @@ func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, e
 // interactive one prompts once from them, persists the pick to the project or
 // user config the user selects, and uses it so the next run needs no flag.
 func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
-	if cfg.Sandbox != "" && cfg.Harness != "" {
+	// The local backend's host opt-in belongs to the resolved sandbox, not to
+	// choosing it here: local pinned by config or a flag is just as unsandboxed
+	// as local picked at the prompt.
+	needsOptIn := cfg.Sandbox == local.Name && !cfg.AllowHost
+	if cfg.Sandbox != "" && cfg.Harness != "" && !needsOptIn {
 		return nil
 	}
 	if !d.interactive() {
 		if cfg.Sandbox == "" {
 			return usageError(cmd, "--sandbox is required; set run.sandbox (project or user config), FACTOTUM_RUN_SANDBOX, or run on a terminal to choose; available: %s", strings.Join(d.RunBackends.Names(), ", "))
 		}
-		return usageError(cmd, "--harness is required; set run.harness (project or user config), FACTOTUM_RUN_HARNESS, or run on a terminal to choose; available: %s", strings.Join(d.RunHarnesses.Names(), ", "))
+		if cfg.Harness == "" {
+			return usageError(cmd, "--harness is required; set run.harness (project or user config), FACTOTUM_RUN_HARNESS, or run on a terminal to choose; available: %s", strings.Join(d.RunHarnesses.Names(), ", "))
+		}
+		// Both are pinned: the missing opt-in surfaces at selection with its
+		// own hint, so a non-interactive run never blocks on a prompt.
+		return nil
 	}
 
 	p := d.prompter(cmd)
@@ -359,15 +368,16 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 		if err != nil {
 			return err
 		}
+		cfg.Sandbox = name
 		chosen.Sandbox = name
 	}
-	if chosen.Sandbox == local.Name && !cfg.AllowHost {
+	if cfg.Sandbox == local.Name && !cfg.AllowHost {
 		optIn, err := promptLocalOptIn(p)
 		if err != nil {
 			return err
 		}
 		if !optIn {
-			return usageError(cmd, "local backend selected but host opt-in declined; nothing saved. Rerun to choose another sandbox, or pass --allow-host for this run")
+			return usageError(cmd, "local backend resolved but host opt-in declined; nothing saved. Pass --allow-host for this run, or rerun to choose another sandbox")
 		}
 		chosen.AllowHost = true
 		cfg.AllowHost = true
@@ -378,6 +388,19 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 			return err
 		}
 		chosen.Harness = name
+	}
+	if chosen.Sandbox == "" && chosen.Harness == "" {
+		// Only the host-scoped opt-in was granted, and that always belongs in
+		// the machine config: there is no scope to ask about.
+		path, err := d.userConfigPath()
+		if err != nil {
+			return err
+		}
+		if err := config.WriteRunDefaults(path, false, "", config.RunDefaults{AllowHost: true}); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(d.Err, "ft: recorded run.allow_host opt-in in %s\n", path)
+		return nil
 	}
 	scope, err := d.promptRunScope(p)
 	if err != nil {
@@ -391,9 +414,6 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 	if optInPath != "" {
 		_, _ = fmt.Fprintf(d.Err, "ft: recorded run.allow_host opt-in in %s\n", optInPath)
 	}
-	if chosen.Sandbox != "" {
-		cfg.Sandbox = chosen.Sandbox
-	}
 	if chosen.Harness != "" {
 		cfg.Harness = chosen.Harness
 	}
@@ -401,8 +421,8 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 }
 
 // promptLocalOptIn asks the explicit, default-no opt-in for the unsandboxed
-// local backend. Selecting local in the prompt is the opt-in moment, but the
-// host trust it grants is loud enough to confirm rather than assume.
+// local backend. Whether local was chosen here or pinned in config, the host
+// trust it grants is loud enough to confirm rather than assume.
 func promptLocalOptIn(p Prompter) (bool, error) {
 	return p.Confirm(
 		"the local backend runs UNSANDBOXED on the host (host credentials, network, files); allow it?",
@@ -455,12 +475,21 @@ func (d *Deps) promptRunScope(p Prompter) (string, error) {
 // the host-scoped allow_host opt-in, into the user config, returning the path
 // written and (when the opt-in was split out) the user config path. A committed
 // project file must never carry allow_host, so a project-scoped pick writes the
-// opt-in to the user config separately.
+// opt-in to the user config separately. The machine path is resolved before the
+// first write: a resolution failure must not leave the project file written
+// without the opt-in.
 func (d *Deps) persistRunDefaults(scope string, chosen config.RunDefaults) (path, optInPath string, err error) {
 	if scope == "project" {
 		path := d.ProjectConfigPath
 		if path == "" {
 			path = config.DefaultPath
+		}
+		var userPath string
+		if chosen.AllowHost {
+			userPath, err = d.userConfigPath()
+			if err != nil {
+				return "", "", err
+			}
 		}
 		committable := config.RunDefaults{Sandbox: chosen.Sandbox, Harness: chosen.Harness}
 		if err := config.WriteRunDefaults(path, true, d.Config.Project, committable); err != nil {
@@ -468,10 +497,6 @@ func (d *Deps) persistRunDefaults(scope string, chosen config.RunDefaults) (path
 		}
 		if !chosen.AllowHost {
 			return path, "", nil
-		}
-		userPath, err := d.userConfigPath()
-		if err != nil {
-			return "", "", err
 		}
 		if err := config.WriteRunDefaults(userPath, false, "", config.RunDefaults{AllowHost: true}); err != nil {
 			return "", "", err

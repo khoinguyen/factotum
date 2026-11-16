@@ -41,7 +41,7 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (*core.M
 	if _, err := s.backend.Projects().Get(ctx, in.ProjectID); err != nil {
 		return nil, fmt.Errorf("message project: %w", err)
 	}
-	to, taskID, err := s.resolveTarget(ctx, in.ProjectID, in.Target)
+	to, taskID, err := s.resolveTarget(ctx, in.ProjectID, in.From, in.Target)
 	if err != nil {
 		return nil, err
 	}
@@ -160,8 +160,9 @@ func ticketSugar(ref string) bool {
 // resolveTarget turns a send target into the stored address and, for task
 // targets, the originating task id (section 4 resolution). A bare loop role is
 // sugar for its actor address; a bare ticket-shaped token is ticket sugar; any
-// other bare token is rejected as unresolvable.
-func (s *MessageService) resolveTarget(ctx context.Context, project core.ProjectID, target string) (core.Address, *core.TicketID, error) {
+// other bare token is rejected as unresolvable. from is the sender, when known,
+// so a refusal can point at that sender's peer.
+func (s *MessageService) resolveTarget(ctx context.Context, project core.ProjectID, from *core.ActorID, target string) (core.Address, *core.TicketID, error) {
 	if !strings.ContainsRune(target, ':') {
 		if actor, ok := LoopRole(target); ok {
 			return core.ActorAddress(actor), nil, nil
@@ -169,7 +170,7 @@ func (s *MessageService) resolveTarget(ctx context.Context, project core.Project
 		if !ticketSugar(target) {
 			return "", nil, fmt.Errorf("%w: unresolvable target %q: name a role (chief, builder-<task>, reviewer-<task>, qa-<task>), a canonical address (actor:<id>, run:<id>, task:<id>), or a ticket id", core.ErrInvalid, target)
 		}
-		return s.resolveTask(ctx, project, core.TicketID(target))
+		return s.resolveTask(ctx, project, from, core.TicketID(target))
 	}
 	kind, id, err := core.ParseAddress(target)
 	if err != nil {
@@ -188,7 +189,7 @@ func (s *MessageService) resolveTarget(ctx context.Context, project core.Project
 	case core.AddressRun:
 		return core.RunAddress(core.RunID(id)), nil, nil
 	case core.AddressTask:
-		return s.resolveTask(ctx, project, core.TicketID(id))
+		return s.resolveTask(ctx, project, from, core.TicketID(id))
 	default:
 		return "", nil, fmt.Errorf("%w: unknown address kind %q", core.ErrInvalid, kind)
 	}
@@ -199,7 +200,7 @@ func (s *MessageService) resolveTarget(ctx context.Context, project core.Project
 // actor settle on that actor's mailbox, and runs of different actors refuse,
 // naming the candidate actor addresses so the sender re-addresses the peer it
 // meant instead of delivering to whichever run id sorts first.
-func (s *MessageService) resolveTask(ctx context.Context, project core.ProjectID, ticketID core.TicketID) (core.Address, *core.TicketID, error) {
+func (s *MessageService) resolveTask(ctx context.Context, project core.ProjectID, from *core.ActorID, ticketID core.TicketID) (core.Address, *core.TicketID, error) {
 	ticket, err := s.backend.Tickets().Get(ctx, ticketID)
 	if err != nil {
 		return "", nil, fmt.Errorf("message task: %w", err)
@@ -226,13 +227,35 @@ func (s *MessageService) resolveTask(ctx context.Context, project core.ProjectID
 		}
 		return core.TaskAddress(ticketID), &ticketID, nil
 	default:
-		sort.Slice(actors, func(i, j int) bool { return actors[i] < actors[j] })
+		orderActors(actors, from)
 		candidates := make([]string, len(actors))
 		for i, actor := range actors {
 			candidates[i] = string(core.ActorAddress(actor))
 		}
-		return "", nil, fmt.Errorf("%w: task %s has live runs for %d actors (%s): address the peer you mean, e.g. ft msg send %s", core.ErrInvalid, ticketID, len(actors), strings.Join(candidates, ", "), candidates[0])
+		next := fmt.Sprintf("address the peer you mean, e.g. ft msg send %s", candidates[0])
+		if from != nil && actors[len(actors)-1] == *from {
+			next = fmt.Sprintf("you are %s; %s", core.ActorAddress(*from), next)
+		}
+		return "", nil, fmt.Errorf("%w: task %s has live runs for %d actors (%s): %s", core.ErrInvalid, ticketID, len(actors), strings.Join(candidates, ", "), next)
 	}
+}
+
+// orderActors sorts actors by id and moves the sender, when it is one of them,
+// to the end: the refusal is a sender looking for the other side, so the list
+// and the example it hands back must name a peer first. Copying the first
+// candidate verbatim then reaches the peer instead of looping back to itself.
+func orderActors(actors []core.ActorID, from *core.ActorID) {
+	sort.Slice(actors, func(i, j int) bool {
+		if from != nil {
+			switch {
+			case actors[i] == *from && actors[j] != *from:
+				return false
+			case actors[j] == *from && actors[i] != *from:
+				return true
+			}
+		}
+		return actors[i] < actors[j]
+	})
 }
 
 // runActors returns the distinct actors behind runs, in run order.

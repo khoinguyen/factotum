@@ -412,6 +412,34 @@ func TestMessageSendRefusesAmbiguousTicket(t *testing.T) {
 	}
 }
 
+// TestMessageSendRefusalExampleNamesThePeerFromTheSender pins that guidance at
+// the CLI surface: with --from set, the ambiguous-ticket example addresses the
+// sender's counterpart, so a role that copies it verbatim reaches the peer and
+// not itself.
+func TestMessageSendRefusalExampleNamesThePeerFromTheSender(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "work"))
+	builder, reviewer := "builder-"+taskID, "reviewer-"+taskID
+	// Register the builder first: the lowest run id is the sender, so an example
+	// chosen by run-id order would hand the builder its own address.
+	for i, actor := range []string{builder, reviewer} {
+		runJSON(t, r, "msg", "agent", "register", "--actor", actor, "--task", taskID,
+			"--pid", strconv.Itoa(i+1), "--project", projectID)
+	}
+
+	_, _, err := r.runSplitErr("msg", "send", taskID, "hand off", "--project", projectID, "--from", "actor:"+builder)
+	if !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("ambiguous ticket send error = %v, want ErrInvalid", err)
+	}
+	if want := "ft msg send actor:" + reviewer; !strings.Contains(err.Error(), want) {
+		t.Fatalf("ambiguous ticket send error = %v, want the example to name the peer %q", err, want)
+	}
+	if self := "ft msg send actor:" + builder; strings.Contains(err.Error(), self) {
+		t.Fatalf("ambiguous ticket send error = %v, want the example not to name the sender %q", err, self)
+	}
+}
+
 // TestMessageSendWarnsWhenTicketResolvesToMailboxWithoutLiveRun pins the other
 // silent half of ticket sugar: when the ticket falls back to a mailbox (here the
 // agent assignee) that has no live run, the send must say so on stderr, because

@@ -648,54 +648,109 @@ func loopField(out, key string) (string, bool) {
 	return "", false
 }
 
-// TestRunCommandLoopSelectingNoWorkReportsNoSession pins that a loop which runs
-// no task reports no session: it mints an id when it starts, but nothing was
-// ever recorded for it, so printing that id would name a session that resolves
-// to no events and no row on the sessions page. Every id the loop reports is
-// one a reader can follow.
-func TestRunCommandLoopSelectingNoWorkReportsNoSession(t *testing.T) {
-	r := newRunner(t)
-	goal := goalWithNoReadyWork(t, r)
-	backend := isofake.New("sandbox")
-	r.runBackend = backend
-	r.runHarness = harnessfake.New("opencode")
+// TestRunCommandLoopSelectingNoWorkReportsOnlyARecordedSession pins what a loop
+// which runs no task may report: a minted id was never recorded - nothing writes
+// session.started for it - so printing it would name a session that resolves to
+// no events and no row on the sessions page, while an inherited session exists
+// independently of this loop and is always reported.
+func TestRunCommandLoopSelectingNoWorkReportsOnlyARecordedSession(t *testing.T) {
+	const inherited = "s-caller99"
+	tests := []struct {
+		name    string
+		inherit bool
+	}{
+		{name: "a minted id is not reported when no task ran"},
+		{name: "an inherited session is reported when no task ran", inherit: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRunner(t)
+			goal := goalWithNoReadyWork(t, r)
+			backend := isofake.New("sandbox")
+			r.runBackend = backend
+			r.runHarness = harnessfake.New("opencode")
+			if tt.inherit {
+				r.getenv = func(key string) string {
+					if key == "FACTOTUM_SESSION" {
+						return inherited
+					}
+					return ""
+				}
+			}
 
-	out := r.run("run", "--goal", goal, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
-	if !strings.Contains(out, "iterations: 0") || !strings.Contains(out, "stop: no_ready_work") {
-		t.Fatalf("expected a zero-iteration loop:\n%s", out)
-	}
-	if got := backend.Commands(); len(got) != 0 {
-		t.Fatalf("ran %d tasks, want 0", len(got))
-	}
-	for _, event := range listEvents(t, r) {
-		if event.Kind == "session.started" || event.Kind == "session.retired" {
-			t.Fatalf("a no-work loop recorded %s for session %q, want no session lifecycle", event.Kind, event.Session)
-		}
-	}
-	if sid, ok := loopField(out, "session"); ok {
-		t.Fatalf("a no-work loop reported session %q, which resolves to no recorded session:\n%s", sid, out)
+			out := r.run("run", "--goal", goal, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+			if !strings.Contains(out, "iterations: 0") || !strings.Contains(out, "stop: no_ready_work") {
+				t.Fatalf("expected a zero-iteration loop:\n%s", out)
+			}
+			if got := backend.Commands(); len(got) != 0 {
+				t.Fatalf("ran %d tasks, want 0", len(got))
+			}
+			for _, event := range listEvents(t, r) {
+				if event.Kind == "session.started" || event.Kind == "session.retired" {
+					t.Fatalf("a no-work loop recorded %s for session %q, want no session lifecycle", event.Kind, event.Session)
+				}
+			}
+			sid, reported := loopField(out, "session")
+			if !tt.inherit {
+				if reported {
+					t.Fatalf("a no-work loop reported session %q, which resolves to no recorded session:\n%s", sid, out)
+				}
+				return
+			}
+			if !reported || sid != inherited {
+				t.Fatalf("a no-work loop reported session %q, want the inherited %q:\n%s", sid, inherited, out)
+			}
+		})
 	}
 }
 
-// TestRunCommandLoopSelectingNoWorkOmitsSessionFromStructuredOutput pins the
-// same rule in `-o json`: a zero-iteration loop carries no session field, so a
-// machine reader never follows an id that resolves to nothing.
-func TestRunCommandLoopSelectingNoWorkOmitsSessionFromStructuredOutput(t *testing.T) {
-	r := newRunner(t)
-	goal := goalWithNoReadyWork(t, r)
-	r.runBackend = isofake.New("sandbox")
-	r.runHarness = harnessfake.New("opencode")
+// TestRunCommandLoopSelectingNoWorkReportsOnlyARecordedSessionInStructuredOutput
+// pins the same rule in `-o json`: the session field appears exactly when the
+// loop has a session to report, so a machine reader never follows an id that
+// resolves to nothing and never loses the caller's.
+func TestRunCommandLoopSelectingNoWorkReportsOnlyARecordedSessionInStructuredOutput(t *testing.T) {
+	const inherited = "s-caller99"
+	tests := []struct {
+		name    string
+		inherit bool
+	}{
+		{name: "a minted id is omitted when no task ran"},
+		{name: "an inherited session is carried when no task ran", inherit: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRunner(t)
+			goal := goalWithNoReadyWork(t, r)
+			r.runBackend = isofake.New("sandbox")
+			r.runHarness = harnessfake.New("opencode")
+			if tt.inherit {
+				r.getenv = func(key string) string {
+					if key == "FACTOTUM_SESSION" {
+						return inherited
+					}
+					return ""
+				}
+			}
 
-	out := r.run("run", "--goal", goal, "-o", "json", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
-	var doc map[string]any
-	if err := json.Unmarshal([]byte(out), &doc); err != nil {
-		t.Fatalf("decode loop output: %v\n%s", err, out)
-	}
-	if _, ok := doc["session"]; ok {
-		t.Fatalf("a no-work loop reported a session field, want none:\n%s", out)
-	}
-	if doc["iterations"] != float64(0) {
-		t.Fatalf("iterations = %v, want 0\n%s", doc["iterations"], out)
+			out := r.run("run", "--goal", goal, "-o", "json", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+			var doc map[string]any
+			if err := json.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatalf("decode loop output: %v\n%s", err, out)
+			}
+			if doc["iterations"] != float64(0) {
+				t.Fatalf("iterations = %v, want 0\n%s", doc["iterations"], out)
+			}
+			session, ok := doc["session"]
+			if !tt.inherit {
+				if ok {
+					t.Fatalf("a no-work loop reported session %v, want the field omitted:\n%s", session, out)
+				}
+				return
+			}
+			if !ok || session != inherited {
+				t.Fatalf("a no-work loop reported session %v, want the inherited %q:\n%s", session, inherited, out)
+			}
+		})
 	}
 }
 

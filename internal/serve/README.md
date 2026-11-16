@@ -8,6 +8,10 @@ and the capture write side. Its tests are layered:
   shell on every client route, the JSON snapshot and detail projections, SSE
   freshness, the shared poll fan-out, and the capture write path (token
   required, unauthorised writes rejected, kind validation, sentence split).
+- `jsonfile_reload_test.go` proves the file backend's sharing contract from a
+  real second process: a hub that opened the jsonfile document before that
+  process wrote serves the write (snapshot, detail, and the SSE update) and
+  keeps it when the hub itself captures.
 - Visual layout is not asserted in Go because Go has no layout engine; the app's
   components (including the capture form) are exercised by the `web/` vitest
   suite instead.

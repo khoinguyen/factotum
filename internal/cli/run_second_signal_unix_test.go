@@ -48,58 +48,87 @@ func TestRunSecondSignalChild(t *testing.T) {
 // cancels the run gracefully, but a second signal is left to its default
 // disposition, so a harness that ignores cancellation cannot make ft
 // uninterruptible. A second signal is deliberately not graceful - the process
-// ends on the spot, so the run's deferred teardown (the backend Delete that
-// removes its container and scratch state, the session retirement) does not run
-// and the backend is left to reap its own environment. It runs in a child
-// process because the behaviour under test is the termination of that process.
+// ends on the spot, so the run's deferred teardown does not run: the backend
+// Delete that removes its container and scratch state is skipped and the
+// session retirement is skipped, leaving both behind for the operator to clean
+// up. It runs in a child process because the behaviour under test is the
+// termination of that process.
 func TestRunSecondSignalSkipsTheGracefulPath(t *testing.T) {
-	child := exec.Command(os.Args[0], "-test.run=^TestRunSecondSignalChild$", "-test.timeout=60s")
-	child.Env = append(os.Environ(), secondSignalChildEnv+"=1")
-	stderr, err := child.StderrPipe()
+	tests := []struct {
+		name   string
+		signal syscall.Signal
+	}{
+		{name: "a second SIGINT ends ft", signal: syscall.SIGINT},
+		{name: "a second SIGTERM ends ft", signal: syscall.SIGTERM},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			child := startSecondSignalChild(t)
+			if err := child.Process.Signal(tt.signal); err != nil {
+				t.Fatalf("send the first signal: %v", err)
+			}
+			expectChildLine(t, child.lines, "cancelled")
+			// The graceful path is stuck on purpose; only a second signal can end it.
+			if err := child.Process.Signal(syscall.Signal(0)); err != nil {
+				t.Fatalf("the child ended on the first signal, want the stuck graceful path still running: %v", err)
+			}
+			if err := child.Process.Signal(tt.signal); err != nil {
+				t.Fatalf("send the second signal: %v", err)
+			}
+
+			waited := make(chan error, 1)
+			go func() { waited <- child.Wait() }()
+			select {
+			case waitErr := <-waited:
+				child.running = false
+				state := child.ProcessState
+				status, ok := state.Sys().(syscall.WaitStatus)
+				if !ok || !status.Signaled() || status.Signal() != tt.signal {
+					t.Fatalf("the second signal did not end ft by its default disposition: state=%v err=%v", state, waitErr)
+				}
+			case <-time.After(30 * time.Second):
+				child.running = false
+				_ = child.Process.Kill()
+				<-waited
+				t.Fatalf("the second %s did not end ft; a harness that ignores cancellation would be uninterruptible", tt.signal)
+			}
+		})
+	}
+}
+
+// secondSignalChild is a started child process whose stderr is being watched:
+// the second-signal test signals it and reads the state it reports.
+type secondSignalChild struct {
+	*exec.Cmd
+	lines <-chan string
+	// running says the child is still unreaped, so a failed test kills it
+	// instead of leaving an orphan process behind.
+	running bool
+}
+
+// startSecondSignalChild re-executes this test binary as the same stuck run the
+// interrupt test uses, and waits until its handler is installed.
+func startSecondSignalChild(t *testing.T) *secondSignalChild {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestRunSecondSignalChild$", "-test.timeout=60s")
+	cmd.Env = append(os.Environ(), secondSignalChildEnv+"=1")
+	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		t.Fatalf("pipe the child's stderr: %v", err)
 	}
-	if err := child.Start(); err != nil {
+	if err := cmd.Start(); err != nil {
 		t.Fatalf("start the child: %v", err)
 	}
-	running := true
+	child := &secondSignalChild{Cmd: cmd, lines: childLines(stderr), running: true}
 	t.Cleanup(func() {
-		if running {
+		if child.running {
 			_ = child.Process.Kill()
 		}
 	})
-
-	lines := childLines(stderr)
-	expectChildLine(t, lines, "ready")
-
-	if err := child.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("send the first signal: %v", err)
-	}
-	expectChildLine(t, lines, "cancelled")
-	// The graceful path is stuck on purpose; only a second signal can end it.
-	if err := child.Process.Signal(syscall.Signal(0)); err != nil {
-		t.Fatalf("the child ended on the first signal, want the stuck graceful path still running: %v", err)
-	}
-	if err := child.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("send the second signal: %v", err)
-	}
-
-	waited := make(chan error, 1)
-	go func() { waited <- child.Wait() }()
-	select {
-	case waitErr := <-waited:
-		running = false
-		state := child.ProcessState
-		status, ok := state.Sys().(syscall.WaitStatus)
-		if !ok || !status.Signaled() || status.Signal() != syscall.SIGINT {
-			t.Fatalf("the second signal did not end ft by its default disposition: state=%v err=%v", state, waitErr)
-		}
-	case <-time.After(30 * time.Second):
-		running = false
-		_ = child.Process.Kill()
-		<-waited
-		t.Fatal("the second signal did not end ft; a harness that ignores cancellation would be uninterruptible")
-	}
+	// The handler is installed before the dispatch runs, so the child is ready
+	// to be signalled once it says so.
+	expectChildLine(t, child.lines, "ready")
+	return child
 }
 
 // childLines streams the child's stderr lines, so the test can send each signal

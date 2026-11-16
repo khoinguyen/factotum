@@ -133,8 +133,10 @@ func newRunCommand(deps *Deps) *cobra.Command {
 // second signal is left to the default disposition, so a harness that ignores
 // cancellation can never leave ft uninterruptible. That escape is deliberately
 // not graceful: it ends the process on the spot, so the teardown above is
-// skipped and the backend is left to reap its own environment. One Ctrl-C is the
-// graceful stop; the second is the way out.
+// skipped and whatever it would have removed is left behind - a container or
+// sandbox keeps running and a minted session stays live, with nothing that
+// reaps either until the operator cleans them up. One Ctrl-C is the graceful
+// stop; the second is the way out.
 func withRunInterrupts(cmd *cobra.Command, run func() error) error {
 	ctx, cancel := context.WithCancelCause(cmd.Context())
 	defer cancel(nil)

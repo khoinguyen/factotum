@@ -82,11 +82,15 @@ function deferred() {
 // round trip and the next statement reading the clock. Under a storm of four
 // concurrent race suites plus 16 CPU hogs that gap reached 145ms between two
 // adjacent statements, and the 20ms bound missed 2 of 1500 samples while 100ms
-// and every bound above it missed none. 600ms is ~4x the measured worst gap.
+// and every bound above it missed none. The derived 600ms bound is ~4x the
+// measured worst gap.
 const STALL_WAIT_MS = 300;
-// STALL_PAST_MS clears 2 * STALL_WAIT_MS by a margin. A real sleep only ever runs
-// long, so this side of the race is safe at any load.
-const STALL_PAST_MS = 700;
+// STALL_PAST_MS clears the stall bound (2 * waitMs) by a margin. Derived, not a
+// literal: raising waitMs past 350 must lengthen the sleep with it rather than
+// silently leave the sleep inside the bound, which would flip what these tests
+// assert. A real sleep only ever runs long, so this side of the race is safe at
+// any load.
+const STALL_PAST_MS = 2 * STALL_WAIT_MS + 100;
 
 // resumeRenewal is the log sink for a stall-then-resume test: it runs one
 // heartbeat tick in the same turn the receiver records the resumed round trip,
@@ -666,7 +670,7 @@ test("a claim round trip that never returns stops renewing the lease", async (t)
   await resume.renewed;
   assert.ok(
     calls.some((c) => c.includes("msg agent heartbeat")),
-    `calls = ${JSON.stringify(calls)}; want the lease renewed once a round trip settles again`,
+    `calls = ${JSON.stringify(calls.slice(-4))}; want the lease renewed once a round trip settles again`,
   );
 });
 
@@ -1012,7 +1016,7 @@ test("a run of failing claims is no progress: the stall line fires and the lease
   await resume.renewed;
   assert.ok(
     calls.some((c) => c.includes("msg agent heartbeat")),
-    `calls = ${JSON.stringify(calls)}; want the lease renewed once a claim completes again`,
+    `calls = ${JSON.stringify(calls.slice(-4))}; want the lease renewed once a claim completes again`,
   );
 });
 

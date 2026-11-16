@@ -381,6 +381,186 @@ func TestResolveRunSelectionLocalOptIn(t *testing.T) {
 	}
 }
 
+// TestResolveRunSelectionOptInForConfiguredLocal pins that the allow_host
+// opt-in belongs to the resolved sandbox, not to choosing it: local pinned in
+// config (or passed as a flag) is just as unsandboxed as local chosen at the
+// prompt, so an unset allow_host is offered either way. With both dimensions
+// already resolved only the opt-in is asked, and it is written to the
+// host-scoped user config without a scope prompt. An opted-in local run asks
+// nothing, and declining aborts without writing anything.
+func TestResolveRunSelectionOptInForConfiguredLocal(t *testing.T) {
+	tests := []struct {
+		name        string
+		sandbox     string
+		harness     string
+		allowHost   bool
+		inputs      []string
+		confirms    []bool
+		wantConfirm bool
+		wantInputs  bool
+		wantErr     bool
+	}{
+		{
+			name:        "configured local with an unset harness opts in",
+			sandbox:     "local",
+			inputs:      []string{"opencode", "user"},
+			confirms:    []bool{true},
+			wantConfirm: true,
+			wantInputs:  true,
+		},
+		{
+			name:        "configured local with a configured harness still opts in",
+			sandbox:     "local",
+			harness:     "opencode",
+			confirms:    []bool{true},
+			wantConfirm: true,
+		},
+		{
+			name:        "configured local declined aborts without saving",
+			sandbox:     "local",
+			harness:     "opencode",
+			confirms:    []bool{false},
+			wantConfirm: true,
+			wantErr:     true,
+		},
+		{
+			name:        "opted-in local asks nothing",
+			sandbox:     "local",
+			harness:     "opencode",
+			allowHost:   true,
+			wantConfirm: false,
+		},
+		{
+			name:        "configured non-local asks nothing",
+			sandbox:     "docker",
+			harness:     "opencode",
+			wantConfirm: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &scriptedPrompter{t: t, inputs: tc.inputs, confirms: tc.confirms}
+			deps := newOptInDeps(t, p)
+
+			cmd := &cobra.Command{Use: "run"}
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cfg := config.Run{Sandbox: tc.sandbox, Harness: tc.harness, AllowHost: tc.allowHost}
+			err := deps.resolveRunSelection(cmd, &cfg)
+			asked := strings.Join(p.asked, "\n")
+			if got := strings.Contains(asked, "confirm:"); got != tc.wantConfirm {
+				t.Fatalf("opt-in prompt asked = %v, want %v (asked=%v)", got, tc.wantConfirm, p.asked)
+			}
+			if got := strings.Contains(asked, "input:"); got != tc.wantInputs {
+				t.Fatalf("dimension/scope prompt asked = %v, want %v (asked=%v)", got, tc.wantInputs, p.asked)
+			}
+			if tc.wantErr {
+				if !errors.Is(err, ErrUsage) {
+					t.Fatalf("declined opt-in error = %v, want a usage error", err)
+				}
+				for _, path := range []string{deps.UserConfigPath, deps.ProjectConfigPath} {
+					if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+						t.Fatalf("declined opt-in wrote %s: %v", path, statErr)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveRunSelection() error = %v", err)
+			}
+			wantHarness := tc.harness
+			if wantHarness == "" {
+				wantHarness = "opencode"
+			}
+			if cfg.Sandbox != tc.sandbox || cfg.Harness != wantHarness {
+				t.Fatalf("resolved = %q/%q, want %q/%q", cfg.Sandbox, cfg.Harness, tc.sandbox, wantHarness)
+			}
+			wantAllowHost := tc.allowHost || (tc.sandbox == "local" && tc.wantConfirm)
+			if cfg.AllowHost != wantAllowHost {
+				t.Fatalf("cfg.AllowHost = %v, want %v", cfg.AllowHost, wantAllowHost)
+			}
+			if !wantAllowHost || tc.allowHost {
+				// Nothing was asked, so nothing should be written: an already
+				// recorded opt-in and a non-local sandbox both save nothing.
+				for _, path := range []string{deps.UserConfigPath, deps.ProjectConfigPath} {
+					if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+						t.Fatalf("a run with nothing to save wrote %s: %v", path, statErr)
+					}
+				}
+				return
+			}
+			user := readFile(t, deps.UserConfigPath)
+			if !strings.Contains(user, "allow_host = true") {
+				t.Fatalf("user config missing the recorded opt-in:\n%s", user)
+			}
+			// A dimension that came from config is already saved: the opt-in
+			// path must not restate it.
+			if strings.Contains(user, `sandbox = `) {
+				t.Fatalf("the opt-in path persisted the already-configured sandbox:\n%s", user)
+			}
+			if tc.harness != "" && strings.Contains(user, `harness = `) {
+				t.Fatalf("the opt-in path persisted the already-configured harness:\n%s", user)
+			}
+			loaded, err := config.Load(config.Input{
+				UserPath:    deps.UserConfigPath,
+				ProjectPath: deps.ProjectConfigPath,
+				Getenv:      func(string) string { return "" },
+			})
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if !loaded.Run.AllowHost {
+				t.Fatalf("reloaded Run.AllowHost = false, want the recorded opt-in")
+			}
+		})
+	}
+}
+
+// TestResolveRunSelectionNonInteractiveLocalOptIn pins that a non-interactive
+// run never blocks on the opt-in: with both dimensions resolved, it leaves the
+// decision to the run's own not-opted-in error instead of prompting.
+func TestResolveRunSelectionNonInteractiveLocalOptIn(t *testing.T) {
+	deps := newOptInDeps(t, nil)
+	deps.Prompt = nil
+	deps.IsTerminal = func(io.Writer) bool { return false }
+
+	cmd := &cobra.Command{Use: "run"}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cfg := config.Run{Sandbox: "local", Harness: "opencode"}
+	if err := deps.resolveRunSelection(cmd, &cfg); err != nil {
+		t.Fatalf("resolveRunSelection() error = %v, want the selection error to surface later", err)
+	}
+	if cfg.AllowHost {
+		t.Fatal("a non-interactive run granted the host opt-in")
+	}
+	for _, path := range []string{deps.UserConfigPath, deps.ProjectConfigPath} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("a non-interactive run wrote %s: %v", path, statErr)
+		}
+	}
+}
+
+// TestPersistRunDefaultsResolvesUserConfigFirst pins that a project-scope write
+// with the host-scoped opt-in resolves the machine config path before writing
+// the project file: a resolution failure (no $HOME, no --user-config) must
+// leave no partial write behind.
+func TestPersistRunDefaultsResolvesUserConfigFirst(t *testing.T) {
+	deps := newOptInDeps(t, &scriptedPrompter{t: t})
+	deps.UserConfigPath = ""
+
+	path, optInPath, err := deps.persistRunDefaults("project", config.RunDefaults{Sandbox: "local", AllowHost: true})
+	if err == nil {
+		t.Fatalf("persistRunDefaults() error = nil, want a user-config resolution failure")
+	}
+	if path != "" || optInPath != "" {
+		t.Fatalf("failed write reported paths %q/%q, want none", path, optInPath)
+	}
+	if _, statErr := os.Stat(deps.ProjectConfigPath); !os.IsNotExist(statErr) {
+		t.Fatalf("the project config was written before the user config resolved: %v", statErr)
+	}
+}
+
 // TestPersistRunDefaultsProjectScopeNeedsProject pins the refusal a requested
 // project scope hits when no project is configured: it fails clearly, names the
 // machine (user) config as the way out, and writes nothing, rather than leaving

@@ -443,7 +443,7 @@ The transport is a thin wrapper over the store port: each endpoint maps to one `
 call (`send`→`Create`, `get`/`inbox`→`Get`/`List`, `ack`/`nack`/`retry`→`Ack`/`Nack`/`Update`+event,
 `claim`→`Claim`, `register`/`heartbeat`/`deregister`→`RunRepo`). The CLI verbs are the same calls, so
 there is one behavior with two transports; `ft msg get` is the non-mutating fetch and `ft msg read`
-is the mutating mark-read (the transport's `ack` is `ft msg agent ack` for a receiver).
+is the mutating fetch-and-mark-read (the transport's `ack` is `ft msg agent ack` for a receiver).
 
 Auth and trust:
 

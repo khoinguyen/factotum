@@ -30,12 +30,20 @@ type messageSendResult struct {
 	Project string `json:"project" yaml:"project"`
 }
 
-// messageReadResult is the single-result shape of `ft msg read`.
+// messageReadResult is the single-result shape of `ft msg read`: the `read` ack
+// flag followed by the whole message `ft msg get` returns, so a caller that acks
+// a message sees what it said in the same call instead of following up with
+// `ft msg get`.
 type messageReadResult struct {
 	ID      string `json:"id" yaml:"id"`
 	Read    bool   `json:"read" yaml:"read"`
+	From    string `json:"from,omitempty" yaml:"from,omitempty"`
 	To      string `json:"to" yaml:"to"`
+	TaskID  string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+	ReplyTo string `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
 	State   string `json:"state" yaml:"state"`
+	Created string `json:"created_at" yaml:"created_at"`
+	Body    string `json:"body" yaml:"body"`
 	Project string `json:"project" yaml:"project"`
 }
 
@@ -220,9 +228,10 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result := messageReadResult{ID: string(message.ID), Read: true, To: string(message.To), State: string(message.State), Project: string(message.ProjectID)}
+			result := messageReadResultFrom(message)
 			return deps.emit(result, func() {
-				deps.printFields(f("message_id", message.ID), f("read", true), f("to", message.To), f("state", message.State), f("project", message.ProjectID))
+				deps.printFields(f("read", true))
+				printMessageBlock(deps, message)
 			})
 		},
 	}
@@ -679,6 +688,24 @@ func messageEntryFrom(message *core.Message) messageEntry {
 		entry.TaskID = string(*message.TaskID)
 	}
 	return entry
+}
+
+// messageReadResultFrom renders a message that was just acked read: the ack flag
+// plus the content `ft msg get` shows for it.
+func messageReadResultFrom(message *core.Message) messageReadResult {
+	detail := messageDetailFrom(message)
+	return messageReadResult{
+		ID:      detail.ID,
+		Read:    true,
+		From:    detail.From,
+		To:      detail.To,
+		TaskID:  detail.TaskID,
+		ReplyTo: detail.ReplyTo,
+		State:   detail.State,
+		Created: detail.Created,
+		Body:    detail.Body,
+		Project: detail.Project,
+	}
 }
 
 func messageDetailFrom(message *core.Message) messageDetail {

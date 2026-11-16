@@ -34,8 +34,34 @@ if [ ! -x "$bin" ]; then
 fi
 
 tmp="$(mktemp -d)"
-cleanup() { rm -rf "$tmp"; }
-trap cleanup EXIT INT TERM
+block_pid=""
+# Job control, so the quickstart block below runs in a process group of its own:
+# an interrupt can then stop the block and everything it started, not just the
+# shell waiting on it.
+set -m
+cleanup() {
+  if [ -n "$block_pid" ]; then
+    kill -TERM -- "-$block_pid" 2>/dev/null || true
+    wait "$block_pid" 2>/dev/null || true
+    block_pid=""
+  fi
+  rm -rf "$tmp"
+}
+# An interrupt must clean up and *stop*. `trap cleanup EXIT INT TERM` ran the
+# handler and then resumed whatever it interrupted, so a Ctrl-C or a CI TERM
+# removed the throwaway HOME and store and carried straight on against them,
+# failing with a misleading error instead of reporting the interruption. Exit
+# with the shell's conventional 128+signal status, and drop the EXIT trap so the
+# one cleanup already done is not repeated.
+on_signal() {
+  echo "smoke-quickstart: interrupted by $1, cleaning up" >&2
+  cleanup
+  trap - EXIT
+  exit "$2"
+}
+trap cleanup EXIT
+trap 'on_signal SIGINT 130' INT
+trap 'on_signal SIGTERM 143' TERM
 
 # "Install": the binary runs. The quickstart below assumes `ft` is on PATH.
 if ! "$bin" version >/dev/null; then
@@ -58,8 +84,15 @@ export PATH="$root/bin:$PATH"
 log="$tmp/quickstart.log"
 # Run the documented block as a user would, with `ft` from the built binary on
 # PATH. Redirecting to a file keeps `ft init` non-interactive (it prompts only
-# when stdout is a terminal).
-if ! ( cd "$work" && bash -euo pipefail -c "$block" ) >"$log" 2>&1; then
+# when stdout is a terminal). The block runs in the background and is waited on
+# so a trap fires while it is still running: bash defers a trap until the
+# foreground command it interrupted finishes.
+( cd "$work" && bash -euo pipefail -c "$block" ) >"$log" 2>&1 &
+block_pid=$!
+block_rc=0
+wait "$block_pid" || block_rc=$?
+block_pid=""
+if [ "$block_rc" -ne 0 ]; then
   echo "smoke-quickstart: the README quickstart failed:" >&2
   cat "$log" >&2
   exit 1

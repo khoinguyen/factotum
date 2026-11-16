@@ -601,8 +601,11 @@ type sessionBracket struct {
 	started  bool
 }
 
+// start records the minted session's start. It is called once per bracket, at
+// the point the run is about to start; started is tracked so end retires only a
+// session that was recorded.
 func (b *sessionBracket) start(ctx context.Context) error {
-	if !b.minted || b.started {
+	if !b.minted {
 		return nil
 	}
 	if _, err := b.sessions.Start(ctx, b.project, b.sid); err != nil {

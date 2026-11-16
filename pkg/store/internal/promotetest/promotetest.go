@@ -524,20 +524,14 @@ func DistinctCaptures(t *testing.T, open Open, path string) {
 // caller is handed that same id, the store keeps one task and one origin edge,
 // and no loser's candidate id exists.
 //
-// The promotions are queued, not just started together: the parent holds the
-// store's exclusive lock while every child arrives, so dropping it is the only
-// way any of them reaches the stamp check the guard's decision runs under. Each
-// child also stamps the start and end of its promotion, which this requires to
-// share an instant — supporting evidence that the wave raced at all, but not the
-// proof: whole-call spans overlap even when a straggler starts after the winner's
-// write, so a run can look overlapped and never have raced the guard.
-// The wave also proves the promotion is a writer: the parent holds the store as
-// a reader from before the release until every child has reached its promotion,
-// so a promotion that takes the store's exclusive lock cannot run — let alone
-// reach its stamp check — until all of its siblings are queued at the same place,
-// and one that takes the shared lock finishes inside the hold. Whole-call spans
-// are kept as supporting evidence that the wave raced, but they are not the
-// proof: they overlap even when a straggler starts after the winner's write.
+// The wave proves the promotion is a writer, and that is what makes it a proof
+// rather than a hope: the parent holds the store's shared lock from before the
+// release until every child has reached its promotion, so a promotion that takes
+// the store's exclusive lock cannot reach its stamp check until all of its
+// siblings are queued at the same place, and one that takes the shared lock runs
+// straight through the reader and is counted. Whole-call spans are supporting
+// evidence that the wave raced at all — not the proof, because they overlap even
+// when a straggler starts after the winner's write.
 func SameCapture(t *testing.T, open Open, reader ReadLock, path string) {
 	t.Helper()
 	ctx := context.Background()
@@ -558,11 +552,6 @@ func SameCapture(t *testing.T, open Open, reader ReadLock, path string) {
 	}
 
 	results, ranWhileRead := promote(t, path, jobs, reader, nil)
-
-	if !overlapped(results) {
-		t.Fatalf("no two of the %d promotions were ever in flight together, so this run never raced the guard: %s spanned %d..%d and %s spanned %d..%d (host clock, ns). A host that cannot run two promotions at once cannot test a cross-process one.",
-			len(jobs), jobs[0].Task, results[0].Start, results[0].End, jobs[1].Task, results[1].Start, results[1].End)
-	}
 
 	fresh, err := open(ctx, path)
 	if err != nil {
@@ -585,8 +574,14 @@ func SameCapture(t *testing.T, open Open, reader ReadLock, path string) {
 	if winners != 1 {
 		t.Fatalf("%d promotions reported created; want exactly one", winners)
 	}
+	// Before the span check: a wave the host serialized produces no duplicate and
+	// no overlap, and the hold is exactly what proves that wave was wrong.
 	if ranWhileRead != 0 {
 		t.Fatalf("%d of the %d promotions finished while another handle held the store as a reader; a promotion's lookup and insert take the store's exclusive lock, so a reader must block every one of them until it lets go", ranWhileRead, len(jobs))
+	}
+	if !overlapped(results) {
+		t.Fatalf("no two of the %d promotions were ever in flight together, so this run never raced the guard: %s spanned %d..%d and %s spanned %d..%d (host clock, ns). A host that cannot run two promotions at once cannot test a cross-process one.",
+			len(jobs), jobs[0].Task, results[0].Start, results[0].End, jobs[1].Task, results[1].Start, results[1].End)
 	}
 	won := results[0].ID
 	if _, err := fresh.Tickets().Get(ctx, won); err != nil {

@@ -8,21 +8,21 @@ import (
 )
 
 // ordinaryLoadProbeTail is the worst `--version` probe latency measured under
-// ordinary parallel load (t-izluv7llq6): eight concurrent `go test -race`
-// suites plus 32 concurrent probes pushed the tail past 3.7s, against roughly
-// 13ms on an idle host.
+// parallel loop-agent load on the host where this flaked (t-izluv7llq6): past
+// 3.7s, against roughly 13ms idle. It is a host-specific measurement, not a
+// portable constant — other hosts run the same test with a tail under a second —
+// so it serves as the yardstick for the bound, not as a claim about any machine.
 const ordinaryLoadProbeTail = 4 * time.Second
 
-// TestVersionProbeTimeoutKeepsHeadroomOverTheLoadTail pins what the probe's
-// bound is for. It exists to stop a hung binary from stalling run selection, not
-// to race a loaded host: fork/exec latency on a busy machine reaches seconds,
-// and a bound near that tail does not merely slow the probe, it reports V1 for
-// an in-place V2, which is the flake that burned every loop agent's `mise run
-// ci`. A bound with only a small margin over the load tail will flake again.
+// TestVersionProbeTimeoutKeepsHeadroomOverTheLoadTail pins the rule the bound is
+// chosen by: at least four times the probe tail parallel loop agents produce. The
+// bound is a hang bound, not a load budget, so a value near that tail does not
+// merely slow the probe, it reports V1 for an in-place V2 — the flake that burned
+// every loop agent's `mise run ci`. A bound under this floor flakes again.
 func TestVersionProbeTimeoutKeepsHeadroomOverTheLoadTail(t *testing.T) {
 	want := 4 * ordinaryLoadProbeTail
 	if versionProbeTimeout < want {
-		t.Fatalf("versionProbeTimeout = %v, want at least %v: four times the %v probe tail measured under parallel load; a tighter bound answers V1 for an in-place V2 on a loaded host", versionProbeTimeout, want, ordinaryLoadProbeTail)
+		t.Fatalf("versionProbeTimeout = %v, want at least %v: four times the %v probe tail measured on the host where the probe flaked; a tighter bound answers V1 for an in-place V2 under loop-agent load", versionProbeTimeout, want, ordinaryLoadProbeTail)
 	}
 }
 

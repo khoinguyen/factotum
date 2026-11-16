@@ -123,12 +123,13 @@ func MajorVersion(banner string) (major int, ok bool) {
 
 // versionProbeTimeout bounds one `--version` probe. It exists to stop a hung
 // binary from stalling run selection, not to race a loaded host: fork/exec
-// latency on a busy machine reaches seconds (measured past 3.7s with eight race
-// suites and 32 concurrent probes, against ~13ms idle, and past 17s on a
-// saturated one), and a bound near that tail does not merely slow the probe, it
-// reports V1 for an in-place V2 (t-izluv7llq6). So the bound keeps headroom over
-// the load tail, and it matches the 30s bound the isolation backends put on a
-// child process. A hung binary still costs a cancelled probe after that bound.
+// latency on a busy machine reaches seconds — past 3.7s on the host where this
+// flaked, against ~13ms idle, and past 17s on a deliberately saturated one — and
+// a bound near that tail does not merely slow the probe, it reports V1 for an
+// in-place V2 (t-izluv7llq6). So the bound is chosen as at least four times the
+// tail parallel loop agents produce (see the probe test), and 30s is also as
+// long as run selection should ever wait for one probe; Docker's readiness bound
+// (DefaultReadyTimeout) picks the same number.
 const versionProbeTimeout = 30 * time.Second
 
 // VariantForBinary returns the OpenCode variant the named binary drives,
@@ -150,7 +151,8 @@ func probeVariant(binary string, timeout time.Duration) Variant {
 	// Killing the direct child does not end the probe on its own: a launcher can
 	// leave a grandchild holding the stdout pipe, and Output then blocks past
 	// the bound until that grandchild exits. WaitDelay bounds that drain, so the
-	// probe answers within its bound instead of stalling run selection.
+	// probe answers within its bound instead of stalling run selection. A second
+	// is the grace pkg/isolation/local gives the same drain (orphanDrainGrace).
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -89,6 +90,24 @@ func TestRunBoundsTheSessionItMints(t *testing.T) {
 				t.Fatalf("minted session %q started %d retired %d, want exactly one of each", sid, started, retired)
 			}
 		})
+	}
+}
+
+// TestRunRetiresTheSessionOfAFailedHarness pins that a harness failure does not
+// leak the session the run minted: the retire is deferred, so the error path
+// retires it exactly as the success path does, and a run that failed on its way
+// out still leaves no permanently alive session.
+func TestRunRetiresTheSessionOfAFailedHarness(t *testing.T) {
+	f := newRunFixture(t)
+	f.backend.Program(isolation.ExecResult{Stdout: []byte("boom\n"), Stderr: []byte("no widget\n"), ExitCode: 1})
+
+	outcome, err := f.run(t, RunInput{})
+	if !errors.Is(err, ErrRunFailed) {
+		t.Fatalf("Run() error = %v, want ErrRunFailed", err)
+	}
+	started, retired := sessionEvents(t, f.svc.backend, outcome.Session)
+	if started != 1 || retired != 1 {
+		t.Fatalf("failed run's session %q started %d retired %d, want exactly one of each", outcome.Session, started, retired)
 	}
 }
 

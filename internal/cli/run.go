@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -39,6 +41,12 @@ type runOptions struct {
 	promptFile     string
 	promptArtifact string
 }
+
+// errRunInterrupted reports a run an operator stopped with INT or TERM. The run
+// is cancelled rather than the process ended on the spot, and this is what the
+// interrupted run returns, so the outcome reads as an interruption instead of as
+// whatever the harness made of losing its command.
+var errRunInterrupted = errors.New("run interrupted")
 
 func newRunCommand(deps *Deps) *cobra.Command {
 	var opts runOptions
@@ -88,13 +96,15 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			if err := deps.validateRunFlags(cmd, opts); err != nil {
 				return err
 			}
-			if opts.goal != "" {
-				return deps.runGoal(cmd, opts.goal, opts)
-			}
-			if len(args) == 0 {
-				return deps.runProject(cmd, opts)
-			}
-			return deps.runTask(cmd, args[0], opts)
+			return withRunInterrupts(cmd, func() error {
+				if opts.goal != "" {
+					return deps.runGoal(cmd, opts.goal, opts)
+				}
+				if len(args) == 0 {
+					return deps.runProject(cmd, opts)
+				}
+				return deps.runTask(cmd, args[0], opts)
+			})
 		},
 	}
 	cmd.Flags().StringVarP(&opts.project, "project", "p", "", "project id whose store the run reads and writes (defaults to the configured project)")
@@ -113,6 +123,36 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "use this file's content as the harness prompt (single task or task-less run)")
 	cmd.Flags().StringVar(&opts.promptArtifact, "prompt-artifact", "", "use this artifact's body as the harness prompt (single task or task-less run)")
 	return cmd
+}
+
+// withRunInterrupts runs one `ft run` dispatch, turning INT and TERM into
+// cancellation of the run's context instead of ending the process on the spot.
+// Cancellation unwinds the run through its ordinary error path, which is what
+// retires a session the run minted and tears down the sandbox it prepared: an
+// unhandled signal skips every defer and leaves that session alive forever. A
+// second signal is left to the default disposition, so a harness that ignores
+// cancellation can never leave ft uninterruptible.
+func withRunInterrupts(cmd *cobra.Command, run func() error) error {
+	ctx, cancel := context.WithCancelCause(cmd.Context())
+	defer cancel(nil)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	go func() {
+		select {
+		case <-signals:
+			signal.Stop(signals)
+			cancel(errRunInterrupted)
+		case <-ctx.Done():
+		}
+	}()
+
+	cmd.SetContext(ctx)
+	err := run()
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	return err
 }
 
 // validateRunFlags rejects a name given on the command line that the registries
@@ -765,9 +805,12 @@ func (d *Deps) driveLoop(cmd *cobra.Command, target projectTarget, targetID stri
 			return err
 		}
 		defer func() {
-			// The loop is over whether or not it finished cleanly, so retire on
-			// the way out even after an interrupt. Losing the event must not mask
-			// the loop's own result.
+			// The loop is over whether or not it finished cleanly. `ft run`
+			// turns an operator's INT/TERM into cancellation of this context, so
+			// an interrupted loop unwinds through here too; the context is
+			// already cancelled by then, which is why the retire runs on one that
+			// ignores cancellation. Losing the event must not mask the loop's own
+			// result.
 			_, _ = d.Sessions.Retire(context.WithoutCancel(cmd.Context()), goal.ProjectID, session, "")
 		}()
 	}

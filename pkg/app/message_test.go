@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -265,6 +266,29 @@ func TestMessageSendResolvesTaskSugar(t *testing.T) {
 		}
 	})
 
+	t.Run("many runs one actor uses the mailbox", func(t *testing.T) {
+		f := newMessageFixture(t)
+		agent := core.ActorID("act-agent")
+		f.addActor(t, agent, core.ActorAgent, "agent")
+		f.addTask(t, "t-1", &agent)
+		lease := f.clock.Now().Add(time.Hour)
+		// Two sessions of the same actor: addressing either run would be an
+		// arbitrary pick, so ticket sugar settles on the actor's mailbox, which
+		// both runs can claim.
+		for i, id := range []core.RunID{"run-1", "run-2"} {
+			if _, err := f.backend.Runs().Register(ctx, &core.Run{ID: id, ProjectID: "prj-1", ActorID: agent, TaskID: taskPtr("t-1"), Host: "h", PID: i + 1, CreatedAt: f.clock.Now(), SeenAt: f.clock.Now(), LeaseUntil: lease}); err != nil {
+				t.Fatalf("register run: %v", err)
+			}
+		}
+		message, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", Target: "t-1", Body: "hi"})
+		if err != nil {
+			t.Fatalf("Send() error = %v", err)
+		}
+		if message.To != core.ActorAddress(agent) {
+			t.Fatalf("Send().To = %q, want %q (not a run picked by id order)", message.To, core.ActorAddress(agent))
+		}
+	})
+
 	t.Run("human assignee stays task", func(t *testing.T) {
 		f := newMessageFixture(t)
 		human := core.ActorID("act-human")
@@ -281,6 +305,52 @@ func TestMessageSendResolvesTaskSugar(t *testing.T) {
 			t.Fatalf("Send().TaskID = %v, want t-1", message.TaskID)
 		}
 	})
+}
+
+// TestMessageSendRefusesAmbiguousTaskSugar guards the silent misroute this task
+// fixed: the normal chief-loop state has a builder and a reviewer run live for
+// one task, and ticket sugar used to pick one of them by run-id order. It must
+// refuse instead, naming the candidate actor:<role> addresses, so the sender
+// re-addresses the peer it meant and nothing is stored against a guess.
+func TestMessageSendRefusesAmbiguousTaskSugar(t *testing.T) {
+	f := newMessageFixture(t)
+	ctx := context.Background()
+	f.addTask(t, "t-1", nil)
+	lease := f.clock.Now().Add(time.Hour)
+	for i, actor := range []core.ActorID{"builder-t-1", "reviewer-t-1"} {
+		run := &core.Run{
+			ID:         core.RunID("run-" + strconv.Itoa(i+1)),
+			ProjectID:  "prj-1",
+			ActorID:    actor,
+			TaskID:     taskPtr("t-1"),
+			Host:       "h",
+			PID:        i + 1,
+			CreatedAt:  f.clock.Now(),
+			SeenAt:     f.clock.Now(),
+			LeaseUntil: lease,
+		}
+		if _, err := f.backend.Runs().Register(ctx, run); err != nil {
+			t.Fatalf("register run: %v", err)
+		}
+	}
+
+	_, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", Target: "t-1", Body: "hi"})
+	if !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("Send(t-1) error = %v, want ErrInvalid for an ambiguous ticket", err)
+	}
+	for _, want := range []string{"actor:builder-t-1", "actor:reviewer-t-1", "ft msg send actor:"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Send(t-1) error = %v, want it to name %q", err, want)
+		}
+	}
+
+	messages, err := f.messages.Inbox(ctx, InboxQuery{ProjectID: "prj-1"})
+	if err != nil {
+		t.Fatalf("Inbox() error = %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("an ambiguous ticket send stored a message: %+v", messages)
+	}
 }
 
 func TestMessageSendRejects(t *testing.T) {

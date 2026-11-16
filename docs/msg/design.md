@@ -154,12 +154,25 @@ type Address string // "actor:act-x", "run:run-y", "task:t-z"
   `queued` (never silently dropped) and falls back to the actor mailbox at the operator's
   discretion (the proposed retry verb's re-address, section 11).
 - `task:<ticket-id>` — sugar, resolved **at enqueue time** by `ft msg send`. In every case the
-  message records `Message.TaskID = t`, so the task link survives the rewrite:
-  1. if a live run is registered with `Run.TaskID == t`, address `run:<that run>`;
-  2. else if the task's `AssigneeID` is an agent actor, address `actor:<assignee>`;
-  3. else keep `To = task:<t>`; whoever later starts the task (registers a run with that `TaskID`)
+  message records `Message.TaskID = t`, so the task link survives the rewrite. Resolution never
+  guesses between peers, because a live run is a session, not a peer:
+  1. exactly one live run is registered with `Run.TaskID == t` → address `run:<that run>`;
+  2. several live runs, all of them the **same actor** → address `actor:<that actor>`: that is the
+     stable mailbox every one of those sessions can claim, while picking one run by id order would
+     be arbitrary;
+  3. several live runs with **different actors** → refuse with `ErrInvalid`, naming every candidate
+     `actor:<role>` address and an example send. This is the normal chief-loop state — a builder
+     and a reviewer are both live on one task — so a ticket-addressed hand-off has to say which
+     peer it means (`ft msg send actor:reviewer-t-x`); a run-id tie-break would silently hand the
+     message to the wrong peer;
+  4. no live run, and the task's `AssigneeID` is an agent actor → address `actor:<assignee>`;
+  5. else keep `To = task:<t>`; whoever later starts the task (registers a run with that `TaskID`)
      becomes the recipient. A stored `task:` message is claimable by exactly the run whose
      `Run.TaskID` matches.
+
+  Cases 4 and 5 address a mailbox, not a session, so `ft msg send` warns on stderr when no live run
+  can claim it: the message is `queued`, a receiver may not exist yet, so `to:` must not be read as
+  a working peer.
 
   Because `TaskID` is carried on the message, a message resolved to `run:`/`actor:` still filters
   by task and still sets `Event.TicketID` (sections 6 and 12); the `task:` stored form is only the
@@ -209,10 +222,12 @@ type Run struct {
   not create a duplicate run; the returned `RunID` is stable for the session.
 - A run is **live** while `LeaseUntil > now` and **stale** otherwise. `ft msg runs --live` and the
   dashboard show liveness. Liveness gates **send resolution**, not claimability: `ft msg send`
-  resolves a task to a live run, else the assignee actor, else `task:` (section 4; `resolveTask` in
-  `pkg/app/message.go`), while `Claim` is a store-local compare-and-swap on the stored address with
-  no liveness check. So a run always drains its own mailbox, even with a lease that lapsed a moment
-  ago, and a claim for a stale `run:` does still match. Gating claim on liveness instead would need
+  resolves a task to its one live run, else the actor when every live run shares it, else the
+  assignee actor, else `task:` — refusing when live runs of different actors make the ticket
+  ambiguous (section 4; `resolveTask` in `pkg/app/message.go`) — while `Claim` is a store-local
+  compare-and-swap on the stored address with no liveness check. So a run always drains its own
+  mailbox, even with a lease that lapsed a moment ago, and a claim for a stale `run:` does still
+  match. Gating claim on liveness instead would need
   the store to read the registry inside the claim, and would strand a live receiver whose lease
   merely lapsed.
 - The cost is the other side: a message addressed to a run that dies before claiming stays `queued`

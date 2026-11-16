@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -193,22 +194,59 @@ func (s *MessageService) resolveTarget(ctx context.Context, project core.Project
 	}
 }
 
+// resolveTask implements ticket sugar (design section 4). It never guesses
+// between peers: exactly one live run is addressed directly, several runs of one
+// actor settle on that actor's mailbox, and runs of different actors refuse,
+// naming the candidate actor addresses so the sender re-addresses the peer it
+// meant instead of delivering to whichever run id sorts first.
 func (s *MessageService) resolveTask(ctx context.Context, project core.ProjectID, ticketID core.TicketID) (core.Address, *core.TicketID, error) {
 	ticket, err := s.backend.Tickets().Get(ctx, ticketID)
 	if err != nil {
 		return "", nil, fmt.Errorf("message task: %w", err)
 	}
 	live := true
-	runs, err := s.backend.Runs().List(ctx, store.RunFilter{ProjectID: project, Task: &ticketID, Live: &live, Now: s.clock.Now(), Limit: 1})
-	if err == nil && len(runs) > 0 {
-		return core.RunAddress(runs[0].ID), &ticketID, nil
+	runs, err := s.backend.Runs().List(ctx, store.RunFilter{ProjectID: project, Task: &ticketID, Live: &live, Now: s.clock.Now()})
+	if err != nil {
+		return "", nil, fmt.Errorf("message task runs: %w", err)
 	}
-	if ticket.AssigneeID != nil {
-		if actor, err := s.backend.Actors().Get(ctx, *ticket.AssigneeID); err == nil && actor.Kind == core.ActorAgent {
-			return core.ActorAddress(actor.ID), &ticketID, nil
+	actors := runActors(runs)
+	switch len(actors) {
+	case 1:
+		if len(runs) == 1 {
+			return core.RunAddress(runs[0].ID), &ticketID, nil
 		}
+		// Several sessions of one actor: the mailbox is the deterministic target
+		// and every one of those runs can claim it.
+		return core.ActorAddress(actors[0]), &ticketID, nil
+	case 0:
+		if ticket.AssigneeID != nil {
+			if actor, err := s.backend.Actors().Get(ctx, *ticket.AssigneeID); err == nil && actor.Kind == core.ActorAgent {
+				return core.ActorAddress(actor.ID), &ticketID, nil
+			}
+		}
+		return core.TaskAddress(ticketID), &ticketID, nil
+	default:
+		sort.Slice(actors, func(i, j int) bool { return actors[i] < actors[j] })
+		candidates := make([]string, len(actors))
+		for i, actor := range actors {
+			candidates[i] = string(core.ActorAddress(actor))
+		}
+		return "", nil, fmt.Errorf("%w: task %s has live runs for %d actors (%s): address the peer you mean, e.g. ft msg send %s", core.ErrInvalid, ticketID, len(actors), strings.Join(candidates, ", "), candidates[0])
 	}
-	return core.TaskAddress(ticketID), &ticketID, nil
+}
+
+// runActors returns the distinct actors behind runs, in run order.
+func runActors(runs []*core.Run) []core.ActorID {
+	actors := make([]core.ActorID, 0, len(runs))
+	seen := make(map[core.ActorID]bool, len(runs))
+	for _, run := range runs {
+		if run == nil || seen[run.ActorID] {
+			continue
+		}
+		seen[run.ActorID] = true
+		actors = append(actors, run.ActorID)
+	}
+	return actors
 }
 
 // InboxQuery filters an inbox listing.

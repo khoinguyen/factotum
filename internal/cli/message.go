@@ -139,6 +139,7 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			deps.warnStrandedTaskMessage(cmd.Context(), message)
 			result := messageSendResult{ID: string(message.ID), Sent: true, To: string(message.To), State: string(message.State), Project: string(message.ProjectID)}
 			return deps.emit(result, func() {
 				deps.printFields(f("message_id", message.ID), f("sent", true), f("to", message.To), f("state", message.State), f("project", message.ProjectID))
@@ -292,6 +293,41 @@ func messageRunEntryFrom(run *core.Run, now time.Time) messageRunEntry {
 		entry.TaskID = string(*run.TaskID)
 	}
 	return entry
+}
+
+// warnStrandedTaskMessage warns when a ticket-addressed send fell back to a
+// mailbox no live run can claim. The message is not lost — it stays queued until
+// a receiver registers — but the sender would otherwise read `to:` as a delivery
+// to a working peer. A run-addressed send is already a specific session, and a
+// store failure here never fails a send that succeeded.
+func (d *Deps) warnStrandedTaskMessage(ctx context.Context, message *core.Message) {
+	if message.TaskID == nil {
+		return
+	}
+	kind, id, err := core.ParseAddress(string(message.To))
+	if err != nil || kind == core.AddressRun {
+		return
+	}
+	live := true
+	filter := store.RunFilter{ProjectID: message.ProjectID, Live: &live, Now: d.Clock.Now()}
+	switch kind {
+	case core.AddressActor:
+		actor := core.ActorID(id)
+		filter.ActorID = &actor
+	case core.AddressTask:
+		filter.Task = message.TaskID
+	default:
+		return
+	}
+	runs, err := d.Messages.ListRuns(ctx, filter)
+	if err != nil || len(runs) > 0 {
+		return
+	}
+	if kind == core.AddressActor {
+		d.warnf("no live run can claim actor:%s yet; the message stays queued until one registers (see ft msg runs --live)", id)
+		return
+	}
+	d.warnf("no live run is working task %s yet; the message stays queued for the run that registers with it (see ft msg runs --live)", id)
 }
 
 // receiverFile is the receiver source filename both harnesses load from their

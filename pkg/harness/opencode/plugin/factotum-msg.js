@@ -22,11 +22,12 @@
 // lease as a working peer, so a receiver that cannot claim while still
 // heartbeating is an inert agent that quietly queues every handoff behind a
 // live-looking TUI. This receiver therefore renews its lease only while its
-// claim loop is running and it has a session to inject into; while parked it lets
-// the lease lapse, so `ft msg runs --live` reports the peer as gone instead of
-// healthy. Neither a failed registration nor a failed claim may end the
-// receiver silently: registration is retried, the claim loop catches every
-// error and keeps polling, and both transitions are logged.
+// claim loop is running, it has a session to inject into, and its current claim
+// round trip keeps settling within two long-poll windows; while parked or
+// wedged it lets the lease lapse, so `ft msg runs --live` reports the peer as
+// gone instead of healthy. Neither a failed registration nor a failed claim may
+// end the receiver silently: registration is retried, the claim loop catches
+// every error and keeps polling, and every transition is logged.
 //
 // OpenCode reloads a plugin when its staged file changes, which restarts the
 // receiver with no session. Persisting the session in the V2 context's storage
@@ -263,27 +264,58 @@ export function createFactotumReceiver({
   // zero restore interval would hammer storage while parked.
   const retryMs = num(config.retryMs, DEFAULT_RETRY_MS);
   const restoreEveryMs = Math.max(SESSION_POLL_MS, num(config.sessionWaitMs, SESSION_WAIT_MS));
+  // A claim round trip - issue the poll, receive the answer, inject and ack -
+  // must settle within two long-poll windows. Past that the loop is not merely
+  // idle but wedged on an await that never returns (a hung local ft, a remote hub
+  // stalling mid-poll with no abort, a session prompt that never resolves), and
+  // renewing the lease would advertise a peer that is queueing every handoff.
+  const stallMs = 2 * num(config.waitMs, DEFAULT_WAIT_MS);
 
   let runID = "";
   let sessionID = "";
   let stopped = false;
   let heartbeatTimer = null;
-  // loopRunning and parked describe what the receiver can do right now, not
-  // whether the process is up. healthy() is the lease gate and parked drives the
-  // one-shot log line; both exist so an inert receiver is visible from outside.
+  // loopRunning, parked, stalled and lastProgressAt describe what the receiver
+  // can do right now, not whether its process is up. healthy() is the lease gate;
+  // the flags drive the one-shot log lines. All of them exist so an inert
+  // receiver is visible from outside.
   let loopRunning = false;
   let parked = false;
+  let stalled = false;
+  let lastProgressAt = 0;
   let lastRestoreAt = 0;
 
   // healthy reports whether this receiver can actually deliver a message: it is
-  // not disposing, its claim loop is running, and it has a session to inject
-  // into. A receiver that fails this must not renew its lease - the hub reads a
-  // renewed lease as a working peer, and `ft msg runs --live` would otherwise
-  // report a healthy agent while every handoff sat queued behind an inert
-  // plugin. Letting the lease lapse makes the failure detectable without a
-  // screen.
+  // not disposing, its claim loop is running, it has a session to inject into,
+  // and its current round trip has not overrun. A receiver that fails this must
+  // not renew its lease - the hub reads a renewed lease as a working peer, and
+  // `ft msg runs --live` would otherwise report a healthy agent while every
+  // handoff sat queued behind an inert plugin. Letting the lease lapse makes the
+  // failure detectable without a screen.
   function healthy() {
-    return !stopped && loopRunning && !!sessionID;
+    return !stopped && loopRunning && !!sessionID && Date.now() - lastProgressAt <= stallMs;
+  }
+
+  // startRoundTrip and settleRoundTrip bound a round trip rather than the loop's
+  // lifetime: a promise that never settles keeps the loop "running" forever, so
+  // only progress may count as health.
+  function startRoundTrip() {
+    lastProgressAt = Date.now();
+  }
+
+  function settleRoundTrip() {
+    lastProgressAt = Date.now();
+    if (!stalled) return;
+    stalled = false;
+    log("factotum msg: claim round trips resumed; renewing this run's lease again");
+  }
+
+  // noteStall logs the first tick that finds the current round trip overrun, and
+  // stays quiet until it settles. Parking is not a stall: it has its own line.
+  function noteStall() {
+    if (!loopRunning || !sessionID || stalled) return;
+    stalled = true;
+    log(`factotum msg: no claim round trip settled in ${stallMs}ms; not renewing this run's lease until one does (a hung claim or injection)`);
   }
 
   async function register() {
@@ -415,6 +447,7 @@ export function createFactotumReceiver({
   // parks rather than claiming (a claimed message it cannot inject would be
   // dropped or burn an attempt); otherwise it claims and delivers.
   async function poll() {
+    startRoundTrip();
     if (!sessionID) {
       await park();
       return;
@@ -433,7 +466,11 @@ export function createFactotumReceiver({
       while (!stopped) {
         try {
           await poll();
+          settleRoundTrip();
         } catch (error) {
+          // A failed poll still completed a round trip: the loop is alive and
+          // retrying, not wedged, so the lease may keep being renewed.
+          settleRoundTrip();
           log(`factotum msg: claim failed: ${error?.message || error}`);
           await sleep(retryMs);
         }
@@ -457,10 +494,15 @@ export function createFactotumReceiver({
       await restoreSession();
       if (stopped) return;
       lastRestoreAt = Date.now();
+      startRoundTrip();
       heartbeatTimer = setIntervalFn(() => {
-        // Renew only while the receiver can claim (see healthy()). An inert
-        // receiver lets its lease lapse so the hub sees the peer as gone.
-        if (!healthy()) return;
+        // Renew only while the receiver can claim and its round trips keep
+        // settling (see healthy()). An inert or wedged receiver lets its lease
+        // lapse so the hub sees the peer as gone, and says why once.
+        if (!healthy()) {
+          noteStall();
+          return;
+        }
         heartbeat().catch((error) => log(`factotum msg: heartbeat failed: ${error?.message || error}`));
       }, Math.max(1000, Math.floor(config.ttlMs / 3)));
       void loop();

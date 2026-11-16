@@ -238,13 +238,15 @@ type Run struct {
   old `run:` message has no claimant; nothing refuses a deregister with queued mail either. An
   operator then re-addresses it with the proposed `retry` verb (section 11).
 - **Liveness means claiming, not being up.** The lease is renewed only while a receiver can actually
-  deliver: its claim loop is running and it has a session to inject into. A receiver that is parked
-  (no session after a reload, which an idle agent will never announce) or whose claim loop stopped
-  must not renew, so its lease lapses and `ft msg runs --live` reports the peer as gone instead of
-  healthy. That is the point of the lease: a live-looking TUI with no claim child is the failure this
-  rule makes observable (t-vo7dpanzuu). Claimability still does not depend on liveness, so a lapsed
-  receiver that wakes drains its mailbox; and registration is retried rather than attempted once, so
-  a transient store error at load cannot leave a session registered-in-name-only.
+  deliver: its claim loop is running, it has a session to inject into, and its current claim round trip
+  settles within two long-poll windows. A receiver that is parked (no session after a reload, which an
+  idle agent will never announce), whose claim loop stopped, or that is wedged on a round trip that
+  never returns (a hung local `ft`, a remote hub stalling mid-poll, a session prompt that never
+  resolves) must not renew, so its lease lapses and `ft msg runs --live` reports the peer as gone
+  instead of healthy. That is the point of the lease: a live-looking TUI with no claim child is the
+  failure this rule makes observable (t-vo7dpanzuu). Claimability still does not depend on liveness, so
+  a lapsed receiver that wakes drains its mailbox; and registration is retried rather than attempted
+  once, so a transient store error at load cannot leave a session registered-in-name-only.
 - Deregister on clean shutdown; staleness is the crash path.
 
 ## 6. Store port and conformance

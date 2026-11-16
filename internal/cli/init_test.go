@@ -493,13 +493,18 @@ func TestInitNonGreenfieldSkipsTechStack(t *testing.T) {
 	}
 }
 
-// TestInitReadmeOnlyRepoAsksTechStack pins the observed repro: a repository
-// created by `gh repo create --add-readme` holds README.md and other scaffolding
-// but no source files, so it is greenfield and must ask for the tech stack.
-func TestInitReadmeOnlyRepoAsksTechStack(t *testing.T) {
+// TestInitCommunityDocsRepoAsksTechStack pins the observed repro: a repository
+// created by `gh repo create --add-readme` and then given GitHub's "add a code
+// of conduct / security policy" files holds README and community docs but no
+// source files, so it is greenfield and must ask for the tech stack. The README
+// here carries the .markdown extension, which no source table lists.
+func TestInitCommunityDocsRepoAsksTechStack(t *testing.T) {
 	r := newRunner(t)
 	root := t.TempDir()
-	for _, name := range []string{"README.md", "LICENSE-MIT", "CONTRIBUTING.md", ".gitignore"} {
+	for _, name := range []string{
+		"README.markdown", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md",
+		"LICENSE-MIT", "CONTRIBUTING.md", ".gitignore",
+	} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("scaffolding\n"), 0o644); err != nil {
 			t.Fatalf("WriteFile(%q) error = %v", name, err)
 		}
@@ -526,8 +531,11 @@ func TestInitReadmeOnlyRepoAsksTechStack(t *testing.T) {
 	}
 }
 
-// TestGreenfieldDir pins which directory shapes count as greenfield: repository
-// scaffolding alone is greenfield, while any real source entry is not.
+// TestGreenfieldDir pins the classification rule from both directions: a
+// directory holding only documentation and other scaffolding is greenfield
+// (so the tech-stack question is asked), while any file with a known source or
+// build-manifest extension is not. The community-doc shapes are the miss this
+// rule replaces: they are greenfield by default rather than by name.
 func TestGreenfieldDir(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -536,14 +544,32 @@ func TestGreenfieldDir(t *testing.T) {
 	}{
 		{name: "empty", want: true},
 		{name: "readme", setup: []string{"README.md"}, want: true},
+		{name: "bare readme", setup: []string{"README"}, want: true},
+		{name: "markdown readme", setup: []string{"README.markdown"}, want: true},
+		{name: "rst readme", setup: []string{"README.rst"}, want: true},
 		{name: "scaffolding", setup: []string{"README.md", "LICENSE", ".gitignore", ".github/", "docs/"}, want: true},
 		{name: "license only", setup: []string{"LICENSE.txt"}, want: true},
-		{name: "license variants", setup: []string{"README.md", "LICENSE-MIT", "LICENSE-APACHE", "COPYING"}, want: true},
+		{name: "license variants", setup: []string{"README.md", "LICENSE-MIT", "LICENSE-APACHE", "COPYING", "COPYING.LESSER", "UNLICENSE"}, want: true},
 		{name: "community files", setup: []string{"README.md", "UNLICENSE", "CHANGELOG.md", "CONTRIBUTING.md"}, want: true},
-		{name: "docs as file", setup: []string{"README.md", "docs"}},
+		{name: "code of conduct", setup: []string{"README.md", "CODE_OF_CONDUCT.md"}, want: true},
+		{name: "security policy", setup: []string{"README.md", "SECURITY.md"}, want: true},
+		{name: "support", setup: []string{"README.md", "SUPPORT.md"}, want: true},
+		{
+			name:  "github scaffold",
+			setup: []string{"README.markdown", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "LICENSE", ".gitignore", ".github/", "docs/"},
+			want:  true,
+		},
+		{name: "unknown extensionless file", setup: []string{"README.md", "NOTES"}, want: true},
 		{name: "go source", setup: []string{"README.md", "main.go"}},
 		{name: "python source", setup: []string{"README.md", "app.py"}},
+		{name: "typescript source", setup: []string{"README.md", "index.ts"}},
 		{name: "license source", setup: []string{"README.md", "license.go"}},
+		{name: "npm manifest", setup: []string{"README.md", "package.json"}},
+		{name: "go manifest", setup: []string{"README.md", "go.mod"}},
+		{name: "python manifest", setup: []string{"README.md", "pyproject.toml"}},
+		{name: "cargo manifest", setup: []string{"README.md", "Cargo.toml"}},
+		{name: "makefile", setup: []string{"README.md", "Makefile"}},
+		{name: "dockerfile", setup: []string{"README.md", "Dockerfile"}},
 		{name: "nested source", setup: []string{"README.md", "src/main.go"}},
 		{name: "unknown directory", setup: []string{"cmd/"}},
 	}

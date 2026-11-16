@@ -411,10 +411,21 @@ func projectDir(cwd string, repo gitRepo, inRepo bool) string {
 }
 
 // greenfieldDir reports whether dir looks like a fresh project with no source
-// files yet: it holds nothing but repository scaffolding (dotfiles such as
-// .gitignore, README/LICENSE/CHANGELOG/CONTRIBUTING files, and a docs
-// directory). A missing or unreadable directory is treated as greenfield, so a
-// git root that does not exist locally still offers the setup question.
+// files yet. The test is a positive source signal, not a list of names to
+// ignore: a directory is greenfield unless it holds a file with a known source
+// or build-manifest extension, an extensionless build file (Makefile,
+// Dockerfile), or a directory other than docs/ (src/ or cmd/ may hold source).
+// Documentation of any name and extension, dotfiles and docs/ are scaffolding a
+// first-run checkout can plausibly start with: `gh repo create --add-readme`
+// plus GitHub's "add a code of conduct / security policy" yields README,
+// CODE_OF_CONDUCT.md, SECURITY.md, SUPPORT.md and a licence. A missing or
+// unreadable directory is treated as greenfield, so a git root that does not
+// exist locally still offers the setup question.
+//
+// The rule is a table, not an allowlist: a language or manifest this
+// classification misses is one row in sourceExtensions or buildFiles, while an
+// unrecognized documentation name is greenfield by default rather than a false
+// "project already exists" answer.
 func greenfieldDir(dir string) bool {
 	if dir == "" {
 		return true
@@ -424,45 +435,76 @@ func greenfieldDir(dir string) bool {
 		return true
 	}
 	for _, entry := range entries {
-		if !scaffoldingEntry(entry) {
+		if sourceEntry(entry) {
 			return false
 		}
 	}
 	return true
 }
 
-// scaffoldingEntry reports whether entry is repository scaffolding a checkout
-// can plausibly start with (`gh repo create --add-readme` yields README.md plus
-// dotfiles and often a licence or community file) rather than project source.
-func scaffoldingEntry(entry os.DirEntry) bool {
+// sourceEntry reports whether entry is a real project signal: source code, a
+// build manifest, or a directory that may hold either. Dotfiles such as
+// .gitignore and .github are scaffolding whichever side of that line they would
+// otherwise fall on.
+func sourceEntry(entry os.DirEntry) bool {
 	name := entry.Name()
 	if strings.HasPrefix(name, ".") {
-		return true
-	}
-	lower := strings.ToLower(name)
-	ext := filepath.Ext(lower)
-	if !scaffoldingExtension(ext) {
 		return false
 	}
-	// A hyphen suffix names a licence variant (LICENSE-MIT, LICENSE-APACHE).
-	stem, _, _ := strings.Cut(strings.TrimSuffix(lower, ext), "-")
-	switch stem {
-	case "docs":
-		return ext == "" && entry.IsDir()
-	case "readme", "license", "licence", "copying", "unlicense", "changelog", "contributing":
+	if entry.IsDir() {
+		return !strings.EqualFold(name, "docs")
+	}
+	lower := strings.ToLower(name)
+	if buildFiles[lower] {
 		return true
 	}
-	return false
+	return sourceExtensions[filepath.Ext(lower)]
 }
 
-// scaffoldingExtension reports whether ext is one a documentation file may
-// carry; a bare README or LICENSE has none.
-func scaffoldingExtension(ext string) bool {
-	switch ext {
-	case "", ".md", ".rst", ".txt", ".adoc":
-		return true
-	}
-	return false
+// sourceExtensions lists the extensions that mark a checkout as holding real
+// source or a build manifest. A new language or manifest is a row here; the
+// documentation side needs none, because an unknown extension is scaffolding.
+var sourceExtensions = map[string]bool{
+	// Source languages.
+	".go": true, ".py": true, ".pyx": true, ".rb": true, ".rs": true, ".java": true,
+	".kt": true, ".kts": true, ".scala": true, ".groovy": true, ".clj": true,
+	".cljs": true, ".cljc": true, ".edn": true, ".c": true, ".h": true, ".cc": true,
+	".cpp": true, ".cxx": true, ".hpp": true, ".hh": true, ".hxx": true, ".m": true,
+	".mm": true, ".swift": true, ".cs": true, ".fs": true, ".fsx": true, ".vb": true,
+	".php": true, ".pl": true, ".pm": true, ".lua": true, ".r": true, ".jl": true,
+	".ex": true, ".exs": true, ".erl": true, ".hrl": true, ".hs": true, ".lhs": true,
+	".elm": true, ".dart": true, ".zig": true, ".nim": true, ".v": true, ".sv": true,
+	".vhd": true, ".vhdl": true, ".sol": true, ".pas": true, ".ml": true, ".mli": true,
+	".rkt": true, ".scm": true, ".lisp": true, ".el": true, ".raku": true, ".purs": true,
+	".re": true, ".rei": true, ".d": true, ".cr": true, ".tcl": true, ".awk": true,
+	".coffee": true, ".asm": true, ".s": true, ".ipynb": true,
+	// Web source.
+	".js": true, ".jsx": true, ".mjs": true, ".cjs": true, ".ts": true, ".tsx": true,
+	".vue": true, ".svelte": true, ".html": true, ".htm": true, ".css": true,
+	".scss": true, ".sass": true, ".less": true,
+	// Scripts.
+	".sh": true, ".bash": true, ".zsh": true, ".fish": true, ".ps1": true, ".bat": true,
+	// Build manifests and their lock files.
+	".mod": true, ".sum": true, ".toml": true, ".json": true, ".jsonc": true,
+	".json5": true, ".yaml": true, ".yml": true, ".xml": true, ".lock": true,
+	".gradle": true, ".sbt": true, ".csproj": true, ".fsproj": true, ".vbproj": true,
+	".sln": true, ".cabal": true, ".gemspec": true, ".podspec": true, ".nimble": true,
+	".rockspec": true, ".bzl": true, ".bazel": true, ".mk": true, ".cmake": true,
+	".build": true, ".props": true, ".targets": true, ".nuspec": true,
+	// Schema and generated source definitions.
+	".proto": true, ".thrift": true, ".graphql": true, ".gql": true, ".tf": true,
+	".hcl": true, ".sql": true,
+}
+
+// buildFiles lists extensionless build entry points, which the extension table
+// cannot see. A bare Makefile stays a real-project signal: the build exists, so
+// the stack is already chosen.
+var buildFiles = map[string]bool{
+	"makefile": true, "gnumakefile": true, "dockerfile": true, "containerfile": true,
+	"justfile": true, "rakefile": true, "gemfile": true, "pipfile": true,
+	"vagrantfile": true, "jenkinsfile": true, "procfile": true, "brewfile": true,
+	"earthfile": true, "pkgbuild": true, "sconstruct": true, "sconscript": true,
+	"build": true, "workspace": true,
 }
 
 // ensureProject opens the project's store and creates the project entity when it

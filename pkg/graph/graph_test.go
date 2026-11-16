@@ -436,30 +436,55 @@ func wideGraph(t *testing.T, n int) *Graph {
 	return mustGraph(t, tasks...)
 }
 
-// topoSortCeiling is the CPU-time budget for TopoSort on the wide graph, sized
-// for the expensive stage `mise run ci` runs: `cover` (`-race -covermode=atomic`)
-// costs about six times the `test` stage's race build, because atomic coverage
-// counters and the race shadow sit inside this pointer-chasing loop. The two
-// consts below record the measurements the ceiling's bounds come from.
-const topoSortCeiling = 1200 * time.Millisecond
+// topoSortCeiling returns the CPU-time budget for TopoSort on the wide graph for
+// the stage this binary was built for. The two stages cost very different
+// amounts: `go test -race` alone is the `test` stage, while `mise run ci`'s
+// `cover` stage adds `-covermode=atomic`, and atomic coverage counters plus the
+// race shadow sit inside this pointer-chasing loop and make it about six times
+// as expensive. A single ceiling sized for cover would leave the test stage -
+// the stage GitHub CI runs - nearly blind: an O(V^2) scan-for-min rescan
+// measured 1.3-1.6s there, just over a 1.2s ceiling. Each stage keeps its own
+// measured headroom.
+func topoSortCeiling() time.Duration {
+	if testing.CoverMode() != "" {
+		return topoSortCoverCeiling
+	}
+	return topoSortTestCeiling
+}
 
-// topoSortCoverTail is the worst CPU time measured for one TopoSort on the wide
-// graph in the stage that failed: `mise run ci`'s cover stage runs
-// `go test -race -covermode=atomic`, where the same call costs ~123ms p50
-// against ~21ms in the plain `test` stage. On a machine loaded by parallel
-// suites it reached 259.169ms, over the old 250ms ceiling, while a register-only
-// control loop in the same process stayed flat: the growth is cache and
-// bandwidth contention on this memory-bound loop, not a contention bug in
-// TopoSort (t-nbcpypbds2).
-const topoSortCoverTail = 260 * time.Millisecond
+// The ceilings are four times the tail measured for their stage, and well under
+// the rescan they guard against; TestTopoSortCeilingsAreSizedByMeasurement pins
+// both relations.
+const (
+	// topoSortTestCeiling covers `go test -race`: measured 31ms min / 34ms p50 /
+	// 45ms p99 / 60ms max over 100 runs with three concurrent race suites
+	// running (load average ~30).
+	topoSortTestCeiling = 300 * time.Millisecond
 
-// topoSortQuadraticRegression is the CPU time the pre-73e93ab quadratic rescan
-// consumed on the same wide graph: measured by putting that rescan back into
-// TopoSort, 5.5s in the `test` stage and 15.2s in `cover` at 20000 tasks. The
-// cover figure is higher because the sort closure's comparisons each bump an
-// atomic coverage counter. The smaller of the two is the upper bound the ceiling
-// must stay well under to keep the guard.
-const topoSortQuadraticRegression = 5500 * time.Millisecond
+	// topoSortCoverCeiling covers `go test -race -covermode=atomic`, the stage
+	// that failed: measured 158ms min / 194ms p50 / 218ms p99 / 236ms max over
+	// 200 runs under the same load (load average 30-46).
+	topoSortCoverCeiling = 1200 * time.Millisecond
+)
+
+// consts record the tails (and the regression) behind each ceiling, so the pin
+// test can reject a quiet edit in either direction. Each tail is the worst
+// single window measured for its stage on this 15-core box while parallel agent
+// suites were running; the cover tail is the 259.169ms recorded by the failure
+// that started this (t-nbcpypbds2), a little above the 236ms max of 200
+// consecutive cover-stage runs.
+const (
+	topoSortTestTail  = 60 * time.Millisecond
+	topoSortCoverTail = 260 * time.Millisecond
+
+	// topoSortQuadraticRegression is the CPU time the pre-73e93ab quadratic
+	// rescan consumed on the same wide graph: measured by putting that rescan
+	// back into TopoSort, 5.5s in the `test` stage and 15.2s in `cover` at 20000
+	// tasks. The cover figure is higher because the sort closure's comparisons
+	// each bump an atomic coverage counter. The smaller of the two is the upper
+	// bound the ceilings must stay well under to keep the guard.
+	topoSortQuadraticRegression = 5500 * time.Millisecond
+)
 
 // TestTopoSortWideGraphBudget guards against the quadratic queue rescan that
 // made graph render --format agent superlinear (t-lvlqecjqgm): the old
@@ -473,11 +498,12 @@ const topoSortQuadraticRegression = 5500 * time.Millisecond
 // (t-xfrpkkt4mx). CPU time does not count the time the process spends waiting
 // for a core, so scheduling contention no longer moves the number. It is not
 // free of the loaded machine's effects: this work is memory-bound, so cache and
-// bandwidth contention can still inflate it by about 2x, which is why the
-// ceiling is sized with headroom over the measured cover-stage tail rather than
-// just above the typical run (t-nbcpypbds2).
+// bandwidth contention can still inflate it by about 2x, which is why each
+// stage's ceiling is sized with headroom over the tail measured in that stage
+// rather than just above the typical run (t-nbcpypbds2).
 func TestTopoSortWideGraphBudget(t *testing.T) {
 	const n = 20000
+	ceiling := topoSortCeiling()
 	g := wideGraph(t, n)
 
 	var (
@@ -491,23 +517,35 @@ func TestTopoSortWideGraphBudget(t *testing.T) {
 	if len(order) != n {
 		t.Fatalf("TopoSort() = %d nodes, want %d", len(order), n)
 	}
-	if elapsed > topoSortCeiling {
-		t.Fatalf("TopoSort() on %d tasks used %v of CPU, over the %v ceiling", n, elapsed, topoSortCeiling)
+	if elapsed > ceiling {
+		t.Fatalf("TopoSort() on %d tasks used %v of CPU, over the %v ceiling", n, elapsed, ceiling)
 	}
-	t.Logf("TopoSort() on %d tasks used %v of CPU (ceiling %v)", n, elapsed, topoSortCeiling)
+	t.Logf("TopoSort() on %d tasks used %v of CPU (cover mode %q, ceiling %v)", n, elapsed, testing.CoverMode(), ceiling)
 }
 
-// TestTopoSortCeilingIsSizedByMeasurement pins both halves of the ceiling: it
-// must keep headroom over the cover-stage tail that actually failed, and it must
-// stay well under the quadratic rescan it exists to catch. A ceiling tightened
-// back towards the typical run flakes on a loaded machine; one raised towards
-// the regression stops being a guard.
-func TestTopoSortCeilingIsSizedByMeasurement(t *testing.T) {
-	if want := 4 * topoSortCoverTail; topoSortCeiling < want {
-		t.Fatalf("topoSortCeiling = %v, want at least %v: four times the %v cover-stage tail measured under parallel load (t-nbcpypbds2); a tighter ceiling races the machine instead of guarding the algorithm", topoSortCeiling, want, topoSortCoverTail)
-	}
-	if want := 3; topoSortCeiling*time.Duration(want) > topoSortQuadraticRegression {
-		t.Fatalf("topoSortCeiling = %v is within %dx of the %v quadratic rescan it must catch; the budget no longer guards against the regression", topoSortCeiling, want, topoSortQuadraticRegression)
+// TestTopoSortCeilingsAreSizedByMeasurement pins both halves of each stage's
+// ceiling: headroom over the tail measured in that stage, and enough distance
+// from the quadratic rescan the ceiling exists to catch. It pins the relation
+// between constants, not the measurements themselves: it cannot notice that a
+// tail has drifted, but it does stop a quiet edit that would tighten the ceiling
+// into a flake or raise it until it guards nothing.
+func TestTopoSortCeilingsAreSizedByMeasurement(t *testing.T) {
+	for _, tc := range []struct {
+		stage   string
+		ceiling time.Duration
+		tail    time.Duration
+	}{
+		{"test", topoSortTestCeiling, topoSortTestTail},
+		{"cover", topoSortCoverCeiling, topoSortCoverTail},
+	} {
+		t.Run(tc.stage, func(t *testing.T) {
+			if want := 4 * tc.tail; tc.ceiling < want {
+				t.Fatalf("ceiling = %v, want at least %v: four times the %v %s-stage tail measured under parallel load (t-nbcpypbds2); a tighter ceiling races the machine instead of guarding the algorithm", tc.ceiling, want, tc.tail, tc.stage)
+			}
+			if want := 3; tc.ceiling*time.Duration(want) > topoSortQuadraticRegression {
+				t.Fatalf("ceiling = %v is within %dx of the %v quadratic rescan it must catch; the budget no longer guards against the regression", tc.ceiling, want, topoSortQuadraticRegression)
+			}
+		})
 	}
 }
 

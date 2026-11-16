@@ -83,6 +83,41 @@ test("the stats line counts unstarted tasks and sums to the total", async () => 
   expect(await screen.findByText(/3 · 2 done · 1 todo · 0 active · 0 blocked/)).toBeTruthy()
 })
 
+// Khoi 2026-10-14: a capture left with a human-next task reads as blocked, its
+// stats line counts that work in its own bucket, and the blocking task is named
+// with a link - not just a count - so a person knows what to pick up.
+test("the idea detail counts human-next work and links the blocking task", async () => {
+  stubClipboard()
+  stubIdea({
+    ...idea,
+    state: "blocked",
+    chip: "needs-human",
+    total: 4,
+    done: 3,
+    todo: 0,
+    active: 0,
+    blocked: 0,
+    human: 1,
+    human_tasks: [
+      {
+        id: "t-human",
+        title: "Decide the rollout",
+        class: "needs-human",
+        chip: "needs human",
+        url: "/task/t-human",
+      },
+    ],
+  })
+  render(<IdeaDetail id="t-idea" />)
+
+  expect(
+    await screen.findByText(/4 · 3 done · 0 todo · 0 active · 0 blocked · 1 human/),
+  ).toBeTruthy()
+  const blocker = (await screen.findByText("Decide the rollout")).closest("a")!
+  expect(blocker.getAttribute("href")).toBe("/task/t-human")
+  expect(screen.getByText("t-human")).toBeTruthy()
+})
+
 // The title control copies one payload: the id and the title, "id: title", so a
 // pasted reference carries both without opening the page.
 test("the title control copies the id and the title together", async () => {

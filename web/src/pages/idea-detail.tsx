@@ -63,8 +63,28 @@ export function IdeaDetail({ id }: { id: string }) {
         <dt className="text-muted-foreground">Tasks</dt>
         <dd>
           {idea.total} · {idea.done} done · {idea.todo} todo ·{" "}
-          {idea.active} active · {idea.blocked} blocked
+          {idea.active} active · {idea.blocked} blocked · {idea.human ?? 0} human
         </dd>
+        {(idea.human_tasks ?? []).length > 0 ? (
+          <>
+            <dt className="text-muted-foreground">Needs human</dt>
+            <dd className="flex flex-col gap-1">
+              {(idea.human_tasks ?? []).map((task) => (
+                <AppLink
+                  key={task.id}
+                  href={task.url}
+                  className="flex min-w-0 items-center gap-2 hover:underline"
+                >
+                  <Chip label={task.chip} toneKey={task.class} />
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {task.id}
+                  </span>
+                  <span className="truncate text-sm">{task.title}</span>
+                </AppLink>
+              ))}
+            </dd>
+          </>
+        ) : null}
         {idea.repo ? (
           <>
             <dt className="text-muted-foreground">Repo</dt>

@@ -234,6 +234,22 @@ func (g *Graph) depResolved(id core.TicketID) bool {
 	return ok && dep.Resolves(g.policy)
 }
 
+// HumanBlockers returns the dependencies of id that are unresolved and appear in
+// readyHuman: the human-next items whose completion id waits on. readyHuman is
+// the human half of the bucket ReadyByActor classified (see ReadyBucket), so a
+// caller that already has it need not re-derive readiness. It is how a surface
+// names the person blocking work instead of reporting a generic unresolved
+// dependency.
+func (g *Graph) HumanBlockers(id core.TicketID, readyHuman map[core.TicketID]bool) []core.TicketID {
+	var out []core.TicketID
+	for _, d := range g.unresolvedDeps(g.tasks[id]) {
+		if readyHuman[d] {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // snoozeActive reports whether a task is parked by a snooze whose condition has
 // not passed. A date or task condition auto-clears once it is met; an
 // indefinite snooze stays until explicitly removed.

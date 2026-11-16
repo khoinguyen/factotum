@@ -747,6 +747,10 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 					return err
 				}
 				candidates = filterByActor(snapshot, candidates, actor)
+				// The agent cannot act while a human-next item gates its work, so
+				// name that blocker in its ranking: agents and humans then see the
+				// same next action.
+				candidates = unionIDs(candidates, humanNextBlockers(snapshot, actor))
 			}
 			candidates = filterByLabels(snapshot, candidates, labels)
 			candidates = filterByGroomed(snapshot, candidates, groomedWant)
@@ -1993,6 +1997,39 @@ func filterByActor(snapshot *app.Snapshot, candidates []core.TicketID, actor *co
 		}
 		if task.AssigneeID == nil && actor.Kind == core.ActorHuman {
 			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// humanNextBlockers returns the ready-human tasks that gate actor's own
+// unfinished work: the human-next decisions whose completion unblocks it. It is
+// what lets `task next --for <agent>` surface the person standing between the
+// agent and its work, rather than returning an empty ranking while that work
+// waits.
+func humanNextBlockers(snapshot *app.Snapshot, actor *core.Actor) []core.TicketID {
+	readyHuman := make(map[core.TicketID]bool, len(snapshot.Ready.Human))
+	for _, id := range snapshot.Ready.Human {
+		readyHuman[id] = true
+	}
+	seen := make(map[core.TicketID]bool)
+	out := make([]core.TicketID, 0)
+	for _, id := range snapshot.Graph.IDs() {
+		task, ok := snapshot.Graph.Ticket(id)
+		if !ok || task.AssigneeID == nil || *task.AssigneeID != actor.ID {
+			continue
+		}
+		// Only unresolved work waits on anything: a resolved or startable task
+		// has no human blocker to surface.
+		if _, reason := snapshot.Graph.Readiness(id); reason == nil {
+			continue
+		}
+		for _, blocker := range snapshot.Graph.HumanBlockers(id, readyHuman) {
+			if seen[blocker] {
+				continue
+			}
+			seen[blocker] = true
+			out = append(out, blocker)
 		}
 	}
 	return out

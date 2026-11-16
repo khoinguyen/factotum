@@ -47,6 +47,11 @@ const (
 // the graph package to name the waiting state.
 const ReasonDepUnresolved = string(graph.ReasonDepUnresolved)
 
+// ReasonNeedsHuman is the waiting reason for a task whose remaining blocker is a
+// human-next item: a ready task that needs a person. It refines dep_unresolved
+// so the board can name the human task the work waits on.
+const ReasonNeedsHuman = "needs_human"
+
 // CaptureController is the factory's hook on the capture write path. When set,
 // the server hands it each capture the moment the capture is durably stored, so
 // a controller can start the capture's factory pipeline (docs/up/design.md §4).
@@ -486,8 +491,13 @@ type ideaView struct {
 	Todo        int             `json:"todo"`
 	Active      int             `json:"active"`
 	Blocked     int             `json:"blocked"`
-	Tasks       []taskLink      `json:"tasks,omitempty"`
-	Artifacts   []artifactView  `json:"artifacts,omitempty"`
+	// Human counts promoted tasks whose next action is a person's: a ready-human
+	// task or one gated by a human-next item. HumanTasks names those tasks, so the
+	// card can point at the blocker instead of only counting it.
+	Human      int            `json:"human"`
+	HumanTasks []taskLink     `json:"human_tasks,omitempty"`
+	Tasks      []taskLink     `json:"tasks,omitempty"`
+	Artifacts  []artifactView `json:"artifacts,omitempty"`
 }
 
 // taskGroup is a set of tasks sharing an origin idea. IdeaState is the origin
@@ -704,8 +714,6 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 			page.InFlight = append(page.InFlight, view)
 		case ready:
 		case reason != nil:
-			view.Reason = string(reason.Code)
-			view.Detail = reason.Detail
 			page.Waiting = append(page.Waiting, view)
 		}
 	}
@@ -828,7 +836,10 @@ type viewSet struct {
 	actors          map[core.ActorID]string
 	agentSet        map[core.TicketID]bool
 	humanSet        map[core.TicketID]bool
-	cycles          [][]core.TicketID
+	// humanBlockers maps a task to the ready-human dependencies it waits on, so
+	// the classifier and the rollup name the person blocking it.
+	humanBlockers map[core.TicketID][]core.TicketID
+	cycles        [][]core.TicketID
 }
 
 // buildViews projects a snapshot into the ids, readiness-annotated task views,
@@ -859,6 +870,12 @@ func (s *Server) buildViews(ctx context.Context, snapshot *app.Snapshot, artifac
 		humanSet: idSet(snapshot.Ready.Human),
 		cycles:   cycles,
 	}
+	vs.humanBlockers = make(map[core.TicketID][]core.TicketID)
+	for _, id := range ids {
+		if blockers := snapshot.Graph.HumanBlockers(id, vs.humanSet); len(blockers) > 0 {
+			vs.humanBlockers[id] = blockers
+		}
+	}
 	for id, actor := range snapshot.Actors {
 		vs.actors[id] = actor.Name
 	}
@@ -881,7 +898,13 @@ func (s *Server) buildViews(ctx context.Context, snapshot *app.Snapshot, artifac
 	}
 	for _, id := range ids {
 		task := byID[id]
-		class := classify(task, vs.agentSet[id], vs.humanSet[id], cycleIDs[id])
+		blockers := vs.humanBlockers[id]
+		class := classify(task, taskFacts{
+			readyAgent: vs.agentSet[id],
+			readyHuman: vs.humanSet[id],
+			needsHuman: len(blockers) > 0,
+			cycle:      cycleIDs[id],
+		})
 		view := taskView{
 			ID:        task.ID,
 			Title:     task.Title,
@@ -894,7 +917,13 @@ func (s *Server) buildViews(ctx context.Context, snapshot *app.Snapshot, artifac
 			Milestone: task.IsMilestone(),
 			URL:       taskOrIdeaURL(task),
 		}
-		if !task.Kind.CapturedByHuman() {
+		switch {
+		case !task.Kind.CapturedByHuman() && class == "needs-human":
+			// Name the human-next item that gates the work, not the generic
+			// unresolved dependency it is derived from.
+			view.Reason = ReasonNeedsHuman
+			view.Detail = joinIDs(blockers)
+		case !task.Kind.CapturedByHuman():
 			if _, reason := snapshot.Graph.Readiness(id); reason != nil && reason.Code != graph.ReasonInProgress {
 				view.Reason = string(reason.Code)
 				view.Detail = reason.Detail
@@ -947,6 +976,9 @@ func (s *Server) rollupIdea(idea core.Ticket, vs viewSet) ideaView {
 			out.Done++
 		case "blocked":
 			out.Blocked++
+		case "human":
+			out.Human++
+			out.HumanTasks = append(out.HumanTasks, taskLinkOf(vs.views[id]))
 		case "active":
 			out.Active++
 		default:
@@ -960,15 +992,18 @@ func (s *Server) rollupIdea(idea core.Ticket, vs viewSet) ideaView {
 }
 
 // taskState reduces one promoted task to its rollup contribution. A task is
-// finished once it resolves, blocked when it is explicitly blocked or waiting on
-// an unresolved condition, active once it has started, and todo while it has not.
-// Grooming alone (a promoted but unstarted task) is not work.
+// finished once it resolves, human when its next action is a person's (a
+// ready-human item, or work gated by one), blocked when it is explicitly blocked
+// or waiting on another unresolved condition, active once it has started, and todo
+// while it has not. Grooming alone (a promoted but unstarted task) is not work.
 func taskState(task core.Ticket, view taskView) string {
 	switch {
 	case task.Status == core.StatusDone || task.Status == core.StatusCancelled:
 		return "finished"
 	case task.Status == core.StatusBlocked:
 		return "blocked"
+	case view.Class == "ready-human" || view.Class == "needs-human":
+		return "human"
 	case view.Reason != "":
 		return "blocked"
 	case task.Status == core.StatusInProgress || task.Status == core.StatusReadyForReview:
@@ -980,9 +1015,11 @@ func taskState(task core.Ticket, view taskView) string {
 
 // ideaRollup classifies an idea from the state of its promoted tasks. An idea
 // with no promoted work is captured; all done is finished; any blocked task
-// makes it blocked (a needs-unblock signal outranks work still moving); an idea
-// with a started or finished task is active; an idea whose tasks are all still
-// todo is captured too - grooming is not work, so it belongs in the backlog.
+// makes it blocked (a needs-unblock signal outranks work still moving); any task
+// whose next action is a person's makes it blocked too, chipped needs-human, so
+// the capture asks for that attention instead of reading as backlog; an idea with
+// a started or finished task is active; an idea whose tasks are all still todo is
+// captured too - grooming is not work, so it belongs in the backlog.
 func ideaRollup(idea ideaView) (state, chip string) {
 	switch {
 	case idea.Total == 0:
@@ -991,6 +1028,8 @@ func ideaRollup(idea ideaView) (state, chip string) {
 		return "finished", "done"
 	case idea.Blocked > 0:
 		return "blocked", "blocked"
+	case idea.Human > 0:
+		return "blocked", "needs-human"
 	case idea.Done > 0 || idea.Active > 0:
 		return "active", "ready-agent"
 	default:
@@ -1134,15 +1173,25 @@ func (s *Server) projectLabel(snapshot *app.Snapshot) string {
 	return snapshot.Project.Name
 }
 
+// taskFacts are the readiness facts the board classifier needs for one task. It
+// is a struct rather than positional booleans so a call site cannot swap two
+// flags and silently misclassify.
+type taskFacts struct {
+	readyAgent bool
+	readyHuman bool
+	needsHuman bool
+	cycle      bool
+}
+
 // classify maps a task to its visual class, reusing the readiness buckets the
 // graph already computed rather than re-deriving readiness. It intentionally
 // mirrors pkg/render's presentation classes instead of calling render.Classify,
 // which would re-derive the whole view on every task. Those class strings are
 // the contract between the two surfaces, so a change here must land in
 // render.Classify too; TestBoardAndRenderAgreeOnStatusClasses guards the parity.
-func classify(task core.Ticket, readyAgent, readyHuman, cycle bool) string {
+func classify(task core.Ticket, facts taskFacts) string {
 	switch {
-	case cycle:
+	case facts.cycle:
 		return "cycle"
 	case task.Kind.CapturedByHuman():
 		return "capture"
@@ -1154,10 +1203,12 @@ func classify(task core.Ticket, readyAgent, readyHuman, cycle bool) string {
 		return "review"
 	case task.Status == core.StatusInProgress:
 		return "in-progress"
-	case readyAgent:
+	case facts.readyAgent:
 		return "ready-agent"
-	case readyHuman:
+	case facts.readyHuman:
 		return "ready-human"
+	case facts.needsHuman:
+		return "needs-human"
 	case task.Status == core.StatusBlocked:
 		return "blocked"
 	default:
@@ -1179,6 +1230,8 @@ func chip(class string) string {
 		return "agent next"
 	case "ready-human":
 		return "human next"
+	case "needs-human":
+		return "needs human"
 	case "blocked":
 		return "blocked"
 	case "cycle":
@@ -1207,6 +1260,17 @@ func idSet(ids []core.TicketID) map[core.TicketID]bool {
 	}
 	return set
 }
+
+// joinIDs renders ticket ids the way the graph reports an unresolved dependency
+// detail, so a needs-human reason reads like every other readiness detail.
+func joinIDs(ids []core.TicketID) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, string(id))
+	}
+	return strings.Join(parts, ", ")
+}
+
 func taskURL(id core.TicketID) string { return "/task/" + string(id) }
 func ideaURL(id core.TicketID) string { return "/idea/" + string(id) }
 

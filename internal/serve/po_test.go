@@ -304,7 +304,7 @@ func TestClassifyInProgress(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			class := classify(core.Ticket{Status: tc.status}, false, false, false)
+			class := classify(core.Ticket{Status: tc.status}, taskFacts{})
 			if class != tc.class {
 				t.Fatalf("classify(%s) = %q, want %q", tc.status, class, tc.class)
 			}
@@ -402,8 +402,10 @@ func TestWaitingTasksGroupedByOriginEdge(t *testing.T) {
 	if !ok {
 		t.Fatalf("group tasks = %v, want %s", taskIDs(group.Tasks), target.ID)
 	}
-	if waiting.Reason != ReasonDepUnresolved {
-		t.Fatalf("waiting reason = %q, want %q", waiting.Reason, ReasonDepUnresolved)
+	// The blocker is an unowned task, which readiness buckets as human work, so
+	// the waiting child names that human-next item instead of a generic dep.
+	if waiting.Reason != ReasonNeedsHuman {
+		t.Fatalf("waiting reason = %q, want %q", waiting.Reason, ReasonNeedsHuman)
 	}
 }
 

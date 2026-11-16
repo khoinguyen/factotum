@@ -92,9 +92,13 @@ func TestBoardAndRenderAgreeOnStatusClasses(t *testing.T) {
 		deps      []core.TicketID
 		snooze    *core.Snooze
 		notBefore *time.Time
-		want      string
+		// humanBlocker makes the shared blocker a ready-human item, so the case
+		// pins the needs-human class both surfaces must agree on.
+		humanBlocker bool
+		want         string
 	}{
 		{name: "todo waiting on a dependency", status: core.StatusTodo, deps: []core.TicketID{"t-blocker"}, want: "waiting"},
+		{name: "todo gated by a human next item", status: core.StatusTodo, deps: []core.TicketID{"t-blocker"}, humanBlocker: true, want: "needs-human"},
 		{name: "todo snoozed indefinitely", status: core.StatusTodo, snooze: &core.Snooze{Indefinite: true}, want: "waiting"},
 		{name: "todo not before a future date", status: core.StatusTodo, notBefore: &future, want: "waiting"},
 		{name: "in progress", status: core.StatusInProgress, want: "in-progress"},
@@ -108,6 +112,9 @@ func TestBoardAndRenderAgreeOnStatusClasses(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			blocker := core.Ticket{ID: "t-blocker", ProjectID: project.ID, Kind: core.KindTask, Title: "blocker", Status: core.StatusInProgress}
+			if tc.humanBlocker {
+				blocker.Status = core.StatusTodo
+			}
 			ticket := core.Ticket{
 				ID:        "t-1",
 				ProjectID: project.ID,
@@ -125,7 +132,12 @@ func TestBoardAndRenderAgreeOnStatusClasses(t *testing.T) {
 			// Both surfaces read the same readiness buckets: the board gets them
 			// from the snapshot graph, the render view from the graph itself.
 			bucket := built.ReadyByActor(nil)
-			board := classify(ticket, slices.Contains(bucket.Agent, ticket.ID), slices.Contains(bucket.Human, ticket.ID), false)
+			humanSet := idSet(bucket.Human)
+			board := classify(ticket, taskFacts{
+				readyAgent: slices.Contains(bucket.Agent, ticket.ID),
+				readyHuman: slices.Contains(bucket.Human, ticket.ID),
+				needsHuman: len(built.HumanBlockers(ticket.ID, humanSet)) > 0,
+			})
 			if board != tc.want {
 				t.Fatalf("board classify(%s) = %q, want %q", tc.name, board, tc.want)
 			}

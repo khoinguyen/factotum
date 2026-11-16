@@ -205,6 +205,8 @@ func chipLabel(class Class) string {
 		return "human next"
 	case ClassBlocked:
 		return "blocked"
+	case ClassNeedsHuman:
+		return "needs human"
 	case ClassCycle:
 		return "cycle"
 	default:

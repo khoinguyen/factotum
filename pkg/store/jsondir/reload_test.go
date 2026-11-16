@@ -386,6 +386,54 @@ func TestConcurrentHandlesLoseNothing(t *testing.T) {
 	}
 }
 
+// TestInPlaceEditIsNotNoticed pins the one kind of change the store does not
+// notice, which is the documented difference from jsonfile (that backend parses
+// its whole document on every operation, so it sees this too). An edit that
+// rewrites an existing file in place leaves both stamps alone: it changes
+// neither the directory's mtime nor the generation. A running handle keeps
+// serving what it read until something it does notice arrives, or it restarts —
+// which is the contract the package doc and README state. If detection
+// improves, this test is the thing to change.
+func TestInPlaceEditIsNotNoticed(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	hub := openReloadHandle(t, dir)
+	cli := openReloadHandle(t, dir)
+
+	task := &core.Ticket{ID: "t-1", ProjectID: "prj-1", Kind: core.KindTask, Title: "before", Status: core.StatusTodo}
+	if err := cli.Tickets().Create(ctx, task); err != nil {
+		t.Fatalf("cli Tickets().Create() error = %v", err)
+	}
+	if got, err := hub.Tickets().Get(ctx, task.ID); err != nil || got.Title != "before" {
+		t.Fatalf("hub Tickets().Get() = %+v, %v; want the task as written", got, err)
+	}
+
+	edited := *task
+	edited.Title = "edited in place"
+	data, err := encodeTask(edited, nil)
+	if err != nil {
+		t.Fatalf("encodeTask() error = %v", err)
+	}
+	// os.WriteFile truncates and rewrites the existing file: no rename, so the
+	// tasks directory keeps its mtime, and nothing bumps the generation.
+	if err := os.WriteFile(filepath.Join(dir, "tasks", "t-1.md"), data, 0o644); err != nil {
+		t.Fatalf("in-place write error = %v", err)
+	}
+	if got, err := hub.Tickets().Get(ctx, task.ID); err != nil || got.Title != "before" {
+		t.Fatalf("hub Tickets().Get() after an in-place edit = %+v, %v; want the stale title the contract documents", got, err)
+	}
+
+	// The next change the store does notice re-reads everything, the edit
+	// included: an added file moves the directory's mtime.
+	added := &core.Ticket{ID: "t-2", ProjectID: "prj-1", Kind: core.KindTask, Title: "added later", Status: core.StatusTodo}
+	if err := cli.Tickets().Create(ctx, added); err != nil {
+		t.Fatalf("cli Tickets().Create(t-2) error = %v", err)
+	}
+	if got, err := hub.Tickets().Get(ctx, task.ID); err != nil || got.Title != "edited in place" {
+		t.Fatalf("hub Tickets().Get() after a noticed change = %+v, %v; want the in-place edit picked up", got, err)
+	}
+}
+
 // TestSecondHandlePromotionUsesItsWrite pins that promotion still answers from
 // the directory, now that reloading covers every operation rather than only the
 // promotion guard: a task another handle promoted is found, not promoted again.

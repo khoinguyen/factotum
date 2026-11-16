@@ -11,9 +11,10 @@
 // re-reads the directory when it changed; every write marks the directory
 // changed, so a long-running handle serves another process's write instead of
 // its Open-time snapshot. Promotion still serializes its lookup and insert on
-// the same lock, so concurrent promotes of one capture agree on a single task.
-// A store on a filesystem shared across hosts is not supported: use sqlite for
-// that.
+// the same lock, so concurrent promotes of one capture agree on a single task. A
+// read-modify-write that spans two operations (get, then update) can still drop
+// a field another process set, and a store on a filesystem shared across hosts
+// is not supported: use sqlite for either.
 package jsondir
 
 import (
@@ -576,9 +577,13 @@ func (b *Backend) begin(exclusive bool) (func(), error) {
 	}
 	b.wrote = false
 	return func() {
-		// Record the state this handle just wrote, so its own write does not
-		// look foreign to the next operation and force a reload. On error the
-		// old stamp stays, and the next operation re-reads.
+		// Record the state on disk, so this handle's own write does not look
+		// foreign to the next operation and force a reload. That holds for a
+		// write that failed too: writeFileAtomic commits by rename, so a failure
+		// leaves the records this handle already holds; only the announced
+		// generation is extra, and a peer that re-reads because of it sees the
+		// same records. If the stamp cannot be read, the old one stays and the
+		// next operation re-reads.
 		if b.wrote {
 			if stamp, err := b.stampDisk(); err == nil {
 				b.stamp = stamp

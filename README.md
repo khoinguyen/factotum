@@ -256,7 +256,9 @@ credential_env = "OPENROUTER_API_KEY"   # isolating backends only; local ignores
 
 Only `sandbox` and `harness` are read from a committed project `[run]` (project intent); host-scoped
 settings (`workspace`, `image`, `user`, `allow_host`, credentials) are read from the machine file
-only, so a committed file never carries a host path or opts into the unsandboxed backend.
+only, so a committed file never carries a host path or opts into the unsandboxed backend. The old
+`backend` key and `FACTOTUM_RUN_BACKEND` were removed: a config or environment that still sets one
+fails with an error naming `sandbox`/`FACTOTUM_RUN_SANDBOX` instead of selecting anything.
 
 OpenCode V2 (`opencode2`) drives the same run: it reads the same config locations as V1 and
 translates V1-shaped config in memory, so `opencode2` is the one to select. Its three breaking

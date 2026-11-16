@@ -736,7 +736,7 @@ func TestRunEnvOverridesFiles(t *testing.T) {
 	dir := t.TempDir()
 	user := writeConfig(t, dir, "user.toml", `
 [run]
-backend = "local"
+sandbox = "local"
 harness = "opencode"
 `)
 	cfg, err := Load(Input{

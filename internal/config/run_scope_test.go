@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -61,23 +62,25 @@ harness = "pi"
 	}
 }
 
-// TestRunProjectSandboxKeyWinsOverDeprecatedBackendKey pins the one-release
-// alias inside the project-scoped [run] table too.
-func TestRunProjectSandboxKeyWinsOverDeprecatedBackendKey(t *testing.T) {
+// TestRunProjectScopeRejectsRemovedBackendKey pins the removal inside the
+// project-scoped [run] table too, so a committed file cannot keep the old name.
+func TestRunProjectScopeRejectsRemovedBackendKey(t *testing.T) {
 	dir := t.TempDir()
 	project := writeConfig(t, dir, "project.toml", `
 project = "acme"
 
 [run]
-sandbox = "openshell"
 backend = "docker"
 harness = "opencode"
 `)
-	cfg, err := Load(Input{UserPath: filepath.Join(dir, "none.toml"), ProjectPath: project, Getenv: emptyEnv})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+	_, err := Load(Input{UserPath: filepath.Join(dir, "none.toml"), ProjectPath: project, Getenv: emptyEnv})
+	if err == nil {
+		t.Fatal("Load() with the removed project backend key = nil error, want an error naming sandbox")
 	}
-	if cfg.Run.Sandbox != "openshell" {
-		t.Fatalf("Run.Sandbox = %q, want openshell (the primary key wins)", cfg.Run.Sandbox)
+	if !strings.Contains(err.Error(), "[run] backend") || !strings.Contains(err.Error(), "sandbox") {
+		t.Fatalf("Load() error = %v, want it to name [run] backend and sandbox", err)
+	}
+	if !strings.Contains(err.Error(), project) {
+		t.Fatalf("Load() error = %v, want it to name the offending file %s", err, project)
 	}
 }

@@ -1147,7 +1147,7 @@ function recorded(store) {
   return store.get(agentRecordKey({ location: LOCATION }));
 }
 
-test("a receiver records the identity and session a cold-restored host must resume", async () => {
+test("a receiver records the identity and session a cold-restored host must resume", async (t) => {
   const store = new Map();
   const env = {
     FACTOTUM_PROJECT: "prj-1",
@@ -1161,6 +1161,7 @@ test("a receiver records the identity and session a cold-restored host must resu
   const { run } = restoreRun();
 
   const cleanup = setupV2(restoreCtx(store, { sessionID: "ses-1" }), { env, run });
+  t.after(cleanup);
   await waitFor(() => recorded(store)?.sessionID === "ses-1", 2000);
 
   const record = recorded(store);
@@ -1171,7 +1172,8 @@ test("a receiver records the identity and session a cold-restored host must resu
   assert.equal(record.store, "jsonfile", "the store the run was launched with survives the restore");
   assert.equal(record.storeOpts, "path=/tmp/db.json");
   assert.equal(record.token, undefined, "a bearer token is never written to durable storage");
-  await cleanup();
+  assert.equal(record.version, undefined, "the record carries only what a restore reads");
+  assert.equal(record.savedAt, undefined, "the record carries only what a restore reads");
 });
 
 test("a cold-restored host re-registers from the recorded identity and delivers", async (t) => {
@@ -1271,4 +1273,88 @@ test("a cold restore of a remote receiver without its token stays inert instead 
   await new Promise((resolve) => setTimeout(resolve, 60));
   assert.equal(resumed.calls.some((c) => c.includes("msg agent register")), false);
   assert.ok(logs.some((entry) => /token/i.test(entry)), `logs = ${JSON.stringify(logs)}; want the missing token named`);
+});
+
+test("a second cold restore delivers into the session the first restore switched to", async () => {
+  // The record's sessionID is what a restore resumes. A restore that adopts a
+  // different session (the restarted host runs another one) but never writes it
+  // back leaves the record naming a session nothing uses any more - and the
+  // next restart would inject every hand-off there: the exact misroute the
+  // restore path exists to prevent.
+  const store = new Map();
+  const env = { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1" };
+
+  // The launch: records ses-1.
+  const launch = restoreRun();
+  const cleanupLaunch = setupV2(restoreCtx(store, { sessionID: "ses-1" }), { env, run: launch.run });
+  try {
+    await waitFor(() => recorded(store)?.sessionID === "ses-1", 2000);
+  } finally {
+    cleanupLaunch();
+  }
+
+  // The first restart: resumes ses-1, then the host announces the session it is
+  // actually running (ses-2). The record must follow the receiver.
+  const resumed = restoreRun({ runID: "run-2" });
+  const cleanupResumed = setupV2(restoreCtx(store, { sessionID: "ses-2" }), { env: {}, run: resumed.run });
+  try {
+    await waitFor(() => recorded(store)?.sessionID === "ses-2", 2000);
+  } finally {
+    cleanupResumed();
+  }
+
+  // The second restart: the queued hand-off must land in ses-2, never the stale
+  // ses-1 the first launch recorded.
+  const injected = [];
+  const again = restoreRun({ runID: "run-3", message: { id: "m-second", from: "act-x", body: "after the second restart" } });
+  const cleanupAgain = setupV2(restoreCtx(store, { injected }), { env: {}, run: again.run });
+  try {
+    await waitFor(() => injected.length === 1, 2000);
+    assert.equal(injected[0].sessionID, "ses-2", "the second restore injected into the session the record still named");
+  } finally {
+    cleanupAgain();
+  }
+});
+
+test("a parked cold restore backs off its liveness poll", async (t) => {
+  // A live peer can hold the actor for hours, so a parked restore polling
+  // `ft msg runs` every retry interval is a stream of subprocesses for as long
+  // as the agent runs. The gap grows instead, and the first poll after the lease
+  // lapses still adopts the mailbox.
+  const store = new Map();
+  const seed = restoreRun();
+  const cleanupSeed = setupV2(restoreCtx(store, { sessionID: "ses-live" }), {
+    env: { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1", FACTOTUM_MSG_RETRY_MS: "10" },
+    run: seed.run,
+  });
+  t.after(cleanupSeed);
+  await waitFor(() => recorded(store)?.sessionID === "ses-live", 2000);
+
+  let live = true;
+  let registered = false;
+  let polls = 0;
+  const cleanup = setupV2(restoreCtx(store), {
+    env: {},
+    run: async (argv) => {
+      if (argv[1] === "runs") {
+        polls += 1;
+        return { code: 0, stdout: JSON.stringify([{ actor: "act-1", live }]), stderr: "" };
+      }
+      if (argv[2] === "register") {
+        registered = true;
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-2" }), stderr: "" };
+      }
+      // Park a claim so the adopted receiver does not spin after the assertion.
+      if (argv[2] === "claim") return new Promise(() => {});
+      return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    },
+  });
+  t.after(cleanup);
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  // Without backoff this window is 30 polls at a 10ms interval.
+  assert.ok(polls <= 10, `polls = ${polls} in 300ms; want the parked poll backed off`);
+
+  live = false;
+  await waitFor(() => registered, 2000);
 });

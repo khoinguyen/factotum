@@ -45,11 +45,14 @@
 // FACTOTUM_* never reaches the plugin and it would register nothing while the
 // TUI looks healthy. Every load that has its configuration therefore records the
 // identity it registered as (and the session it injects into) for its location,
-// and a load with no environment recovers it from storage. That recovery waits
-// while another receiver holds the actor live: two claimers of one mailbox split
-// a hand-off between them, and a human opening the checkout by hand must not
-// take over a running agent's queue. The record never carries the hub token, so
-// a remote receiver whose token is gone says so and stays inert rather than
+// and a load with no environment recovers it from storage. A restore keeps that
+// record current with the session it actually injects into, so the next restart
+// resumes the live session instead of a stale id. That recovery waits while
+// another receiver holds the actor live - with a backing-off liveness poll, since
+// a live peer can hold it for hours: two claimers of one mailbox split a
+// hand-off between them, and a human opening the checkout by hand must not take
+// over a running agent's queue. The record never carries the hub token, so a
+// remote receiver whose token is gone says so and stays inert rather than
 // registering against the wrong store.
 //
 // It is a thin client of the receiver protocol. With no hub URL it shells out to
@@ -80,6 +83,10 @@ export const DEFAULT_TTL_MS = 90000;
 export const DEFAULT_RETRY_MS = 1000;
 const SESSION_WAIT_MS = 10000;
 const SESSION_POLL_MS = 50;
+// RESTORE_POLL_MAX_MS caps the parked cold restore's liveness poll (see
+// waitForActorFree): a live peer keeps it parked for as long as its agent runs,
+// and the cap still notices a lapsed lease promptly enough to adopt the mailbox.
+const RESTORE_POLL_MAX_MS = 30000;
 
 function num(value, fallback) {
   const parsed = Number(value);
@@ -759,7 +766,6 @@ export function msgAgentStore(ctx) {
 
 function recordFromConfig(config, sessionID) {
   return {
-    version: 1,
     project: config.project,
     actor: config.actor,
     task: config.task || "",
@@ -774,7 +780,6 @@ function recordFromConfig(config, sessionID) {
     store: config.store || "",
     storeOpts: config.storeOpts || "",
     sessionID: sessionID || "",
-    savedAt: Date.now(),
   };
 }
 
@@ -833,11 +838,17 @@ async function actorLive(run, config) {
  * so the restore can never split a running agent's mailbox. A crashed receiver's
  * lease lapses within its TTL, which is the case this waits out; a live peer
  * keeps this parked (and says so once) until it is disposed.
+ *
+ * The poll backs off from the retry delay to RESTORE_POLL_MAX_MS: a live peer
+ * holds the actor for as long as its agent runs, so a fixed one-second poll
+ * would spawn `ft msg runs` for hours.
  */
 async function waitForActorFree(config, { run, log, stopped }) {
   if (config.msgUrl) return true;
   const call = run || ((argv) => spawnRunner(config.bin, argv, { env: receiverEnv(config) }));
   const retryMs = num(config.retryMs, DEFAULT_RETRY_MS);
+  const maxPollMs = Math.max(RESTORE_POLL_MAX_MS, retryMs);
+  let pollMs = retryMs;
   let told = false;
   while (!stopped()) {
     const live = await actorLive(call, config);
@@ -846,7 +857,8 @@ async function waitForActorFree(config, { run, log, stopped }) {
       told = true;
       log(`factotum msg: actor ${config.actor} already has a live receiver; registering again once its lease lapses`);
     }
-    await sleep(retryMs);
+    await sleep(pollMs);
+    pollMs = Math.min(pollMs * 2, maxPollMs);
   }
   return false;
 }
@@ -876,7 +888,9 @@ export function setupRestoredReceiver(ctx, { call, run, log = pluginLog } = {}) 
     }
     if (disposed) return;
     log(`factotum msg: no launch environment; restoring actor ${record.config.actor} from this location's recorded identity`);
-    cleanup = startReceiver(ctx, record.config, { call, run, log, resume: record.sessionID });
+    // A restored receiver records too: the session it adopts is what the next
+    // restart must resume, and only this record carries it across the restart.
+    cleanup = startReceiver(ctx, record.config, { call, run, log, resume: record.sessionID, record: true });
   })().catch((error) => log(`factotum msg: cold restore failed: ${error?.message || error}`));
   return () => {
     disposed = true;
@@ -919,9 +933,10 @@ export function pluginLog(message) {
 
 /**
  * startReceiver wires the shared receiver to the context's session and event
- * domains and returns the cleanup OpenCode calls on unload. `record` persists
- * the identity for a later cold restore, `resume` supplies the session a restore
- * recovered, and `run`/`call` are the test seams for the ft transport.
+ * domains and returns the cleanup OpenCode calls on unload. `record` keeps the
+ * location's recorded identity and session current, so the next cold restore
+ * resumes the session this receiver injects into; `resume` supplies the session
+ * a restore recovered, and `run`/`call` are the test seams for the ft transport.
  */
 export function startReceiver(ctx, config, { call, run, loadSession, saveSession, log = pluginLog, resume = "", record = false } = {}) {
   const sessions = msgSessionStore(ctx, config);
@@ -941,8 +956,10 @@ export function startReceiver(ctx, config, { call, run, loadSession, saveSession
   const start = async () => {
     // Record the identity before any session is known: the service can restart
     // before the agent's first turn, and a receiver registered without a session
-    // is still addressable (it injects once one appears).
-    if (record) await agents.save(config, "");
+    // is still addressable (it injects once one appears). A restore starts from
+    // the session it resumed, so seeding with that keeps the record on the
+    // session this receiver injects into instead of blanking it.
+    if (record) await agents.save(config, resume);
     await receiver.start();
   };
   start().catch((error) => log(`factotum msg: receiver start failed: ${error?.message || error}`));

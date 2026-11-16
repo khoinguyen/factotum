@@ -256,9 +256,9 @@ ft doctor --strict           # exit non-zero on warnings too
 concrete recommendation: a provider configured but unknown, an endpoint that does not
 answer, a model it does not serve (`ollama pull <model>`), a stdio command not on
 `PATH`, a vector index on an old model (`ft memory reindex`), or a judge without a
-key. It is read-only unless `--fix` is given, asks on a terminal before applying
-anything, never starts a server or downloads a model, and exits non-zero when a
-check fails, so a script can gate on it.
+key. It is read-only unless `--fix` is given; on a terminal without `--fix` it asks
+before applying anything, and it never starts a server or downloads a model on its
+own, exiting non-zero when a check fails so a script can gate on it.
 
 ## Conventions that matter
 
@@ -342,7 +342,8 @@ agents" and "Isolation policy" sections carry the rest.
   A run on a terminal is **interactive** (the agent attached) so a human can answer it, and
   its run note records the outcome only; `--unattended`, a piped stdin/stdout, or `--goal`
   runs **headless**. Interactive needs an attaching backend (`local`, not `openshell`/
-  `docker`, which say to rerun with `--unattended`). A headless run narrates on stderr only
+  `docker`, which say to rerun with `--unattended`); a piped or redirected stdin/stdout
+  keeps a run headless too. A headless run narrates on stderr only
   when stderr is a terminal and output is text: `ft: run <task> (sandbox=<b> harness=<h>)
   started`, then a periodic `still running (Ns)` heartbeat.
 - `-p/--project` picks the project whose store the run reads and writes (else the configured one); a target it does not hold is not found (exit 3).

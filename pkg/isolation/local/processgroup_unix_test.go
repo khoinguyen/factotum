@@ -43,6 +43,38 @@ func TestStopKillsProcessGroup(t *testing.T) {
 	}
 }
 
+// TestExecExitKillsProcessGroup pins the teardown a command's own exit needs: the
+// process group outlives its leader, so a worker the command forked is still
+// running when Wait returns unless the exit ends the group. A run must not leave
+// that worker behind just because its harness exited cleanly.
+func TestExecExitKillsProcessGroup(t *testing.T) {
+	b, _ := newBackend(t, local.Options{})
+	dir := t.TempDir()
+	h := prepare(t, b, isolation.Spec{Workdir: dir})
+	// The worker's output is redirected away from the inherited pipe so the
+	// leader's exit is what Wait returns on, not the orphan drain bound.
+	ex, err := b.Exec(context.Background(), h, isolation.Command{
+		Argv:    []string{"sh", "-c", "sleep 60 >/dev/null 2>&1 & echo $! > child.pid"},
+		Workdir: dir,
+	})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	pid := waitForPID(t, filepath.Join(dir, "child.pid"))
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	res, err := ex.Wait(context.Background())
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want 0: the leader exited on its own", res.ExitCode)
+	}
+	if !waitGone(pid) {
+		t.Fatalf("worker pid %d survived the command's own exit", pid)
+	}
+}
+
 // TestStopKillsInteractiveChildTree pins the interactive half of the same
 // guarantee. An interactive child cannot be moved out of ft's process group: it
 // inherits the host terminal, and the terminal's foreground process group is

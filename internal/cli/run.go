@@ -798,15 +798,17 @@ func (d *Deps) driveLoop(cmd *cobra.Command, target projectTarget, targetID stri
 	// One session for the whole loop: the caller's when this invocation inherited
 	// one, else a fresh id, so every task the loop runs lands on one timeline
 	// instead of each run minting its own. A minted session is the loop's to
-	// close: it is started when the first task is actually about to run - a loop
-	// refused in preflight or selecting no work never starts one, so it leaves no
-	// empty row - and retired on the way out. An inherited session belongs to the
-	// caller and is never started or retired here.
+	// close: it is started when the first task is actually about to run and
+	// retired on the way out, so a loop refused in preflight or selecting no work
+	// leaves no empty row - and, never having started one, reports no session
+	// either. An inherited session belongs to the caller and is never started or
+	// retired here.
 	session := d.Session
+	minted := session == ""
+	started := false
 	var startSession func(context.Context) error
-	if session == "" {
+	if minted {
 		session = d.Sessions.NewID()
-		started := false
 		startSession = func(ctx context.Context) error {
 			if started {
 				return nil
@@ -879,7 +881,15 @@ func (d *Deps) driveLoop(cmd *cobra.Command, target projectTarget, targetID stri
 	if outcome == nil {
 		return runErr
 	}
-	if err := d.printLoopOutcome(goal, outcome, session, runErr); err != nil {
+	// A loop that selected no work minted a session id but never recorded it, so
+	// report no session rather than an id that resolves to nothing. A caller's
+	// session exists independently of this loop, so an inherited id is always
+	// reported.
+	reported := session
+	if minted && !started {
+		reported = ""
+	}
+	if err := d.printLoopOutcome(goal, outcome, reported, runErr); err != nil {
 		return err
 	}
 	return runErr
@@ -1058,7 +1068,7 @@ type runLoopDoc struct {
 	Remaining  int              `json:"remaining" yaml:"remaining"`
 	NotRun     []string         `json:"not_run,omitempty" yaml:"not_run,omitempty"`
 	Steps      []runLoopStepDoc `json:"steps" yaml:"steps"`
-	Session    string           `json:"session" yaml:"session"`
+	Session    string           `json:"session,omitempty" yaml:"session,omitempty"`
 	Project    string           `json:"project" yaml:"project"`
 	Repo       string           `json:"repo" yaml:"repo"`
 }
@@ -1084,6 +1094,10 @@ func (d *Deps) printLoopStep(step app.LoopStep) {
 	d.printf("\n")
 }
 
+// printLoopOutcome reports the loop's result. session is the id the loop ran
+// under, or empty when it recorded none - a zero-iteration loop whose id was
+// freshly minted - so the reported output only ever names a session that
+// exists.
 func (d *Deps) printLoopOutcome(goal *core.Ticket, outcome *app.LoopOutcome, session string, runErr error) error {
 	doc := runLoopDoc{
 		Goal:       string(outcome.Goal),
@@ -1114,7 +1128,10 @@ func (d *Deps) printLoopOutcome(goal *core.Ticket, outcome *app.LoopOutcome, ses
 		for _, id := range outcome.NotRun {
 			fields = append(fields, f("not_run", id))
 		}
-		fields = append(fields, f("session", session), f("project", goal.ProjectID), f("repo", d.repoValue(goal.Repo)))
+		if session != "" {
+			fields = append(fields, f("session", session))
+		}
+		fields = append(fields, f("project", goal.ProjectID), f("repo", d.repoValue(goal.Repo)))
 		d.printFields(fields...)
 	}, d.runLoopHints(goal, outcome, runErr)...)
 }

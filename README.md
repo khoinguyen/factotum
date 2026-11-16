@@ -217,7 +217,8 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   bucket `ft task next --for <agent>` offers; startable but non-agent-ready on-path work
   (unassigned, human-owned, or ungroomed) is left for a human and named in `not_run:`. The stop
   reason is `stop:` (`goal_reached`, `no_ready_work`, `blocked`, `budget_exhausted`, or `failed`),
-  and each iteration prints a compact `step:` block.
+  and each iteration prints a compact `step:` block. Every task the loop runs shares one session,
+  reported as `session:`; a loop that runs no task reports none.
 - `--prompt-file`/`--prompt-artifact` supply a stored prompt: with a task it replaces the task
   prompt, and with no task id it runs the prompt once over every repository and writes nothing to
   the graph. They are mutually exclusive; a missing or empty `--prompt-file` is an input error

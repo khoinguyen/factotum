@@ -19,11 +19,12 @@
 # TITLE RESOLUTION. A restored session can leave duplicate titles behind: the
 # stale surfaces sit in an old window while the live pair is in the current one.
 # First-match-wins therefore risks pasting into a dead shell. When a title
-# matches more than one surface (or, failing that, workspace), the candidates
-# are ranked by liveness - current window, active window, active workspace,
-# active surface - and probed in that order for `recipient_has_agent: true`; a
-# bare surface is never pasted into. If no candidate has a live agent the
-# wrapper fails loudly and asks for an explicit ref instead of guessing.
+# matches more than one surface (or workspace, including a same-titled workspace
+# whose live agent sits under a differently-titled tab), the candidates are
+# ranked by liveness - current window, active window, active workspace, active
+# surface - and probed in that order for `recipient_has_agent: true`; a bare
+# surface is never pasted into. If no candidate has a live agent the wrapper
+# fails loudly and asks for an explicit ref instead of guessing.
 set -euo pipefail
 
 usage() { echo "usage: cmux-msg.sh <target> <text...>" >&2; exit 2; }
@@ -35,18 +36,22 @@ text="$*"
 
 # resolve_title <title> prints one tab-separated row per matching surface; only
 # when no surface matches does it print matching workspaces instead. Columns:
-#   score, tree-order, kind, ref, cleanup-surface, display
+#   score, tree-order, kind, ref, cleanup-surface, display, enclosing-workspace
+# cleanup-surface is "-" for a workspace row (it has no surface of its own), so
+# no column is empty: bash's `read` collapses runs of whitespace IFS tabs.
 # Surfaces outrank workspaces as before (a tab title resolves to the tab). The
-# score encodes liveness; tree-order keeps ties deterministic.
+# score encodes liveness; tree-order keeps ties deterministic. The enclosing
+# workspace lets the caller spot a same-titled workspace that is not just the
+# surface's own container (a duplicate copy whose tab has a different title).
 resolve_title() {
   cmux tree --all | awk -v n="$1" '
     function title_of(line) {
       if (match(line, /"[^"]*"/)) return substr(line, RSTART + 1, RLENGTH - 2)
       return ""
     }
-    function emit(kind, ref, cleanup, score, display) {
+    function emit(kind, ref, cleanup, score, display, owner) {
       order++
-      print score "\t" order "\t" kind "\t" ref "\t" cleanup "\t" display
+      print score "\t" order "\t" kind "\t" ref "\t" cleanup "\t" display "\t" owner
     }
     /^window window:/ {
       win_ref = ""
@@ -60,8 +65,8 @@ resolve_title() {
       ws_title = title_of($0)
       ws_base = (index($0, "◀ active") ? 4 : 0)
       if (ws_title == n)
-        emit("workspace", ws_ref, "", win_base + ws_base,
-             "workspace \"" n "\" (" win_ref ")")
+        emit("workspace", ws_ref, "-", win_base + ws_base,
+             "workspace \"" n "\" (" win_ref ")", ws_ref)
       next
     }
     /surface surface:/ {
@@ -69,7 +74,7 @@ resolve_title() {
       if (match($0, /surface:[0-9]+/)) sref = substr($0, RSTART, RLENGTH)
       score = win_base + ws_base + (index($0, "◀ active") ? 2 : 0)
       emit("surface", sref, sref, score,
-           "surface " sref " (workspace \"" ws_title "\", " win_ref ")")
+           "surface " sref " (workspace \"" ws_title "\", " win_ref ")", ws_ref)
       next
     }
   '
@@ -128,8 +133,22 @@ esac
 
 rows="$(resolve_title "$target")"
 surfaces="$(printf '%s\n' "$rows" | awk -F'\t' 'NF && $3 == "surface"')"
+workspaces="$(printf '%s\n' "$rows" | awk -F'\t' 'NF && $3 == "workspace"')"
 candidates="$surfaces"
-[ -n "$candidates" ] || candidates="$(printf '%s\n' "$rows" | awk -F'\t' 'NF && $3 == "workspace"')"
+
+# A lone surface match can still be a stale copy: a duplicate workspace with the
+# same title may hold the live agent under a differently-titled tab. Such a
+# workspace is a candidate too, so the title is ambiguous, not a paste case.
+# A workspace that merely contains the matched surface is not an extra copy.
+if [ -n "$surfaces" ] && [ -n "$workspaces" ]; then
+  extras="$(printf '%s\n%s\n' "$surfaces" "$workspaces" | awk -F'\t' '
+    $3 == "surface" { own[$7] = 1; next }
+    $3 == "workspace" && !($4 in own) { print }')"
+  if [ -n "$extras" ]; then
+    candidates="$(printf '%s\n%s\n' "$surfaces" "$extras")"
+  fi
+fi
+[ -n "$candidates" ] || candidates="$workspaces"
 
 if [ -z "$candidates" ]; then
   echo "cmux-msg: no surface/workspace named '$target'" >&2
@@ -158,8 +177,9 @@ fi
 # probing a bare surface only queues a copy there, which is marked read so a
 # later attach does not replay it. Never paste when the title was ambiguous.
 tried=""
-while IFS=$'\t' read -r _score _order _kind cand cleanup display; do
+while IFS=$'\t' read -r _score _order _kind cand cleanup display _owner; do
   [ -n "$cand" ] || continue
+  [ "$cleanup" = "-" ] && cleanup=""
   if ! json="$(send_json "$cand")"; then
     printf 'cmux-msg: cannot message %s: ambiguous target %s\n' "$cand" "'$target'" >&2
     exit 1

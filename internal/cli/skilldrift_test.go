@@ -67,9 +67,9 @@ func TestEmbeddedSkillsFitOutputBound(t *testing.T) {
 }
 
 // TestSkillBoundFindingKeepsLineHeadroom pins the line half of the guard: a
-// rendering at the allowed size passes, one line over fails naming the budget
-// and the format, and a rendering at the raw output bound still fails, so the
-// bound cannot quietly become the budget.
+// rendering at the allowed size passes, one line over fails naming the budget,
+// the format, and how many lines to cut, and a rendering at the raw output bound
+// still fails, so the bound cannot quietly become the budget.
 func TestSkillBoundFindingKeepsLineHeadroom(t *testing.T) {
 	budget := maxOutputLines - skillLineHeadroom
 	rendering := func(lines int) []byte { return []byte(strings.Repeat("line\n", lines)) }
@@ -77,11 +77,12 @@ func TestSkillBoundFindingKeepsLineHeadroom(t *testing.T) {
 		name     string
 		lines    int
 		wantFail bool
+		cut      string
 	}{
 		{name: "well under", lines: skillLineHeadroom, wantFail: false},
 		{name: "exactly the budget", lines: budget, wantFail: false},
-		{name: "one line over the budget", lines: budget + 1, wantFail: true},
-		{name: "at the output bound", lines: maxOutputLines, wantFail: true},
+		{name: "one line over the budget", lines: budget + 1, wantFail: true, cut: "cut 1 line"},
+		{name: "at the output bound", lines: maxOutputLines, wantFail: true, cut: fmt.Sprintf("cut %d lines", skillLineHeadroom)},
 	}
 	for _, format := range skillFormats {
 		for _, tc := range cases {
@@ -97,6 +98,9 @@ func TestSkillBoundFindingKeepsLineHeadroom(t *testing.T) {
 				if !strings.Contains(joined, fmt.Sprintf("at or below %d", budget)) || !strings.Contains(joined, "lines of "+format+" output") {
 					t.Fatalf("skillRenderFindings(%s, %d lines) = %v, want the %d-line budget and the format named", format, tc.lines, findings, budget)
 				}
+				if !strings.Contains(joined, tc.cut) {
+					t.Fatalf("skillRenderFindings(%s, %d lines) = %v, want %q so the author knows what to cut", format, tc.lines, findings, tc.cut)
+				}
 			})
 		}
 	}
@@ -107,7 +111,9 @@ func TestSkillBoundFindingKeepsLineHeadroom(t *testing.T) {
 // serialized (json/yaml) whole, so a rendering over the byte budget truncates
 // `ft skill get`. Each format is probed directly so the envelope of the other
 // shapes cannot mask the axis under test, and the budget — the bound less
-// skillByteHeadroom — is what passes, not the raw bound.
+// skillByteHeadroom — is what passes, not the raw bound. A failure names the
+// overage, so the next author knows how much to cut rather than only that the
+// rendering does not fit.
 func TestSkillBoundFindingChecksByteBudgetPerFormat(t *testing.T) {
 	budget := maxOutputBytes - skillByteHeadroom
 	// A one-line rendering of exactly size bytes, so only the byte axis is in
@@ -117,12 +123,13 @@ func TestSkillBoundFindingChecksByteBudgetPerFormat(t *testing.T) {
 		name     string
 		size     int
 		wantFail bool
+		cut      string
 	}{
 		{name: "well under", size: budget / 2, wantFail: false},
 		{name: "one byte under the budget", size: budget - 1, wantFail: false},
 		{name: "exactly the byte budget", size: budget, wantFail: false},
-		{name: "one byte over the budget", size: budget + 1, wantFail: true},
-		{name: "at the raw output bound", size: maxOutputBytes, wantFail: true},
+		{name: "one byte over the budget", size: budget + 1, wantFail: true, cut: "cut 1 byte"},
+		{name: "at the raw output bound", size: maxOutputBytes, wantFail: true, cut: fmt.Sprintf("cut %d bytes", skillByteHeadroom)},
 	}
 	for _, format := range skillFormats {
 		for _, tc := range cases {
@@ -140,6 +147,9 @@ func TestSkillBoundFindingChecksByteBudgetPerFormat(t *testing.T) {
 				}
 				if !strings.Contains(joined, format+" output") {
 					t.Fatalf("skillRenderFindings(%s, %d bytes) = %v, want the rendered format named", format, tc.size, findings)
+				}
+				if !strings.Contains(joined, tc.cut) {
+					t.Fatalf("skillRenderFindings(%s, %d bytes) = %v, want %q so the author knows what to cut", format, tc.size, findings, tc.cut)
 				}
 			})
 		}
@@ -236,20 +246,31 @@ func skillBoundFindings(doc skillDoc) []string {
 
 // skillRenderFindings reports how one rendering of a skill breaks the output
 // budget in lines or bytes, naming the format so the trim lands on the shape
-// that is over. Both limits are budgets, not ceilings: the raw bound truncates
-// the first byte or line past it, so a rendering at the bound has no room for an
-// edit and one added word reds an unrelated PR.
+// that is over, and the overage so the author knows how much to cut. Both limits
+// are budgets, not ceilings: the raw bound truncates the first byte or line past
+// it, so a rendering at the bound has no room for an edit and one added word
+// reds an unrelated PR.
 func skillRenderFindings(name, format string, rendered []byte) []string {
 	var findings []string
 	if lines, budget := countLines(rendered), maxOutputLines-skillLineHeadroom; lines > budget {
-		findings = append(findings, fmt.Sprintf("skill %q renders as %d lines of %s output; keep it at or below %d (the %d-line output bound less %d lines of headroom) so that format is not truncated",
-			name, lines, format, budget, maxOutputLines, skillLineHeadroom))
+		findings = append(findings, fmt.Sprintf("skill %q renders as %d lines of %s output; keep it at or below %d (the %d-line output bound less %d lines of headroom) so that format is not truncated: %s",
+			name, lines, format, budget, maxOutputLines, skillLineHeadroom, overage(lines-budget, "line")))
 	}
 	if size, budget := len(rendered), maxOutputBytes-skillByteHeadroom; size > budget {
-		findings = append(findings, fmt.Sprintf("skill %q renders as %d bytes of %s output; keep it at or below %d (the %d-byte output bound less %d bytes of headroom) so `ft skill get %s` is never truncated in that format",
-			name, size, format, budget, maxOutputBytes, skillByteHeadroom, name))
+		findings = append(findings, fmt.Sprintf("skill %q renders as %d bytes of %s output; keep it at or below %d (the %d-byte output bound less %d bytes of headroom) so `ft skill get %s` is never truncated in that format: %s",
+			name, size, format, budget, maxOutputBytes, skillByteHeadroom, name, overage(size-budget, "byte")))
 	}
 	return findings
+}
+
+// overage words how much a rendering is over its budget, pluralized so a
+// one-unit overage does not read as "1 bytes", so the finding always states the
+// exact cut the next author has to make.
+func overage(amount int, unit string) string {
+	if amount == 1 {
+		return "cut 1 " + unit
+	}
+	return fmt.Sprintf("cut %d %ss", amount, unit)
 }
 
 func TestEmbeddedSkillsReferenceRealCommandsAndFlags(t *testing.T) {

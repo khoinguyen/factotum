@@ -155,6 +155,9 @@ func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 	)
 	launchPort := freeTCPPort(t)
 	launch, password, launchOut := startV2Server(t, bin, dir, launchEnv, launchPort)
+	// The explicit stop below is ordered by the test; this one covers a failure
+	// before it, which would otherwise leave an `opencode2 serve` running.
+	defer launch.stop()
 	// Activation (the first session) is what loads the plugin, so it can race the
 	// receiver's subscription. Wait for the register first, then give the
 	// receiver the session the record must carry.
@@ -225,11 +228,14 @@ const (
 // home, and no FACTOTUM_* at all. Activation (the first session) is what loads
 // the plugin, and a session created before its subscription is missed - which is
 // why the receiver keeps the session the record names until the host announces
-// another. It waits for the restored receiver to register before returning.
+// another. It waits for the restored receiver to register before returning. The
+// server is stopped by the test, in order; a restore that fails before it is
+// handed back still stops its own server on cleanup.
 func startRestoredServer(t *testing.T, bin, dir, callsPath string, isolated []string, port int) (*v2Server, string, *lockedBuffer) {
 	t.Helper()
 	env := append(withoutFactotumEnv(), isolated...)
 	server, password, output := startV2Server(t, bin, dir, env, port)
+	t.Cleanup(server.stop)
 	createSessionV2(t, port, password)
 	waitForStubCall(t, callsPath, "msg agent register", port, password, output)
 	return server, password, output

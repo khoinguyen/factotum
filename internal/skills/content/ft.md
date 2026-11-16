@@ -37,11 +37,10 @@ ft graph render --project <p>   # the whole DAG as text
 `ft task next` ranks ready tasks by what unblocks the most work, proximity to a
 milestone, the `--toward` target, and priority. Use it instead of scanning the
 list by hand. When a task is missing from the ranking, `ft task next --explain`
-lists each excluded task with its reason, applying the same
-`--for`/`--label`/`--repo`/`--groomed`/`-n` filters as ranking, and `ft task get
-<task>` prints a `not ready because:` line for the same reason. `--for <agent>`
-also ranks the ready-human tasks gating its own work, so the human decision it
-waits on is never buried.
+lists each excluded task with its reason, applying the same filters as
+ranking, and `ft task get <task>` prints a `not ready because:` line for the same
+reason. `--for <agent>` also ranks the ready-human tasks gating its own work, so
+the human decision it waits on is never buried.
 
 ## Watch the factory
 
@@ -50,7 +49,7 @@ ft serve                        # live dashboard + capture; also -p <project>, -
 ```
 `ft serve` is an idea-centric live dashboard: ideas roll up promoted tasks, a kanban groups by
 origin idea, idea/task/memory/doc drill down; reads open and SSE-live. The app is an embedded
-shadcn/ui SPA served at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`: the dashboard's floating Capture button (a sticky bar on mobile) opens a token-gated prompt modal that stores it as a document and ft-msgs the chief at `/api/prompt`, while `/capture` remains the fallback page that posts a sentence to `/api/capture` as an idea or a bug. The message port rides the same token at `/api/msg/*` so a receiver on another host can message through the project backend, and every write authenticates with `Authorization: Bearer <token>`. The token resolves from `--token`, then `FACTOTUM_SERVE_TOKEN`, then `serve.token` in the machine config; an explicit one is never printed, while a scoped serve with none mints and prints a fresh random one each start, and `--all` without a token (no single capture target) turns capture off and leaves reads open.
+shadcn/ui SPA served at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`: its floating Capture button opens a token-gated prompt modal that stores the prompt as a doc and ft-msgs the chief at `/api/prompt`, while `/capture` is the fallback page posting a sentence to `/api/capture` as an idea or a bug. The message port rides the same token at `/api/msg/*` so a receiver on another host can message through the project backend, and every write authenticates with `Authorization: Bearer <token>`. The token resolves from `--token`, then `FACTOTUM_SERVE_TOKEN`, then `serve.token` in the machine config; an explicit one is never printed, while a scoped serve with none mints and prints a fresh random one each start, and `--all` without a token (no single capture target) turns capture off and leaves reads open.
 
 ## Move work through its lifecycle
 
@@ -64,9 +63,8 @@ ft task reopen <task>   # back to todo, e.g. after a failed review
 The status verbs also work at the top level: `ft done <task>` == `ft task done
 <task>` == `ft task set <task> status=done`.
 
-Each command prints a `Next:` hint with the natural follow-up, so you rarely
-need to remember the exact verb. Pass `--no-hints` (or set
-`FACTOTUM_NO_HINTS=1`) to silence them.
+Each command prints a `Next:` hint with the natural follow-up. Pass `--no-hints`
+(or set `FACTOTUM_NO_HINTS=1`) to silence them.
 
 Park work you cannot start yet without cancelling it:
 
@@ -156,14 +154,13 @@ ft feedback create -b "..." -p <project> -r <repo>   # with originating context
 ```
 
 `ft feedback create` stores the report as a task labeled `external-feedback` in
-the Factotum database, not the caller's project store, so a bug found on any
-project reaches the maintainers, and prints the stored task id. The sink is the
-project named by `--feedback-store` (default `factotum`) from the machine-scoped
-`[projects.<id>]` entry, and `--transport` selects the sink transport (only `db`
-ships today). Reporting never touches the caller's store, so it works even when
-that store is misconfigured or absent; the report collects the message, the
-command/flow, the `ft` version, and the originating project and repo, with paths
-under `$HOME` and token-shaped strings redacted before storing.
+the Factotum database, not the caller's project store, so it reaches the
+maintainers from any project even when that store is misconfigured or absent, and
+prints its id. The sink is the project named by `--feedback-store` (default
+`factotum`) from the machine-scoped `[projects.<id>]` entry, and `--transport`
+selects the sink transport (only `db` ships today). The report collects the
+message, the command/flow, the `ft` version, and the originating project and
+repo, with paths under `$HOME` and token-shaped strings redacted before storing.
 
 ## Break a prompt into tasks
 
@@ -176,7 +173,7 @@ ft prompt -p <project> -y break this feature into tasks # create the proposed ta
 proposes, in the `ft task apply` document shape. Nothing is created until `-y`;
 applying is idempotent — a proposed task whose **title** already matches one in the
 project or earlier in the plan is skipped, not duplicated (case-insensitive,
-whitespace-trimmed) and reported (text marks them `skipped: true`; `-o json|yaml` returns a `{created, skipped}` object). The agent CLI comes from the machine-scoped `[agent]` table (`command = "my-agent-cli"`, which reads the instruction on stdin and prints JSON on stdout), `FACTOTUM_AGENT_COMMAND`, or the `--agent-command` flag (which wins for one invocation); without a configured agent, `ft prompt` reports a clear error.
+whitespace-trimmed) and reported (`skipped: true` in text; `{created, skipped}` in json/yaml). The agent CLI comes from the machine-scoped `[agent]` table (`command = "my-agent-cli"`, which reads the instruction on stdin and prints JSON on stdout), `FACTOTUM_AGENT_COMMAND`, or the `--agent-command` flag (which wins for one invocation); with none configured, `ft prompt` reports a clear error.
 
 ## Find things
 
@@ -212,7 +209,7 @@ ft memory delete <memory>
 ft memory reindex -p <project>       # re-embed all memory (requires [embed])
 ```
 
-A memory carries three things, all authored by the agent: a `title`, a one-line
+A memory carries three things: a `title`, a one-line
 `brief` (what it is and when to load it), and the full `body`. `ft memory list`
 and `ft task context` show the brief; `ft memory get` returns the body. `ft`
 stores them verbatim and never generates them, and when a judge is configured
@@ -236,12 +233,12 @@ ft msg send <address|role|ticket-id> <text> -p <project>; ft msg inbox -p <proje
 ft msg install [--harness opencode|opencode2|pi] [--dir <plugin-dir>]; ft msg runs [-p <project>] [--live]; ft msg agent register|claim|ack|nack|heartbeat|deregister   # receiver staging, run liveness, protocol
 ```
 
-A bare ticket id is sugar for `task:<id>`: send resolves it to the task's one live run, else the one actor its runs share, else the agent assignee, else the ticket; live runs of different actors refuse, naming each `actor:<role>`, and a fallback to a mailbox no live run can claim warns. A bare **loop role** - `chief`, or `builder-<task>`/`reviewer-<task>`/`qa-<task>` - is sugar for `actor:<role>`, the stable mailbox a loop session registers as, so peers reach each other by role, not a cmux surface. Every actor-valued flag (`--from`, `--for`, `--on`, `--actor`, including `ft task assign --actor`) and an `actor:` send target accept a bare id, a name, or the canonical `actor:<id>`, storing the bare id so the canonical form never doubles into `actor:actor:<id>`; a `run:`/`task:` address, a malformed or doubled one, and a bare target that is neither a loop role nor a `t-...` ticket id are rejected, never coerced. `ft msg read` is idempotent; `--from` defaults to the configured actor. A receiver waits for its session before claiming and `nack`s what it cannot inject, so a handoff is never silently dropped; it registers with `ft msg agent register` (the chief session via `--session`, else `FACTOTUM_SESSION`), long-polls `claim`, injects messages as user turns, and `ack`s them. `ft msg runs` lists the registered runs with their leases; `--live` is the channel check, keeping only valid leases so a busy project cannot bury your own run. `ft msg install` stages `factotum-msg.js` in OpenCode's global plugin dir (`--dir` to relocate), a no-op when the staged file matches, so every loop-agent launch re-runs it without the plugin watcher reloading a live receiver; it carries both majors' entrypoints and is inert without `FACTOTUM_PROJECT`/`FACTOTUM_ACTOR`. A reloaded V2 receiver resumes the session it persisted, so an idle agent still claims a queued handoff. `ft run` stages that receiver when the run has an actor and launches OpenCode V2 on its own private server (--standalone), because the shared service carries no `FACTOTUM_*` and would leave it inert. Cross-host, the same protocol rides `ft serve` at `/api/msg/*` (gated by `serve.token`): a receiver takes the HTTP transport when `FACTOTUM_MSG_URL` names a hub (auth via `FACTOTUM_SERVE_TOKEN`) and falls back to the local `ft` when it is unset (a run sets both from `serve.url`/`serve.token`); a URL without a token is a half-configured hub, so a run with an actor warns and drops it, while a run with no actor stays quiet.
+A bare ticket id is sugar for `task:<id>`: send resolves it to the task's one live run, else the one actor its runs share, else the agent assignee, else the ticket; live runs of different actors refuse, naming each `actor:<role>`, and a fallback to a mailbox no live run can claim warns. A bare **loop role** - `chief`, `builder-<task>`, `reviewer-<task>`, `qa-<task>` - is sugar for `actor:<role>`, the stable mailbox a loop session registers as, so peers reach each other by role, not a cmux surface. An actor-valued flag (`--from`, `--for`, `--on`, `--actor`, including `ft task assign --actor`) or an `actor:` target accepts a bare id, a name, or `actor:<id>`, storing the bare id so the canonical form never doubles; a `run:`/`task:` address, a malformed or doubled one, and a bare target that is neither a loop role nor a `t-...` ticket are rejected, never coerced. `ft msg read` is idempotent; `--from` defaults to the configured actor. A receiver registers with `ft msg agent register` (the chief session via `--session`, else `FACTOTUM_SESSION`), waits for its session before claiming, long-polls `claim`, injects messages as user turns, `ack`s them, and `nack`s what it cannot inject, so a handoff is never silently dropped. `ft msg runs --live` is the channel check, keeping only valid leases so a busy project cannot bury your own run. `ft msg install` stages `factotum-msg.js` in OpenCode's global plugin dir (`--dir` to relocate), a no-op when the staged file matches, so a launch re-runs it without the watcher reloading a live receiver; it is inert without `FACTOTUM_PROJECT`/`FACTOTUM_ACTOR`, and a reloaded V2 receiver resumes its persisted session, so an idle agent still claims a queued handoff. `ft run` stages it for a run with an actor and launches OpenCode V2 on its own private server (--standalone), since the shared service carries no `FACTOTUM_*`. Cross-host, the protocol rides `ft serve` at `/api/msg/*` (gated by `serve.token`): a receiver uses the HTTP transport when `FACTOTUM_MSG_URL` names a hub (`FACTOTUM_SERVE_TOKEN` authenticates) and the local `ft` when it is unset (a run sets both from `serve.url`/`serve.token`); a URL without a token is half-configured, so a run with an actor warns and drops it, while one with no actor stays quiet.
 
 ## Chief sessions
 
 A chief session is an identity for one chief run and the work it drives; actor ids stay role-scoped and the session is a separate field. `ft session start -p <project> [--session <sid>]` records `session.started` (minting an id when none is given), `ft session retire ... [--successor <sid>]` records `session.retired`, and `ft session ack` records `session.acked` from the id the environment carries (never an argument), so a run can require proof that a launched child picked the id up; `ft groom --unattended` requires it before judging the tasks the session produced. `loop-agent.sh` mints an id per chief launch and exports `FACTOTUM_SESSION`, which builders/reviewers/QA inherit: every `ft` call attributes its events to that session, queryable with `ft event list --session <sid>`. A run may name its own session id (as `ft groom` does); every other run inherits the caller's session when it has one, else mints a run-scoped one.
-The caller actor is resolved per invocation by `--actor` > `FACTOTUM_CALLER` > `FACTOTUM_DEFAULT_ACTOR` > project/user `default_actor`, each accepting the bare id or the canonical `actor:<id>`. `FACTOTUM_CALLER` is the authoritative detection channel: a well-formed name that matches a registered actor stamps the events, one matching none is dropped with a warning (no attribution, no auto-create, no failure), and a malformed value fails the invocation. An explicit `--actor` follows the same rule except that the loop-role prefixes are exempt, so a typo neither stamps events nor becomes the auto-QA reminder target. A configured default is attributed when it names an actor registered in this store or is a role-shaped identity the loop exports - `chief`, or one of `builder-<task>`, `reviewer-<task>`, `qa-<task>`, `grooming-agent-<artifact>`, `architecture-reviewer-<session>`, each scoped by a well-formed id (a task `t-`, an artifact `art-`, a grooming session `groom-`) - because it needs no Actor record; one that is neither is dropped with a warning, and a default lookalike that merely starts with a role name (`builder-gpt-4`) is not a role. `--actor` is deliberately looser and exempts any non-empty role prefix, so name those roles as the default, not as an explicit `--actor`. `ft task claim` resolves its default the same way, so a role-only session can claim, while an unregistered non-role default warns and then fails exactly as if none were set. Readiness and grooming classify an assignee by the same rule, so a task a loop role holds with no record is agent-next and agent-ready, while a human or a role lookalike stays human. Every actor-valued work flag - `ft task assign --actor`, `ft task wait --on`, `ft task claim --for`, `ft task next --for` and its `--explain`, and `ft idea promote`/`ft bug triage`/`ft task promote --actor` - resolves the Actor record first, else a loop role as its agent identity; a registered record always wins, even when its id is role-shaped (promoting to a registered human still fails as not an agent). Attribution is separate: `--actor` on the caller keeps the drop-with-a-warning behavior, while `ft msg send --from` accepts a registered record or a loop-role sender without one and fails an unknown non-role sender. A note records that attributed caller as its `author`, so `ft task note backfill` does not read a role-authored note as machine text. Environment identity is **spoofable** (any process can export `FACTOTUM_CALLER`), a convenience signal, never a security boundary.
+The caller actor is resolved per invocation by `--actor` > `FACTOTUM_CALLER` > `FACTOTUM_DEFAULT_ACTOR` > project/user `default_actor`. `FACTOTUM_CALLER` is the authoritative detection channel: a well-formed name that matches a registered actor stamps the events, one matching none is dropped with a warning (no attribution, no auto-create, no failure), and a malformed value fails the invocation. An explicit `--actor` follows the same rule but exempts any non-empty role prefix, so name roles as the default: a typo then neither stamps events nor becomes the auto-QA reminder target. A configured default is attributed when it names an actor registered in this store or is a role-shaped identity the loop exports - `chief`, or one of `builder-<task>`, `reviewer-<task>`, `qa-<task>`, `grooming-agent-<artifact>`, `architecture-reviewer-<session>`, each scoped by a well-formed id (a task `t-`, an artifact `art-`, a grooming session `groom-`) - because it needs no Actor record; one that is neither is dropped with a warning, and a lookalike that merely starts with a role name (`builder-gpt-4`) is not a role. `ft task claim` resolves its default the same way, so a role-only session can claim, while an unregistered non-role default warns and then fails exactly as if none were set. Readiness and grooming classify an assignee by the same rule, so a task a loop role holds with no record is agent-next and agent-ready, while a human or a role lookalike stays human. Every actor-valued work flag - `ft task assign --actor`, `ft task wait --on`, `ft task claim --for`, `ft task next --for` and its `--explain`, and `ft idea promote`/`ft bug triage`/`ft task promote --actor` - resolves the Actor record first, else a loop role as its agent identity; a registered record always wins, even when its id is role-shaped (promoting to a registered human still fails as not an agent). Attribution is separate: `--actor` on the caller keeps the drop-with-a-warning behavior, while `ft msg send --from` accepts a registered record or a loop-role sender without one and fails an unknown non-role sender. A note records that attributed caller as its `author`, so `ft task note backfill` does not read a role-authored note as machine text. `FACTOTUM_CALLER` is spoofable - a convenience signal, never a security boundary.
 With no identity named at all, `ft` makes a best-effort guess so the silence is explained: it checks the markers the supported harnesses export (`CLAUDECODE`/`CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_AGENT`, `OPENCODE`/`OPENCODE_SESSION_ID`, `PI_CODING_AGENT`, `GEMINI_CLI`, `QWEN_CODE`), then `AI_AGENT`, then the nearest ancestor process named for a known agent binary. The guess is reported on stderr as an **unverified heuristic** naming its evidence (and whether stdin is a terminal), and is never recorded or auto-registered - not an event stamp, note author, assignee, or reminder target - and never overrides a named identity, including one dropped as unregistered. A terminal on stdin is evidence only. Both signals are spoofable - any process can export a marker, any binary can be named `claude` - and a nested agent passes the outer harness's markers down, so the guess names the outermost: treat it as a nudge to set `FACTOTUM_CALLER` or `--actor`, never as identity or a security boundary.
 
 ## Diagnose the optional subsystems
@@ -258,9 +255,9 @@ ft doctor --strict           # exit non-zero on warnings too
 concrete recommendation: a provider configured but unknown, an endpoint that does not
 answer, a model it does not serve (`ollama pull <model>`), a stdio command not on
 `PATH`, a vector index on an old model (`ft memory reindex`), or a judge without a
-key. It is read-only unless `--fix` is given; on a terminal without `--fix` it asks
-before applying anything, and it never starts a server or downloads a model on its
-own, exiting non-zero when a check fails so a script can gate on it.
+key. It is read-only without `--fix` (which asks on a terminal), and never starts
+a server or downloads a model, exiting non-zero when a check fails so a script can
+gate on it.
 
 ## Conventions that matter
 
@@ -297,8 +294,7 @@ is used **in place** — not copied into the workspace — so a backend on the w
 in an isolated copy (`ft groom` resolves and warns the same way). The launched session inherits
 the run's project, store, and session (`FACTOTUM_PROJECT`/`FACTOTUM_STORE`/`FACTOTUM_STORE_OPTS`/
 `FACTOTUM_SESSION`), so the `ft` it runs never resolves the checkout's config (your real
-`~/.factotum`, say) and its events land on the run's session; a nested run inherits the caller's
-session, else one is minted run-scoped (an explicitly named id wins). The run prints the id as
+`~/.factotum`, say) and its events land on the run's session. The run prints the id as
 `session:`, so `ft event list --session` and the sessions page follow its agent's work. A run with
 an actor exports `FACTOTUM_ACTOR`, `FACTOTUM_TASK_ID`, `FACTOTUM_DEFAULT_ACTOR` (what a bare
 `ft msg send` is attributed to); every run exports `FACTOTUM_HARNESS`, so a registered run reports
@@ -312,8 +308,7 @@ ft run --prompt-file grooming.md --sandbox local --harness opencode2 --allow-hos
 ft run --goal t-abc123 --sandbox local --harness opencode2 --allow-host --max-tasks 5
 ```
 
-A run is a harness (one agent CLI end to end: image, invocation, model flag, prompt
-delivery, output parsing) inside an isolation backend. The `local` backend
+A run is a harness (one agent CLI end to end) inside an isolation backend. The `local` backend
 runs the harness directly on the host with no isolation: dev-only, never the default, and
 refused until explicitly opted in with `--allow-host` or `run.allow_host` (machine-scoped,
 ignored from the committed project file). It can read host credentials, reach the network,
@@ -333,11 +328,11 @@ files into the bind-mounted checkout, so set `$(id -u):$(id -g)`); on `openshell
 the literal `sandbox`, seeding `run_as_user`/`run_as_group` and otherwise keeping the hardened
 `1000:1000` (a root request is refused); `local` ignores it. `provider` + `credential_env` name
 the credential a harness may use, read from the host environment and handed to an isolating
-backend, never placed in the sandbox, and ignored by `local`, which runs the host binary with
-the host's own credentials.
+backend, never placed in the sandbox; `local` ignores it and runs the host binary with the
+host's own credentials.
 
-An isolating backend is deny-by-default: no host is reachable until the project opts in, except
-the model provider endpoint the credential attaches. Committing `.factotum/openshell-policy.yaml`
+An isolating backend is deny-by-default except for the model provider endpoint the credential
+attaches. Committing `.factotum/openshell-policy.yaml`
 with `allow_hosts` and nothing else widens egress but never weakens the identity, filesystem, or
 credential defaults; with no policy file `ft run` warns egress is deny-all. The README's "Run
 agents" and "Isolation policy" sections carry the rest.
@@ -347,7 +342,7 @@ agents" and "Isolation policy" sections carry the rest.
   of the project (a task-less session such as grooming), writing nothing to the graph. They
   are mutually exclusive, and a missing or empty `--prompt-file` is an input error (exit 1).
   A run on a terminal is **interactive** (the agent attached) so a human can answer it, and
-  its run note records the outcome only; `--unattended`, a piped stdin/stdout, or `--goal`
+  its run note records the outcome only; `--unattended` or `--goal`
   runs **headless**. Interactive needs an attaching backend (`local`, not `openshell`/
   `docker`, which say to rerun with `--unattended`); a piped or redirected stdin/stdout
   keeps a run headless too. A headless run narrates on stderr only

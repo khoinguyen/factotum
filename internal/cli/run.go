@@ -70,10 +70,11 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			"and the launched session inherits that store. The sandbox and harness\n" +
 			"resolve from --sandbox and --harness, then FACTOTUM_RUN_*, then the [run]\n" +
 			"config table (project over user); on a terminal an unset one prompts once\n" +
-			"and is saved, while a non-interactive unset one is an error. Choosing the\n" +
-			"local backend in that prompt asks to opt in (default no) and records\n" +
-			"run.allow_host in the user config; the local backend is unsandboxed and\n" +
-			"otherwise requires --allow-host (or run.allow_host).\n" +
+			"and is saved, while a non-interactive unset one is an error. Whenever the\n" +
+			"resolved sandbox is local and run.allow_host is unset, an interactive run\n" +
+			"asks to opt in (default no) and records run.allow_host in the user config,\n" +
+			"however local was chosen; the local backend is unsandboxed and otherwise\n" +
+			"requires --allow-host (or run.allow_host).\n" +
 			"On a terminal, a single-task run or a task-less prompt run attaches the agent\n" +
 			"to the terminal (for example the OpenCode TUI) so a human can answer it, and\n" +
 			"its output stays live and is not captured, so a task run's note records the\n" +
@@ -389,7 +390,7 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 		}
 		chosen.Harness = name
 	}
-	if chosen.Sandbox == "" && chosen.Harness == "" {
+	if chosen.AllowHost && chosen.Sandbox == "" && chosen.Harness == "" {
 		// Only the host-scoped opt-in was granted, and that always belongs in
 		// the machine config: there is no scope to ask about.
 		path, err := d.userConfigPath()

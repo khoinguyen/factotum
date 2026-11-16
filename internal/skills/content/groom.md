@@ -54,8 +54,9 @@ emits - so a machine consumer reads the reason without interleaved prose.
 
 `--sandbox` and `--harness` are optional: `ft groom` resolves them like `ft run`
 (flag, env, project `[run]`, machine `[run]`), prompting once on a terminal when
-unset; choosing `local` in that prompt asks to opt in (default no) and records
-`run.allow_host` in the user config. A machine `[run]` table lets a bare
+unset. Whenever `local` is the resolved sandbox and `run.allow_host` is unset, it
+asks to opt in (default no) and records `run.allow_host` in the user config,
+however local was chosen. A machine `[run]` table lets a bare
 `ft groom` run with no flags.
 
 Like `ft run`, a repository registered with a local `Path` (not a `URL`) is used

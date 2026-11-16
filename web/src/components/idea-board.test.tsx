@@ -175,6 +175,32 @@ test("the idea card counts human-next work and names the blocking task", () => {
   expect(tooltip.textContent).toContain("Decide the rollout")
 })
 
+// QA of the human-next work (art-jgcmwjwoz7) found the five counts were bare
+// numbers: their meaning lived only in the hover tooltip, so touch and
+// at-a-glance readers could not tell a done count from a blocked one. Each count
+// now carries its own always-visible label; the tooltip stays for the detail a
+// label cannot hold (the blocking task titles, the artifact count).
+test("the idea card labels every count so the numbers read without a hover", () => {
+  render(<IdeaBoard ideas={ideas} />)
+
+  const card = screen.getByText("Spark of a plan").closest("a")!
+  const counts = card.querySelector('[role="tooltip"]')!.parentElement!
+  for (const [name, label] of [
+    ["done", "done"],
+    ["todo", "todo"],
+    ["active", "active"],
+    ["blocked", "blocked"],
+    ["human", "human"],
+  ]) {
+    const node = counts.querySelector(`[data-count-label="${name}"]`)
+    expect(node?.textContent).toBe(label)
+    // Visible, not hidden behind a hover state.
+    expect(node?.className ?? "").not.toContain("hidden")
+    // And outside the tooltip, which stays display:none until hovered.
+    expect(card.querySelector(`[role="tooltip"] [data-count-label="${name}"]`)).toBeNull()
+  }
+})
+
 // Khoi 2026-10-08: hovering the counts spells them out in a floating tooltip,
 // e.g. "0 done", "7 active", "0 blocked".
 test("the counts carry a hover tooltip spelling them out", () => {

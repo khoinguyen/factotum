@@ -3,6 +3,29 @@ import { Chip, kindLabel } from "@/components/chip"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { IdeaView, Snapshot } from "@/lib/api"
 
+function Count({
+  name,
+  label,
+  value,
+  tone,
+}: {
+  name: string
+  label: string
+  value: number
+  tone: string
+}) {
+  return (
+    <span className="flex flex-col items-center gap-0.5 leading-none">
+      <span data-count={name} className={`font-medium ${tone}`}>
+        {value}
+      </span>
+      <span data-count-label={name} className="text-[9px] text-muted-foreground">
+        {label}
+      </span>
+    </span>
+  )
+}
+
 function IdeaCard({ idea }: { idea: IdeaView }) {
   const artifacts = idea.artifacts?.length ?? 0
   const human = idea.human ?? 0
@@ -16,26 +39,40 @@ function IdeaCard({ idea }: { idea: IdeaView }) {
       <span className="truncate text-sm font-medium">{idea.title}</span>
       <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
         <Chip label={kindLabel(idea.kind)} toneKey={idea.kind} />
-        <span className="group relative flex items-center gap-1 tabular-nums">
-          <span data-count="done" className="font-medium text-emerald-700 dark:text-emerald-300">
-            {idea.done}
-          </span>
-          <span data-count="todo" className="font-medium text-amber-700 dark:text-amber-300">
-            {idea.todo}
-          </span>
-          <span data-count="active" className="font-medium text-sky-700 dark:text-sky-300">
-            {idea.active}
-          </span>
-          <span data-count="blocked" className="font-medium text-red-700 dark:text-red-300">
-            {idea.blocked}
-          </span>
-          <span
-            data-count="human"
-            className="font-medium text-violet-700 dark:text-violet-300"
-          >
-            {human}
-          </span>
-          <span className="text-muted-foreground">of {idea.total}</span>
+        {/* Each count carries its own label: the tooltip alone left the five
+            bare numbers unreadable at a glance and to touch input. */}
+        <span className="group relative flex items-start gap-1.5 tabular-nums">
+          <Count
+            name="done"
+            label="done"
+            value={idea.done}
+            tone="text-emerald-700 dark:text-emerald-300"
+          />
+          <Count
+            name="todo"
+            label="todo"
+            value={idea.todo}
+            tone="text-amber-700 dark:text-amber-300"
+          />
+          <Count
+            name="active"
+            label="active"
+            value={idea.active}
+            tone="text-sky-700 dark:text-sky-300"
+          />
+          <Count
+            name="blocked"
+            label="blocked"
+            value={idea.blocked}
+            tone="text-red-700 dark:text-red-300"
+          />
+          <Count
+            name="human"
+            label="human"
+            value={human}
+            tone="text-violet-700 dark:text-violet-300"
+          />
+          <span className="leading-none text-muted-foreground">of {idea.total}</span>
           <span
             role="tooltip"
             className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-popover-foreground shadow-md group-hover:block group-focus-within/card:block"

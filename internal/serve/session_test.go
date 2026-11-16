@@ -340,6 +340,76 @@ func TestSessionsLiveRunKeepsSessionAlive(t *testing.T) {
 	}
 }
 
+// TestSessionsQuietSessionStaysAlive proves the idle window is wider than a
+// chief's normal quiet spell: a chief that delegated a task and is waiting for
+// the builder emits no events for 20-40 minutes, and must not read as dead.
+func TestSessionsQuietSessionStaysAlive(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ctx := context.Background()
+
+	clock := &stepClock{t: time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)}
+	sessions := app.NewSessionService(f.backend, clock, f.ids)
+	if _, err := sessions.Start(ctx, project.ID, "s-quiet"); err != nil {
+		t.Fatalf("Start(s-quiet) error = %v", err)
+	}
+	clock.t = clock.t.Add(30 * time.Minute)
+
+	ts := clockServer(t, f, clock, Options{Project: project.ID})
+	var doc sessionDoc
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+
+	quiet := findSession(t, doc, "s-quiet")
+	if quiet.State != "alive" {
+		t.Fatalf("state = %q, want alive for a session quiet for 30m", quiet.State)
+	}
+	if quiet.LastEventAt != "2026-01-01T09:00:00Z" {
+		t.Fatalf("last_event_at = %q, want the start event", quiet.LastEventAt)
+	}
+}
+
+// TestSessionsRetiredWinsOverLiveRun pins the reincarnation teardown shape: the
+// outgoing chief's receiver can still be heartbeating when the successor retires
+// it, and the explicit retirement must win over the run lease.
+func TestSessionsRetiredWinsOverLiveRun(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ctx := context.Background()
+
+	clock := &stepClock{t: time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)}
+	sessions := app.NewSessionService(f.backend, clock, f.ids)
+	if _, err := sessions.Start(ctx, project.ID, "s-outgoing"); err != nil {
+		t.Fatalf("Start(s-outgoing) error = %v", err)
+	}
+	run, err := app.NewMessageService(f.backend, clock, f.ids).RegisterRun(ctx, app.RegisterRunInput{
+		ProjectID: project.ID,
+		ActorID:   core.ActorID("chief"),
+		Session:   "s-outgoing",
+		TTL:       time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("RegisterRun() error = %v", err)
+	}
+	if !run.Live(clock.t) {
+		t.Fatalf("run lease = %v, want live at %v", run.LeaseUntil, clock.t)
+	}
+	if _, err := sessions.Retire(ctx, project.ID, "s-outgoing", "s-next"); err != nil {
+		t.Fatalf("Retire() error = %v", err)
+	}
+
+	ts := clockServer(t, f, clock, Options{Project: project.ID})
+	var doc sessionDoc
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+
+	outgoing := findSession(t, doc, "s-outgoing")
+	if outgoing.State != "retired" {
+		t.Fatalf("state = %q, want retired: the explicit retirement wins over a live run", outgoing.State)
+	}
+	if outgoing.Successor != "s-next" {
+		t.Fatalf("successor = %q, want s-next", outgoing.Successor)
+	}
+}
+
 // TestSessionsDeliveredWork proves each session reports the work its events
 // delivered: the tasks driven to done, the pull requests recorded on those
 // tasks, and the captures advanced by delivering their promoted work.

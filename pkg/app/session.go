@@ -28,10 +28,14 @@ func NewSessionService(backend store.Backend, clock Clock, ids IDGen) *SessionSe
 // — before the dashboard projects it as stale rather than alive. A session's
 // record only changes when someone retires it, so a chief that exits or is
 // killed would otherwise stay "alive" forever; fading after this window is what
-// keeps the sessions page an answer to "who is working right now". The window is
-// deliberately looser than DefaultRunTTL: a live run lease is the primary
-// liveness signal, so this only bounds a session with no receiver at all.
-const DefaultSessionIdle = 15 * time.Minute
+// keeps the sessions page an answer to "who is working right now".
+//
+// The window is set above a chief's normal quiet spell, not just above the run
+// lease: a chief that delegates to a builder emits no events for 20-40 minutes
+// (measured median 22m, p90 41m on the project's own sessions). A live run lease
+// is the short-term signal, so this window is the fallback for a quiet session
+// with no receiver, and must not mistake delegation for death.
+const DefaultSessionIdle = 60 * time.Minute
 
 // NewID mints a fresh, short session id. A reincarnation always gets a new one,
 // so no two chief sessions share an id.

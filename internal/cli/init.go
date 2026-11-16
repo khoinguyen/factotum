@@ -181,7 +181,7 @@ func (d *Deps) runInit(cmd *cobra.Command, opts initOptions) error {
 		projectPath = config.DefaultPath
 	}
 
-	interactive := d.interactive()
+	interactive := d.promptsAllowed(cmd)
 	p := d.prompter(cmd)
 
 	if opts.project && !fileExists(userPath) && interactive {
@@ -502,15 +502,6 @@ func displayPath(path, home string) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-// interactive reports whether `ft init` may prompt: a terminal on stdout, or an
-// injected prompter in tests.
-func (d *Deps) interactive() bool {
-	if d.Prompt != nil {
-		return true
-	}
-	return d.IsTerminal != nil && d.IsTerminal(d.Out)
 }
 
 func (d *Deps) prompter(cmd *cobra.Command) Prompter {

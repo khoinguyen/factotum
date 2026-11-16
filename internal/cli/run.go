@@ -352,7 +352,7 @@ func (d *Deps) resolveRunSelection(cmd *cobra.Command, cfg *config.Run) error {
 	if cfg.Sandbox != "" && cfg.Harness != "" && !needsOptIn {
 		return nil
 	}
-	if !d.selectionInteractive(cmd) {
+	if !d.promptsAllowed(cmd) {
 		if cfg.Sandbox == "" {
 			return usageError(cmd, "--sandbox is required; set run.sandbox (project or user config), FACTOTUM_RUN_SANDBOX, or run on a terminal to choose; available: %s", strings.Join(d.RunBackends.Names(), ", "))
 		}
@@ -529,13 +529,12 @@ func (d *Deps) userConfigPath() (string, error) {
 	return path, nil
 }
 
-// selectionInteractive reports whether the run selection may prompt: an
-// injected prompter (tests), or a terminal on both stdout and stdin. stdout
-// alone is not enough: with stdin redirected the prompts read EOF, accept every
-// default, and persist a config nobody chose, so such a run is non-interactive
-// and gets the usage error instead. This is the same rule runInteractive uses
-// for attaching the agent to the terminal.
-func (d *Deps) selectionInteractive(cmd *cobra.Command) bool {
+// promptsAllowed reports whether a command may prompt the user: an injected
+// prompter (tests), or a terminal on both stdout and stdin. stdout alone is not
+// enough: with stdin redirected the prompts read EOF, accept every default, and
+// persist a config nobody chose, so such a session is headless instead. `ft run`
+// selects its sandbox and harness by the same rule, and `ft init` by this one.
+func (d *Deps) promptsAllowed(cmd *cobra.Command) bool {
 	if d.Prompt != nil {
 		return true
 	}

@@ -14,6 +14,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/spf13/cobra"
+
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/store/builtins"
 )
@@ -58,6 +60,39 @@ func fakeRepo(string) (gitRepo, bool) {
 func noRepo(string) (gitRepo, bool) { return gitRepo{}, false }
 
 func terminal(io.Writer) bool { return true }
+
+// TestPromptsAllowed pins the prompt gate: a terminal on stdout is not enough.
+// With stdin redirected the prompts read EOF, accept every default, and persist
+// choices nobody made, so the gate must also require a terminal on stdin.
+func TestPromptsAllowed(t *testing.T) {
+	tests := []struct {
+		name   string
+		stdout bool
+		stdin  bool
+		prompt Prompter
+		want   bool
+	}{
+		{name: "both terminals", stdout: true, stdin: true, want: true},
+		{name: "stdout terminal stdin pipe", stdout: true, stdin: false, want: false},
+		{name: "stdin terminal stdout pipe", stdout: false, stdin: true, want: false},
+		{name: "neither terminal", want: false},
+		{name: "injected prompter", prompt: &scriptedPrompter{t: t}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := NewDeps(app.SystemClock{}, app.RandomIDGen{}, io.Discard, io.Discard, nil)
+			d.Prompt = tt.prompt
+			d.IsTerminal = func(io.Writer) bool { return tt.stdout }
+			d.IsTerminalReader = func(io.Reader) bool { return tt.stdin }
+			cmd := &cobra.Command{}
+			cmd.SetIn(strings.NewReader(""))
+
+			if got := d.promptsAllowed(cmd); got != tt.want {
+				t.Fatalf("promptsAllowed() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestInitUserOnlyCreatesMachineConfig(t *testing.T) {
 	r := newRunner(t)
@@ -229,6 +264,80 @@ func TestInitBareInRepoNonInteractiveDoesNotRegister(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "ft init -p") {
 		t.Fatalf("init should hint at ft init -p:\n%s", errOut)
+	}
+}
+
+// TestInitPipedStdinDoesNotPrompt pins the regression this task fixes: stdout
+// on a terminal with stdin redirected must take the headless path, not run the
+// prompts and accept every default. Otherwise `ft init < /dev/null` registers a
+// project (and a tech stack) the caller never chose.
+func TestInitPipedStdinDoesNotPrompt(t *testing.T) {
+	r := newRunner(t)
+	r.gitDetect = fakeRepo
+	r.isTerminal = terminal
+	r.stdinTerminal = func(io.Reader) bool { return false }
+
+	t.Run("bare init does not register", func(t *testing.T) {
+		out, errOut := r.runSplit("init")
+		if !strings.Contains(out, "created: true") {
+			t.Fatalf("init should still create the machine config:\n%s", out)
+		}
+		if _, err := os.Stat(r.projectPath); !os.IsNotExist(err) {
+			t.Fatalf("piped stdin must not register a project (err=%v)", err)
+		}
+		if strings.Contains(errOut, "Register this repository") {
+			t.Fatalf("piped stdin must not prompt:\n%s", errOut)
+		}
+		if !strings.Contains(errOut, "ft init -p") {
+			t.Fatalf("piped stdin should keep the ft init -p hint:\n%s", errOut)
+		}
+	})
+
+	t.Run("init -p takes defaults", func(t *testing.T) {
+		r := newRunner(t)
+		root := t.TempDir()
+		r.gitDetect = func(string) (gitRepo, bool) {
+			return gitRepo{Root: root, Remote: "git@github.com:acme/widget.git"}, true
+		}
+		r.isTerminal = terminal
+		r.stdinTerminal = func(io.Reader) bool { return false }
+
+		out, errOut := r.runSplit("init", "-p")
+		if !strings.Contains(out, "project: widget") {
+			t.Fatalf("init -p should register with the derived defaults:\n%s", out)
+		}
+		if strings.Contains(out, "tech_stack") {
+			t.Fatalf("piped stdin must not record a tech stack:\n%s", out)
+		}
+		if strings.Contains(errOut, "Tech stack") {
+			t.Fatalf("piped stdin must not prompt:\n%s", errOut)
+		}
+	})
+}
+
+// TestInitBothTerminalsPromptsFromStdin pins the other direction: with a
+// terminal on both stdin and stdout the real prompter still runs and records
+// the answers, so the gate does not overshoot into a headless init.
+func TestInitBothTerminalsPromptsFromStdin(t *testing.T) {
+	r := newRunner(t)
+	root := t.TempDir()
+	r.gitDetect = func(string) (gitRepo, bool) {
+		return gitRepo{Root: root, Remote: "git@github.com:acme/widget.git"}, true
+	}
+	r.isTerminal = terminal
+	r.stdinTerminal = func(io.Reader) bool { return true }
+	// register, then blank project id/name/db/repo defaults, then the tech stack.
+	r.stdin = strings.NewReader("y\n\n\n\n\nrust\n")
+
+	out, errOut := r.runSplit("init")
+	if !strings.Contains(errOut, "Register this repository as a Factotum project?") {
+		t.Fatalf("both terminals should prompt for registration:\n%s", errOut)
+	}
+	if !strings.Contains(out, "project: widget") || !strings.Contains(out, "tech_stack: rust") {
+		t.Fatalf("both terminals should record the prompted answers:\n%s", out)
+	}
+	if project := readFile(t, r.projectPath); !strings.Contains(project, `tech_stack = "rust"`) {
+		t.Fatalf("project config missing the prompted tech stack:\n%s", project)
 	}
 }
 

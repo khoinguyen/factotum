@@ -44,9 +44,12 @@ type runner struct {
 	// test can drive interactive-mode selection.
 	stdinTerminal func(io.Reader) bool
 	prompt        Prompter
-	gitDetect     func(string) (gitRepo, bool)
-	doctorProbe   doctor.Prober
-	fixRunner     func(context.Context, []string, io.Writer) error
+	// stdin, when set, feeds the command tree, so a test can exercise the real
+	// terminal prompter instead of a scripted one.
+	stdin       io.Reader
+	gitDetect   func(string) (gitRepo, bool)
+	doctorProbe doctor.Prober
+	fixRunner   func(context.Context, []string, io.Writer) error
 	// callerHint, when set, replaces the best-effort caller probe: a test injects
 	// the hint it wants detected. Unset means "nothing detected".
 	callerHint func() *callerHint
@@ -167,6 +170,9 @@ func (r *runner) runSplit(args ...string) (string, string) {
 	root.SetArgs(append(append([]string{}, base...), args...))
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
+	if r.stdin != nil {
+		root.SetIn(r.stdin)
+	}
 	if err := root.Execute(); err != nil && !errors.Is(err, ErrUsage) {
 		r.t.Fatalf("execute %v: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
 	}

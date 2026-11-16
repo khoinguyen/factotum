@@ -11,12 +11,12 @@ sizes vary by a few tenths of a percent between builds (build id), so read them 
 **Keep the in-repo `Prompter`.** This is not a stopgap we are failing to replace: for the shape of
 interaction `ft init` actually has, a terminal prompt library costs 3–37 extra third-party packages
 and up to 3.75 MB of binary to improve the look of five single-line questions — and the most
-polished candidate, `huh`, **breaks when stdin is not a terminal**: as written it exits 1 with
-`could not open TTY`, and once it is given explicit streams (which keeping prompts on stderr
-requires) it paints a full-screen UI and blocks instead. The shape that breaks it is not the headless
-one, it is the ordinary one: a shell or agent run with **stdout on a terminal and stdin redirected**
-(`ft init < /dev/null`). Today that invocation silently takes every default; under `huh` it would
-fail or hang.
+polished candidate, `huh`, **hangs on a redirected stdin**. In a normal shell, where the process has
+a controlling terminal, it opens `/dev/tty`, paints a full-screen UI, and blocks; only a truly
+headless process (no controlling terminal at all) gets an error instead
+(`could not open TTY`, exit 1). The shape that breaks it is not the headless one, it is the ordinary
+one: **stdout on a terminal, stdin redirected** (`ft init < /dev/null`). Today that invocation
+silently takes every default; under `huh` it would hang.
 
 Revisit when a command needs a widget the port cannot express. The first of those exists today:
 `ft run` picks one of N registered adapters through an `Input` with the options in the label and
@@ -84,9 +84,9 @@ For each candidate I built a throwaway module with a minimal program that mirror
   compiles is subtracted (`ft` already has `dustin/go-humanize`, `golang.org/x/sys/unix`, and the
   `x/sys`/`x/sync` modules). The raw numbers are in the appendix.
 - **Non-TTY stdin behavior.** The program run with stdin from `/dev/null`, killed after 6 s if still
-  alive. This is the case `ft init` must never get wrong. `huh` was tested in both configurations a
-  caller might reach for — a bare form, and a form with explicit streams — because they fail
-  differently (§4).
+  alive. This is the case `ft init` must never get wrong. `huh` was tested in a four-cell matrix —
+  bare form versus explicit streams, each with and without a controlling terminal — because its
+  failure mode depends on both (§4).
 - **Scriptability.** Whether a *test* can drive the two-method port off a pipe
   (`printf 'demo\ny\n'`): one prompt is easy, two prompts in sequence is the port's actual shape.
 
@@ -99,7 +99,7 @@ sqlite).
 | Candidate (version) | Modules net-new | 3rd-party pkgs net-new | Binary | Non-TTY stdin | Pipe-driveable (2 prompts) | Last release | License | Maintained |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | in-repo `Prompter` | 0 | 0 | +0 | no prompts, by design | yes (fake + real) | — | repo | yes |
-| `charm.land/huh/v2` v2.0.3 | 35 | 37 | 6.26 MB (+3.75) | `could not open TTY`, exit 1; **blocks** with explicit streams | accessible mode only | 2026-03-10 | MIT | active |
+| `charm.land/huh/v2` v2.0.3 | 35 | 37 | 6.26 MB (+3.75) | **hangs** with a controlling terminal; `could not open TTY` (exit 1) headless | accessible mode only | 2026-03-10 | MIT | active |
 | `github.com/manifoldco/promptui` v0.9.0 | 4 | 4 | 4.84 MB (+2.33) | prompt then EOF error, no default | **no** — first prompt drains the pipe, second always EOF | 2021-10-30 | BSD-3 | pushes, no releases |
 | `github.com/AlecAivazis/survey/v2` v2.3.7 | 17 | 17 | 5.30 MB (+2.79) | **`ERR: EOF`** | no | 2023-06-13 | MIT | **archived** (2024-04) |
 | `github.com/c-bata/go-prompt` v0.2.6 | 5 | 8 | 3.17 MB (+0.66) | **panics**: `device not configured` | no | v0.2.6 (2021) | MIT | no 2026 commits |
@@ -111,16 +111,22 @@ For scale: `huh` alone would take the third-party closure from 41 packages to 78
 ### Per candidate
 
 - **`huh` v2.** The polished option: forms, groups, validation, themes. It is disqualified for
-  today's flow by its non-TTY behavior, which fails in two different ways. A bare `form.Run()`
-  opens `/dev/tty` itself and exits 1 with
-  `huh: bubbletea: error opening TTY: ... open /dev/tty: device not configured` — a hard failure on
-  a redirected `ft init`, including in a `setsid` session with no controlling terminal. Give the
-  form explicit streams instead (`.WithInput(os.Stdin).WithOutput(...)`, which §6.4 needs to keep
-  prompts off stdout) and it no longer fails: it painted escape-sequence UI to a pty and was still
-  running at 6 s. Redirected stdout is not respected either, so an unguarded form would both hang
-  and corrupt the `key: value` output contract. Its accessible mode (`WithAccessible(true)`) *does*
-  work from a pipe, returns defaults on EOF, and is the one scriptable path in the field — which is
-  why it, and only it, is named as the later adoption target.
+  today's flow by its non-TTY behavior, which depends on whether the process has a controlling
+  terminal, not on how the form is wired:
+
+  | form | controlling terminal | stdin `/dev/null`, stdout redirected |
+  | --- | --- | --- |
+  | bare `form.Run()` | yes | **hangs**; escape-sequence UI on stderr |
+  | bare `form.Run()` | no | exits 1: `could not open TTY: open /dev/tty: device not configured` |
+  | explicit streams | yes | **hangs**; escapes written to the given writer, even a file |
+  | explicit streams | no | **hangs**; same |
+
+  So the ordinary shell invocation blocks rather than failing, and the explicit-streams shape (which
+  is what a caller reaches for to choose the writer) writes a full-screen UI into a redirected file
+  — the `key: value` output contract is only safe because `huh`'s *default* writer is stderr
+  (`form.go`), which a caller can override. Its accessible mode (`WithAccessible(true)`) *does* work
+  from a pipe, returns defaults on EOF, and is the one scriptable path in the field — which is why
+  it, and only it, is named as the later adoption target.
 - **`promptui`.** Cheap, but it re-renders with escape sequences off a terminal, and it cannot run
   the port from a pipe: the first prompt's readline consumes the buffered input, so the second
   prompt gets EOF no matter how much is piped. On `/dev/null` it returns `^D` rather than the
@@ -170,7 +176,7 @@ The port makes this a one-file swap, and these are the constraints to keep:
    library form.
 2. **Gate on stdin, not just stdout.** Today's check is `d.interactive()` =
    `d.IsTerminal(d.Out)` — stdout only (`init.go:509`). With stdout on a terminal and stdin
-   redirected — a common way scripts and agents invoke `ft init` — today's prompter runs all five
+   redirected — a common way scripts and agents invoke `ft init` — today's prompter runs all six
    questions and silently accepts every default:
 
    ```sh
@@ -178,16 +184,18 @@ The port makes this a one-file swap, and these are the constraints to keep:
    # Register this repository as a Factotum project? [Y/n] Project id [repo]: ... created: true
    ```
 
-   A `huh` form behind that same gate does not inherit that behavior: with default streams it exits 1
-   with `could not open TTY`, and with explicit streams it blocks (verified with stdout on a pty and
-   stdin on `/dev/null`). So the gate must become stdout-TTY **and** stdin-TTY *before* any form is
-   constructed. The fully headless case is the easy one; terminal-stdout with piped stdin is the one
-   that gets through today.
+   A `huh` form behind that same gate does not inherit that behavior: a bare form opens `/dev/tty`
+   and blocks, and only fails with `could not open TTY` when the process has no controlling terminal
+   at all. So the gate must become stdout-TTY **and** stdin-TTY *before* any form is constructed.
+   The fully headless case is the easy one; terminal-stdout with piped stdin is the one that gets
+   through today and hangs.
 3. Accessible mode is for terminals where raw mode is unavailable, and for tests — never the
    non-TTY path. A non-TTY stdin keeps today's behavior: no prompts at all.
-4. Keep prompts on `d.Err`. A library that renders to stdout would corrupt `-o json|yaml`.
+4. Keep prompts on `d.Err`. `huh` already writes there by default (`form.go` sets
+   `tea.WithOutput(os.Stderr)`), so do not override it: passing `WithOutput(os.Stdout)` moves the
+   UI into stdout and ignores that stdout is redirected (§4).
 5. Preserve blank → default and EOF → default. `huh`'s accessible mode does this already; its
-   default mode does not (the form aborts), so the mapping is not free.
+   default mode hangs or errors on EOF, so the mapping is not free.
 6. Strip colour in tests, or disable it: accessible mode still emits SGR escapes when piped.
 7. Re-measure weight at adoption time — the numbers above are dated, and `huh` v2 is young.
 
@@ -216,6 +224,11 @@ printf 'demo\ny\n' | ./bin/probe                                             # t
 
 Net-new is those sets minus what `ft` already compiles
 (`go list -deps ... ./... | grep -v '^github.com/khoinguyen/factotum'` → 41 packages, 35 modules).
+
+For `huh`, the non-TTY matrix needs both axes — a controlling terminal or not, and bare form versus
+explicit streams — so each cell was run once through a pty (`script -q /tmp/x.log /bin/sh -c
+'./bin/probe </dev/null >/tmp/out 2>/tmp/err'`) and once in a session with no controlling terminal
+(`setsid`, where available), checking that the probe process itself was still alive after 6 s.
 
 | Candidate | Modules (raw) | 3rd-party pkgs (raw) | overlap with `ft` |
 | --- | --- | --- | --- |

@@ -103,7 +103,9 @@ func TestLoopSkillsMessageOverFtMsg(t *testing.T) {
 // transport: a real loop-agent pair round-tripped over ft msg (t-wp27miss7i),
 // so the wrapper is gone and no agent instruction may still point at it. A dead
 // receiver must fail loudly through `ft msg runs --live`, not type into a cmux
-// terminal where a misroute is silent.
+// terminal where a misroute is silent. Both shipped instruction trees are
+// checked: .agents/skills (the loop roles) and internal/skills/content (served
+// by `ft skill`).
 func TestLoopSkillsHaveNoCmuxFallback(t *testing.T) {
 	root := repoRoot(t)
 	for _, gone := range []string{
@@ -114,25 +116,30 @@ func TestLoopSkillsHaveNoCmuxFallback(t *testing.T) {
 			t.Errorf("%s must be deleted: ft msg is the only channel and a paste fallback hides a dead receiver", gone)
 		}
 	}
-	err := filepath.WalkDir(filepath.Join(root, ".agents", "skills"), func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if strings.Contains(strings.ToLower(string(data)), "cmux-msg") {
-			rel, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				rel = path
+	for _, dir := range []string{
+		filepath.Join(".agents", "skills"),
+		filepath.Join("internal", "skills", "content"),
+	} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
 			}
-			t.Errorf("%s still references cmux-msg; peers talk over ft msg only", rel)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(strings.ToLower(string(data)), "cmux-msg") {
+				rel, relErr := filepath.Rel(root, path)
+				if relErr != nil {
+					rel = path
+				}
+				t.Errorf("%s still references cmux-msg; peers talk over ft msg only", rel)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk .agents/skills: %v", err)
 	}
 	// Every reporting role must say what to do when the channel is dead.
 	for _, skill := range []string{

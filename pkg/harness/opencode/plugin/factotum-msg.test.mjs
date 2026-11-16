@@ -368,6 +368,62 @@ test("msgSessionStore resumes only the current process's live session", async ()
   assert.notEqual(msgSessionKey(BASE_CONFIG), msgSessionKey({ ...BASE_CONFIG, pid: BASE_CONFIG.pid + 1 }));
 });
 
+test("msgSessionKey never lets one part's content shift the boundary", () => {
+  // A dot inside a part must not be able to stand in for the separator between
+  // parts: "a.b" + "c" and "a" + "b.c" are different agents.
+  assert.notEqual(
+    msgSessionKey({ ...BASE_CONFIG, project: "a.b", actor: "c" }),
+    msgSessionKey({ ...BASE_CONFIG, project: "a", actor: "b.c" }),
+  );
+
+  // Deriving the key twice from the same config yields the same key, so a
+  // plugin reload (same pid) still finds the session it persisted.
+  assert.equal(msgSessionKey(BASE_CONFIG), msgSessionKey({ ...BASE_CONFIG }));
+});
+
+test("msgSessionStore still resumes a session saved under the legacy dotted key", async () => {
+  const store = new Map();
+  const live = new Set(["ses-legacy", "ses-current"]);
+  const ctx = {
+    storage: {
+      get: async (key) => store.get(key),
+      set: async (key, value) => { store.set(key, value); },
+    },
+    session: {
+      async get({ sessionID }) {
+        if (live.has(sessionID)) return { id: sessionID };
+        throw new Error("Session.NotFoundError");
+      },
+    },
+  };
+
+  // A receiver running before the length-prefixed format persisted the session
+  // under the dotted key; a reload after the upgrade must still find it.
+  store.set(`session.${BASE_CONFIG.project}.${BASE_CONFIG.actor}.${BASE_CONFIG.pid}`, "ses-legacy");
+  const glean = msgSessionStore(ctx, BASE_CONFIG);
+  assert.equal(await glean.load(), "ses-legacy");
+
+  // Once a session is saved under the new key, it wins over the legacy one.
+  await glean.save("ses-current");
+  assert.equal(await glean.load(), "ses-current");
+});
+
+test("msgSessionStore does not read the legacy key when a part is dotted", async () => {
+  const store = new Map();
+  const ctx = {
+    storage: {
+      get: async (key) => store.get(key),
+      set: async (key, value) => { store.set(key, value); },
+    },
+    session: { async get({ sessionID }) { return { id: sessionID }; } },
+  };
+  // The dotted config "a.b"/"c" shares its legacy key with a different agent,
+  // "a"/"b.c"; falling back to it would inject into the wrong session.
+  store.set("session.a.b.c.7", "ses-other");
+  const dotted = { ...BASE_CONFIG, project: "a.b", actor: "c" };
+  assert.equal(await msgSessionStore(ctx, dotted).load(), "");
+});
+
 test("makeInjector prefers promptAsync and falls back to prompt", async () => {
   const asyncCalls = [];
   await makeInjector({ session: { promptAsync: async (options) => asyncCalls.push(options) } })("ses-1", "hi");

@@ -421,9 +421,31 @@ export function makeContextInjector(session) {
  * project, the actor, and the plugin host's pid. A plugin reload keeps the pid,
  * so the key survives it; a fresh agent launch has a new pid, so it starts
  * clean instead of resuming a dead session.
+ *
+ * Each part is length-prefixed so its content cannot shift the boundary between
+ * parts: project "a.b" + actor "c" and project "a" + actor "b.c" are different
+ * agents and get different keys.
  */
 export function msgSessionKey(config) {
-  return `session.${config.project}.${config.actor}.${config.pid}`;
+  const parts = [config.project, config.actor, config.pid].map(sessionKeyPart);
+  return `session.${parts.map((part) => `${part.length}:${part}`).join(".")}`;
+}
+
+function sessionKeyPart(part) {
+  return String(part ?? "");
+}
+
+/**
+ * legacyMsgSessionKey is the dot-joined key receivers wrote before parts were
+ * length-prefixed. msgSessionStore reads it as a fallback so a reload across the
+ * upgrade still resumes its session. It is deliberately skipped when a part
+ * contains '.': that is exactly the case where the old format could not tell
+ * two agents apart, so the key may belong to someone else.
+ */
+function legacyMsgSessionKey(config) {
+  const parts = [config.project, config.actor, config.pid].map(sessionKeyPart);
+  if (parts.some((part) => part.includes("."))) return "";
+  return `session.${parts.join(".")}`;
 }
 
 /**
@@ -436,22 +458,27 @@ export function msgSessionKey(config) {
  */
 export function msgSessionStore(ctx, config) {
   const key = msgSessionKey(config);
+  const legacyKey = legacyMsgSessionKey(config);
+  async function liveSession(candidate) {
+    if (!candidate) return "";
+    let stored;
+    try {
+      stored = await ctx?.storage?.get(candidate);
+    } catch (_) {
+      return "";
+    }
+    const sid = typeof stored === "string" ? stored : stored?.sessionID;
+    if (!sid) return "";
+    try {
+      if (!(await ctx?.session?.get({ sessionID: sid }))) return "";
+    } catch (_) {
+      return "";
+    }
+    return sid;
+  }
   return {
     async load() {
-      let stored;
-      try {
-        stored = await ctx?.storage?.get(key);
-      } catch (_) {
-        return "";
-      }
-      const sid = typeof stored === "string" ? stored : stored?.sessionID;
-      if (!sid) return "";
-      try {
-        if (!(await ctx?.session?.get({ sessionID: sid }))) return "";
-      } catch (_) {
-        return "";
-      }
-      return sid;
+      return (await liveSession(key)) || (await liveSession(legacyKey));
     },
     async save(sid) {
       try {

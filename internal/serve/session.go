@@ -127,7 +127,8 @@ func (s *Server) sessions(ctx context.Context) ([]sessionView, error) {
 			}
 		}
 	}
-	runs, err := s.options.Backend.Runs().List(ctx, store.RunFilter{ProjectID: scope})
+	live := true
+	runs, err := s.options.Backend.Runs().List(ctx, store.RunFilter{ProjectID: scope, Live: &live, Now: now})
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +137,7 @@ func (s *Server) sessions(ctx context.Context) ([]sessionView, error) {
 	// not recorded an event for a while.
 	liveSession := make(map[string]bool)
 	for _, run := range runs {
-		if run.Session != "" && run.Live(now) {
+		if run.Session != "" {
 			liveSession[run.Session] = true
 		}
 	}

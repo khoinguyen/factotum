@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -353,6 +354,7 @@ class FakeEventSource {
 afterEach(() => {
   cleanup()
   FakeEventSource.instances = []
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   window.localStorage.clear()
@@ -786,6 +788,55 @@ test("renders a stale session as stale, not alive", async () => {
   expect(screen.getByText("stale")).toBeTruthy()
   expect(screen.queryByText("alive")).toBeNull()
   expect(screen.getByText(/last event 2026-01-01T09:05:00Z/)).toBeTruthy()
+})
+
+test("the sessions page refreshes on a timer so a dead session fades without a mutation", async () => {
+  // A dead session emits no events, so the SSE stream stays silent: the page
+  // must poll to re-derive staleness, or an open tab shows `alive` forever.
+  vi.useFakeTimers()
+  const alive = {
+    id: "s-dead",
+    state: "alive",
+    started_at: "2026-01-01T09:00:00Z",
+    last_event_at: "2026-01-01T09:00:00Z",
+    duration_seconds: 0,
+    delivered: {
+      tasks_done: 0,
+      prs_merged: 0,
+      captures_advanced: 0,
+      tasks: [],
+      prs: [],
+    },
+  }
+  let calls = 0
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+      const path = new URL(url, "http://localhost").pathname
+      if (path !== "/api/sessions") {
+        return { ok: false, status: 404, json: async () => ({}) }
+      }
+      const doc =
+        calls++ === 0
+          ? { sessions: [alive] }
+          : { sessions: [{ ...alive, state: "stale", reason: "no activity" }] }
+      return { ok: true, status: 200, json: async () => doc }
+    }),
+  )
+  vi.stubGlobal("EventSource", FakeEventSource)
+
+  renderAt("/sessions")
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0)
+  })
+  expect(screen.getByText("alive")).toBeTruthy()
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+  expect(screen.getByText("stale")).toBeTruthy()
 })
 
 test("renders an empty sessions page", async () => {

@@ -48,8 +48,9 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 			"PO can answer the grill; --unattended, or a pipe or redirect, runs it headless.\n" +
 			"The sandbox and harness resolve like `ft run`: --sandbox/--harness, then\n" +
 			"FACTOTUM_RUN_*, then the [run] config table (project over user), prompting once on a\n" +
-			"terminal when unset; choosing the local backend in that prompt asks to opt in\n" +
-			"(default no) and records run.allow_host in the user config.",
+			"terminal when unset; whenever the resolved sandbox is local and run.allow_host is\n" +
+			"unset, an interactive run asks to opt in (default no) and records run.allow_host\n" +
+			"in the user config.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return deps.runGroom(cmd, args, opts)
 		},

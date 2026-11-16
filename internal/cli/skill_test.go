@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -44,6 +45,35 @@ func TestSkillGetPrintsRawMarkdown(t *testing.T) {
 	}
 	if named := r.run("skill", "get", "ft"); named != out {
 		t.Fatalf("skill get ft differs from the default:\n%s", named)
+	}
+}
+
+// TestRenderSkillDocTextEndsBodyWithExactlyOneNewline pins the text rendering's
+// trailing newline: `ft skill get` prints the raw body, and a body that does not
+// end with a newline must gain exactly one so the last line is terminated, while
+// a body that already ends with one is not doubled. Every embedded skill ends
+// with a newline, so no other test reaches the append branch; without this pin a
+// regression there prints a body without its final newline, and the output-bound
+// guard cannot see it because it measures rendered bytes rather than their shape.
+func TestRenderSkillDocTextEndsBodyWithExactlyOneNewline(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "body without a trailing newline gains one", body: "# ft\n\nA skill body with no final newline."},
+		{name: "body with a trailing newline is not doubled", body: "# ft\n\nA skill body that already ends with one.\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := renderSkillDoc(&buf, "text", skillDoc{Name: "probe", Body: tc.body}); err != nil {
+				t.Fatalf("renderSkillDoc(text) error = %v", err)
+			}
+			want := strings.TrimSuffix(tc.body, "\n") + "\n"
+			if got := buf.String(); got != want {
+				t.Fatalf("renderSkillDoc(text) = %q, want %q: the body must end with exactly one newline", got, want)
+			}
+		})
 	}
 }
 

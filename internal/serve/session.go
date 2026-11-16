@@ -24,14 +24,15 @@ type deliveredView struct {
 }
 
 // sessionView is one chief session projected for the sessions page: its
-// lifecycle (alive or retired, when it started and stopped, why) and the work it
-// delivered. A session is defined by the events that carry its id, so a session
-// whose events exist but whose start was not recorded still appears.
+// lifecycle (alive, stale, or retired, when it started and stopped, why) and the
+// work it delivered. A session is defined by the events that carry its id, so a
+// session whose events exist but whose start was not recorded still appears.
 type sessionView struct {
 	ID              string        `json:"id"`
 	State           string        `json:"state"`
 	StartedAt       string        `json:"started_at,omitempty"`
 	StoppedAt       string        `json:"stopped_at,omitempty"`
+	LastEventAt     string        `json:"last_event_at,omitempty"`
 	DurationSeconds int           `json:"duration_seconds"`
 	Reason          string        `json:"reason,omitempty"`
 	Successor       string        `json:"successor,omitempty"`
@@ -48,6 +49,7 @@ type sessionAcc struct {
 	started *core.Event
 	retired *core.Event
 	first   time.Time
+	last    time.Time
 	done    map[core.TicketID]bool
 }
 
@@ -107,6 +109,9 @@ func (s *Server) sessions(ctx context.Context) ([]sessionView, error) {
 		if acc.first.IsZero() || event.CreatedAt.Before(acc.first) {
 			acc.first = event.CreatedAt
 		}
+		if acc.last.IsZero() || event.CreatedAt.After(acc.last) {
+			acc.last = event.CreatedAt
+		}
 		switch event.Kind {
 		case core.EventSessionStarted:
 			if acc.started == nil {
@@ -122,28 +127,49 @@ func (s *Server) sessions(ctx context.Context) ([]sessionView, error) {
 			}
 		}
 	}
+	runs, err := s.options.Backend.Runs().List(ctx, store.RunFilter{ProjectID: scope})
+	if err != nil {
+		return nil, err
+	}
+	// A run whose lease is still valid is a session's strongest liveness
+	// evidence: its receiver is heartbeating right now, even if the session has
+	// not recorded an event for a while.
+	liveSession := make(map[string]bool)
+	for _, run := range runs {
+		if run.Session != "" && run.Live(now) {
+			liveSession[run.Session] = true
+		}
+	}
+
 	sort.SliceStable(order, func(i, j int) bool {
 		return sessionStart(byID[order[i]]).After(sessionStart(byID[order[j]]))
 	})
 	out := make([]sessionView, 0, len(order))
 	for _, sid := range order {
-		out = append(out, s.sessionViewOf(ctx, sid, byID[sid], vs, now))
+		out = append(out, s.sessionViewOf(ctx, sid, byID[sid], vs, now, liveSession[sid]))
 	}
 	return out, nil
 }
 
 // sessionViewOf projects one accumulated session. start is the recorded start,
-// falling back to the earliest event for a session whose start was not logged;
-// duration runs to now while the session is alive and to its retirement once it
-// stopped.
-func (s *Server) sessionViewOf(ctx context.Context, sid string, acc *sessionAcc, vs viewSet, now time.Time) sessionView {
+// falling back to the earliest event for a session whose start was not logged.
+// Liveness is derived rather than trusted: a session is stale once it has no
+// event inside the idle window and no live run, because its process can die
+// without ever recording a retirement. Duration runs to now while the session is
+// alive, to its last activity once it goes stale, and to its retirement once it
+// explicitly stopped.
+func (s *Server) sessionViewOf(ctx context.Context, sid string, acc *sessionAcc, vs viewSet, now time.Time, live bool) sessionView {
 	start := sessionStart(acc)
 	view := sessionView{ID: sid, State: "alive"}
 	if !start.IsZero() {
 		view.StartedAt = start.UTC().Format(time.RFC3339)
 	}
+	if !acc.last.IsZero() {
+		view.LastEventAt = acc.last.UTC().Format(time.RFC3339)
+	}
 	end := now
-	if acc.retired != nil {
+	switch {
+	case acc.retired != nil:
 		view.State = "retired"
 		end = acc.retired.CreatedAt
 		view.StoppedAt = end.UTC().Format(time.RFC3339)
@@ -152,6 +178,12 @@ func (s *Server) sessionViewOf(ctx context.Context, sid string, acc *sessionAcc,
 			view.Reason = "retired for " + successor
 		} else {
 			view.Reason = "retired"
+		}
+	case !live && (acc.last.IsZero() || now.Sub(acc.last) > app.DefaultSessionIdle):
+		view.State = "stale"
+		view.Reason = "no activity"
+		if !acc.last.IsZero() {
+			end = acc.last
 		}
 	}
 	if !start.IsZero() && end.After(start) {

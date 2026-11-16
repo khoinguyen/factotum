@@ -21,6 +21,7 @@ const tone: Record<string, string> = {
   bug: "border-red-600/40 bg-red-500/15 text-red-700 dark:text-red-300",
   cancelled: "border-muted-foreground/30 bg-muted text-muted-foreground",
   waiting: "border-muted-foreground/30 bg-muted text-muted-foreground",
+  stale: "border-amber-600/40 bg-amber-500/15 text-amber-700 dark:text-amber-300",
 }
 
 export function Chip({

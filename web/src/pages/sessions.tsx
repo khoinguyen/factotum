@@ -20,8 +20,15 @@ export function formatDuration(seconds: number): string {
   return `${secs}s`
 }
 
+// sessionTone colors the state chip: alive is the working green, stale is a
+// warning (the process is presumed gone), retired is muted.
+const sessionTone: Record<string, string> = {
+  alive: "ready-agent",
+  stale: "stale",
+  retired: "waiting",
+}
+
 function SessionCard({ session }: { session: SessionView }) {
-  const retired = session.state === "retired"
   const delivered = session.delivered
   return (
     <Card>
@@ -29,8 +36,8 @@ function SessionCard({ session }: { session: SessionView }) {
         <CardTitle className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-sm">{session.id}</span>
           <Chip
-            label={retired ? "retired" : "alive"}
-            toneKey={retired ? "waiting" : "ready-agent"}
+            label={session.state}
+            toneKey={sessionTone[session.state] ?? "waiting"}
           />
           <span className="text-xs font-normal text-muted-foreground">
             {formatDuration(session.duration_seconds)}
@@ -40,7 +47,10 @@ function SessionCard({ session }: { session: SessionView }) {
       <CardContent className="flex flex-col gap-3">
         <p className="text-xs text-muted-foreground">
           started {session.started_at ?? "unknown"}
-          {retired && session.stopped_at ? ` · stopped ${session.stopped_at}` : ""}
+          {session.last_event_at ? ` · last event ${session.last_event_at}` : ""}
+          {session.state === "retired" && session.stopped_at
+            ? ` · stopped ${session.stopped_at}`
+            : ""}
           {session.reason ? ` · ${session.reason}` : ""}
         </p>
         <p className="text-sm">
@@ -82,8 +92,9 @@ function SessionCard({ session }: { session: SessionView }) {
   )
 }
 
-// Sessions is the chief-sessions page: it lists every session alive or retired
-// with when it started and stopped and why, and the work it delivered.
+// Sessions is the chief-sessions page: it lists every session alive, stale, or
+// retired with when it started, its last activity, when and why it stopped, and
+// the work it delivered.
 export function Sessions() {
   const { sessions, state, error } = useLiveSessions()
 
@@ -104,7 +115,8 @@ export function Sessions() {
     )
   }
 
-  const alive = sessions.filter((session) => session.state !== "retired")
+  const alive = sessions.filter((session) => session.state === "alive")
+  const stale = sessions.filter((session) => session.state === "stale")
   const retired = sessions.filter((session) => session.state === "retired")
   const tasksDone = sessions.reduce(
     (total, session) => total + session.delivered.tasks_done,
@@ -122,8 +134,8 @@ export function Sessions() {
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Alive" value={alive.length} />
+        <Stat label="Stale" value={stale.length} />
         <Stat label="Retired" value={retired.length} />
-        <Stat label="Sessions" value={sessions.length} />
         <Stat label="Tasks done" value={tasksDone} />
       </section>
 
@@ -135,6 +147,15 @@ export function Sessions() {
         <section className="flex flex-col gap-3">
           <h2 className="text-lg font-semibold">Alive · {alive.length}</h2>
           {alive.map((session) => (
+            <SessionCard key={session.id} session={session} />
+          ))}
+        </section>
+      ) : null}
+
+      {stale.length > 0 ? (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-semibold">Stale · {stale.length}</h2>
+          {stale.map((session) => (
             <SessionCard key={session.id} session={session} />
           ))}
         </section>

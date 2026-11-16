@@ -757,6 +757,37 @@ test("renders the sessions page with alive and retired sessions", async () => {
   expect(screen.getByText("PR one")).toBeTruthy()
 })
 
+test("renders a stale session as stale, not alive", async () => {
+  // A session whose process died without retiring never changes its record, so
+  // the page must trust the derived state: stale, with the last activity shown.
+  stubFetch({
+    "/api/sessions": {
+      sessions: [
+        {
+          id: "s-dead",
+          state: "stale",
+          started_at: "2026-01-01T09:00:00Z",
+          last_event_at: "2026-01-01T09:05:00Z",
+          duration_seconds: 300,
+          reason: "no activity",
+          delivered: {
+            tasks_done: 0,
+            prs_merged: 0,
+            captures_advanced: 0,
+            tasks: [],
+            prs: [],
+          },
+        },
+      ],
+    },
+  })
+  renderAt("/sessions")
+  expect(await screen.findByText("s-dead")).toBeTruthy()
+  expect(screen.getByText("stale")).toBeTruthy()
+  expect(screen.queryByText("alive")).toBeNull()
+  expect(screen.getByText(/last event 2026-01-01T09:05:00Z/)).toBeTruthy()
+})
+
 test("renders an empty sessions page", async () => {
   stubFetch({ "/api/sessions": { sessions: [] } })
   renderAt("/sessions")

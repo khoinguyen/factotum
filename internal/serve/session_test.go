@@ -32,6 +32,7 @@ type sessionJSON struct {
 	State           string        `json:"state"`
 	StartedAt       string        `json:"started_at"`
 	StoppedAt       string        `json:"stopped_at"`
+	LastEventAt     string        `json:"last_event_at"`
 	DurationSeconds int           `json:"duration_seconds"`
 	Reason          string        `json:"reason"`
 	Successor       string        `json:"successor"`
@@ -106,7 +107,9 @@ func TestSessionsListLifecycle(t *testing.T) {
 	if _, err := sessions.Retire(ctx, project.ID, "s-old", "s-new"); err != nil {
 		t.Fatalf("Retire(s-old) error = %v", err)
 	}
-	clock.t = clock.t.Add(time.Hour)
+	// Read the dashboard five minutes after the new session started, inside the
+	// idle window, so it still counts as alive.
+	clock.t = clock.t.Add(5 * time.Minute)
 
 	ts := clockServer(t, f, clock, Options{Project: project.ID})
 	var doc sessionDoc
@@ -136,6 +139,9 @@ func TestSessionsListLifecycle(t *testing.T) {
 	if old.Reason != "retired for s-new" || old.Successor != "s-new" {
 		t.Fatalf("s-old reason = %q successor = %q", old.Reason, old.Successor)
 	}
+	if old.LastEventAt != "2026-01-01T11:00:00Z" {
+		t.Fatalf("s-old last_event_at = %q, want the retirement time", old.LastEventAt)
+	}
 
 	fresh := findSession(t, doc, "s-new")
 	if fresh.State != "alive" {
@@ -144,8 +150,11 @@ func TestSessionsListLifecycle(t *testing.T) {
 	if fresh.StoppedAt != "" {
 		t.Fatalf("s-new stopped_at = %q, want empty", fresh.StoppedAt)
 	}
-	if fresh.DurationSeconds != 3600 {
-		t.Fatalf("s-new duration = %d, want 3600 (now - start)", fresh.DurationSeconds)
+	if fresh.DurationSeconds != 300 {
+		t.Fatalf("s-new duration = %d, want 300 (now - start)", fresh.DurationSeconds)
+	}
+	if fresh.LastEventAt != "2026-01-01T11:00:00Z" {
+		t.Fatalf("s-new last_event_at = %q", fresh.LastEventAt)
 	}
 }
 
@@ -207,6 +216,127 @@ func TestSessionsShowAFinishedRunAsRetired(t *testing.T) {
 	// its arrays empty, not absent.
 	if view.Delivered.Tasks == nil || view.Delivered.PRs == nil {
 		t.Fatalf("delivered = %+v, want empty arrays", view.Delivered)
+	}
+}
+
+// TestSessionsGoStaleWithoutActivity proves liveness is derived from evidence,
+// not trusted from the record: a session whose last event is older than the
+// idle window reads stale with its duration frozen at that last event, so a
+// chief that exits, is killed, or dies with its surface cannot sit on the
+// dashboard as alive forever. Retiring it still works, and wins over staleness.
+func TestSessionsGoStaleWithoutActivity(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ctx := context.Background()
+
+	clock := &stepClock{t: time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)}
+	sessions := app.NewSessionService(f.backend, clock, f.ids)
+	if _, err := sessions.Start(ctx, project.ID, "s-dead"); err != nil {
+		t.Fatalf("Start(s-dead) error = %v", err)
+	}
+
+	agent, err := f.actors.Add(ctx, core.ActorAgent, "claude")
+	if err != nil {
+		t.Fatalf("Add(agent) error = %v", err)
+	}
+	task := f.addTask(t, project.ID, "Work the session did")
+	clock.t = clock.t.Add(5 * time.Minute)
+	// The fixture's services run on the fixed fixture clock; this session's
+	// events must land on the step clock the dashboard reads.
+	tasks := app.NewTicketService(f.backend, clock, f.ids)
+	if _, err := tasks.SetStatus(app.WithCaller(ctx, agent.ID, "s-dead"), task.ID, core.StatusInProgress); err != nil {
+		t.Fatalf("SetStatus() error = %v", err)
+	}
+	lastSeen := clock.t
+
+	// One session's start is old, the other's is inside the window: only the
+	// old one is stale at the moment the dashboard reads.
+	clock.t = lastSeen.Add(app.DefaultSessionIdle - time.Minute)
+	if _, err := sessions.Start(ctx, project.ID, "s-live"); err != nil {
+		t.Fatalf("Start(s-live) error = %v", err)
+	}
+	clock.t = clock.t.Add(2 * time.Minute)
+
+	ts := clockServer(t, f, clock, Options{Project: project.ID})
+	var doc sessionDoc
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+
+	dead := findSession(t, doc, "s-dead")
+	if dead.State != "stale" {
+		t.Fatalf("s-dead state = %q, want stale: a session with no events inside the window is not alive", dead.State)
+	}
+	if dead.LastEventAt != lastSeen.UTC().Format(time.RFC3339) {
+		t.Fatalf("s-dead last_event_at = %q, want %q", dead.LastEventAt, lastSeen.UTC().Format(time.RFC3339))
+	}
+	if dead.DurationSeconds != 300 {
+		t.Fatalf("s-dead duration = %d, want 300 (last event - start, frozen)", dead.DurationSeconds)
+	}
+
+	live := findSession(t, doc, "s-live")
+	if live.State != "alive" {
+		t.Fatalf("s-live state = %q, want alive inside the window", live.State)
+	}
+
+	// The explicit path stays available: retiring a stale session makes it
+	// retired, not stale, and stops its clock at the retirement.
+	if _, err := sessions.Retire(ctx, project.ID, "s-dead", ""); err != nil {
+		t.Fatalf("Retire(s-dead) error = %v", err)
+	}
+	var retiredDoc sessionDoc
+	getDoc(t, ts.URL+"/api/sessions", &retiredDoc)
+	retired := findSession(t, retiredDoc, "s-dead")
+	if retired.State != "retired" {
+		t.Fatalf("s-dead after retire state = %q, want retired", retired.State)
+	}
+	if retired.StoppedAt == "" {
+		t.Fatalf("s-dead after retire stopped_at is empty, want the retirement time")
+	}
+}
+
+// TestSessionsLiveRunKeepsSessionAlive proves the msg-run lease is the primary
+// liveness signal: a receiver still heartbeating its session keeps it alive even
+// when no event has been recorded for longer than the idle window, and once the
+// lease lapses with nothing else happening the session goes stale.
+func TestSessionsLiveRunKeepsSessionAlive(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ctx := context.Background()
+
+	clock := &stepClock{t: time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)}
+	sessions := app.NewSessionService(f.backend, clock, f.ids)
+	if _, err := sessions.Start(ctx, project.ID, "s-run"); err != nil {
+		t.Fatalf("Start(s-run) error = %v", err)
+	}
+	clock.t = clock.t.Add(2 * app.DefaultSessionIdle)
+
+	if _, err := app.NewMessageService(f.backend, clock, f.ids).RegisterRun(ctx, app.RegisterRunInput{
+		ProjectID: project.ID,
+		ActorID:   core.ActorID("chief"),
+		Session:   "s-run",
+		TTL:       time.Minute,
+	}); err != nil {
+		t.Fatalf("RegisterRun() error = %v", err)
+	}
+
+	ts := clockServer(t, f, clock, Options{Project: project.ID})
+	var doc sessionDoc
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+
+	alive := findSession(t, doc, "s-run")
+	if alive.State != "alive" {
+		t.Fatalf("state = %q, want alive: a live run lease keeps its session alive", alive.State)
+	}
+	if alive.StoppedAt != "" {
+		t.Fatalf("stopped_at = %q, want empty for a live session", alive.StoppedAt)
+	}
+
+	// The process dies: no heartbeat renews the lease, and with no fresh event
+	// the session stops counting as alive.
+	clock.t = clock.t.Add(2 * time.Minute)
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+	stale := findSession(t, doc, "s-run")
+	if stale.State != "stale" {
+		t.Fatalf("state = %q, want stale after the run lease lapsed", stale.State)
 	}
 }
 

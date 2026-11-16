@@ -8,12 +8,13 @@ import (
 	"github.com/khoinguyen/factotum/pkg/isolation"
 )
 
-// TestExitedCommandStaysTracked is white-box: it pins that a command is tracked
-// for the run's lifetime, not the command's. Once its direct child exits, the
-// process group is still the run's, so a worker the command forked is still in
-// it; Stop and Delete must keep a handle on that group rather than find nothing
-// tracked, which is what made a normal exit leak.
-func TestExitedCommandStaysTracked(t *testing.T) {
+// TestExitedCommandIsUntracked is white-box: a command's own exit ends its
+// process group, and the entry is dropped with it. A retained entry would buy
+// nothing - the group has already been signalled - and would keep an armed
+// kill(-pgid) for a group id the kernel is free to reuse, which Stop or Delete
+// would then fire at a group this run does not own. Stop after the exit stays a
+// safe no-op.
+func TestExitedCommandIsUntracked(t *testing.T) {
 	b := New(Options{AllowHost: true, Warn: io.Discard})
 	ctx := context.Background()
 	h, err := b.Prepare(ctx, isolation.Spec{})
@@ -32,8 +33,11 @@ func TestExitedCommandStaysTracked(t *testing.T) {
 		t.Fatalf("Wait() error = %v", err)
 	}
 
-	if got := tracked(env); got != 1 {
-		t.Fatalf("tracked processes after the command exited = %d, want 1: the run keeps its group", got)
+	if got := tracked(env); got != 0 {
+		t.Fatalf("tracked processes after the command exited = %d, want 0: the exit already ended its group", got)
+	}
+	if err := b.Stop(ctx, h); err != nil {
+		t.Fatalf("Stop() after the command exited = %v, want a no-op", err)
 	}
 }
 

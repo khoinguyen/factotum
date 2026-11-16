@@ -275,6 +275,22 @@ func TestResolveErrorsWhenLocalPathRelativeWithoutBase(t *testing.T) {
 	if !strings.Contains(err.Error(), "absolute") {
 		t.Errorf("error %q does not say how to fix it", err)
 	}
+	if !strings.Contains(err.Error(), "project root") {
+		t.Errorf("error %q does not name what is missing", err)
+	}
+}
+
+func TestResolveErrorsWhenBaseRelative(t *testing.T) {
+	root := t.TempDir()
+	project := testProject(core.Repository{Name: "backend", Path: "repos/backend"})
+
+	_, err := workspace.Resolve(context.Background(), project, testTask("backend"), workspace.Options{Root: root, Base: "repos", Git: &fakeGit{}})
+	if !errors.Is(err, workspace.ErrBase) {
+		t.Fatalf("Resolve() error = %v, want ErrBase", err)
+	}
+	if !strings.Contains(err.Error(), `"repos"`) {
+		t.Errorf("error %q does not name the offending base", err)
+	}
 }
 
 func TestResolveUsesRelativeLocalPathAgainstBase(t *testing.T) {

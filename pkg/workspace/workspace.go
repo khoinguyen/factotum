@@ -60,6 +60,8 @@ import (
 var (
 	// ErrRoot means Options.Root was empty or not absolute.
 	ErrRoot = errors.New("workspace: root must be an absolute path")
+	// ErrBase means Options.Base was set but not absolute.
+	ErrBase = errors.New("workspace: base must be an absolute path")
 	// ErrNoRepos means the task resolved to no repositories to materialize.
 	ErrNoRepos = errors.New("workspace: no repositories to materialize")
 	// ErrNoSource means a required repo has neither a URL to clone nor a Path.
@@ -156,7 +158,8 @@ type Options struct {
 	// Base is the absolute directory a relative repo Path resolves against,
 	// typically the project root (the directory holding .factotum/config.toml).
 	// It is only consulted for a relative Path; empty means a relative Path
-	// cannot be resolved.
+	// cannot be resolved, and a non-empty value that is not absolute is
+	// rejected with ErrBase.
 	Base string
 	// Git is the clone runner; nil uses the host git (NewExecGit).
 	Git Git
@@ -177,6 +180,9 @@ func Resolve(ctx context.Context, project core.Project, task core.Ticket, opts O
 	root := opts.Root
 	if root == "" || !filepath.IsAbs(root) {
 		return nil, fmt.Errorf("%w: %q", ErrRoot, root)
+	}
+	if opts.Base != "" && !filepath.IsAbs(opts.Base) {
+		return nil, fmt.Errorf("%w: %q", ErrBase, opts.Base)
 	}
 	repos, err := project.ReposForTask(task)
 	if err != nil {
@@ -248,7 +254,7 @@ func resolveLocalPath(repo core.Repository, base string) (string, error) {
 		return filepath.Clean(repo.Path), nil
 	}
 	if base == "" {
-		return "", fmt.Errorf("%w: repository %q path %q is relative and no project root is configured to resolve it; register an absolute path (ft project repo update) or run from the project root", ErrLocalPath, repo.Name, repo.Path)
+		return "", fmt.Errorf("%w: repository %q path %q is relative and no project root is configured to resolve it; register an absolute path (ft project repo update) or load the project's own .factotum/config.toml, which supplies its root", ErrLocalPath, repo.Name, repo.Path)
 	}
 	return filepath.Clean(filepath.Join(base, repo.Path)), nil
 }

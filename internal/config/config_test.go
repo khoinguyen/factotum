@@ -460,7 +460,8 @@ func TestProjectRoot(t *testing.T) {
 		want string
 	}{
 		{"conventional", filepath.Join(root, ".factotum", "config.toml"), root},
-		{"custom name", filepath.Join(root, "project.toml"), root},
+		{"custom name in .factotum", filepath.Join(root, ".factotum", "config.dev.toml"), root},
+		{"custom dir", filepath.Join(root, "cfg", "project.toml"), filepath.Join(root, "cfg")},
 		{"empty", "", ""},
 	}
 	for _, tc := range cases {

@@ -1,6 +1,8 @@
 # ft run: the attached (TTY) path and the process tree it cannot own
 
-Status: **design note for review** (t-oy6udjlyvj). No behavioural change in this change.
+Status: **design note, decision recorded** (t-oy6udjlyvj). No behavioural change in this change. The
+attached path keeps leaking its worker until option C lands as its own task; A and B are both
+rejected below.
 
 PR #432 ended a forked worker when a *detached* command exits on its own, and deliberately left the
 attached (default interactive) path alone, recording the follow-up as: the child must own a session
@@ -99,11 +101,16 @@ every path (which moves the "terminal left broken" risk from the harness to ft),
 must not survive the run and steal keystrokes, `SIGWINCH` forwarding, and suspend handling; roughly
 250-350 lines with the pty tests, and it wants a review with the terminal in front of it.
 
-## 5. Recommendation
+## 5. Decision
 
-Do not ship A. Either B now, as a small change that cannot regress any interactive behaviour, or C
-as its own task, which is the design that actually owns the tree. C is the one to keep; B is worth
-it only if the leak should stop before C lands.
+Do not ship A: it trades a leaked worker for a terminal that can hang.
+
+Do not ship B either: killing by membership in a group ft shares with its caller can reach a process
+ft never owned, and a misfired kill loses work where a leaked sleeper only wastes memory.
+
+C is the fix, and it gets its own task and its own review - it wants a human in front of a terminal
+to sign off on the raw-mode and restore behaviour. Until it lands, the attached path keeps leaking
+the worker that started this note, which is a waste rather than a hazard.
 
 ## 6. How the measurements were taken
 

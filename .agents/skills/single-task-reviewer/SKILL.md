@@ -49,13 +49,10 @@ evidence" below, which you file yourself.
 - **After sending, stop and wait.** The receiver long-polls and wakes the peer; do not poll for a
   reply. Confirm the channel with `ft msg runs --live` (your run shows `reviewer-<task-id>`); `--live`
   keeps the list short enough that a busy project cannot bury your own run.
-- **Fallback (rollout).** If `ft msg runs --live` shows no run for your actor, or the builder/chief is
-  unreachable over ft msg, fall back to the cmux wrapper (from your worktree root):
-  `CMUX_MSG_FROM=reviewer-<task-id> .agents/skills/chief/scripts/cmux-msg.sh <target> "<text>"`
-  where `<target>` is the peer's tab/workspace title or a `surface:N` ref. Structural cmux commands
-  still need explicit refs (`cmux identify --id-format both`, `cmux tree --all`; there is no
-  `list-surfaces`). Report the fallback to the chief. **Never** use
-  `set-buffer`/`paste-buffer`/`send-key` to message an agent.
+- **There is no cmux fallback.** If `ft msg runs --live` shows no run for your actor (or a peer's),
+  send the blocker to the chief over ft msg anyway — it stays in the mailbox until a receiver claims
+  it — and stop so the launch is fixed. **Never** use `set-buffer`/`paste-buffer`/`send-key` to
+  message an agent.
 
 ## Verify before you judge
 
@@ -114,7 +111,7 @@ exists to prevent.
 
 Report to the chief: task id, PR number, the commit you reviewed, approved or not, and residual
 watch items (include the PR comment link). Message the chief with
-`ft msg send actor:chief -b "From reviewer-<task-id>: <report>"` (or the cmux-msg.sh fallback). Then stop
+`ft msg send actor:chief -b "From reviewer-<task-id>: <report>"`. Then stop
 and wait.
 - **Escalation:** if after three rounds you and the builder cannot align, tell the chief, post your
   verdict and the builder's disagreement on the PR, and leave it open for Khoi.

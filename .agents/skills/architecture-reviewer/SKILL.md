@@ -87,11 +87,11 @@ ft msg send actor:chief -b "From architecture-reviewer-<session>: <verdict + fin
 ```
 
 Use the canonical `actor:<role>` address, and after sending stop and wait — the receiver wakes the
-chief; do not poll. **Fallback (rollout):** only when ft msg is not delivering, use the shared
-wrapper `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (run from your worktree root)
-with `CMUX_MSG_FROM=architecture-reviewer-<session>`. **Do not use
-`set-buffer`/`paste-buffer`/`send-key` to message the chief**; keep `paste-buffer` only for input
-that genuinely needs a terminal.
+chief; do not poll. **There is no cmux fallback:** if `ft msg runs --live` shows no run for your
+actor (or the chief's), send the blocker to the chief over ft msg anyway — it stays in the mailbox
+until a receiver claims it — and stop so the launch is fixed. **Do not use
+`set-buffer`/`paste-buffer`/`send-key` to message the chief**; keep `paste-buffer` only for input that
+genuinely needs a terminal.
 
 You start in a detached worktree at the feature's commit (or `origin/main`); the docs live in the
 repo, so `git fetch` and check out the branch under review.

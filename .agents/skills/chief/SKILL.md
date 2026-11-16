@@ -107,12 +107,10 @@ resolve your own refs once and pass them explicitly.
   handoff silently misrouted is exactly the failure this avoids. The receiver long-polls and wakes
   an idle agent, so a subagent "reporting to the chief" is it messaging `actor:chief`. **Launch
   yourself through `loop-agent.sh chief <project> - <dir> "<kickoff>"`** so you load the receiver and
-  are addressable as `actor:chief`; confirm with `ft msg runs --live`. **Fallback (rollout):** only when a
-  peer is unreachable over ft msg, use the shared wrapper
-  `.agents/skills/chief/scripts/cmux-msg.sh <target> <text...>` (the peer's tab/workspace title or a
-  `surface:N` ref); it calls `cmux agent message`, or pastes once into the surface when the recipient
-  has no agent hook. A title shared by several surfaces resolves to the live agent (current
-  window/workspace) and fails loudly if none has one, so pass a ref when you know it. **Do not use
+  are addressable as `actor:chief`; confirm with `ft msg runs --live`. **There is no cmux fallback**
+  — the cmux paste wrapper was retired once a real loop-agent pair round-tripped over ft msg.
+  A peer with no live run is a broken launch: check `ft msg runs --live`, relaunch it through
+  `loop-agent.sh`, and report the failure; never type into its terminal. **Do not use
   `set-buffer`/`paste-buffer`/`send-key` to message an agent**; keep
   `paste-buffer` only for input that genuinely needs a terminal.
 - Waking: the ft msg receiver wakes an idle peer at its next poll, exactly as `cmux agent message`
@@ -216,13 +214,14 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
    - to the reviewer: the task id, that the **handoff comes from `builder-<t>`** (his `ft msg`
      message once the PR is pushed), that your kickoff only wires him in, not the handoff — so wait
      for the builder, and do not check the branch or ping him before it — and the same chief note.
-   - **Fallback (rollout):** only if `ft msg` is not delivering, wire them with `cmux-msg.sh
-     <tab-or-ref> "<text>"` instead.
+   - Both sends must land: confirm each peer has a live run with `ft msg runs --live` (no receiver
+     is a broken launch, not a reason to paste into the terminal).
 5. **Wait.** They run the build → hand-off → triage → verdict loop between themselves. Do not read
    their diffs. Wait for the builder (or reviewer) to report back to you. They run unattended and must
    never block on an interactive prompt; if one stalls on a question, nudge it with `ft msg send
    actor:<role> -b "proceed without asking: decide and document, or report the blocker to the chief
-   and stop"` (cmux-msg.sh as the fallback), and file a skill-bug task if it repeats.
+   and stop"`, and file a skill-bug task if it repeats. If the nudge does not land, check `ft msg runs
+   --live`: a peer with no receiver is a broken launch to relaunch, not one to paste into.
 6. **Briefly check.** Confirm: PR approved, the project's verification command green
    (`ft config get verify`; when the project records none, discover it from its own docs), task
    status. That is the whole

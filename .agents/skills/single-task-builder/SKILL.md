@@ -41,13 +41,10 @@ Message peers over **`ft msg`**, not cmux targets. The chief launched this sessi
 - Confirm the channel is live with `ft msg runs --live` (your run shows `builder-<task-id>`); `--live`
   keeps the list short enough that a busy project cannot bury your own run. Check a message landed
   with `ft msg get <id>` (state goes `read` once the peer's receiver injected it).
-- **Fallback (rollout).** If `ft msg runs --live` shows no run for your actor, or a peer is unreachable over
-  ft msg, fall back to the cmux wrapper (from your worktree root):
-  `CMUX_MSG_FROM=builder-<task-id> .agents/skills/chief/scripts/cmux-msg.sh <target> "<text>"`
-  where `<target>` is the peer's tab/workspace title (e.g. `reviewer-<task-id>`, `chief`) or a
-  `surface:N` ref. Structural cmux commands still need explicit refs (`cmux identify --id-format
-  both`, `cmux tree --all`; there is no `list-surfaces`). Report the fallback to the chief so the
-  launch is fixed. **Never** use `set-buffer`/`paste-buffer`/`send-key` to message an agent.
+- **There is no cmux fallback.** If `ft msg runs --live` shows no run for your actor (or a peer's),
+  send the blocker to the chief over ft msg anyway — it stays in the mailbox until a receiver claims
+  it — and stop so the launch is fixed. **Never** use `set-buffer`/`paste-buffer`/`send-key` to
+  message an agent.
 
 ## The task
 
@@ -76,8 +73,8 @@ From builder-<task-id>: Please review PR #<n> (task <t>, branch <b>) - <title>. 
 CI green; Exercise in the PR body. Focus: <the 1-3 riskiest things>.
 ```
 
-Send it with `ft msg send actor:reviewer-<task-id> -b "<the line above>"` (or the cmux-msg.sh
-fallback above), then `ft task review <t>` and a note linking the PR. Confirm the handoff landed with
+Send it with `ft msg send actor:reviewer-<task-id> -b "<the line above>"`, then `ft task review <t>`
+and a note linking the PR. Confirm the handoff landed with
 `ft msg get <id>` (state advances past `queued`); an intact handoff is one the reviewer can act on.
 
 ## Triage
@@ -99,7 +96,7 @@ is the chief's call.
 
 When the reviewer approves — or you and he cannot agree — report the outcome to the chief: task id,
 PR number, verdict, and anything unresolved. Message the chief with
-`ft msg send actor:chief -b "From builder-<task-id>: <report>"` (or the cmux-msg.sh fallback). Then stop;
+`ft msg send actor:chief -b "From builder-<task-id>: <report>"`. Then stop;
 the chief decides what happens next.
 - **Escalation:** if after three rounds you and the reviewer cannot align, tell the chief and leave
   the PR open for Khoi.

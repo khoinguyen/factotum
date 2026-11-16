@@ -66,11 +66,9 @@ ft msg send actor:chief -b "From grooming-agent-<artifact>: groomed <artifact> (
 captures: <capture-id> (<kind>) <title>; ..."
 ```
 
-Fall back to the cmux wrapper only if `ft msg` is not delivering for you:
-
-```sh
-CMUX_MSG_FROM=grooming-agent-<artifact> bash .agents/skills/chief/scripts/cmux-msg.sh <chief-tab-or-surface> "<summary>"
-```
+There is no cmux fallback: if `ft msg runs --live` shows no run for your actor (or the chief's),
+send the blocker to the chief over ft msg anyway — it stays in the mailbox until a receiver claims
+it — and stop so the launch is fixed.
 
 Then stop. The chief files follow-ups and decides what happens next.
 

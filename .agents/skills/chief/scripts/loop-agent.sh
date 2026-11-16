@@ -19,8 +19,8 @@
 # not through `ft run`, so `ft run`'s per-run receiver staging never happens.
 # This wrapper does that staging once (idempotent) and exports the env the
 # plugin reads, so every loop agent loads the receiver and is addressable by
-# its role. `cmux-msg.sh` stays the fallback until a peer is verified reachable
-# over ft msg.
+# its role. The cmux paste fallback has been removed: a peer with no live run is
+# a broken launch (`ft msg runs --live`), not a reason to type into a terminal.
 #
 # It also notes a worktree that already hosts a running OpenCode instance:
 # launching there attaches the new TUI to that instance as a tab, which inherits

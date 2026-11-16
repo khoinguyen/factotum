@@ -103,41 +103,69 @@ func TestRunAndGroomHelpOfferOnlySandbox(t *testing.T) {
 	}
 }
 
-// TestRunResolvesSandboxFlagBeforeStoreWork pins the resolution ordering: an
-// unknown --sandbox is a flag error reported before the run resolves a prompt
-// artifact or touches the task.
-func TestRunResolvesSandboxFlagBeforeStoreWork(t *testing.T) {
-	r := newRunner(t)
-	_, taskID := runContext(t, r)
-	r.runHarness = harnessfake.New("opencode")
-
-	err := r.runErr("run", taskID, "--sandbox", "nope", "--harness", "fake",
-		"--prompt-artifact", "art-missing", "--workspace", t.TempDir())
-	if !errors.Is(err, ErrUsage) || !strings.Contains(err.Error(), `unknown isolation backend "nope"`) {
-		t.Fatalf("unknown --sandbox error = %v, want the flag's usage error", err)
+// TestRunResolvesFlagsBeforePromptWork pins the resolution ordering: an invalid
+// --sandbox or --harness is a flag error reported before the run resolves a
+// prompt artifact or touches the task.
+func TestRunResolvesFlagsBeforePromptWork(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"sandbox", []string{"--sandbox", "nope", "--harness", "fake"}, `unknown isolation backend "nope"`},
+		{"harness", []string{"--sandbox", "fake", "--harness", "nope"}, `unknown harness "nope"`},
 	}
-	if shown := r.run("task", "get", taskID); !strings.HasPrefix(shown, "(todo) ") {
-		t.Fatalf("a run with an invalid --sandbox touched the task:\n%s", shown)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			_, taskID := runContext(t, r)
+			r.runBackend = isofake.New("sandbox")
+			r.runHarness = harnessfake.New("opencode")
+
+			args := append(append([]string{"run", taskID}, tc.args...),
+				"--prompt-artifact", "art-missing", "--workspace", t.TempDir())
+			err := r.runErr(args...)
+			if !errors.Is(err, ErrUsage) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("invalid %s error = %v, want the flag's usage error", tc.name, err)
+			}
+			if shown := r.run("task", "get", taskID); !strings.HasPrefix(shown, "(todo) ") {
+				t.Fatalf("a run with an invalid %s touched the task:\n%s", tc.name, shown)
+			}
+		})
 	}
 }
 
-// TestGroomResolvesSandboxFlagBeforeSessionWork pins the same ordering on groom:
-// the flag is resolved before the session reads its prompt or creates the
-// session directory beside the store.
-func TestGroomResolvesSandboxFlagBeforeSessionWork(t *testing.T) {
-	r := newRunner(t)
-	projectID, cfgPath := tasklessContext(t, r)
-	r.run("idea", "create", "-p", projectID, "-t", "Maybe cache")
-	r.runHarness = harnessfake.New("opencode")
-
-	missingPrompt := filepath.Join(t.TempDir(), "missing.md")
-	err := r.runErr("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", missingPrompt,
-		"--sandbox", "nope", "--harness", "fake", "--workspace", t.TempDir())
-	if !errors.Is(err, ErrUsage) || !strings.Contains(err.Error(), `unknown isolation backend "nope"`) {
-		t.Fatalf("unknown --sandbox error = %v, want the flag's usage error", err)
+// TestGroomResolvesFlagsBeforeSessionWork pins the same ordering on groom: the
+// flags are resolved before the session reads its prompt or creates the session
+// directory beside the store.
+func TestGroomResolvesFlagsBeforeSessionWork(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"sandbox", []string{"--sandbox", "nope", "--harness", "fake"}, `unknown isolation backend "nope"`},
+		{"harness", []string{"--sandbox", "fake", "--harness", "nope"}, `unknown harness "nope"`},
 	}
-	sessions := filepath.Join(filepath.Dir(r.path), groom.SessionsDirName)
-	if _, err := os.Stat(sessions); !os.IsNotExist(err) {
-		t.Fatalf("groom with an invalid --sandbox created %s", sessions)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			projectID, cfgPath := tasklessContext(t, r)
+			r.run("idea", "create", "-p", projectID, "-t", "Maybe cache")
+			r.runBackend = isofake.New("sandbox")
+			r.runHarness = harnessfake.New("opencode")
+
+			missingPrompt := filepath.Join(t.TempDir(), "missing.md")
+			args := append([]string{"--config", cfgPath, "groom", "-p", projectID, "--prompt-file", missingPrompt},
+				append(tc.args, "--workspace", t.TempDir())...)
+			err := r.runErr(args...)
+			if !errors.Is(err, ErrUsage) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("invalid %s error = %v, want the flag's usage error", tc.name, err)
+			}
+			sessions := filepath.Join(filepath.Dir(r.path), groom.SessionsDirName)
+			if _, err := os.Stat(sessions); !os.IsNotExist(err) {
+				t.Fatalf("groom with an invalid %s created %s", tc.name, sessions)
+			}
+		})
 	}
 }

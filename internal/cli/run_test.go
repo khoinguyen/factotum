@@ -294,19 +294,27 @@ func TestRunCommandResolvesRelativeRepoPathFromProjectConfigRoot(t *testing.T) {
 }
 
 func TestRunCommandRequiresExplicitSelection(t *testing.T) {
-	r := newRunner(t)
-	r.runBackend = isofake.New("sandbox")
-	r.runHarness = harnessfake.New("opencode")
-	workspace := t.TempDir()
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"missing sandbox", []string{"--harness", "fake"}, "--sandbox is required"},
+		{"missing harness", []string{"--sandbox", "fake"}, "--harness is required"},
+		{"unknown sandbox", []string{"--sandbox", "nope", "--harness", "fake"}, `unknown isolation backend "nope"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			r.runBackend = isofake.New("sandbox")
+			r.runHarness = harnessfake.New("opencode")
+			args := append(append([]string{"run", "t-anything"}, tc.args...), "--workspace", t.TempDir())
 
-	if err := r.runErr("run", "t-anything", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
-		t.Fatalf("missing backend error = %v, want usage", err)
-	}
-	if err := r.runErr("run", "t-anything", "--sandbox", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
-		t.Fatalf("missing harness error = %v, want usage", err)
-	}
-	if err := r.runErr("run", "t-anything", "--sandbox", "nope", "--harness", "fake", "--workspace", workspace); !errors.Is(err, ErrUsage) {
-		t.Fatalf("unknown backend error = %v, want usage", err)
+			err := r.runErr(args...)
+			if !errors.Is(err, ErrUsage) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("%s error = %v, want usage naming %q", tc.name, err, tc.want)
+			}
+		})
 	}
 }
 

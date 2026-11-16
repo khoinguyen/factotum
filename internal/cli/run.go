@@ -116,9 +116,11 @@ func newRunCommand(deps *Deps) *cobra.Command {
 }
 
 // validateRunFlags rejects a name given on the command line that the registries
-// do not have, before the command resolves a project, scopes a session, reads a
-// prompt, or opens a store: an unset name comes from config and is resolved
-// later, once the selection is built.
+// do not have, before the command's own work: resolving the target project,
+// scoping grooming items, reading a prompt, or minting a session. The root has
+// already opened the store for any store-backed command (pre-existing), so the
+// guarantee starts at the command, not the store; an unset name comes from
+// config and is resolved later, once the selection is built.
 func (d *Deps) validateRunFlags(cmd *cobra.Command, opts runOptions) error {
 	if opts.sandbox != "" {
 		if _, err := d.RunBackends.MustLookup(opts.sandbox); err != nil {

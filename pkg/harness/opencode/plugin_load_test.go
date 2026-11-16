@@ -79,6 +79,126 @@ func TestPluginLoadsOnInstalledOpenCodeV2(t *testing.T) {
 	}
 }
 
+// TestPluginRegistersAfterColdRestoreOnOpenCodeV2 is the regression guard for
+// t-fbeydkulit: OpenCode V2 cold-restores a surviving session as
+// `opencode -s <session>` with the original launch environment gone, so
+// FACTOTUM_* never reaches the plugin. It must recover the identity it recorded
+// on its previous load and register again; before the fix it registered nothing
+// and every hand-off queued behind a healthy-looking TUI.
+//
+// The guard runs a private `opencode2 serve` twice over one scratch directory and
+// one isolated OpenCode home: the first launch with the FACTOTUM_* a loop agent
+// carries, then - after the server is stopped, standing in for the restart - a
+// second launch with every FACTOTUM_* removed. It asserts the second launch
+// registers the actor the first one recorded, through the ft binary the record
+// carries (the stub; a fallback to the real `ft` would log nothing). Gated on the
+// binary, so CI without the isolated V2 runtime skips.
+func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
+	bin := opencode2Path(t)
+	dir, err := os.MkdirTemp("", "factotum-opencode2-cold-restore-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := removeAllEventually(dir); err != nil {
+			t.Logf("scratch dir %s not fully removed (OpenCode's detached install may still be writing): %v", dir, err)
+		}
+	})
+	callsPath, stub := stagePluginAndStub(t, dir, opencode.MsgPluginBytes())
+
+	xdgConfig := filepath.Join(dir, "xdg")
+	xdgData := filepath.Join(dir, "xdg-data")
+	xdgCache := filepath.Join(dir, "xdg-cache")
+	for _, d := range []string{xdgConfig, xdgData, xdgCache} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", d, err)
+		}
+	}
+	// One OpenCode home for both launches: the receiver's durable identity and
+	// the session it resumes live here, exactly as they survive a restart.
+	isolated := []string{
+		"XDG_CONFIG_HOME=" + xdgConfig,
+		"XDG_DATA_HOME=" + xdgData,
+		"XDG_CACHE_HOME=" + xdgCache,
+		"CALLS=" + callsPath,
+	}
+
+	// The loop agent's launch: a private server that carries its env.
+	launchEnv := append(withoutFactotumEnv(), isolated...)
+	launchEnv = append(launchEnv,
+		"FACTOTUM_PROJECT=prj-test",
+		"FACTOTUM_ACTOR=act-test",
+		"FACTOTUM_HARNESS=opencode2",
+		"FACTOTUM_BIN="+stub,
+		"FACTOTUM_MSG_WAIT_MS=10",
+		"FACTOTUM_MSG_TTL_MS=1000",
+	)
+	launchPort := freeTCPPort(t)
+	launch, password, launchOut := startV2Server(t, bin, dir, launchEnv, launchPort)
+	createSessionV2(t, launchPort, password)
+	waitForStubCall(t, callsPath, "msg agent register", launchPort, password, launchOut)
+	launch.stop()
+
+	// The cold restore: the same location and OpenCode home, and no FACTOTUM_*
+	// at all - the environment V2's resume path runs with.
+	_ = os.Remove(callsPath)
+	restoreEnv := append(withoutFactotumEnv(), isolated...)
+	restorePort := freeTCPPort(t)
+	restored, restorePassword, output := startV2Server(t, bin, dir, restoreEnv, restorePort)
+	defer restored.stop()
+	createSessionV2(t, restorePort, restorePassword)
+
+	waitForStubCall(t, callsPath, "msg agent register", restorePort, restorePassword, output)
+	calls, _ := os.ReadFile(callsPath)
+	if !strings.Contains(string(calls), "--actor act-test") {
+		t.Fatalf("the cold-restored receiver registered without the recorded actor:\n%s\nopencode2 output:\n%s", calls, output.String())
+	}
+	if !strings.Contains(string(calls), "--project prj-test") {
+		t.Fatalf("the cold-restored receiver registered against the wrong project:\n%s", calls)
+	}
+	// The record carries the launch's harness too: a restore that fell back to
+	// this adapter's own default would not name the V2 harness the loop uses.
+	if !strings.Contains(string(calls), "--harness opencode2") {
+		t.Fatalf("the cold-restored receiver did not register with the recorded harness:\n%s", calls)
+	}
+}
+
+// waitForStubCall polls the stub's call log until it contains needle, failing
+// after 60s with the plugin's state and the reason it never got that far.
+func waitForStubCall(t *testing.T, callsPath, needle string, port int, password string, output *lockedBuffer) {
+	t.Helper()
+	state := ""
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		if state = pluginStateV2(t, port, password, "factotum.msg"); state != "" {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	for time.Now().Before(deadline) {
+		if calls, _ := os.ReadFile(callsPath); strings.Contains(string(calls), needle) {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	calls, _ := os.ReadFile(callsPath)
+	t.Fatalf("no %q in the stub's call log within 60s (plugin state %q); log:\n%s\nopencode2 output:\n%s", needle, state, calls, output.String())
+}
+
+// withoutFactotumEnv returns the current environment with every FACTOTUM_*
+// removed. The guard's restore launch must see exactly what a cold restore does:
+// no receiver configuration at all.
+func withoutFactotumEnv() []string {
+	env := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "FACTOTUM_") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return env
+}
+
 // opencode2Path locates the isolated OpenCode 2 binary: an explicit OPENCODE2
 // path first, then `opencode2` on PATH. The installed V1 `opencode` is never
 // used, so the two guards stay independent.
@@ -369,6 +489,7 @@ func stagePluginAndStub(t *testing.T, dir string, plugin []byte) (callsPath, stu
 	stub = filepath.Join(dir, "ft-stub.sh")
 	stubScript := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> \"$CALLS\"\n" +
+		"if [ \"$1 $2\" = \"msg runs\" ]; then printf '[]'; exit 0; fi\n" +
 		"case \"$3\" in\n" +
 		"  register) printf '{\"run_id\":\"run-1\"}';;\n" +
 		"  claim) printf '{\"found\":false}';;\n" +

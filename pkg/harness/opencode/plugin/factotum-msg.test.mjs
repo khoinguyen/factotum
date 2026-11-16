@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import plugin, {
+  agentRecordKey,
   cliCall,
   configFromEnv,
   createFactotumReceiver,
@@ -13,6 +14,7 @@ import plugin, {
   msgSessionStore,
   normalizeMsgURL,
   parseJSON,
+  receiverEnv,
   selectCall,
   setupV2,
   subscribeContextEvents,
@@ -482,8 +484,17 @@ test("subscribeContextEvents forwards events and aborts on cleanup", async () =>
   assert.equal(aborted, true);
 });
 
-test("setupV2 is inert without a project or actor", () => {
-  assert.equal(setupV2({ session: {}, event: { subscribe: () => {} } }, { env: {} }), undefined);
+test("setupV2 is inert without a project or actor and a recorded identity", async () => {
+  const calls = [];
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    return { code: 0, stdout: "[]", stderr: "" };
+  };
+  const cleanup = setupV2(restoreCtx(new Map()), { env: {}, run });
+  assert.equal(typeof cleanup, "function", "the V2 entrypoint still returns a cleanup for the host to call");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(calls, [], "an ordinary OpenCode session must not shell out to ft");
+  cleanup();
 });
 
 test("setupV2 registers, subscribes, injects a claimed message, and disposes", async () => {
@@ -783,4 +794,193 @@ test("setupV2 resumes the persisted session after a reload and delivers without 
   assert.ok(calls.some((c) => c.includes("msg agent ack m-1") && c.includes("--state read")));
 
   await cleanup();
+});
+
+// --- cold restore (t-fbeydkulit) ------------------------------------------
+//
+// OpenCode V2 cold-restores a surviving session as `opencode -s <session>` with
+// the original launch environment gone, so FACTOTUM_* never reaches the plugin:
+// it registers nothing and every hand-off queues behind a TUI that looks
+// healthy. The receiver therefore records the identity it registered as (and the
+// session it injects into) for its location, and a load with no environment
+// recovers it - but only while no live receiver holds that actor, so opening the
+// same checkout by hand can never split a running agent's mailbox.
+
+const LOCATION = { directory: "/work/prj-1", project: { id: "loc-1" } };
+
+// restoreCtx is one OpenCode instance's plugin context. A cold restore is a new
+// context over the same durable storage: a new process, the same location.
+function restoreCtx(store, { injected = [], sessionID = "", get } = {}) {
+  return {
+    location: LOCATION,
+    session: {
+      prompt: async (options) => { injected.push(options); },
+      get: get || (async ({ sessionID: id }) => ({ id })),
+    },
+    storage: {
+      get: async (key) => store.get(key),
+      set: async (key, value) => { store.set(key, value); },
+    },
+    event: {
+      async *subscribe() {
+        if (sessionID) yield { data: { sessionID } };
+        await new Promise(() => {});
+      },
+    },
+  };
+}
+
+// restoreRun is the stub ft a restore test shells out to. `runs` is what
+// `ft msg runs` reports (the liveness probe); a claim of runID yields `message`
+// once, then parks.
+function restoreRun({ runID = "run-1", runs = [], message } = {}) {
+  const calls = [];
+  let claimed = false;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    if (argv[1] === "runs") return { code: 0, stdout: JSON.stringify(runs), stderr: "" };
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: runID }), stderr: "" };
+      case "claim":
+        if (message && !claimed) {
+          claimed = true;
+          return { code: 0, stdout: JSON.stringify({ found: true, message }), stderr: "" };
+        }
+        return new Promise(() => {});
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  return { run, calls };
+}
+
+function recorded(store) {
+  return store.get(agentRecordKey({ location: LOCATION }));
+}
+
+test("a receiver records the identity and session a cold-restored host must resume", async () => {
+  const store = new Map();
+  const env = {
+    FACTOTUM_PROJECT: "prj-1",
+    FACTOTUM_ACTOR: "act-1",
+    FACTOTUM_TASK_ID: "t-1",
+    FACTOTUM_BIN: "/opt/ft",
+    FACTOTUM_STORE: "jsonfile",
+    FACTOTUM_STORE_OPTS: "path=/tmp/db.json",
+    FACTOTUM_SERVE_TOKEN: "secret",
+  };
+  const { run } = restoreRun();
+
+  const cleanup = setupV2(restoreCtx(store, { sessionID: "ses-1" }), { env, run });
+  await waitFor(() => recorded(store)?.sessionID === "ses-1", 2000);
+
+  const record = recorded(store);
+  assert.equal(record.project, "prj-1");
+  assert.equal(record.actor, "act-1");
+  assert.equal(record.task, "t-1");
+  assert.equal(record.bin, "/opt/ft");
+  assert.equal(record.store, "jsonfile", "the store the run was launched with survives the restore");
+  assert.equal(record.storeOpts, "path=/tmp/db.json");
+  assert.equal(record.token, undefined, "a bearer token is never written to durable storage");
+  await cleanup();
+});
+
+test("a cold-restored host re-registers from the recorded identity and delivers", async (t) => {
+  const store = new Map();
+  const env = { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1" };
+  const first = restoreRun();
+  const cleanupFirst = setupV2(restoreCtx(store, { sessionID: "ses-restored" }), { env, run: first.run });
+  t.after(cleanupFirst);
+  await waitFor(() => recorded(store)?.sessionID === "ses-restored", 2000);
+
+  // The server restarts and resumes the session as `opencode -s <session>`: same
+  // location and OpenCode storage, but no FACTOTUM_* in the environment.
+  const injected = [];
+  const second = restoreRun({ runID: "run-2", message: { id: "m-restore", from: "act-x", body: "after the restart" } });
+  const cleanupRestored = setupV2(restoreCtx(store, { injected }), { env: {}, run: second.run });
+  t.after(cleanupRestored);
+
+  await waitFor(() => injected.length === 1, 2000);
+  assert.deepEqual(injected[0], { sessionID: "ses-restored", text: "[ft msg from act-x]\nafter the restart" });
+  assert.ok(second.calls.some((c) => c.includes("msg agent register") && c.includes("--actor act-1")));
+  assert.ok(second.calls.some((c) => c.includes("msg agent ack m-restore") && c.includes("--state read")));
+});
+
+test("receiverEnv pins the configured store onto the child ft environment", () => {
+  // Without the pin a restored receiver would register against the store its
+  // new host resolves (the machine's default) instead of the run's throwaway one.
+  const env = receiverEnv({ store: "jsonfile", storeOpts: "path=/tmp/db.json" }, { HOME: "/home/u", FACTOTUM_STORE: "sqlite" });
+  assert.deepEqual(env, { HOME: "/home/u", FACTOTUM_STORE: "jsonfile", FACTOTUM_STORE_OPTS: "path=/tmp/db.json" });
+  assert.deepEqual(receiverEnv({}, { HOME: "/home/u" }), { HOME: "/home/u" });
+});
+
+test("a cold restore waits while another receiver holds the actor live", async (t) => {
+  // Two claimers of one mailbox split a hand-off between them, so a load with no
+  // environment must not take over an actor a live receiver already serves. It
+  // adopts as soon as that receiver's lease lapses (a crashed host), which is the
+  // restore case this exists for.
+  const store = new Map();
+  const seed = restoreRun();
+  const cleanupSeed = setupV2(restoreCtx(store, { sessionID: "ses-live" }), {
+    env: { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1" },
+    run: seed.run,
+  });
+  t.after(cleanupSeed);
+  await waitFor(() => recorded(store)?.sessionID === "ses-live", 2000);
+
+  let live = true;
+  const resumed = restoreRun({ runID: "run-2" });
+  const run = async (argv) => {
+    if (argv[1] !== "runs") return resumed.run(argv);
+    resumed.calls.push(argv.join(" "));
+    return { code: 0, stdout: JSON.stringify([{ actor: "act-1", live }]), stderr: "" };
+  };
+  const cleanup = setupV2(restoreCtx(store), { env: {}, run });
+  t.after(cleanup);
+
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(resumed.calls.some((c) => c.includes("msg agent register")), false, "a live receiver's actor is not adopted");
+
+  live = false;
+  await waitFor(() => resumed.calls.some((c) => c.includes("msg agent register")), 2000);
+});
+
+test("a cold restore whose recorded session is gone stays inert", async (t) => {
+  const store = new Map();
+  const seed = restoreRun();
+  const cleanupSeed = setupV2(restoreCtx(store, { sessionID: "ses-deleted" }), {
+    env: { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1" },
+    run: seed.run,
+  });
+  t.after(cleanupSeed);
+  await waitFor(() => recorded(store)?.sessionID === "ses-deleted", 2000);
+
+  const resumed = restoreRun({ runID: "run-2" });
+  const cleanup = setupV2(restoreCtx(store, { get: async () => { throw new Error("Session.NotFoundError"); } }), { env: {}, run: resumed.run });
+  t.after(cleanup);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(resumed.calls.some((c) => c.includes("msg agent register")), false);
+});
+
+test("a cold restore of a remote receiver without its token stays inert instead of registering locally", async (t) => {
+  // The token is not persisted with the record, so a restored receiver cannot
+  // reach its hub. Registering against the local store instead would be a silent
+  // misroute: it must say so and leave the hand-offs queued.
+  const store = new Map();
+  const seed = restoreRun();
+  const cleanupSeed = setupV2(restoreCtx(store, { sessionID: "ses-hub" }), {
+    env: { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1", FACTOTUM_MSG_URL: "http://hub:8484", FACTOTUM_SERVE_TOKEN: "secret" },
+    call: cliCall(configFromEnv({ FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1" }), seed.run),
+  });
+  t.after(cleanupSeed);
+  await waitFor(() => recorded(store)?.sessionID === "ses-hub", 2000);
+
+  const logs = [];
+  const resumed = restoreRun({ runID: "run-2" });
+  const cleanup = setupV2(restoreCtx(store), { env: {}, run: resumed.run, log: (entry) => logs.push(entry) });
+  t.after(cleanup);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(resumed.calls.some((c) => c.includes("msg agent register")), false);
+  assert.ok(logs.some((entry) => /token/i.test(entry)), `logs = ${JSON.stringify(logs)}; want the missing token named`);
 });

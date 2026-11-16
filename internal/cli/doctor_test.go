@@ -53,6 +53,112 @@ func (r *runner) runDoctorWithInput(input string, args ...string) (string, error
 	return out.String(), err
 }
 
+// doctorObservation is what one doctor run did about a fix: whether it ran one
+// and whether it asked first.
+type doctorObservation struct {
+	ran   bool
+	asked bool
+}
+
+// observeDoctorFix runs doctor against a broken embedder under one caller shape
+// (here: whether stdout is a terminal, and whether --fix was passed) and reports
+// what it actually did, so a test never has to assume the interactive matrix.
+func observeDoctorFix(t *testing.T, terminal, fix bool) doctorObservation {
+	t.Helper()
+	r := newRunner(t)
+	probe := &fakeDoctorProbe{modelErr: fmt.Errorf("%w: not found", doctor.ErrModelNotServed)}
+	r.doctorProbe = probe
+	r.isTerminal = func(io.Writer) bool { return terminal }
+	writeUserConfig(t, r, "[embed]\nprovider = \"ollama\"\nendpoint = \"http://127.0.0.1:11434\"\nmodel = \"m\"\n[typesafe]\nsecret_api_key = \"k\"\n")
+
+	var observed doctorObservation
+	r.fixRunner = func(_ context.Context, _ []string, _ io.Writer) error {
+		observed.ran = true
+		probe.modelErr = nil
+		return nil
+	}
+	args := []string{"doctor"}
+	if fix {
+		args = append(args, "--fix")
+	}
+	out, _ := r.runDoctorWithInput("y\n", args...)
+	observed.asked = strings.Contains(out, "apply fix? [y/N]")
+	return observed
+}
+
+// fixFlowWords names, in the words the help must use, what an observed run did
+// with a fix.
+func fixFlowWords(o doctorObservation) string {
+	switch {
+	case o.asked:
+		return "asks before"
+	case o.ran:
+		return "without prompting"
+	default:
+		return "read-only"
+	}
+}
+
+// helpSentences flattens help text so a claim can be checked against the sentence
+// that makes it, not against the document as a whole.
+func helpSentences(text string) []string {
+	return strings.Split(strings.Join(strings.Fields(text), " "), ". ")
+}
+
+// sentenceWith reports whether one help sentence pairs the flow's words with the
+// caller condition, so wording that is true for every caller cannot satisfy a
+// claim that only holds for one.
+func sentenceWith(sentences []string, phrase, scope string) bool {
+	for _, sentence := range sentences {
+		if strings.Contains(sentence, phrase) && strings.Contains(sentence, scope) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDoctorHelpMatchesBehaviour ties the doctor Long text to the fix flows the
+// command implements. Each caller shape is observed by running it, and the words
+// the help must use are derived from what it did: a shape that starts or stops
+// asking, applying, or staying read-only changes the required wording. The help
+// therefore cannot describe a flow the command no longer has, or omit one it
+// gained.
+func TestDoctorHelpMatchesBehaviour(t *testing.T) {
+	shapes := []struct {
+		name     string
+		terminal bool
+		fix      bool
+		// scope is the condition the help must name in the same sentence as the
+		// flow it qualifies.
+		scope string
+	}{
+		{name: "non-terminal without --fix", scope: "non-terminal"},
+		{name: "terminal without --fix", terminal: true, scope: "terminal"},
+		{name: "--fix", fix: true, scope: "--fix"},
+	}
+
+	r := newRunner(t)
+	var out bytes.Buffer
+	deps := NewDeps(app.SystemClock{}, app.RandomIDGen{}, &out, &out, r.getenv)
+	r.setup(deps)
+	long := newDoctorCommand(deps).Long
+
+	help := strings.Join(strings.Fields(r.run("doctor", "--help")), " ")
+	if !strings.Contains(help, strings.Join(strings.Fields(long), " ")) {
+		t.Fatalf("--help must print doctor's Long text:\n%s", help)
+	}
+
+	sentences := helpSentences(long)
+	for _, shape := range shapes {
+		observed := observeDoctorFix(t, shape.terminal, shape.fix)
+		phrase := fixFlowWords(observed)
+		if !sentenceWith(sentences, phrase, shape.scope) {
+			t.Errorf("%s behaves as %q (ran=%v, asked=%v), so --help must say so of a %s:\n%s",
+				shape.name, phrase, observed.ran, observed.asked, shape.scope, long)
+		}
+	}
+}
+
 const healthyEmbedConfig = `[embed]
 provider = "openai"
 endpoint = "http://127.0.0.1:8080"

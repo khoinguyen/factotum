@@ -301,6 +301,18 @@ wake it with `ft msg send`; no cmux target is involved. The reviewer reads the s
 - **`approve` / `approve-with-changes` unblocks the build.** Carry on with the builder/reviewer
   pair.
 
+- **File the tech-debt items every cycle.** The review's standing tech-debt pass names refactor and
+  architecture-hardening items with a rationale and a proposed refactor (or records `none found`).
+  File each as a task so the debt is tracked work, not a stale list:
+
+  ```sh
+  ft task create -p <project> -t "<proposed refactor>" \
+    --body "Rationale: <why it matters now>. Proposed refactor: <the concrete change>."
+  ```
+
+  Link the task to the reviewed feature's origin item, and carry out the pass on every grooming
+  cycle — not only when someone remembers to ask.
+
 Never skip the review to move faster: an unreviewed design that ships is the failure this role
 exists to prevent.
 

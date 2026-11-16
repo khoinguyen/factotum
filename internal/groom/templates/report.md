@@ -31,6 +31,12 @@ Feature docs: spec.md, plan.md, tech-design.md
 
 - <question> (item: <id>, owner: <stakeholder>)
 
+## Tech debt
+
+Standing step: answer this every session; write `none found` when nothing qualifies. File each item as a task and name it here.
+
+- <area> - <rationale> - <proposed refactor> - task: <task id>
+
 ## DAG changes
 
 - added: <edge>

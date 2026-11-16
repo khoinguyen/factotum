@@ -47,6 +47,9 @@ type runner struct {
 	gitDetect     func(string) (gitRepo, bool)
 	doctorProbe   doctor.Prober
 	fixRunner     func(context.Context, []string, io.Writer) error
+	// callerHint, when set, replaces the best-effort caller probe: a test injects
+	// the hint it wants detected. Unset means "nothing detected".
+	callerHint func() *callerHint
 	// feedbackFactory, when set, registers a fake feedback sink transport under
 	// the name "fake" so a test can prove the command is transport-agnostic.
 	feedbackFactory feedback.Factory
@@ -92,6 +95,13 @@ func (r *runner) setup(deps *Deps) []string {
 	deps.GitDetect = r.gitDetect
 	deps.DoctorProbe = r.doctorProbe
 	deps.DoctorFixRunner = r.fixRunner
+	// Caller detection is a host probe (the environment, the process tree, the
+	// terminal). Tests inject the hint they mean to exercise, and default to no
+	// hint, so a test never depends on the machine it runs on.
+	deps.CallerHint = r.callerHint
+	if deps.CallerHint == nil {
+		deps.CallerHint = func() *callerHint { return nil }
+	}
 	if r.isTerminal != nil {
 		deps.IsTerminal = r.isTerminal
 	}

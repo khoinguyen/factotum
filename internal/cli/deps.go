@@ -74,6 +74,11 @@ type Deps struct {
 	// the opened store's actors before it becomes the attribution actor, so an
 	// unregistered caller is dropped rather than trusted.
 	Caller string
+	// CallerHint guesses which agent CLI launched an invocation that named no
+	// identity at all, so bindCaller can say the guess is unverified. It never
+	// becomes an actor, and a nil result means nothing was detected. Tests
+	// inject a hint (or nil); nil here disables the probe.
+	CallerHint func() *callerHint
 	// Session is the chief session id from FACTOTUM_SESSION, recorded on the
 	// caller context so every event this invocation appends is attributed to it.
 	Session      string
@@ -215,6 +220,9 @@ func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(
 	deps.FeedbackTransports = feedback.Builtins()
 	deps.RunBackends = runBackends(getenv)
 	deps.RunHarnesses = runHarnesses()
+	deps.CallerHint = func() *callerHint {
+		return probeCallerHint(deps.Getenv, deps.IsTerminalReader(os.Stdin))
+	}
 	return deps
 }
 

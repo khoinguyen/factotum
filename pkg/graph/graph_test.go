@@ -436,12 +436,30 @@ func wideGraph(t *testing.T, n int) *Graph {
 	return mustGraph(t, tasks...)
 }
 
-// topoSortCeiling is the CPU-time budget for TopoSort on the wide graph. At
-// 20000 tasks a correct run is ~20ms of CPU under -race, while the pre-73e93ab
-// quadratic rescan is several seconds, so the ceiling sits far above the
-// O((V+E) log V) cost and far below the regression it guards against; see
-// BenchmarkTopoSort.
-const topoSortCeiling = 250 * time.Millisecond
+// topoSortCeiling is the CPU-time budget for TopoSort on the wide graph, sized
+// for the expensive stage `mise run ci` runs: `cover` (`-race -covermode=atomic`)
+// costs about six times the `test` stage's race build, because atomic coverage
+// counters and the race shadow sit inside this pointer-chasing loop. The two
+// consts below record the measurements the ceiling's bounds come from.
+const topoSortCeiling = 1200 * time.Millisecond
+
+// topoSortCoverTail is the worst CPU time measured for one TopoSort on the wide
+// graph in the stage that failed: `mise run ci`'s cover stage runs
+// `go test -race -covermode=atomic`, where the same call costs ~123ms p50
+// against ~21ms in the plain `test` stage. On a machine loaded by parallel
+// suites it reached 259.169ms, over the old 250ms ceiling, while a register-only
+// control loop in the same process stayed flat: the growth is cache and
+// bandwidth contention on this memory-bound loop, not a contention bug in
+// TopoSort (t-nbcpypbds2).
+const topoSortCoverTail = 260 * time.Millisecond
+
+// topoSortQuadraticRegression is the CPU time the pre-73e93ab quadratic rescan
+// consumed on the same wide graph: measured by putting that rescan back into
+// TopoSort, 5.5s in the `test` stage and 15.2s in `cover` at 20000 tasks. The
+// cover figure is higher because the sort closure's comparisons each bump an
+// atomic coverage counter. The smaller of the two is the upper bound the ceiling
+// must stay well under to keep the guard.
+const topoSortQuadraticRegression = 5500 * time.Millisecond
 
 // TestTopoSortWideGraphBudget guards against the quadratic queue rescan that
 // made graph render --format agent superlinear (t-lvlqecjqgm): the old
@@ -451,9 +469,13 @@ const topoSortCeiling = 250 * time.Millisecond
 //
 // The budget measures process CPU time, not wall time. `mise run ci` runs
 // `cover` concurrently with `test`, and on a contended hosted runner that load
-// inflated wall-clock TopoSort past 500ms against this ceiling while the work
-// itself was unchanged (t-xfrpkkt4mx). CPU time is the invariant under load,
-// and it still catches the quadratic rescan, which burns seconds of CPU.
+// inflated wall-clock TopoSort past 500ms while the work itself was unchanged
+// (t-xfrpkkt4mx). CPU time does not count the time the process spends waiting
+// for a core, so scheduling contention no longer moves the number. It is not
+// free of the loaded machine's effects: this work is memory-bound, so cache and
+// bandwidth contention can still inflate it by about 2x, which is why the
+// ceiling is sized with headroom over the measured cover-stage tail rather than
+// just above the typical run (t-nbcpypbds2).
 func TestTopoSortWideGraphBudget(t *testing.T) {
 	const n = 20000
 	g := wideGraph(t, n)
@@ -472,11 +494,28 @@ func TestTopoSortWideGraphBudget(t *testing.T) {
 	if elapsed > topoSortCeiling {
 		t.Fatalf("TopoSort() on %d tasks used %v of CPU, over the %v ceiling", n, elapsed, topoSortCeiling)
 	}
+	t.Logf("TopoSort() on %d tasks used %v of CPU (ceiling %v)", n, elapsed, topoSortCeiling)
+}
+
+// TestTopoSortCeilingIsSizedByMeasurement pins both halves of the ceiling: it
+// must keep headroom over the cover-stage tail that actually failed, and it must
+// stay well under the quadratic rescan it exists to catch. A ceiling tightened
+// back towards the typical run flakes on a loaded machine; one raised towards
+// the regression stops being a guard.
+func TestTopoSortCeilingIsSizedByMeasurement(t *testing.T) {
+	if want := 4 * topoSortCoverTail; topoSortCeiling < want {
+		t.Fatalf("topoSortCeiling = %v, want at least %v: four times the %v cover-stage tail measured under parallel load (t-nbcpypbds2); a tighter ceiling races the machine instead of guarding the algorithm", topoSortCeiling, want, topoSortCoverTail)
+	}
+	if want := 3; topoSortCeiling*time.Duration(want) > topoSortQuadraticRegression {
+		t.Fatalf("topoSortCeiling = %v is within %dx of the %v quadratic rescan it must catch; the budget no longer guards against the regression", topoSortCeiling, want, topoSortQuadraticRegression)
+	}
 }
 
 // measureCPU returns the process CPU time fn consumed. CPU time, not wall
-// time, is the budget's invariant: it does not inflate when other processes
-// (a concurrent `cover` run) compete for the CPU.
+// time, keeps the budget out of a loaded machine's scheduling tail: it does not
+// inflate when other processes (a concurrent `cover` run) compete for a core.
+// It still tracks work done on this process's behalf, including GC that runs
+// inside fn.
 func measureCPU(fn func()) time.Duration {
 	start := processCPUTime()
 	fn()

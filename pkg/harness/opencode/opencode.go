@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/khoinguyen/factotum/internal/procgroup"
 	"github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 )
@@ -148,11 +149,15 @@ func probeVariant(binary string, timeout time.Duration) Variant {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "--version")
-	// Killing the direct child does not end the probe on its own: a launcher can
-	// leave a grandchild holding the stdout pipe, and Output then blocks past
-	// the bound until that grandchild exits. WaitDelay bounds that drain, so the
-	// probe answers within its bound instead of stalling run selection. A second
-	// is the grace pkg/isolation/local gives the same drain (orphanDrainGrace).
+	// The probe owns no terminal, so it can put the binary in its own process
+	// group and signal the group when the bound expires. That is what ends the
+	// probe: a launcher can leave a grandchild holding the stdout pipe, and
+	// killing the direct child alone neither ends the probe nor reaps the
+	// grandchild - it abandons a live process on every hung `--version`.
+	procgroup.Isolate(cmd)
+	cmd.Cancel = func() error { return procgroup.KillGroup(cmd) }
+	// WaitDelay stays as the backstop for a descendant that left the group: it
+	// bounds the drain, where the group kill bounds the tree.
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {

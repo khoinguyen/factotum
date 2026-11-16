@@ -941,25 +941,37 @@ export function pluginLog(message) {
 export function startReceiver(ctx, config, { call, run, loadSession, saveSession, log = pluginLog, resume = "", record = false } = {}) {
   const sessions = msgSessionStore(ctx, config);
   const agents = msgAgentStore(ctx);
+  // Every record write joins one chain. The seed below is issued before the
+  // event subscription, and an event can announce the session the host is
+  // actually running while that seed is still in flight: written concurrently,
+  // the seed can land last and put the record back on the stale session the
+  // restore resumed, which the next restart would then resume. Chaining the
+  // writes keeps the record on the newest session the receiver learned.
+  let writes = Promise.resolve();
+  const enqueue = (write) => {
+    writes = writes.then(write).catch(() => {});
+    return writes;
+  };
+  // Record the identity before any session is known: the service can restart
+  // before the agent's first turn, and a receiver registered without a session
+  // is still addressable (it injects once one appears). A restore starts from
+  // the session it resumed, so seeding with that keeps the record on the
+  // session this receiver injects into instead of blanking it.
+  const seed = record ? enqueue(() => agents.save(config, resume)) : null;
   const receiver = createFactotumReceiver({
     config,
     call: call || selectCall(config, { run }),
     inject: makeContextInjector(ctx?.session),
     loadSession: loadSession || (resume ? async () => resume : sessions.load),
-    saveSession: async (sid) => {
+    saveSession: (sid) => enqueue(async () => {
       await sessions.save(sid);
       if (record) await agents.save(config, sid);
-    },
+    }),
     log,
   });
   const stop = subscribeContextEvents(ctx, (event) => receiver.onEvent(event));
   const start = async () => {
-    // Record the identity before any session is known: the service can restart
-    // before the agent's first turn, and a receiver registered without a session
-    // is still addressable (it injects once one appears). A restore starts from
-    // the session it resumed, so seeding with that keeps the record on the
-    // session this receiver injects into instead of blanking it.
-    if (record) await agents.save(config, resume);
+    if (seed) await seed;
     await receiver.start();
   };
   start().catch((error) => log(`factotum msg: receiver start failed: ${error?.message || error}`));

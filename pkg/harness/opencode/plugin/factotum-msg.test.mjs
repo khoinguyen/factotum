@@ -1316,6 +1316,69 @@ test("a second cold restore delivers into the session the first restore switched
   }
 });
 
+test("an event's session cannot be overwritten by the seed it arrived alongside", async (t) => {
+  // A restore seeds the record with the session it resumed, and the event stream
+  // announces the session the restarted host is actually running. The two writes
+  // target one key, so if they race the seed can land last and leave the record
+  // naming the stale session - which the next restart resumes: the misroute the
+  // two-restore guard pins. The writes are serialised, so they land in the order
+  // the receiver learned the sessions, whatever the storage round trips do.
+  const store = new Map();
+  store.set(agentRecordKey({ location: LOCATION }), {
+    project: "prj-1",
+    actor: "act-1",
+    harness: "opencode",
+    bin: "ft",
+    sessionID: "ses-seed",
+  });
+
+  const slowSeed = deferred();
+  let seedIssued = false;
+  let settled = 0;
+  const ctx = {
+    location: LOCATION,
+    session: {
+      prompt: async () => {},
+      get: async ({ sessionID: id }) => ({ id }),
+    },
+    storage: {
+      get: async (key) => store.get(key),
+      set: async (key, value) => {
+        if (key !== agentRecordKey({ location: LOCATION })) {
+          store.set(key, value);
+          return;
+        }
+        // Hold the seed's write, standing in for a storage round trip that
+        // outlasts the event's.
+        if (value?.sessionID === "ses-seed") {
+          seedIssued = true;
+          await slowSeed.promise;
+        }
+        store.set(key, value);
+        settled += 1;
+      },
+    },
+    event: {
+      async *subscribe() {
+        yield { data: { sessionID: "ses-event" } };
+        await new Promise(() => {});
+      },
+    },
+  };
+
+  const { run } = restoreRun({ runID: "run-1" });
+  const cleanup = setupV2(ctx, { env: {}, run });
+  t.after(cleanup);
+
+  await waitFor(() => seedIssued, 2000);
+  // Let an unordered event write land while the seed is still in flight.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  slowSeed.resolve();
+  await waitFor(() => settled >= 2, 2000);
+
+  assert.equal(recorded(store)?.sessionID, "ses-event", "the record follows the session the host announced, not the seed the restore resumed");
+});
+
 test("a parked cold restore backs off its liveness poll", async (t) => {
   // A live peer can hold the actor for hours, so a parked restore polling
   // `ft msg runs` every retry interval is a stream of subprocesses for as long

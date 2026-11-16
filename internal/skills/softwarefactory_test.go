@@ -125,6 +125,41 @@ func TestSoftwareFactorySkillSeparatesEmbeddedAndRoleSkills(t *testing.T) {
 	}
 }
 
+// TestSoftwareFactorySkillShowsStandingTechDebtStep pins the #402 review's
+// second finding: the pipeline overview and the architecture-review phase both
+// show the standing tech-debt step, and they name who files the items, so the
+// groom session's report and the architecture review do not file the same debt
+// twice.
+func TestSoftwareFactorySkillShowsStandingTechDebtStep(t *testing.T) {
+	skill, err := Get("software-factory")
+	if err != nil {
+		t.Fatalf("Get(software-factory) error = %v", err)
+	}
+	overview := skill.Body
+	start := strings.Index(overview, "## The loop")
+	end := strings.Index(overview, "## Phase details")
+	if start < 0 || end <= start {
+		t.Fatalf("software-factory body has no loop overview section:\n%s", overview)
+	}
+	overview = overview[start:end]
+	if !strings.Contains(overview, "standing tech-debt") {
+		t.Errorf("software-factory pipeline overview omits the standing tech-debt step:\n%s", overview)
+	}
+	flat := strings.Join(strings.Fields(skill.Body), " ")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"name the role that files the items", "chief files"},
+		{"forbid refiling what the groom report filed", "filed twice"},
+	}
+	for _, req := range required {
+		if !strings.Contains(flat, req.text) {
+			t.Errorf("software-factory body must %s (missing %q)", req.why, req.text)
+		}
+	}
+}
+
 // TestSoftwareFactorySkillIsProjectAgnostic pins that the recipe names no
 // concrete project: every project-scoped command takes a project placeholder (or
 // a default), never a hardcoded id, so it works for any project.

@@ -31,7 +31,7 @@ Two things are called "skill", and they load differently. `ft` ships **embedded 
 
 1. **Capture** — record every idea or defect the moment it surfaces, as a non-executable item.
 2. **Groom** — grill the product owner, split the work, and emit the feature spec, plan, and tech design.
-3. **Architecture review** — review the design independently; a failing verdict blocks the build.
+3. **Architecture review** — independent review, plus the standing tech-debt pass; failure blocks the build.
 4. **Breakdown** — make the DAG honest: dependencies, one verification gate per task, a release milestone.
 5. **Build** — the chief's loop: a fresh builder and reviewer per task, each in its own worktree.
 6. **Review** — the reviewer builds the branch, runs CI, exercises it, and probes the edges.
@@ -78,9 +78,9 @@ ft task next -p <project> --groomed
 
 ### 3. Architecture review
 
-Before any of the feature is built, review the design independently. Dispatch the
-`architecture-reviewer` skill as `architecture-reviewer-<session>` on the session's spec, plan, and
-tech design. It records its findings on the origin item and exactly one tech-design verdict:
+Before building, review the design independently. Dispatch the `architecture-reviewer` skill as
+`architecture-reviewer-<session>` on the session's spec, plan, and tech design. It records its
+findings on the origin item and one tech-design verdict:
 
 ```sh
 ft groom review <session> --verdict approve -f review.md
@@ -89,9 +89,9 @@ ft groom review <session> --verdict needs-rework -f review.md
 ft groom review -p <project> <session> --verdict needs-rework -f review.md   # another project's session
 ```
 
-A `needs-rework` verdict blocks the feature from build: `ft groom review` blocks the tasks the
-session produced. Fix the findings and re-review; `approve` or `approve-with-changes` unblocks the
-build. Never skip this to move faster.
+A `needs-rework` verdict blocks the build until an approving review. Every review also runs the
+standing tech-debt pass: the chief files each item the reviewer names, and the groom report's own
+debt tasks are never filed twice.
 
 ### 4. Breakdown
 

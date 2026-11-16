@@ -502,6 +502,31 @@ func TestChiefSkillFilesTechDebtTasksEveryCycle(t *testing.T) {
 	}
 }
 
+// TestChiefSkillHandsTheTechDebtPassToTheReviewer pins the division of labour
+// the #402 review flagged: the architecture reviewer runs the standing tech-debt
+// pass and the chief files what it recommends. The chief must not be told to
+// carry out the pass itself, and it must not refile an item the groom session's
+// own report already filed as a task.
+func TestChiefSkillHandsTheTechDebtPassToTheReviewer(t *testing.T) {
+	body := strings.Join(strings.Fields(agentSkill(t, ".agents/skills/chief/SKILL.md")), " ")
+	if strings.Contains(body, "carry out the pass") {
+		t.Error("chief skill invites the chief to carry out the tech-debt pass itself; the architecture reviewer runs it")
+	}
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"have the reviewer run the pass", "architecture reviewer runs"},
+		{"say the chief files the result", "you file"},
+		{"file only debt no task already carries", "no task carries"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("chief skill must %s (missing %q)", req.why, req.text)
+		}
+	}
+}
+
 // TestGroomingAgentSkillReadsPromptAndLinksCaptures guards the grooming-agent
 // charter: it reads a prompt doc artifact, captures one or more ideas/bugs from
 // it, links each capture back to the artifact as its origin, and reports back to

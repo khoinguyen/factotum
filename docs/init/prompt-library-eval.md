@@ -15,8 +15,9 @@ polished candidate, `huh`, **hangs on a redirected stdin**. In a normal shell, w
 a controlling terminal, it opens `/dev/tty`, paints a full-screen UI, and blocks; only a truly
 headless process (no controlling terminal at all) gets an error instead
 (`could not open TTY`, exit 1). The shape that breaks it is not the headless one, it is the ordinary
-one: **stdout on a terminal, stdin redirected** (`ft init < /dev/null`). Today that invocation
-silently takes every default; under `huh` it would hang.
+one: **stdout on a terminal, stdin redirected** (`ft init < /dev/null`). That invocation used to
+silently take every default; the stdin gate (§6.2) now makes it headless, and under `huh` it would
+hang.
 
 Revisit when a command needs a widget the port cannot express. The first of those exists today:
 `ft run` picks one of N registered adapters through an `Input` with the options in the label and
@@ -174,21 +175,23 @@ The port makes this a one-file swap, and these are the constraints to keep:
 
 1. Keep `Prompter` and the scripted fake; only `terminalPrompter` changes. Tests never construct a
    library form.
-2. **Gate on stdin, not just stdout.** Today's check is `d.interactive()` =
-   `d.IsTerminal(d.Out)` — stdout only (`init.go:509`). With stdout on a terminal and stdin
-   redirected — a common way scripts and agents invoke `ft init` — today's prompter runs all six
-   questions and silently accepts every default:
+2. **Gate on stdin, not just stdout.** The gate is now `d.promptsAllowed(cmd)`: a terminal on
+   stdout **and** stdin (`init.go`, `run.go`). It used to be `d.interactive()` =
+   `d.IsTerminal(d.Out)` — stdout only — so with stdout on a terminal and stdin redirected (a
+   common way scripts and agents invoke `ft init`) the prompter ran all six questions and
+   silently accepted every default:
 
    ```sh
    script -q /tmp/x.log /bin/sh -c 'HOME=$T ft init </dev/null'   # T is a throwaway HOME
-   # Register this repository as a Factotum project? [Y/n] Project id [repo]: ... created: true
+   # before: Register this repository as a Factotum project? [Y/n] ... created: true
+   # now:    user_config: ... / created: true, then a hint to run ft init -p
    ```
 
-   A `huh` form behind that same gate does not inherit that behavior: a bare form opens `/dev/tty`
-   and blocks, and only fails with `could not open TTY` when the process has no controlling terminal
-   at all. So the gate must become stdout-TTY **and** stdin-TTY *before* any form is constructed.
-   The fully headless case is the easy one; terminal-stdout with piped stdin is the one that gets
-   through today and hangs.
+   Keep the rule at stdout-TTY **and** stdin-TTY *before* any form is constructed: a `huh` form
+   behind the old gate does not inherit the safe behavior — a bare form opens `/dev/tty` and
+   blocks, and only fails with `could not open TTY` when the process has no controlling terminal
+   at all. The fully headless case is the easy one; terminal-stdout with piped stdin is the one
+   that hangs.
 3. Accessible mode is for terminals where raw mode is unavailable, and for tests — never the
    non-TTY path. A non-TTY stdin keeps today's behavior: no prompts at all.
 4. Keep prompts on `d.Err`. `huh` already writes there by default (`form.go` sets

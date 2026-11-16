@@ -14,8 +14,8 @@ ft init -p --tech-stack go  # register a greenfield dir, recording the stack non
 ```
 
 `ft init` writes the machine-scoped config (`~/.factotum/config.toml`) when missing and never
-clobbers it; without a terminal it stops there and hints at `ft init -p`. On a terminal inside a
-git repository it offers to register the current directory; `-p/--project` registers directly,
+clobbers it; without a terminal on stdin and stdout it stops there and hints at `ft init -p`.
+On a terminal inside a git repository it offers registration; `-p/--project` registers directly,
 deriving the id and name from the git remote (else the directory name). Registration writes a
 `[projects.<id>]` entry (`db_path` default `~/.factotum/<id>.db`, sqlite), pins `project = "<id>"`
 in the directory's `.factotum/config.toml`, and creates the project in its store. A

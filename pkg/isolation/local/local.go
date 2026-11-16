@@ -329,15 +329,24 @@ func (b *Backend) execAttached(c *exec.Cmd, env *environment, cmd isolation.Comm
 	// does: that group is ft's own, so the signal would kill ft and its launcher
 	// with the harness. Walk the child's tree instead, so a worker the agent
 	// forked does not outlive the stop.
+	//
+	// The attached streams are terminal files, which exec hands to the child
+	// directly, so there is normally nothing to drain. Options allows an
+	// injected non-file stream, though, and exec copies that through a pipe: a
+	// descendant that inherits the pipe and outlives the child would pin Wait
+	// forever, so the same drain bound the detached path uses applies here.
+	c.WaitDelay = orphanDrainGrace
+
 	var exited atomic.Bool
 	c.Cancel = func() error {
 		if exited.Load() {
 			return nil
 		}
 		// Walk the tree first: ft's own group is the only one this child shares,
-		// so the descendants have to be singled out. The direct child must die
-		// for Wait to return, so its kill is the one reported; the tree walk is
-		// best effort and a descendant that already exited is not a failure.
+		// so its descendants have to be singled out. The walk ignores only a
+		// process table it could not read - an exited process is handled inside
+		// it - and the direct child must die for Wait to return, so that kill is
+		// the one reported.
 		_ = procgroup.KillTree(c.Process.Pid)
 		return c.Process.Kill()
 	}

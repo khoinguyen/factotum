@@ -6,5 +6,7 @@
 // the primitive for that, so a command nobody attached to a terminal belongs in
 // one (Isolate + KillGroup). A command attached to the host terminal cannot be:
 // it has to stay in the caller's process group, which owns the terminal and
-// carries the caller's own Ctrl-C, so its tree is walked instead (KillTree).
+// carries the caller's own Ctrl-C, so its tree is walked instead (KillTree). The
+// walk reads the kernel's process table, which is wired up for darwin and linux;
+// elsewhere KillTree kills the direct child only.
 package procgroup

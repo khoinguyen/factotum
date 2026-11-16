@@ -3,6 +3,7 @@
 package local_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -102,6 +103,53 @@ func TestExecBoundedWhenDescendantHoldsPipe(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Wait() blocked on a descendant that held the pipe")
+	}
+}
+
+// TestExecAttachedBoundedWhenDescendantHoldsStream pins the same drain bound on
+// the attached path. An interactive command normally writes to terminal files,
+// which exec passes straight through, but Options allows an injected non-file
+// stream, and exec copies that through a pipe. A descendant that inherits the
+// pipe and outlives the child would then pin Wait - the interactive run would
+// never come back - so the orphan grace has to apply here too.
+func TestExecAttachedBoundedWhenDescendantHoldsStream(t *testing.T) {
+	var out bytes.Buffer
+	b, _ := newBackend(t, local.Options{Stdin: strings.NewReader(""), Stdout: &out})
+	dir := t.TempDir()
+	h := prepare(t, b, isolation.Spec{Workdir: dir})
+	ex, err := b.Exec(context.Background(), h, isolation.Command{
+		Argv:    []string{"sh", "-c", "printf hello; sleep 30 & echo $! > bg.pid"},
+		Workdir: dir,
+		TTY:     true,
+	})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	pid := waitForPID(t, filepath.Join(dir, "bg.pid"))
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	done := make(chan struct{})
+	var (
+		res  isolation.ExecResult
+		werr error
+	)
+	go func() {
+		res, werr = ex.Wait(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+		if werr != nil {
+			t.Errorf("Wait() error = %v, want nil: the drain bound is not a command failure", werr)
+		}
+		if res.ExitCode != 0 {
+			t.Errorf("ExitCode = %d, want 0", res.ExitCode)
+		}
+		if got := out.String(); got != "hello" {
+			t.Errorf("terminal output = %q, want hello", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait() blocked on a descendant that held the attached stream")
 	}
 }
 

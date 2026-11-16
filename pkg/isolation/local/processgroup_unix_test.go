@@ -5,6 +5,7 @@ package local_test
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,6 +39,36 @@ func TestStopKillsProcessGroup(t *testing.T) {
 	}
 	if !waitGone(pid) {
 		t.Fatalf("grandchild pid %d survived Stop", pid)
+	}
+}
+
+// TestStopKillsInteractiveChildTree pins the interactive half of the same
+// guarantee. An interactive child cannot be moved out of ft's process group: it
+// inherits the host terminal, and the terminal's foreground process group is
+// what lets the agent read the keyboard, take Ctrl-C, and keep ft's own
+// graceful stop (one Ctrl-C cancels the run) working. Signalling that group
+// would signal ft itself, so Stop walks the tree instead: a harness that forks
+// workers must not leave them running.
+func TestStopKillsInteractiveChildTree(t *testing.T) {
+	b, _ := newBackend(t, local.Options{Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard})
+	dir := t.TempDir()
+	h := prepare(t, b, isolation.Spec{Workdir: dir})
+	if _, err := b.Exec(context.Background(), h, isolation.Command{
+		Argv:    []string{"sh", "-c", "sleep 30 & echo $! > child.pid; wait"},
+		Workdir: dir,
+		TTY:     true,
+	}); err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+
+	pid := waitForPID(t, filepath.Join(dir, "child.pid"))
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	if err := b.Stop(context.Background(), h); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if !waitGone(pid) {
+		t.Fatalf("interactive grandchild pid %d survived Stop", pid)
 	}
 }
 

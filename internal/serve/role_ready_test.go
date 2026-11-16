@@ -2,7 +2,9 @@ package serve
 
 import (
 	"context"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
@@ -66,42 +68,70 @@ func TestBoardAndRenderAgreeOnRoleAssignee(t *testing.T) {
 	}
 }
 
-// TestBoardAndRenderAgreeOnStatusClasses pins the status-class parity between
-// the web work board and the render view. The render classifier used to fold in
+// TestBoardAndRenderAgreeOnStatusClasses pins the class parity between the web
+// work board and the render view. The render classifier used to fold in
 // progress into "blocked", so `ft graph render --format json` disagreed with
 // the board; a status that either surface classifies on its own must not drift
-// again. A todo's class depends on readiness rather than status alone, so the
-// subject waits on an unresolved blocker: both surfaces must call that
-// "waiting", the last parity gap render had.
+// again.
+//
+// A todo's class depends on readiness rather than status alone, so the table
+// carries every readiness cause that leaves a todo waiting: an unresolved
+// dependency, an active snooze, and a future not_before. Each case feeds both
+// surfaces the same graph, so a rule that changes on one side only - say the
+// board starts rendering a snoozed todo as blocked - fails here.
+//
+// "waiting" is also a named section of the web dashboard, so the string is a
+// UI contract shared with the board template, not an incidental default. Do not
+// rename it on one side without renaming the section on the other.
 func TestBoardAndRenderAgreeOnStatusClasses(t *testing.T) {
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	future := now.Add(48 * time.Hour)
 	tests := []struct {
-		status core.TicketStatus
-		want   string
+		name      string
+		status    core.TicketStatus
+		deps      []core.TicketID
+		snooze    *core.Snooze
+		notBefore *time.Time
+		want      string
 	}{
-		{core.StatusTodo, "waiting"},
-		{core.StatusInProgress, "in-progress"},
-		{core.StatusReadyForReview, "review"},
-		{core.StatusDone, "done"},
-		{core.StatusCancelled, "cancelled"},
-		{core.StatusBlocked, "blocked"},
+		{name: "todo waiting on a dependency", status: core.StatusTodo, deps: []core.TicketID{"t-blocker"}, want: "waiting"},
+		{name: "todo snoozed indefinitely", status: core.StatusTodo, snooze: &core.Snooze{Indefinite: true}, want: "waiting"},
+		{name: "todo not before a future date", status: core.StatusTodo, notBefore: &future, want: "waiting"},
+		{name: "in progress", status: core.StatusInProgress, want: "in-progress"},
+		{name: "ready for review", status: core.StatusReadyForReview, want: "review"},
+		{name: "done", status: core.StatusDone, want: "done"},
+		{name: "cancelled", status: core.StatusCancelled, want: "cancelled"},
+		{name: "blocked", status: core.StatusBlocked, want: "blocked"},
 	}
 	policy := core.DefaultResolutionPolicy()
 	project := &core.Project{ID: "prj-1", Name: "Acme", Policy: policy}
 	for _, tc := range tests {
-		t.Run(string(tc.status), func(t *testing.T) {
-			if got := classify(core.Ticket{Status: tc.status}, false, false, false); got != tc.want {
-				t.Fatalf("board classify(%s) = %q, want %q", tc.status, got, tc.want)
-			}
+		t.Run(tc.name, func(t *testing.T) {
 			blocker := core.Ticket{ID: "t-blocker", ProjectID: project.ID, Kind: core.KindTask, Title: "blocker", Status: core.StatusInProgress}
-			ticket := core.Ticket{ID: "t-1", ProjectID: project.ID, Kind: core.KindTask, Title: "work", Status: tc.status}
-			ticket.Deps = []core.TicketID{blocker.ID}
-			built, err := graph.New([]core.Ticket{blocker, ticket}, policy)
-			if err != nil {
-				t.Fatalf("graph.New() error = %v", err)
+			ticket := core.Ticket{
+				ID:        "t-1",
+				ProjectID: project.ID,
+				Kind:      core.KindTask,
+				Title:     "work",
+				Status:    tc.status,
+				Deps:      tc.deps,
+				Snooze:    tc.snooze,
+				NotBefore: tc.notBefore,
 			}
-			view := render.View{Project: project, Tasks: []*core.Ticket{&blocker, &ticket}, Graph: built, Ready: built.ReadyByActor(nil)}
+			built, err := graph.NewAt([]core.Ticket{blocker, ticket}, policy, now)
+			if err != nil {
+				t.Fatalf("graph.NewAt() error = %v", err)
+			}
+			// Both surfaces read the same readiness buckets: the board gets them
+			// from the snapshot graph, the render view from the graph itself.
+			bucket := built.ReadyByActor(nil)
+			board := classify(ticket, slices.Contains(bucket.Agent, ticket.ID), slices.Contains(bucket.Human, ticket.ID), false)
+			if board != tc.want {
+				t.Fatalf("board classify(%s) = %q, want %q", tc.name, board, tc.want)
+			}
+			view := render.View{Project: project, Tasks: []*core.Ticket{&blocker, &ticket}, Graph: built, Ready: bucket}
 			if got := string(view.Classify(ticket)); got != tc.want {
-				t.Fatalf("render Classify(%s) = %q, board says %q", tc.status, got, tc.want)
+				t.Fatalf("render Classify(%s) = %q, board says %q", tc.name, got, tc.want)
 			}
 		})
 	}

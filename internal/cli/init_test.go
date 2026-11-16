@@ -83,12 +83,21 @@ func TestPromptsAllowed(t *testing.T) {
 			d := NewDeps(app.SystemClock{}, app.RandomIDGen{}, io.Discard, io.Discard, nil)
 			d.Prompt = tt.prompt
 			d.IsTerminal = func(io.Writer) bool { return tt.stdout }
-			d.IsTerminalReader = func(io.Reader) bool { return tt.stdin }
+			stdin := strings.NewReader("distinctive")
+			var probed io.Reader
+			d.IsTerminalReader = func(r io.Reader) bool {
+				probed = r
+				return tt.stdin
+			}
 			cmd := &cobra.Command{}
-			cmd.SetIn(strings.NewReader(""))
+			cmd.SetIn(stdin)
 
 			if got := d.promptsAllowed(cmd); got != tt.want {
 				t.Fatalf("promptsAllowed() = %v, want %v", got, tt.want)
+			}
+			// The gate probes the command's own stdin, not the process's.
+			if tt.prompt == nil && tt.stdout && probed != stdin {
+				t.Fatalf("IsTerminalReader got %v, want cmd.InOrStdin()", probed)
 			}
 		})
 	}
@@ -264,6 +273,24 @@ func TestInitBareInRepoNonInteractiveDoesNotRegister(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "ft init -p") {
 		t.Fatalf("init should hint at ft init -p:\n%s", errOut)
+	}
+}
+
+// TestInitHelpStatesThePromptGate pins the surface: --help must name the real
+// gate (a terminal on both stdin and stdout), not the old stdout-only rule.
+func TestInitHelpStatesThePromptGate(t *testing.T) {
+	r := newRunner(t)
+
+	out := r.run("init", "--help")
+	// Help is hard-wrapped, so match on the reflowed text.
+	flat := strings.Join(strings.Fields(out), " ")
+	for _, want := range []string{"stdin and stdout both on a terminal", "Without a terminal on stdin or stdout"} {
+		if !strings.Contains(flat, want) {
+			t.Fatalf("init --help missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(flat, "inside a git repository on a terminal") {
+		t.Fatalf("init --help still states the stdout-only rule:\n%s", out)
 	}
 }
 

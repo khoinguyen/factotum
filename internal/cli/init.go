@@ -127,14 +127,15 @@ func newInitCommand(deps *Deps) *cobra.Command {
 		Short: "Set up machine and project config for first-run use",
 		Long: "Initialize Factotum config, replacing hand-written files.\n\n" +
 			"With no flags, create the machine-scoped config (~/.factotum/config.toml)\n" +
-			"when missing, and, inside a git repository on a terminal, offer to register\n" +
-			"this directory as a project. --user-only (-u) never touches project scope.\n" +
-			"--project (-p) registers this directory, deriving the project id and name from\n" +
-			"the git remote or the directory name unless a name is given. On a greenfield\n" +
-			"directory it asks for the tech stack and records it in the project config, or\n" +
-			"takes --tech-stack when there is no terminal. Without a terminal there are no\n" +
-			"prompts: ft init only creates the machine config, and ft init -p registers\n" +
-			"using the derived defaults.",
+			"when missing, and, inside a git repository with stdin and stdout both on a\n" +
+			"terminal, offer to register this directory as a project. --user-only (-u)\n" +
+			"never touches project scope. --project (-p) registers this directory,\n" +
+			"deriving the project id and name from the git remote or the directory name\n" +
+			"unless a name is given. On a greenfield directory it asks for the tech\n" +
+			"stack and records it in the project config, or takes --tech-stack when it\n" +
+			"cannot prompt. Without a terminal on stdin or stdout there are no prompts:\n" +
+			"ft init only creates the machine config, and ft init -p registers using\n" +
+			"the derived defaults.",
 		Args: cobra.MaximumNArgs(1),
 		Annotations: map[string]string{
 			annotationNoCallerStore: "true",

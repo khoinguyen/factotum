@@ -46,8 +46,8 @@ Non-goals (explicitly out of scope for this milestone).
   (`pkg/app/run.go`) but has no durable run identity to address.
 - `ft serve` is an HTTP adapter bound to loopback by default with a read side (open) and a
   token-gated capture write side (`internal/cli/serve.go`, `internal/serve/README.md`).
-- The chief loop messages peers through cmux (`cmux agent message`, with the `cmux-msg.sh` paste
-  fallback), which is not durable, is host-local, and breaks when the recipient's plugin fails to
+- The chief loop messaged peers through cmux (`cmux agent message`, with the `cmux-msg.sh` paste
+  fallback), which was not durable, was host-local, and broke when the recipient's plugin failed to
   load.
 
 The gap `ft msg` closes: a durable mailbox ft owns, with an address that survives a restart and a
@@ -495,9 +495,11 @@ long-poll claim, inject as a user turn, ack.
 
 ### cmux migration
 
-- `ft msg send` becomes the primitive. `cmux-msg.sh` becomes a shim that calls `ft msg send` and
-  only falls back to `cmux paste` when ft is unavailable. The chief loop addresses peers as
-  `run:<id>` (precise) or `actor:<name>` (stable), replacing surface-title disambiguation.
+- `ft msg send` is the primitive. The `cmux-msg.sh` wrapper was **removed** (t-wp27miss7i) once a
+  real loop-agent pair round-tripped over `ft msg` (receiver loaded, role addressing, delivery
+  reached `read`); there is no cmux fallback. A peer with no live receiver is a broken launch to fix
+  via `ft msg runs --live`, not a surface to paste into. The chief loop addresses peers as `run:<id>`
+  (precise) or `actor:<name>` (stable), replacing surface-title disambiguation.
 
 ## 11. CLI surface
 
@@ -569,8 +571,8 @@ ft msg prune [--before <time>] [--state read|failed]   # drop old terminal messa
   conformance cases. That growth is the intended forcing function.
 - Rollout follows the current DAG: this spec → **t-q7iwpouhr5** (entity + store port + CLI +
   conformance) → **t-773lhmbml2** (serve transport) and **t-eedgwt6g6g / t-fn2gndufxa** (pi /
-  opencode receivers). The chief loop can switch to `ft msg` once q7iwpouhr5 + one receiver land;
-  cmux fallback stays until both.
+  opencode receivers). The chief loop switched to `ft msg` once q7iwpouhr5 + the opencode receiver
+  landed; the cmux fallback was removed after a real loop-agent pair round-tripped (t-wp27miss7i).
 
 ## 14. Open questions for Khoi (product calls)
 

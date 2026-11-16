@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,7 +35,7 @@ func agentSkill(t *testing.T, rel string) string {
 // TestReviewerSkillWaitsForBuilderHandoff guards the recurring premature-review
 // race: the reviewer must idle until the builder sends the handoff and must not
 // check the branch or ping the builder before it. The chief's kickoff only wires
-// the pair in; the builder's cmux-msg.sh message is the handoff.
+// the pair in; the builder's ft msg handoff is what starts the review.
 func TestReviewerSkillWaitsForBuilderHandoff(t *testing.T) {
 	body := agentSkill(t, ".agents/skills/single-task-reviewer/SKILL.md")
 	required := []struct {
@@ -67,33 +68,83 @@ func TestChiefSkillNamesBuilderAsHandoffSource(t *testing.T) {
 // TestLoopSkillsMessageOverFtMsg guards the channel migration and the robust
 // addressing form: the builder, reviewer, and chief message each other over
 // ft msg using the canonical actor:<role> address (a bare role resolves
-// fuzzily across actor/run/task and can misroute or drop, t-fpd56yebqt), and
-// keep the cmux wrapper only as a documented rollout fallback. A regression to
-// hand-crafted cmux targets, or to a bare role address, is a failure.
+// fuzzily across actor/run/task and can misroute or drop, t-fpd56yebqt). A
+// regression to hand-crafted cmux targets, or to a bare role address, is a
+// failure.
 func TestLoopSkillsMessageOverFtMsg(t *testing.T) {
 	cases := []struct {
 		skill string
 		texts []string
 	}{
 		{".agents/skills/single-task-builder/SKILL.md", []string{
-			"ft msg send actor:reviewer-<task-id>", "ft msg send actor:chief", "actor:builder-<task-id>", "cmux-msg.sh",
+			"ft msg send actor:reviewer-<task-id>", "ft msg send actor:chief", "actor:builder-<task-id>",
 		}},
 		{".agents/skills/single-task-reviewer/SKILL.md", []string{
-			"ft msg send actor:builder-<task-id>", "ft msg send actor:chief", "actor:reviewer-<task-id>", "cmux-msg.sh",
+			"ft msg send actor:builder-<task-id>", "ft msg send actor:chief", "actor:reviewer-<task-id>",
 		}},
 		{".agents/skills/chief/SKILL.md", []string{
-			"ft msg send actor:builder-", "ft msg send actor:reviewer-", "loop-agent.sh", "cmux-msg.sh",
+			"ft msg send actor:builder-", "ft msg send actor:reviewer-", "loop-agent.sh",
 		}},
 		{".agents/skills/architecture-reviewer/SKILL.md", []string{
-			"ft msg send actor:chief", "actor:architecture-reviewer-<session>", "cmux-msg.sh",
+			"ft msg send actor:chief", "actor:architecture-reviewer-<session>",
 		}},
 	}
 	for _, tc := range cases {
 		body := agentSkill(t, tc.skill)
 		for _, text := range tc.texts {
 			if !strings.Contains(body, text) {
-				t.Errorf("%s must reference %q (loop agents talk over ft msg addressed actor:<role>, cmux only as fallback)", tc.skill, text)
+				t.Errorf("%s must reference %q (loop agents talk over ft msg addressed actor:<role>)", tc.skill, text)
 			}
+		}
+	}
+}
+
+// TestLoopSkillsHaveNoCmuxFallback guards the retirement of the cmux paste
+// transport: a real loop-agent pair round-tripped over ft msg (t-wp27miss7i),
+// so the wrapper is gone and no agent instruction may still point at it. A dead
+// receiver must fail loudly through `ft msg runs --live`, not type into a cmux
+// terminal where a misroute is silent.
+func TestLoopSkillsHaveNoCmuxFallback(t *testing.T) {
+	root := repoRoot(t)
+	for _, gone := range []string{
+		".agents/skills/chief/scripts/cmux-msg.sh",
+		".agents/skills/chief/scripts/cmux-msg_test.sh",
+	} {
+		if _, err := os.Stat(filepath.Join(root, gone)); !os.IsNotExist(err) {
+			t.Errorf("%s must be deleted: ft msg is the only channel and a paste fallback hides a dead receiver", gone)
+		}
+	}
+	err := filepath.WalkDir(filepath.Join(root, ".agents", "skills"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(strings.ToLower(string(data)), "cmux-msg") {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				rel = path
+			}
+			t.Errorf("%s still references cmux-msg; peers talk over ft msg only", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk .agents/skills: %v", err)
+	}
+	// Every reporting role must say what to do when the channel is dead.
+	for _, skill := range []string{
+		".agents/skills/chief/SKILL.md",
+		".agents/skills/single-task-builder/SKILL.md",
+		".agents/skills/single-task-reviewer/SKILL.md",
+		".agents/skills/single-task-qa/SKILL.md",
+		".agents/skills/grooming-agent/SKILL.md",
+		".agents/skills/architecture-reviewer/SKILL.md",
+	} {
+		if body := agentSkill(t, skill); !strings.Contains(body, "no cmux fallback") {
+			t.Errorf("%s must say there is no cmux fallback when the peer is unreachable", skill)
 		}
 	}
 }
@@ -422,7 +473,7 @@ func TestArchitectureReviewerSkillReviewsDocsNotCode(t *testing.T) {
 		{"surface tech-debt/refactor items", "tech-debt"},
 		{"hand back a tech-design verdict", "tech-design verdict"},
 		{"refuse to review line-level code", "not line-level code"},
-		{"keep the cmux wrapper as a rollout fallback", "cmux-msg.sh"},
+		{"report the verdict to the chief over ft msg", "ft msg send actor:chief"},
 	}
 	for _, req := range required {
 		if !strings.Contains(body, req.text) {
@@ -607,7 +658,7 @@ func TestChiefSkillDispatchesArchitectureReviewThroughLoopWrapper(t *testing.T) 
 // TestArchitectureReviewerSkillIsAddressableOverFtMsg guards the reviewer's
 // side of that dispatch: launched through the wrapper it is a first-class ft msg
 // peer, so it must message the chief as actor:architecture-reviewer-<session>
-// over ft msg, keeping the cmux wrapper only as a rollout fallback.
+// over ft msg and report a dead channel instead of pasting into cmux.
 func TestArchitectureReviewerSkillIsAddressableOverFtMsg(t *testing.T) {
 	body := agentSkill(t, ".agents/skills/architecture-reviewer/SKILL.md")
 	required := []struct {
@@ -617,7 +668,7 @@ func TestArchitectureReviewerSkillIsAddressableOverFtMsg(t *testing.T) {
 		{"name the wrapper that gives it the receiver", "loop-agent.sh"},
 		{"name its own role as the sender", "actor:architecture-reviewer-<session>"},
 		{"message the chief over ft msg", "ft msg send actor:chief"},
-		{"keep the cmux wrapper as a fallback", "cmux-msg.sh"},
+		{"report a dead channel instead of pasting", "no cmux fallback"},
 		{"stop after sending instead of polling", "stop and wait"},
 	}
 	for _, req := range required {

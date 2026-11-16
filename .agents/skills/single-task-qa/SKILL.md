@@ -54,11 +54,9 @@ ids). Message the chief over ft msg:
 ft msg send actor:chief -b "From qa-<task-id>: <summary>"
 ```
 
-Fall back to the cmux wrapper only if ft msg is not delivering for you:
-
-```sh
-CMUX_MSG_FROM=qa-<task-id> bash .agents/skills/chief/scripts/cmux-msg.sh <chief-tab-or-surface> "<summary>"
-```
+There is no cmux fallback: if `ft msg runs --live` shows no run for your actor (or the chief's),
+send the blocker to the chief over ft msg anyway — it stays in the mailbox until a receiver claims
+it — and stop so the launch is fixed.
 
 Then stop. The chief files follow-ups and decides what merges.
 

@@ -110,7 +110,7 @@ ft task update <task> --groomed --acceptance "observable result"
 
 The `chief` skill drives the loop without filling one context: it picks the highest-ranked ready
 task and dispatches a fresh `single-task-builder` and a fresh `single-task-reviewer` per task, each
-in its own worktree, wired to each other over cmux.
+in its own worktree, wired to each other over `ft msg` (`actor:<role>`).
 
 ```sh
 ft task next -p <project> --groomed --for <agent>

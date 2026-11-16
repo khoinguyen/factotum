@@ -517,7 +517,7 @@ func TestChiefSkillHandsTheTechDebtPassToTheReviewer(t *testing.T) {
 		text string
 	}{
 		{"have the reviewer run the pass", "architecture reviewer runs"},
-		{"say the chief files the result", "you file"},
+		{"say the chief files the result", "you file the result"},
 		{"file only debt no task already carries", "no task carries"},
 	}
 	for _, req := range required {

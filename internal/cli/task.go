@@ -1511,6 +1511,15 @@ func newTaskApplyCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVarP(&filename, "filename", "f", "", "task document file, or - for stdin (required)")
 	cmd.Flags().StringVar(&format, "format", "", "document format: json or yaml (default by extension)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report changes without writing")
+	deps.validateBeforeStore(cmd, func(cmd *cobra.Command) error {
+		if err := requireFlags(cmd, "filename"); err != nil {
+			return err
+		}
+		if format != "" {
+			return validateDocFormat(cmd, format)
+		}
+		return nil
+	})
 	return cmd
 }
 
@@ -1581,6 +1590,9 @@ func newTaskEditCommand(deps *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "yaml", "document format: json or yaml")
+	deps.validateBeforeStore(cmd, func(cmd *cobra.Command) error {
+		return validateDocFormat(cmd, format)
+	})
 	return cmd
 }
 

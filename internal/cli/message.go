@@ -437,6 +437,16 @@ type agentOKResult struct {
 // newMessageAgentCommand is the hidden, stable adapter interface the receiver
 // plugins shell out to when they cannot speak HTTP. Every verb is one store
 // protocol call, with JSON-first output so a plugin parses one shape.
+// validateAckState rejects a state outside the two an ack may record. The root
+// runs it before the store opens (validateBeforeStore), so a bad --state never
+// creates a database; the command's own path keeps the check.
+func validateAckState(cmd *cobra.Command, state core.MessageState) error {
+	if state != core.MessageRead && state != core.MessageFailed {
+		return usageError(cmd, "--state must be read or failed")
+	}
+	return nil
+}
+
 func newMessageAgentCommand(deps *Deps) *cobra.Command {
 	var project string
 	cmd := &cobra.Command{
@@ -569,8 +579,8 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 				return usageError(cmd, "--run is required")
 			}
 			state := core.MessageState(ackState)
-			if state != core.MessageRead && state != core.MessageFailed {
-				return usageError(cmd, "--state must be read or failed")
+			if err := validateAckState(cmd, state); err != nil {
+				return err
 			}
 			in := app.AckInput{ID: core.MessageID(args[0]), RunID: core.RunID(ackRun), State: state, Error: ackError}
 			if err := deps.Messages.Ack(cmd.Context(), in); err != nil {
@@ -583,6 +593,9 @@ func newMessageAgentCommand(deps *Deps) *cobra.Command {
 	ack.Flags().StringVar(&ackRun, "run", "", "run id (required)")
 	ack.Flags().StringVar(&ackState, "state", "read", "read or failed")
 	ack.Flags().StringVarP(&ackError, "error", "e", "", "failure reason when --state failed")
+	deps.validateBeforeStore(ack, func(cmd *cobra.Command) error {
+		return validateAckState(cmd, core.MessageState(ackState))
+	})
 
 	var nackRun, nackError string
 	nack := &cobra.Command{

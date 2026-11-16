@@ -121,9 +121,15 @@ func MajorVersion(banner string) (major int, ok bool) {
 	return n, true
 }
 
-// versionProbeTimeout bounds the `--version` probe so a hung binary cannot stall
-// run selection.
-const versionProbeTimeout = 5 * time.Second
+// versionProbeTimeout bounds one `--version` probe. It exists to stop a hung
+// binary from stalling run selection, not to race a loaded host: fork/exec
+// latency on a busy machine reaches seconds (measured past 3.7s with eight race
+// suites and 32 concurrent probes, against ~13ms idle, and past 17s on a
+// saturated one), and a bound near that tail does not merely slow the probe, it
+// reports V1 for an in-place V2 (t-izluv7llq6). So the bound keeps headroom over
+// the load tail, and it matches the 30s bound the isolation backends put on a
+// child process. A hung binary still costs a cancelled probe after that bound.
+const versionProbeTimeout = 30 * time.Second
 
 // VariantForBinary returns the OpenCode variant the named binary drives,
 // detected from its `--version` output: a major version of 2 or later is V2.
@@ -132,9 +138,21 @@ const versionProbeTimeout = 5 * time.Second
 // lets `--harness opencode` follow an in-place upgrade (brew installs V2 under
 // the same `opencode` name) without a config change.
 func VariantForBinary(binary string) Variant {
-	ctx, cancel := context.WithTimeout(context.Background(), versionProbeTimeout)
+	return probeVariant(binary, versionProbeTimeout)
+}
+
+// probeVariant is VariantForBinary with its bound exposed, so a test can pin the
+// hang guard without waiting the production bound out.
+func probeVariant(binary string, timeout time.Duration) Variant {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, binary, "--version").Output()
+	cmd := exec.CommandContext(ctx, binary, "--version")
+	// Killing the direct child does not end the probe on its own: a launcher can
+	// leave a grandchild holding the stdout pipe, and Output then blocks past
+	// the bound until that grandchild exits. WaitDelay bounds that drain, so the
+	// probe answers within its bound instead of stalling run selection.
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
 	if err != nil {
 		return V1
 	}

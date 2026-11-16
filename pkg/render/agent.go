@@ -33,10 +33,10 @@ func (Agent) Render(_ context.Context, w io.Writer, view View) error {
 
 	b.WriteString("dep-blocked:\n")
 	for _, id := range derived.ids {
-		task := derived.tasks[id]
-		if view.resolved(task) || derived.readyAgent[id] || derived.readyHuman[id] || derived.cycles[id] {
+		if !view.depBlocked(derived, id) {
 			continue
 		}
+		task := derived.tasks[id]
 		fmt.Fprintf(&b, "  - %s wave=%d blocked_by=[%s]%s%s\n", id, derived.waves[id], strings.Join(view.blockers(id), ", "), repoTag(task.Repo), kindTag(task))
 	}
 

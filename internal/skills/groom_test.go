@@ -1,6 +1,8 @@
 package skills
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -136,6 +138,39 @@ func TestGroomSkillDocumentsArchitectureReview(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("groom skill body does not mention %q", want)
+		}
+	}
+}
+
+// TestGroomSkillMakesTechDebtStanding pins the standing tech-debt step in the
+// grooming protocol: the session answers the report's Tech debt section every
+// cycle, filing each item as a task carrying the rationale and proposed
+// refactor, and the architecture review repeats the pass.
+func TestGroomSkillMakesTechDebtStanding(t *testing.T) {
+	skill, err := Get("groom")
+	if err != nil {
+		t.Fatalf("Get(groom) error = %v", err)
+	}
+	body := strings.ToLower(skill.Body)
+	for _, want := range []string{"tech debt", "standing", "rationale", "proposed refactor", "none found"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("groom skill body does not mention %q", want)
+		}
+	}
+}
+
+// TestSessionPromptMakesTechDebtStanding pins the standing step into the durable
+// session prompt, so a session launched from it learns the report's Tech debt
+// section and the review pass without reading the code.
+func TestSessionPromptMakesTechDebtStanding(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), groom.PromptPath))
+	if err != nil {
+		t.Fatalf("read durable session prompt %q: %v", groom.PromptPath, err)
+	}
+	body := strings.ToLower(string(data))
+	for _, want := range []string{"tech debt", "standing", "rationale", "proposed refactor", "none found"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("session prompt does not mention %q", want)
 		}
 	}
 }

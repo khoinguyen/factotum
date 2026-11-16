@@ -448,6 +448,59 @@ func TestKickoffUnattendedMode(t *testing.T) {
 	}
 }
 
+// TestReportTemplateMakesTechDebtAStandingSection pins the standing tech-debt
+// step in every grooming cycle: the report always answers a Tech debt section,
+// and each debt it names carries a rationale and a proposed refactor with the
+// task filed for it, so the cycle cannot silently skip the question.
+func TestReportTemplateMakesTechDebtAStandingSection(t *testing.T) {
+	if !slices.Contains(ReportSections(), "Tech debt") {
+		t.Fatalf("ReportSections() = %v, want a standing Tech debt section", ReportSections())
+	}
+	section := sectionBody(t, ReportTemplate(), "Tech debt")
+	for _, want := range []string{"rationale", "proposed refactor", "task:", "none found"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("report Tech debt section does not carry %q:\n%s", want, section)
+		}
+	}
+}
+
+// TestKickoffNamesTechDebtStep pins the standing tech-debt step into every
+// session kickoff, so the cycle announces it whether or not a session reads the
+// skill: the review names each refactor/hardening item with its rationale and
+// proposed refactor, and an explicit none found is recorded.
+func TestKickoffNamesTechDebtStep(t *testing.T) {
+	kick := Kickoff("factotum", []ScopeItem{
+		{ID: "t-idea", Kind: "idea", Title: "Maybe cache"},
+	}, StagedPaths("groom-9"), "groom-9", false)
+	for _, want := range []string{"standing tech-debt", "rationale", "proposed refactor", "none found"} {
+		if !strings.Contains(kick, want) {
+			t.Errorf("kickoff does not name the standing tech-debt step (%q missing):\n%s", want, kick)
+		}
+	}
+}
+
+// sectionBody returns the body of the level-2 markdown section titled title,
+// from its heading to the next level-2 heading (or the end).
+func sectionBody(t *testing.T, body, title string) string {
+	t.Helper()
+	lines := strings.Split(body, "\n")
+	start := -1
+	for i, raw := range lines {
+		line := strings.TrimRight(raw, " \t")
+		if strings.HasPrefix(line, "## ") && strings.TrimSpace(strings.TrimPrefix(line, "## ")) == title {
+			start = i + 1
+			continue
+		}
+		if start >= 0 && strings.HasPrefix(line, "## ") {
+			return strings.Join(lines[start:i], "\n")
+		}
+	}
+	if start < 0 {
+		t.Fatalf("section %q not found:\n%s", title, body)
+	}
+	return strings.Join(lines[start:], "\n")
+}
+
 // sectionTitles returns the level-2 section titles of a markdown document, in
 // order.
 func sectionTitles(body string) []string {

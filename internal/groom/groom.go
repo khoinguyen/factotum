@@ -70,6 +70,7 @@ func ReportSections() []string {
 		"Per item",
 		"Product questions (grill)",
 		"Deferred (for stakeholders)",
+		"Tech debt",
 		"DAG changes",
 	}
 }
@@ -357,6 +358,9 @@ func ReviewKickoff(sessionID string, items []ScopeItem) string {
 	fmt.Fprintf(&b, "the origin item(s) below, and records exactly one verdict with `ft groom review %s\n", sessionID)
 	fmt.Fprintf(&b, "--verdict <%s>`. A needs-rework verdict blocks the feature from build until\n", strings.Join(verdictStrings(), "|"))
 	b.WriteString("a later review approves.\n")
+	b.WriteString("Every review includes a standing tech-debt pass: name each refactor or architecture-hardening\n")
+	b.WriteString("item with its rationale and a proposed refactor, and record `none found` when there is none, so\n")
+	b.WriteString("each cycle surfaces the debt as a task instead of leaving it ad hoc.\n")
 	fmt.Fprintf(&b, "Origin item(s): %s\n", originIDs(items))
 	return b.String()
 }

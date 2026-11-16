@@ -214,10 +214,17 @@ End every session with a report whose top-level sections are, in this order:
 2. `Per item`
 3. `Product questions (grill)`
 4. `Deferred (for stakeholders)`
-5. `DAG changes`
+5. `Tech debt`
+6. `DAG changes`
 
 The report template is versioned data (embedded in `ft`), not prose you invent; its
 section set and ordering are fixed and asserted by a test.
+
+`Tech debt` is a standing step, not an optional extra: every session answers it. File each
+refactor or architecture-hardening item as a task whose body carries the **rationale** (why it
+matters now) and the **proposed refactor** (the concrete change), and name the task in the section;
+write `none found` when nothing qualifies. The independent architecture review repeats the pass, so
+each cycle surfaces debt as actionable work rather than leaving it ad hoc.
 
 ## Deferred-questions file
 
@@ -285,6 +292,10 @@ ft groom review -p <project> <session> --verdict needs-rework -f review.md
 stores the verdict on the session. A **needs-rework** verdict blocks the feature from build: the
 produced tasks are blocked until a later review approves, and an approving review unblocks them.
 `ft groom show <session>` prints the verdict and the review body.
+
+The review carries the same standing tech-debt pass the report does: its findings name each
+refactor or architecture-hardening item with a rationale and a proposed refactor, or record
+`none found`, and the chief files each item as a task.
 
 ## DAG hygiene
 

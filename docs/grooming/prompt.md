@@ -129,6 +129,12 @@ Feature docs: spec.md, plan.md, tech-design.md
 
 - <question> (item: <id>, owner: <stakeholder>)
 
+## Tech debt
+
+Standing step: answer this every session; write `none found` when nothing qualifies. File each item as a task and name it here.
+
+- <area> - <rationale> - <proposed refactor> - task: <task id>
+
 ## DAG changes
 
 - added: <edge>
@@ -259,6 +265,11 @@ verdict with `ft groom review <session> --verdict <verdict> -f <review-file>`:
 
 The session does not run the review. It ends with the docs linked to their origin item and named in
 the report, so the review has the docs and the item to record on.
+
+The review carries a **standing tech-debt pass**: every review names each refactor or
+architecture-hardening item the feature creates or exposes, with its rationale and a proposed
+refactor, and records `none found` when there is none. The chief files each item as a task, so a
+cycle always answers the debt question instead of raising it ad hoc.
 
 ## Constraints
 

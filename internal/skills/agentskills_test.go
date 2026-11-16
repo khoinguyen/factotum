@@ -455,6 +455,53 @@ func TestArchitectureReviewerSkillWiresTheGroomingGate(t *testing.T) {
 	}
 }
 
+// TestArchitectureReviewerSkillMakesTechDebtStanding guards the standing
+// tech-debt pass: every review, not just a convenient one, names each refactor
+// or architecture-hardening item with a rationale and a proposed refactor, and
+// says so explicitly when there is none. The chief files the tasks; the
+// reviewer only recommends.
+func TestArchitectureReviewerSkillMakesTechDebtStanding(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/architecture-reviewer/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"run the tech-debt pass every review", "standing tech-debt"},
+		{"apply it every time", "every review"},
+		{"name each item's rationale", "rationale"},
+		{"name each item's proposed refactor", "proposed refactor"},
+		{"require an explicit none found", "none found"},
+		{"hand the items to the chief to file", "chief files"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("architecture-reviewer skill must %s (missing %q)", req.why, req.text)
+		}
+	}
+}
+
+// TestChiefSkillFilesTechDebtTasksEveryCycle pins the chief's half of the
+// standing step: when the architecture review surfaces tech-debt items, the
+// chief turns each into a task carrying the rationale and proposed refactor,
+// rather than letting the list go stale in the review.
+func TestChiefSkillFilesTechDebtTasksEveryCycle(t *testing.T) {
+	body := agentSkill(t, ".agents/skills/chief/SKILL.md")
+	required := []struct {
+		why  string
+		text string
+	}{
+		{"name the tech-debt step", "tech-debt"},
+		{"make it standing", "every cycle"},
+		{"file each item as a task", "ft task create"},
+		{"carry the rationale and proposed refactor into the task", "proposed refactor"},
+	}
+	for _, req := range required {
+		if !strings.Contains(body, req.text) {
+			t.Errorf("chief skill must %s (missing %q)", req.why, req.text)
+		}
+	}
+}
+
 // TestGroomingAgentSkillReadsPromptAndLinksCaptures guards the grooming-agent
 // charter: it reads a prompt doc artifact, captures one or more ideas/bugs from
 // it, links each capture back to the artifact as its origin, and reports back to

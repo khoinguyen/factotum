@@ -115,9 +115,23 @@ and the concrete change that would resolve it:
   the CLI surface, every storage backend and the conformance suite, the dashboard, the agent loop,
   and the task graph. Call out blast radius and anything left unaddressed.
 
-Also **surface tech-debt and refactor items** the design creates or exposes — a follow-up worth
-filing, a thing to do now versus later — with enough context for the chief to turn any of them into
-a task (`ft task create`).
+**Surface tech-debt and refactor items** the design creates or exposes — the **Standing tech-debt
+step** below makes that pass mandatory on every review, not an occasional extra.
+
+## Standing tech-debt step
+
+The tech-debt pass is a standing step of **every review**, not an occasional extra: run it even
+when the design is clean, and answer it explicitly. Name each refactor or architecture-hardening
+item the design creates or exposes — and the debt in the surrounding code the feature touches or
+makes worse — with:
+
+- the **area** (package, command, backend, or doc);
+- its **rationale** — why it matters now, what it costs to carry;
+- a **proposed refactor** — the concrete change, scoped to one PR;
+- the **task title** you recommend, so the chief can file it as-is (`ft task create`).
+
+When there is none, write **`none found`**: a review that silently omits the pass has not done it.
+The chief files each item as a task every cycle; you recommend the items, you do not file them.
 
 ## Verdict
 

@@ -499,7 +499,7 @@ func TestInitNonGreenfieldSkipsTechStack(t *testing.T) {
 func TestInitReadmeOnlyRepoAsksTechStack(t *testing.T) {
 	r := newRunner(t)
 	root := t.TempDir()
-	for _, name := range []string{"README.md", "LICENSE", ".gitignore"} {
+	for _, name := range []string{"README.md", "LICENSE-MIT", "CONTRIBUTING.md", ".gitignore"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("scaffolding\n"), 0o644); err != nil {
 			t.Fatalf("WriteFile(%q) error = %v", name, err)
 		}
@@ -538,8 +538,12 @@ func TestGreenfieldDir(t *testing.T) {
 		{name: "readme", setup: []string{"README.md"}, want: true},
 		{name: "scaffolding", setup: []string{"README.md", "LICENSE", ".gitignore", ".github/", "docs/"}, want: true},
 		{name: "license only", setup: []string{"LICENSE.txt"}, want: true},
+		{name: "license variants", setup: []string{"README.md", "LICENSE-MIT", "LICENSE-APACHE", "COPYING"}, want: true},
+		{name: "community files", setup: []string{"README.md", "UNLICENSE", "CHANGELOG.md", "CONTRIBUTING.md"}, want: true},
+		{name: "docs as file", setup: []string{"README.md", "docs"}},
 		{name: "go source", setup: []string{"README.md", "main.go"}},
 		{name: "python source", setup: []string{"README.md", "app.py"}},
+		{name: "license source", setup: []string{"README.md", "license.go"}},
 		{name: "nested source", setup: []string{"README.md", "src/main.go"}},
 		{name: "unknown directory", setup: []string{"cmd/"}},
 	}

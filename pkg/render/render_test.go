@@ -485,6 +485,62 @@ func TestClassifyStatuses(t *testing.T) {
 	}
 }
 
+// TestClassifyWaiting pins the remaining board parity gap: a todo task that is
+// only waiting on an unmet dependency is "waiting" on the web board, not
+// "blocked". A ready todo still gets a ready class, so the waiting case must not
+// swallow ordinary ready work.
+func TestClassifyWaiting(t *testing.T) {
+	blocker := task("blocker", core.StatusInProgress)
+	waiting := task("waiting", core.StatusTodo, "blocker")
+	ready := task("ready", core.StatusTodo)
+	view := statusView(t, blocker, waiting, ready)
+	if got := view.Classify(*waiting); got != ClassWaiting {
+		t.Fatalf("Classify(dep-blocked todo) = %q, want %q", got, ClassWaiting)
+	}
+	if got := view.Classify(*ready); got != ClassReadyAgent && got != ClassReadyHuman {
+		t.Fatalf("Classify(ready todo) = %q, want a ready class", got)
+	}
+}
+
+// TestWaitingClassRendersAcrossFormats proves the waiting class reaches every
+// render format, not only the classifier: tree, json, and html all report what
+// the web board shows for a dep-blocked todo.
+func TestWaitingClassRendersAcrossFormats(t *testing.T) {
+	blocker := task("blocker", core.StatusInProgress)
+	waiting := task("waiting", core.StatusTodo, "blocker")
+	view := statusView(t, blocker, waiting)
+
+	if tree := renderString(t, Tree{}, view); !strings.Contains(tree, "waiting [waiting]") {
+		t.Fatalf("tree render missing waiting class:\n%s", tree)
+	}
+
+	var doc struct {
+		Tasks []struct {
+			ID    string `json:"id"`
+			Class string `json:"class"`
+		} `json:"tasks"`
+	}
+	out := renderString(t, JSON{}, view)
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("json render invalid: %v\n%s", err, out)
+	}
+	classes := map[string]string{}
+	for _, entry := range doc.Tasks {
+		classes[entry.ID] = entry.Class
+	}
+	if got := classes["waiting"]; got != "waiting" {
+		t.Fatalf("json class for dep-blocked todo = %q, want %q\n%s", got, "waiting", out)
+	}
+
+	html := renderString(t, HTML{}, view)
+	if !strings.Contains(html, `class="chip waiting"`) {
+		t.Fatalf("html output missing waiting chip class:\n%s", html)
+	}
+	if !strings.Contains(html, ">waiting</span>") {
+		t.Fatalf("html output missing 'waiting' chip label:\n%s", html)
+	}
+}
+
 // TestJSONRenderLabelsInProgress is the reported bug: `ft graph render --format
 // json` labelled an in-progress task "blocked".
 func TestJSONRenderLabelsInProgress(t *testing.T) {

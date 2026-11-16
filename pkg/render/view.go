@@ -56,8 +56,12 @@ const (
 	ClassReadyHuman Class = "ready-human"
 	ClassInProgress Class = "in-progress"
 	ClassBlocked    Class = "blocked"
-	ClassCycle      Class = "cycle"
-	ClassCapture    Class = "capture"
+	// ClassWaiting is an unresolved task that is neither ready nor explicitly
+	// blocked, such as a todo still waiting on an unmet dependency. It mirrors
+	// the web board's waiting column, which both surfaces must agree on.
+	ClassWaiting Class = "waiting"
+	ClassCycle   Class = "cycle"
+	ClassCapture Class = "capture"
 )
 
 type info struct {
@@ -180,8 +184,10 @@ func (v View) Classify(task core.Ticket) Class {
 		return ClassReadyAgent
 	case derived.readyHuman[task.ID]:
 		return ClassReadyHuman
-	default:
+	case task.Status == core.StatusBlocked:
 		return ClassBlocked
+	default:
+		return ClassWaiting
 	}
 }
 

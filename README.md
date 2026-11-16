@@ -179,11 +179,11 @@ ft run --goal <task|milestone> --sandbox openshell --harness opencode2 --max-tas
   both. The launched session inherits the selected store.
 
 - `--sandbox` and `--harness` resolve flag > `FACTOTUM_RUN_*` > committed project `[run]` > machine
-  `[run]`. On a terminal an unset one prompts once and saves the answer; with no configured project
-  it saves to machine scope and says why (project scope needs a pinned project, so it is not
-  offered). Non-interactively, an unset one is an error. The `local` backend is unsandboxed, warns
-  when it starts, and must be opted in explicitly: `--allow-host`, `run.allow_host`, or the
-  interactive prompt, which asks (default no) and records `run.allow_host = true` in the user
+  `[run]`. With stdin and stdout both on a terminal an unset one prompts once and saves the answer;
+  with no configured project it saves to machine scope and says why (project scope needs a pinned
+  project, so it is not offered). Non-interactively, an unset one is an error. The `local` backend is
+  unsandboxed, warns when it starts, and must be opted in explicitly: `--allow-host`, `run.allow_host`,
+  or the interactive prompt, which asks (default no) and records `run.allow_host = true` in the user
   config.
 - Sandboxes: `local` (dev only), `openshell`, and `docker`. Harnesses: `opencode2` (OpenCode V2,
   preferred, image `ghcr.io/anomalyco/opencode:2.0.27`), `opencode` (OpenCode V1, image

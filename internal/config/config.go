@@ -399,9 +399,10 @@ func ExpandPath(path string) string {
 
 // ProjectRoot returns the absolute project root for a loaded project config
 // path: the directory that holds the .factotum directory, so a relative repo
-// Path resolves against the checkout's root. The conventional
-// <root>/.factotum/config.toml drops the .factotum layer; any other file name
-// uses the config file's own directory. An empty path has no root and returns "".
+// Path resolves against the checkout's root. A config file whose parent
+// directory is .factotum resolves to that directory's parent, whatever the file
+// is called; a file anywhere else uses its own directory. An empty path has no
+// root and returns "".
 func ProjectRoot(configPath string) string {
 	if configPath == "" {
 		return ""

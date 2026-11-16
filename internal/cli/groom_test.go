@@ -3,12 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/khoinguyen/factotum/internal/config"
 	"github.com/khoinguyen/factotum/internal/groom"
@@ -484,8 +487,8 @@ func TestGroomCommandBoundsHarnessStderr(t *testing.T) {
 }
 
 // TestGroomCommandStructuredOutputOmitsStderrBlock keeps json/yaml failures
-// machine-readable: the harness's error stream is a text block only, so a
-// structured caller reads the error envelope without interleaved prose.
+// machine-readable: the harness's error stream never becomes an interleaved
+// text block, so a structured caller reads the envelope's fields alone.
 func TestGroomCommandStructuredOutputOmitsStderrBlock(t *testing.T) {
 	r := newRunner(t)
 	projectID, cfgPath := tasklessContext(t, r)
@@ -509,6 +512,111 @@ func TestGroomCommandStructuredOutputOmitsStderrBlock(t *testing.T) {
 	}
 	if strings.Contains(stderrOut, "agent said: no API key configured") {
 		t.Fatalf("structured groom output carried the text stderr block:\n%s", stderrOut)
+	}
+}
+
+// runErrorLimit is pkg/app's defaultRunErrorLimit: the harness stderr tail a
+// failed run keeps.
+const runErrorLimit = 4096
+
+// groomFailureEnvelope runs one failing groom session in format and returns the
+// structured error envelope cmd/factotum prints for the failure.
+func groomFailureEnvelope(t *testing.T, format, stderr string) (string, error) {
+	t.Helper()
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("task", "create", "-p", projectID, "-t", "Add widget")
+
+	promptPath := filepath.Join(t.TempDir(), "prompt.md")
+	mustWrite(t, promptPath, "# Grooming session prompt\n")
+
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stderr: []byte(stderr), ExitCode: 3})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	_, commandErr, err := r.runSplitErr("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath,
+		"-o", format, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+	if !errors.Is(err, app.ErrRunFailed) {
+		t.Fatalf("groom error = %v, want ErrRunFailed\nstderr:\n%s", err, commandErr)
+	}
+	var envelope bytes.Buffer
+	PrintError(&envelope, format, err)
+	return envelope.String(), err
+}
+
+// decodeGroomFailureEnvelope parses a structured failure payload, proving it is
+// valid json/yaml, and fails the test with the payload when it is not.
+func decodeGroomFailureEnvelope(t *testing.T, format, payload string, v any) {
+	t.Helper()
+	var err error
+	switch format {
+	case "json":
+		err = json.Unmarshal([]byte(payload), v)
+	case "yaml":
+		err = yaml.Unmarshal([]byte(payload), v)
+	}
+	if err != nil {
+		t.Fatalf("structured failure payload is not valid %s: %v\n%s", format, err, payload)
+	}
+}
+
+// TestGroomCommandStructuredFailureCarriesHarnessStderr proves a failed session
+// under -o json|yaml names why in the error envelope, not only its exit code: the
+// harness's bounded stderr tail rides in the same `stderr` field `ft run` emits,
+// and identical failures stay byte-identical.
+func TestGroomCommandStructuredFailureCarriesHarnessStderr(t *testing.T) {
+	const tail = "agent said: no API key configured"
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			payload, groomErr := groomFailureEnvelope(t, format, tail+"\n")
+			var envelope struct {
+				Code    string `json:"code" yaml:"code"`
+				Message string `json:"message" yaml:"message"`
+				Stderr  string `json:"stderr" yaml:"stderr"`
+			}
+			decodeGroomFailureEnvelope(t, format, payload, &envelope)
+			if want := ErrorCode(groomErr); envelope.Code != want {
+				t.Fatalf("envelope code = %q, want %q\n%s", envelope.Code, want, payload)
+			}
+			if !strings.Contains(envelope.Message, "harness failed") {
+				t.Fatalf("envelope message lost the failure: %q", envelope.Message)
+			}
+			if envelope.Stderr != tail {
+				t.Fatalf("envelope stderr = %q, want %q\n%s", envelope.Stderr, tail, payload)
+			}
+			again, _ := groomFailureEnvelope(t, format, tail+"\n")
+			if again != payload {
+				t.Fatalf("identical failures produced different payloads:\n%s\n%s", payload, again)
+			}
+		})
+	}
+}
+
+// TestGroomCommandStructuredFailureBoundsHarnessStderr pins that the structured
+// payload carries the bounded tail, not the whole stream: a chatty harness cannot
+// flood a machine consumer, and the reason it failed last is still there.
+func TestGroomCommandStructuredFailureBoundsHarnessStderr(t *testing.T) {
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			payload, _ := groomFailureEnvelope(t, format,
+				"start-of-stream\n"+strings.Repeat("x", 6000)+"\nfatal: no API key\n")
+			var envelope struct {
+				Stderr string `json:"stderr" yaml:"stderr"`
+			}
+			decodeGroomFailureEnvelope(t, format, payload, &envelope)
+			for _, want := range []string{"... [truncated]", "fatal: no API key"} {
+				if !strings.Contains(envelope.Stderr, want) {
+					t.Fatalf("envelope stderr missing %q: %q", want, envelope.Stderr)
+				}
+			}
+			if strings.Contains(envelope.Stderr, "start-of-stream") {
+				t.Fatalf("envelope carried the head of an unbounded stream: %q", envelope.Stderr)
+			}
+			if got, limit := len(envelope.Stderr), runErrorLimit+len("\n... [truncated]"); got > limit {
+				t.Fatalf("envelope stderr = %d bytes, want at most %d", got, limit)
+			}
+		})
 	}
 }
 

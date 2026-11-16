@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,7 @@ const (
 	signalsReadyThenPromotes = `
 : > "$1"
 while [ ! -e "$2/release" ]; do sleep 0.01; done
+: > "$2/door-$3"
 printf '{"id":"%s","created":true,"err":""}' "$3" > "$2/result-$3.json"
 `
 	neverSignals = `exec sleep 30`
@@ -31,11 +33,12 @@ printf '{"id":"%s","created":true,"err":""}' "$3" > "$2/result-$3.json"
 // stubChild is a starter that runs script as the child, handing it its ready
 // path, the shared directory and the task id.
 func stubChild(script string) starter {
-	return func(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error) {
+	return func(dir, path string, job Job, releaseBy time.Time, gate *os.File) (*exec.Cmd, *bytes.Buffer, error) {
 		output := &bytes.Buffer{}
 		cmd := exec.Command("/bin/sh", "-c", script, "sh",
 			filepath.Join(dir, "ready-"+string(job.Task)), dir, string(job.Task))
 		cmd.Stdout, cmd.Stderr = output, output
+		cmd.Stdin = gate
 		if err := cmd.Start(); err != nil {
 			return nil, output, err
 		}
@@ -52,14 +55,14 @@ func TestPromoteReplacesAChildThatNeverSignals(t *testing.T) {
 	var stalled *exec.Cmd
 	starts := 0
 	working := stubChild(signalsReadyThenPromotes)
-	start := func(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error) {
+	start := func(dir, path string, job Job, releaseBy time.Time, gate *os.File) (*exec.Cmd, *bytes.Buffer, error) {
 		starts++
 		if starts == 1 {
-			cmd, output, err := stubChild(neverSignals)(dir, path, job, releaseBy)
+			cmd, output, err := stubChild(neverSignals)(dir, path, job, releaseBy, gate)
 			stalled = cmd
 			return cmd, output, err
 		}
-		return working(dir, path, job, releaseBy)
+		return working(dir, path, job, releaseBy, gate)
 	}
 
 	results := promoteWith(t, start, t.TempDir(),
@@ -86,7 +89,7 @@ func TestStartReadyStopsAtThePhaseBudget(t *testing.T) {
 	dir := t.TempDir()
 	begin := time.Now()
 	_, _, attempts, err := startReady(stubChild(neverSignals), dir, t.TempDir(),
-		Job{Capture: "cap-1", Task: "t-1"}, begin.Add(time.Minute), 50*time.Millisecond, begin.Add(300*time.Millisecond))
+		Job{Capture: "cap-1", Task: "t-1"}, begin.Add(time.Minute), nil, 50*time.Millisecond, begin.Add(300*time.Millisecond))
 	if err == nil {
 		t.Fatal("startReady reported a ready child although none ever signalled")
 	}
@@ -120,6 +123,94 @@ func TestWaitForFileHonoursItsDeadline(t *testing.T) {
 	}
 	if elapsed := time.Since(begin); elapsed > 2*time.Second {
 		t.Fatalf("waitForFile waited %s past its 40ms deadline", elapsed)
+	}
+}
+
+// TestOverlappedNeedsTheSpansToShareTime pins the evidence the SameCapture guard
+// now requires: spans that share no instant are not a race, and spans that only
+// touch are not either.
+func TestOverlappedNeedsTheSpansToShareTime(t *testing.T) {
+	tests := []struct {
+		name    string
+		results []Result
+		want    bool
+	}{
+		{name: "no results", results: nil, want: false},
+		{name: "one promotion", results: []Result{{Start: 1, End: 5}}, want: false},
+		{name: "disjoint", results: []Result{{Start: 1, End: 2}, {Start: 3, End: 4}}, want: false},
+		{name: "touching but not sharing", results: []Result{{Start: 1, End: 2}, {Start: 2, End: 3}}, want: false},
+		{name: "nested", results: []Result{{Start: 1, End: 9}, {Start: 2, End: 3}}, want: true},
+		{name: "partial", results: []Result{{Start: 1, End: 4}, {Start: 3, End: 6}}, want: true},
+		{name: "only the last two", results: []Result{{Start: 1, End: 2}, {Start: 5, End: 8}, {Start: 7, End: 9}}, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := overlapped(tc.results); got != tc.want {
+				t.Fatalf("overlapped(%+v) = %t, want %t", tc.results, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAwaitGateHoldsUntilOneByteArrives pins the child half of the start: the
+// promotion begins only once the parent's byte reaches it. The reader reports
+// that it has been entered and then blocks, so the check needs no timeout.
+func TestAwaitGateHoldsUntilOneByteArrives(t *testing.T) {
+	t.Setenv(gateEnv, "1")
+	entered := make(chan struct{})
+	open := make(chan struct{})
+	gate := readerFunc(func(p []byte) (int, error) {
+		close(entered)
+		<-open
+		p[0] = 0
+		return 1, nil
+	})
+	done := make(chan error, 1)
+	go func() { done <- awaitGate(gate) }()
+	<-entered
+	select {
+	case err := <-done:
+		t.Fatalf("awaitGate returned %v while the gate was still closed", err)
+	default:
+	}
+	close(open)
+	if err := <-done; err != nil {
+		t.Fatalf("awaitGate() error = %v after the parent's byte", err)
+	}
+}
+
+// TestAwaitGateIsOpenOutsideTheHarness keeps the in-process child (the deadline
+// test runs one) from reading whatever stdin the test process happens to have.
+func TestAwaitGateIsOpenOutsideTheHarness(t *testing.T) {
+	t.Setenv(gateEnv, "")
+	if err := awaitGate(readerFunc(func([]byte) (int, error) {
+		t.Error("awaitGate read its gate although the harness did not set one")
+		return 0, io.EOF
+	})); err != nil {
+		t.Fatalf("awaitGate() without the gate = %v, want no read at all", err)
+	}
+}
+
+// readerFunc lets a test stand in a reader that reports what it is asked to do.
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
+// TestAwaitDoorsFailsWhenAChildNeverArrives keeps the barrier honest: a child
+// that opens its handle and then dies instead of reaching its promotion fails
+// the phase with its own message, so the parent neither hangs nor starts the
+// remaining promotions without it.
+func TestAwaitDoorsFailsWhenAChildNeverArrives(t *testing.T) {
+	begin := time.Now()
+	err := awaitDoors(t.TempDir(), []Job{{Capture: "cap-1", Task: "t-1"}}, begin.Add(120*time.Millisecond))
+	if err == nil {
+		t.Fatal("awaitDoors reported a child that never reached its promotion")
+	}
+	if !strings.Contains(err.Error(), "phase budget") || !strings.Contains(err.Error(), "t-1") {
+		t.Fatalf("error = %v; it must name the child and the budget that ran out", err)
+	}
+	if elapsed := time.Since(begin); elapsed > 3*time.Second {
+		t.Fatalf("awaitDoors gave up after %s, want about its 120ms deadline", elapsed)
 	}
 }
 

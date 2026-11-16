@@ -39,7 +39,9 @@ milestone, the `--toward` target, and priority. Use it instead of scanning the
 list by hand. When a task is missing from the ranking, `ft task next --explain`
 lists each excluded task with its reason, applying the same
 `--for`/`--label`/`--repo`/`--groomed`/`-n` filters as ranking, and `ft task get
-<task>` prints a `not ready because:` line for the same reason.
+<task>` prints a `not ready because:` line for the same reason. `--for <agent>`
+also ranks the ready-human tasks gating its own work, so the human decision it
+waits on is never buried.
 
 ## Watch the factory
 

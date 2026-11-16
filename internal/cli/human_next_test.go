@@ -38,4 +38,14 @@ func TestTaskNextSurfacesTheHumanBlocker(t *testing.T) {
 	if strings.Contains(forAgent, unrelated) {
 		t.Fatalf("task next --for agent listed unrelated human work %s:\n%s", unrelated, forAgent)
 	}
+
+	// Another actor's gated work does not put its human blocker in this actor's
+	// ranking: only the actor's own waiting work contributes.
+	otherHuman := firstField(t, r.run("task", "create", "-p", projectID, "-t", "decide the other thing", "--groomed", "--acceptance", "decided"))
+	otherGated := firstField(t, r.run("task", "create", "-p", projectID, "-t", "build the other thing", "--groomed", "--acceptance", "works", "--dep", otherHuman))
+	r.run("task", "assign", otherGated, "--actor", "builder-t-2")
+	forBuilderOne := r.run("task", "next", "-p", projectID, "--for", "builder-t-1")
+	if strings.Contains(forBuilderOne, otherHuman) {
+		t.Fatalf("task next --for builder-t-1 listed builder-t-2's blocker %s:\n%s", otherHuman, forBuilderOne)
+	}
 }

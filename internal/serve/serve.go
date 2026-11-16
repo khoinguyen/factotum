@@ -713,6 +713,13 @@ func (s *Server) page(ctx context.Context) (*pageData, error) {
 		case task.Status == core.StatusInProgress || task.Status == core.StatusReadyForReview:
 			page.InFlight = append(page.InFlight, view)
 		case ready:
+			// Ready human work still waits on a person, so the board shows it in
+			// the waiting lane as well as the Human next list (Khoi 2026-10-14: a
+			// human-next item blocks the capture's agent work and must not be
+			// buried). Ready agent work is unaffected.
+			if vs.humanSet[id] {
+				page.Waiting = append(page.Waiting, view)
+			}
 		case reason != nil:
 			page.Waiting = append(page.Waiting, view)
 		}
@@ -917,17 +924,20 @@ func (s *Server) buildViews(ctx context.Context, snapshot *app.Snapshot, artifac
 			Milestone: task.IsMilestone(),
 			URL:       taskOrIdeaURL(task),
 		}
+		_, reason := snapshot.Graph.Readiness(id)
 		switch {
-		case !task.Kind.CapturedByHuman() && class == "needs-human":
-			// Name the human-next item that gates the work, not the generic
-			// unresolved dependency it is derived from.
+		case task.Kind.CapturedByHuman():
+		case class == "needs-human":
+			// The human is the specific blocker, but the detail stays the graph's
+			// full unresolved-dependency list so the board agrees with
+			// `task next --explain` about everything still missing.
 			view.Reason = ReasonNeedsHuman
-			view.Detail = joinIDs(blockers)
-		case !task.Kind.CapturedByHuman():
-			if _, reason := snapshot.Graph.Readiness(id); reason != nil && reason.Code != graph.ReasonInProgress {
-				view.Reason = string(reason.Code)
+			if reason != nil {
 				view.Detail = reason.Detail
 			}
+		case reason != nil && reason.Code != graph.ReasonInProgress:
+			view.Reason = string(reason.Code)
+			view.Detail = reason.Detail
 		}
 		if o, ok := vs.origin[id]; ok {
 			view.Origin = o.ID
@@ -1259,16 +1269,6 @@ func idSet(ids []core.TicketID) map[core.TicketID]bool {
 		set[id] = true
 	}
 	return set
-}
-
-// joinIDs renders ticket ids the way the graph reports an unresolved dependency
-// detail, so a needs-human reason reads like every other readiness detail.
-func joinIDs(ids []core.TicketID) string {
-	parts := make([]string, 0, len(ids))
-	for _, id := range ids {
-		parts = append(parts, string(id))
-	}
-	return strings.Join(parts, ", ")
 }
 
 func taskURL(id core.TicketID) string { return "/task/" + string(id) }

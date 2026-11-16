@@ -158,3 +158,107 @@ func TestAgentTaskGatedByHumanNextIsClassifiedNeedsHuman(t *testing.T) {
 		t.Fatalf("gated detail = %q, want it to name %s", view.Detail, human.ID)
 	}
 }
+
+// The needs-human reason names the human, but it must not hide the task's other
+// unresolved blockers: the detail stays the graph's full unresolved-dependency
+// list, so the board and `task next --explain` agree on what is still missing.
+func TestNeedsHumanDetailKeepsTheOtherBlockers(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	project := f.addProject(t, "acme", "Acme")
+	agent, err := f.actors.Add(ctx, core.ActorAgent, "bot")
+	if err != nil {
+		t.Fatalf("Add(actor) error = %v", err)
+	}
+	human, err := f.tasks.Add(ctx, app.TicketInput{ProjectID: project.ID, Kind: core.KindTask, Title: "pick the approach"})
+	if err != nil {
+		t.Fatalf("Add(human) error = %v", err)
+	}
+	other, err := f.tasks.Add(ctx, app.TicketInput{ProjectID: project.ID, Kind: core.KindTask, Title: "still moving"})
+	if err != nil {
+		t.Fatalf("Add(other) error = %v", err)
+	}
+	if _, err := f.tasks.SetStatus(ctx, other.ID, core.StatusInProgress); err != nil {
+		t.Fatalf("SetStatus(other) error = %v", err)
+	}
+	gated, err := f.tasks.Add(ctx, app.TicketInput{
+		ProjectID: project.ID, Kind: core.KindTask, Title: "build it",
+		AssigneeID: &agent.ID, Groomed: true, AcceptanceCriteria: []string{"it works"},
+	})
+	if err != nil {
+		t.Fatalf("Add(gated) error = %v", err)
+	}
+	for _, dep := range []core.TicketID{human.ID, other.ID} {
+		if _, err := f.tasks.AddDep(ctx, gated.ID, dep); err != nil {
+			t.Fatalf("AddDep(%s) error = %v", dep, err)
+		}
+	}
+
+	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(ctx)
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+	view, ok := findTask(page.Waiting, gated.ID)
+	if !ok {
+		t.Fatalf("Waiting = %v, want the gated %s", taskIDs(page.Waiting), gated.ID)
+	}
+	if view.Reason != ReasonNeedsHuman {
+		t.Fatalf("gated reason = %q, want %q", view.Reason, ReasonNeedsHuman)
+	}
+	for _, want := range []core.TicketID{human.ID, other.ID} {
+		if !strings.Contains(view.Detail, string(want)) {
+			t.Fatalf("gated detail = %q, want it to keep %s", view.Detail, want)
+		}
+	}
+}
+
+// Khoi 2026-10-14: a human-next item must show in the work board's
+// Waiting / blocked lane, not only in the separate "Human next" panel, because
+// the capture is blocked on a person. Ordinary ready agent work stays out of the
+// lane.
+func TestWaitingLaneCarriesHumanNextWork(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	project := f.addProject(t, "acme", "Acme")
+	agent, err := f.actors.Add(ctx, core.ActorAgent, "bot")
+	if err != nil {
+		t.Fatalf("Add(actor) error = %v", err)
+	}
+	human, err := f.tasks.Add(ctx, app.TicketInput{ProjectID: project.ID, Kind: core.KindTask, Title: "pick the approach"})
+	if err != nil {
+		t.Fatalf("Add(human) error = %v", err)
+	}
+	agentTask, err := f.tasks.Add(ctx, app.TicketInput{
+		ProjectID: project.ID, Kind: core.KindTask, Title: "agent work",
+		AssigneeID: &agent.ID, Groomed: true, AcceptanceCriteria: []string{"works"},
+	})
+	if err != nil {
+		t.Fatalf("Add(agent) error = %v", err)
+	}
+
+	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(ctx)
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+	if !hasTask(page.NextHuman, human.ID) {
+		t.Fatalf("NextHuman = %v, want %s", taskIDs(page.NextHuman), human.ID)
+	}
+	view, ok := findTask(page.Waiting, human.ID)
+	if !ok {
+		t.Fatalf("Waiting = %v, want the human-next %s in the lane too", taskIDs(page.Waiting), human.ID)
+	}
+	if view.Class != "ready-human" || view.Chip != "human next" {
+		t.Fatalf("lane view = (class %q, chip %q), want (ready-human, human next)", view.Class, view.Chip)
+	}
+	if !hasTask(page.NextAgent, agentTask.ID) || hasTask(page.Waiting, agentTask.ID) {
+		t.Fatalf("ready agent work %s must stay out of the waiting lane", agentTask.ID)
+	}
+}

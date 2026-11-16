@@ -267,9 +267,33 @@ func (d *Deps) bindCaller(cmd *cobra.Command) {
 			}
 		case d.ActorRef != "":
 			d.bindActor(cmd.Context())
+		default:
+			d.warnCallerHint()
 		}
 	}
 	cmd.SetContext(app.WithCaller(cmd.Context(), core.ActorID(d.ActorRef), d.Session))
+}
+
+// warnCallerHint surfaces a best-effort guess at the agent CLI this invocation
+// runs under, without ever attributing it. It runs only when no identity was
+// named at all: an explicit --actor, FACTOTUM_CALLER, or configured default
+// keeps its own path (including the drop warning for an unregistered one), so a
+// guess can never contradict a user-supplied identity. The warning says the
+// guess is unverified and the invocation stays unattributed, and nothing is
+// recorded - no event, note author, assignee, or reminder target carries it.
+func (d *Deps) warnCallerHint() {
+	if d.CallerHint == nil {
+		return
+	}
+	hint := d.CallerHint()
+	if hint == nil || hint.Agent == "" {
+		return
+	}
+	evidence := hint.Evidence
+	if hint.Terminal {
+		evidence += "; stdin is a terminal"
+	}
+	d.warnf("probable agent caller %q (unverified heuristic: %s); this invocation stays unattributed - set FACTOTUM_CALLER or --actor to name the actor", hint.Agent, evidence)
 }
 
 // bindActor resolves the actor this invocation names — an explicit --actor or a

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"text/tabwriter"
 
@@ -369,14 +370,21 @@ func (d *Deps) printTable(header []string, rows [][]string) {
 	_ = buffered.Flush()
 }
 
-func (d *Deps) printJSON(value any) error {
-	encoder := json.NewEncoder(d.Out)
+func (d *Deps) printJSON(value any) error { return writeJSON(d.Out, value) }
+
+func (d *Deps) printYAML(value any) error { return writeYAML(d.Out, value) }
+
+// writeJSON writes value as indented json. It is a free function so a command
+// whose output the byte guard measures can render into a buffer and get the
+// same bytes a caller receives.
+func writeJSON(w io.Writer, value any) error {
+	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(value)
 }
 
-func (d *Deps) printYAML(value any) error {
-	encoder := yaml.NewEncoder(d.Out)
+func writeYAML(w io.Writer, value any) error {
+	encoder := yaml.NewEncoder(w)
 	encoder.SetIndent(2)
 	defer func() { _ = encoder.Close() }()
 	return encoder.Encode(value)

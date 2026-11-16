@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -17,6 +18,29 @@ type skillDoc struct {
 	Name        string `json:"name" yaml:"name"`
 	Description string `json:"description" yaml:"description"`
 	Body        string `json:"body" yaml:"body"`
+}
+
+// renderSkillDoc writes doc exactly as `ft skill get` prints it: the raw body
+// for text output (with the trailing newline when the body lacks one), and the
+// whole document for json/yaml. The output-bound guard renders through this
+// function, so a skill the guard says fits is one a caller receives whole in
+// every format - json escapes the body and yaml indents it, so each shape has
+// its own size.
+func renderSkillDoc(w io.Writer, format string, doc skillDoc) error {
+	switch format {
+	case "json":
+		return writeJSON(w, doc)
+	case "yaml":
+		return writeYAML(w, doc)
+	}
+	if _, err := io.WriteString(w, doc.Body); err != nil {
+		return err
+	}
+	if strings.HasSuffix(doc.Body, "\n") {
+		return nil
+	}
+	_, err := io.WriteString(w, "\n")
+	return err
 }
 
 func newSkillCommand(deps *Deps) *cobra.Command {
@@ -66,12 +90,7 @@ func newSkillCommand(deps *Deps) *cobra.Command {
 				return err
 			}
 			doc := skillDoc{Name: skill.Name, Description: skill.Description, Body: skill.Body}
-			return deps.emit(doc, func() {
-				deps.printf("%s", skill.Body)
-				if !strings.HasSuffix(skill.Body, "\n") {
-					deps.printf("\n")
-				}
-			})
+			return renderSkillDoc(deps.Out, deps.OutputFormat, doc)
 		},
 	}
 

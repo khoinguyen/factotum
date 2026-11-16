@@ -63,6 +63,14 @@ async function waitFor(predicate, timeoutMs = 1000) {
   throw new Error("timed out waiting for condition");
 }
 
+// deferred is a promise whose settlement the test controls, standing in for a
+// round trip that never returns (a wedged claim or injection).
+function deferred() {
+  let resolve;
+  const promise = new Promise((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
 function receiverFor(claimResults, injected, { inject, loadSession, saveSession } = {}) {
   const { run, calls } = fakeRun(claimResults);
   let intervalCleared = false;
@@ -548,6 +556,110 @@ test("a failed register is retried so a transient error cannot leave the receive
   await waitFor(() => injected.length === 1);
   assert.ok(attempts >= 2, `register attempts = ${attempts}; want a retry after the failed first attempt`);
   assert.match(injected[0].text, /after retry/);
+});
+
+test("a claim round trip that never returns stops renewing the lease", async (t) => {
+  // A wedged claim (a hung local ft, or a remote hub stalling mid-poll with no
+  // AbortSignal) keeps the loop *running* without completing a round trip. Health
+  // cannot be "the loop promise exists": that is the live-looking peer that
+  // quietly queues the reviewer reproduced.
+  const calls = [];
+  const logs = [];
+  const hung = deferred();
+  let tick = null;
+  let claimed = false;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        if (!claimed) {
+          claimed = true;
+          return hung.promise;
+        }
+        return new Promise(() => {});
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const config = { ...BASE_CONFIG, waitMs: 10 };
+  const receiver = createFactotumReceiver({
+    config,
+    call: cliCall(config, run),
+    inject: async () => {},
+    setIntervalFn: (fn) => { tick = fn; return 1; },
+    clearIntervalFn: () => {},
+    log: (entry) => logs.push(entry),
+  });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => calls.some((c) => c.includes("msg agent claim")));
+
+  // Well past twice the long-poll window (2 * waitMs) with no completed round
+  // trip: the lease must stop being renewed, and the receiver must say why once.
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await tick();
+  assert.equal(calls.some((c) => c.includes("msg agent heartbeat")), false, "a wedged claim must stop the heartbeat");
+  const stalls = () => logs.filter((entry) => /round trip/.test(entry)).length;
+  assert.equal(stalls(), 1, `stall log entries = ${JSON.stringify(logs)}; want exactly one`);
+
+  // A second tick inside the same stall does not repeat the line.
+  await tick();
+  assert.equal(stalls(), 1, "the stall is logged once, not every tick");
+
+  // When the round trip finally completes, the lease is renewed again.
+  hung.resolve({ code: 0, stdout: JSON.stringify({ found: false }), stderr: "" });
+  await waitFor(() => logs.some((entry) => /resumed/.test(entry)), 1000);
+  await tick();
+  await waitFor(() => calls.some((c) => c.includes("msg agent heartbeat")), 500);
+});
+
+test("an injection that never returns stops renewing the lease", async (t) => {
+  // Same stall class from the other side: the claim succeeded, but the session
+  // prompt never settles, so nothing is being delivered even though the loop is
+  // alive.
+  const calls = [];
+  const logs = [];
+  const hung = deferred();
+  let tick = null;
+  let claims = 0;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        claims += 1;
+        if (claims > 1) return new Promise(() => {});
+        return { code: 0, stdout: JSON.stringify({ found: true, message: { id: "m-hang", body: "stuck" } }), stderr: "" };
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const config = { ...BASE_CONFIG, waitMs: 10 };
+  const receiver = createFactotumReceiver({
+    config,
+    call: cliCall(config, run),
+    inject: async () => hung.promise,
+    setIntervalFn: (fn) => { tick = fn; return 1; },
+    clearIntervalFn: () => {},
+    log: (entry) => logs.push(entry),
+  });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => claims === 1);
+
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await tick();
+  assert.equal(calls.some((c) => c.includes("msg agent heartbeat")), false, "a wedged injection must stop the heartbeat");
+  assert.equal(
+    logs.filter((entry) => /round trip/.test(entry)).length,
+    1,
+    `logs = ${JSON.stringify(logs)}; want one stall line`,
+  );
 });
 
 test("an inert receiver stops renewing its lease so the hub sees it stale, not healthy", async (t) => {

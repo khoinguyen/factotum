@@ -44,6 +44,33 @@ func TestProbeVariantKillsTheHungTree(t *testing.T) {
 	}
 }
 
+// TestProbeVariantEndsAWorkerLeftByAnExitedBinary pins the probe's other trigger:
+// the binary can answer and exit on its own while a worker it forked is still in
+// the group. No bound expires then, so Cancel is never called and the group has
+// to be ended anyway - otherwise every successful `--version` of a
+// launcher-shaped binary abandons a live process.
+func TestProbeVariantEndsAWorkerLeftByAnExitedBinary(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "bg.pid")
+	bin := filepath.Join(dir, "opencode")
+	// The worker's output is redirected away from the inherited pipe, so the
+	// probe returns on the direct child's exit rather than on the worker.
+	script := "#!/bin/sh\nsleep 30 >/dev/null 2>&1 &\necho $! > " + pidFile + "\necho 1.19.0\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if got := probeVariant(bin, 5*time.Second); got != V1 {
+		t.Fatalf("probeVariant(answering binary) = %v, want V1", got)
+	}
+
+	pid := waitForPID(t, pidFile)
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	if !waitGone(pid) {
+		t.Fatalf("grandchild pid %d survived the probe's own exit", pid)
+	}
+}
+
 // waitForPID reads a pid the fake binary dropped in a file, waiting for it to
 // appear because the probe's bound can expire while the shell is still starting.
 func waitForPID(t *testing.T, path string) int {

@@ -323,7 +323,7 @@ ft run --goal t-abc123 --sandbox local --harness opencode2 --allow-host --max-ta
 ```
 
 A run is a harness (one agent CLI end to end: image, invocation, model flag, prompt
-delivery, completion, output parsing) inside an isolation backend. The `local` backend
+delivery, output parsing) inside an isolation backend. The `local` backend
 runs the harness directly on the host with no isolation: dev-only, never the default, and
 refused until explicitly opted in with `--allow-host` or `run.allow_host` (machine-scoped,
 ignored from the committed project file). It can read host credentials, reach the network,

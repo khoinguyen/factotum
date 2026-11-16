@@ -31,12 +31,10 @@ type Harness struct {
 	entrypoint []string
 	user       string
 	delivery   Delivery
-	sentinel   string
 	fail       error
 }
 
-// New returns a fake harness named name. It delivers the prompt as an argument
-// and uses no completion sentinel until configured otherwise.
+// New returns a fake harness named name. It delivers the prompt as an argument.
 func New(name string) *Harness {
 	return &Harness{name: name, delivery: DeliveryArg}
 }
@@ -62,12 +60,6 @@ func (h *Harness) WithUser(user string) *Harness {
 // WithDelivery sets how the prompt reaches the process.
 func (h *Harness) WithDelivery(d Delivery) *Harness {
 	h.delivery = d
-	return h
-}
-
-// WithSentinel sets the output marker that marks the run complete.
-func (h *Harness) WithSentinel(s string) *Harness {
-	h.sentinel = s
 	return h
 }
 
@@ -126,21 +118,11 @@ func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 	return cmd, nil
 }
 
-func (h *Harness) Done(ev isolation.Event) bool {
-	return h.sentinel != "" && strings.Contains(ev.Message, h.sentinel)
-}
-
 func (h *Harness) Result(out []byte) (harness.Result, error) {
 	if h.fail != nil {
 		return harness.Result{}, h.fail
 	}
-	text := strings.TrimSpace(string(out))
-	if h.sentinel != "" {
-		if i := strings.Index(text, h.sentinel); i >= 0 {
-			text = strings.TrimSpace(text[:i])
-		}
-	}
-	return harness.Result{Output: text}, nil
+	return harness.Result{Output: strings.TrimSpace(string(out))}, nil
 }
 
 func (h *Harness) promptPath(req harness.Request) string {

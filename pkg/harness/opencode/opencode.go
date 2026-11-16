@@ -7,7 +7,7 @@
 // vocabulary: Spec names the base image and working identity;
 // Command builds the headless invocation (opencode run with the model flag and
 // the prompt as the final positional) or, for an interactive request, the
-// terminal-attached TUI invocation; Done and Result read the agent's output. V2
+// terminal-attached TUI invocation; Result parses the agent's output. V2
 // launches on its own private server in both modes, so the receiver plugin it
 // loads inherits the run's environment.
 //
@@ -195,9 +195,6 @@ type Options struct {
 	// "OPENROUTER_API_KEY". CredentialEnvVar and Provider must both be set for
 	// the harness to declare a credential.
 	CredentialEnvVar string
-	// Sentinel marks the run complete when it appears in the agent's output. It
-	// is empty by default, so completion is then the process exit.
-	Sentinel string
 	// Args are extra arguments passed through before the prompt, e.g.
 	// {"--agent", "build"} or {"--auto"} to let the agent act without
 	// permission prompts.
@@ -213,7 +210,6 @@ type Harness struct {
 	model            string
 	provider         string
 	credEnv          string
-	sentinel         string
 	args             []string
 	interactiveModel bool
 	standalone       bool
@@ -231,7 +227,6 @@ func New(opts Options) *Harness {
 		model:            opts.Model,
 		provider:         opts.Provider,
 		credEnv:          opts.CredentialEnvVar,
-		sentinel:         opts.Sentinel,
 		args:             append([]string(nil), opts.Args...),
 		interactiveModel: v.interactiveModel(),
 		standalone:       v.privateServer(),
@@ -345,27 +340,10 @@ func (h *Harness) appendStandalone(argv []string) []string {
 	return argv
 }
 
-// Done reports whether ev is the configured completion sentinel. It matches
-// within a single streamed event, so Result on the full stdout is the
-// authoritative completion check. With no sentinel, Done always returns false
-// and the run completes on process exit.
-func (h *Harness) Done(ev isolation.Event) bool {
-	if h.sentinel == "" || ev.Kind != isolation.EventOutput {
-		return false
-	}
-	return strings.Contains(ev.Message, h.sentinel)
-}
-
-// Result parses the agent's stdout: it trims whitespace, removes the completion
-// sentinel if present, and reports whether that sentinel fired.
+// Result parses the agent's stdout: it trims surrounding whitespace and returns
+// the text verbatim, including any line that looks like a completion marker.
 func (h *Harness) Result(out []byte) (harness.Result, error) {
-	text := strings.TrimSpace(string(out))
-	complete := false
-	if h.sentinel != "" && strings.Contains(text, h.sentinel) {
-		complete = true
-		text = strings.TrimSpace(strings.ReplaceAll(text, h.sentinel, ""))
-	}
-	return harness.Result{Output: text, Complete: complete}, nil
+	return harness.Result{Output: strings.TrimSpace(string(out))}, nil
 }
 
 // LocateBinary resolves name on the host PATH. The local launcher uses it to

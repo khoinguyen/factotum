@@ -1,10 +1,11 @@
 // Package harness defines the pluggable coding-agent harness port for `ft run`.
 //
 // A Harness knows one agent CLI end to end: its image and entrypoint, the
-// invocation and model flag, how the prompt reaches the process, how a run is
-// detected as complete, and how its output is parsed. It describes all of that
-// in the vocabulary of the isolation port (pkg/isolation), so any backend can
-// run any harness without either side knowing the other by name.
+// invocation and model flag, how the prompt reaches the process, and how its
+// output is parsed. A run is complete when its process exits; completion is not
+// a harness signal. It describes all of that in the vocabulary of the isolation
+// port (pkg/isolation), so any backend can run any harness without either side
+// knowing the other by name.
 //
 // Harnesses are registrations, not a hardcoded switch: concrete adapters live in
 // subpackages (for example pkg/harness/opencode, pkg/harness/claude) and
@@ -83,15 +84,11 @@ type Request struct {
 	Interactive bool
 }
 
-// Result is what a harness extracts from a completed run.
+// Result is what a harness extracts from a completed run. The run's exit code
+// comes from the isolation layer, not from the harness.
 type Result struct {
 	// Output is the agent's final output, however the harness defines it.
 	Output string
-	// ExitCode is the command's exit status.
-	ExitCode int
-	// Complete reports whether the harness's completion detection fired (as
-	// opposed to the process merely exiting).
-	Complete bool
 }
 
 // Harness is the port. Implementations must be safe for concurrent use.
@@ -106,9 +103,6 @@ type Harness interface {
 	// request builds the harness's TUI invocation and sets Command.TTY so the
 	// backend attaches a terminal.
 	Command(req Request) (isolation.Command, error)
-	// Done reports whether an event marks the run complete. A harness with no
-	// completion sentinel returns false; the run then completes on process exit.
-	Done(ev isolation.Event) bool
 	// Result parses the agent's output into a Result.
 	Result(out []byte) (Result, error)
 }

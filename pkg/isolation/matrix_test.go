@@ -34,23 +34,13 @@ func runCombo(backend isolation.IsolationBackend, h harness.Harness, req harness
 		return harness.Result{}, err
 	}
 
-	complete := false
-	for ev := range exec.Events() {
-		if h.Done(ev) {
-			complete = true
-		}
+	for range exec.Events() {
 	}
 	res, err := exec.Wait(ctx)
 	if err != nil {
 		return harness.Result{}, err
 	}
-	result, err := h.Result(res.Stdout)
-	if err != nil {
-		return harness.Result{}, err
-	}
-	result.ExitCode = res.ExitCode
-	result.Complete = complete
-	return result, nil
+	return h.Result(res.Stdout)
 }
 
 // TestMatrixComposesWithoutSpecialCasing proves the two ports compose across a
@@ -70,9 +60,8 @@ func runCombo(backend isolation.IsolationBackend, h harness.Harness, req harness
 // exercised for every combination.
 func TestMatrixComposesWithoutSpecialCasing(t *testing.T) {
 	const (
-		prompt   = "summarize the issue"
-		model    = "vendor/model-1"
-		sentinel = "TASK_COMPLETE"
+		prompt = "summarize the issue"
+		model  = "vendor/model-1"
 	)
 	tests := []struct {
 		name     string
@@ -92,15 +81,13 @@ func TestMatrixComposesWithoutSpecialCasing(t *testing.T) {
 
 			backend := fake.New(tc.backend)
 			backend.Program(
-				isolation.ExecResult{ExitCode: 0, Stdout: []byte(want + "\n" + sentinel + "\n")},
+				isolation.ExecResult{ExitCode: 0, Stdout: []byte(want + "\n")},
 				isolation.Event{Kind: isolation.EventOutput, Stream: isolation.StreamStdout, Message: want},
-				isolation.Event{Kind: isolation.EventOutput, Stream: isolation.StreamStdout, Message: sentinel},
 				isolation.Event{Kind: isolation.EventStatus, Message: "exited"},
 			)
 			h := harnessfake.New(tc.harness).
 				WithImage(image).
-				WithDelivery(tc.delivery).
-				WithSentinel(sentinel)
+				WithDelivery(tc.delivery)
 
 			result, err := runCombo(backend, h, harness.Request{
 				Prompt:  prompt,
@@ -113,12 +100,6 @@ func TestMatrixComposesWithoutSpecialCasing(t *testing.T) {
 			}
 			if result.Output != want {
 				t.Errorf("Output = %q, want %q", result.Output, want)
-			}
-			if !result.Complete {
-				t.Errorf("Complete = false, want the harness sentinel to fire")
-			}
-			if result.ExitCode != 0 {
-				t.Errorf("ExitCode = %d, want 0", result.ExitCode)
 			}
 
 			prepared := backend.Prepared()

@@ -28,6 +28,7 @@ const BASE_CONFIG = {
   pid: 7,
   waitMs: 25000,
   ttlMs: 90000,
+  retryMs: 5,
   sessionWaitMs: 30,
   msgUrl: "",
   token: "",
@@ -503,6 +504,141 @@ test("setupV2 registers, subscribes, injects a claimed message, and disposes", a
 
   await cleanup();
   assert.ok(calls.some((c) => c.includes("msg agent deregister")));
+});
+
+// --- receiver liveness (t-vo7dpanzuu) -------------------------------------
+//
+// A loop agent can sit TUI-alive and idle with an inert receiver: no claim, no
+// run, every handoff quietly queued. These pin the three silent paths that leave
+// it in that state and the signal that makes it visible without a screen.
+
+test("a failed register is retried so a transient error cannot leave the receiver silent", async (t) => {
+  // Registration used to be a single attempt whose failure start() rejected;
+  // the entrypoints swallow that rejection, so the agent kept a healthy TUI, no
+  // run, no claim loop and no retry - forever.
+  const injected = [];
+  const calls = [];
+  let attempts = 0;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        attempts += 1;
+        if (attempts === 1) return { code: 1, stdout: "", stderr: "store locked" };
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        if (calls.filter((c) => c.includes("msg agent claim")).length > 1) return new Promise(() => {});
+        return { code: 0, stdout: JSON.stringify({ found: true, message: { id: "m-retry", body: "after retry" } }), stderr: "" };
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const config = { ...BASE_CONFIG, retryMs: 5 };
+  const receiver = createFactotumReceiver({
+    config,
+    call: cliCall(config, run),
+    inject: async (sid, text) => { injected.push({ sid, text }); },
+    setIntervalFn: () => 1,
+    clearIntervalFn: () => {},
+  });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+
+  await receiver.start();
+  await waitFor(() => injected.length === 1);
+  assert.ok(attempts >= 2, `register attempts = ${attempts}; want a retry after the failed first attempt`);
+  assert.match(injected[0].text, /after retry/);
+});
+
+test("an inert receiver stops renewing its lease so the hub sees it stale, not healthy", async (t) => {
+  // `ft msg runs --live` reads liveness from the lease. A receiver with no
+  // session cannot claim, so renewing the lease would advertise a peer that is
+  // silently queueing every handoff - the failure this task is about.
+  const calls = [];
+  let tick = null;
+  let claims = 0;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        claims += 1;
+        if (claims > 1) return new Promise(() => {});
+        return { code: 0, stdout: JSON.stringify({ found: false }), stderr: "" };
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const receiver = createFactotumReceiver({
+    config: BASE_CONFIG,
+    call: cliCall(BASE_CONFIG, run),
+    inject: async () => {},
+    setIntervalFn: (fn) => { tick = fn; return 1; },
+    clearIntervalFn: () => {},
+  });
+  t.after(() => receiver.dispose());
+  await receiver.start();
+  assert.equal(typeof tick, "function", "start must arm the heartbeat");
+
+  // No session is ever announced: the receiver is parked, so it must not renew.
+  for (let i = 0; i < 3; i += 1) await tick();
+  assert.equal(
+    calls.some((c) => c.includes("msg agent heartbeat")),
+    false,
+    "a receiver that cannot claim must let its lease lapse instead of looking live",
+  );
+
+  // Once a session arrives the loop claims, and the lease is renewed again.
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await waitFor(() => calls.some((c) => c.includes("msg agent claim")));
+  await tick();
+  await waitFor(() => calls.some((c) => c.includes("msg agent heartbeat")), 500);
+});
+
+test("a parked receiver keeps retrying its persisted session instead of waiting for an event", async (t) => {
+  // A reload can find no session for a moment: the previous receiver's save is
+  // fire-and-forget, and storage can become readable after the first read. An
+  // idle agent gets no event, so a single failed lookup strands the receiver.
+  const injected = [];
+  let loads = 0;
+  const { receiver, calls } = receiverFor(
+    [{ found: true, message: { id: "m-late", from: "act-x", body: "late session" } }, { found: false }],
+    injected,
+    {
+      loadSession: async () => {
+        loads += 1;
+        return loads >= 3 ? "ses-late" : "";
+      },
+    },
+  );
+
+  t.after(() => receiver.dispose());
+  await receiver.start();
+  await waitFor(() => injected.length === 1, 2000);
+  assert.equal(injected[0].sid, "ses-late");
+  assert.ok(loads >= 3, `session loads = ${loads}; want the parked receiver to retry`);
+  assert.ok(calls.some((c) => c.includes("msg agent ack m-late") && c.includes("--state read")));
+});
+
+test("the V2 entrypoint logs receiver state so an inert session leaves evidence", async (t) => {
+  // The observed failures were diagnosed from a screen because the receiver said
+  // nothing. Registration and the session-less park must both leave a log line.
+  const entries = [];
+  const env = { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1", FACTOTUM_MSG_RETRY_MS: "5" };
+  const config = configFromEnv(env);
+  const { run } = fakeRun([]);
+  const ctx = {
+    session: { prompt: async () => {} },
+    event: { subscribe: async function* () { await new Promise(() => {}); } },
+  };
+
+  const cleanup = setupV2(ctx, { env, call: cliCall(config, run), log: (entry) => entries.push(entry) });
+  t.after(() => cleanup());
+  await waitFor(() => entries.some((entry) => /registered actor act-1 as run run-1/.test(entry)), 2000);
+  await waitFor(() => entries.some((entry) => /no opencode session to inject into/.test(entry)), 2000);
+
+  assert.ok(entries.length >= 2, `log entries = ${JSON.stringify(entries)}; want registration and the session-less park`);
 });
 
 test("setupV2 resumes the persisted session after a reload and delivers without an event", async () => {

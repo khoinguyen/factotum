@@ -80,9 +80,11 @@ resolve_title() {
   '
 }
 
-# parse_json <json> <key> prints the string/bool value of key, or nothing.
+# parse_json <json> <key> prints the string/bool value of key, or nothing. The
+# capture excludes the closing brace: when the key is last, "false}" is not a
+# boolean and would otherwise read as a live agent.
 parse_json() {
-  printf '%s\n' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",]*\)\"\{0,1\}.*/\1/p" | head -1
+  printf '%s\n' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" | head -1
 }
 
 send_json() { # <ref>; prints cmux agent message's JSON
@@ -168,7 +170,14 @@ if [ "$count" -eq 1 ]; then
     exit 0
   fi
   surface="$(parse_json "$json" recipient_surface_ref)"
-  [ -n "$surface" ] || surface="$(printf '%s' "$first" | cut -f5)"
+  if [ -z "$surface" ]; then
+    surface="$(printf '%s' "$first" | cut -f5)"
+    [ "$surface" = "-" ] && surface=""
+  fi
+  if [ -z "$surface" ]; then
+    printf 'cmux-msg: %s has no agent and no surface to paste into (pass an explicit surface ref)\n' "$ref" >&2
+    exit 1
+  fi
   paste_fallback "$surface" "$json"
   exit 0
 fi

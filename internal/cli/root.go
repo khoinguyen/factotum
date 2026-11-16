@@ -176,6 +176,12 @@ func NewRoot(deps *Deps) *cobra.Command {
 				return err
 			}
 
+			// A flag value the command can reject is checked before any store is
+			// opened, so an invocation that can never run leaves no database, lock,
+			// migration, or vector side index behind.
+			if err := deps.runFlagChecks(cmd); err != nil {
+				return err
+			}
 			if !needsCallerStore(cmd) {
 				deps.Attach(cfg, nil)
 				deps.bindCaller(cmd)

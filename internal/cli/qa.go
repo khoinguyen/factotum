@@ -107,7 +107,22 @@ func newQARecordCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "QA verdict: pass or fail (required)")
 	cmd.Flags().StringVarP(&opts.body, "body", "b", "", "the QA findings")
 	cmd.Flags().StringVarP(&opts.bodyFile, "body-file", "f", "", "read the QA findings from a file")
+	deps.validateBeforeStore(cmd, func(cmd *cobra.Command) error {
+		if !cmd.Flags().Changed("verdict") {
+			return nil // a missing --verdict is RunE's required-flag error
+		}
+		return validateQAVerdict(cmd, opts.verdict)
+	})
 	return cmd
+}
+
+// validateQAVerdict rejects a verdict outside the closed set, before the store is
+// opened (the root runs it via validateBeforeStore) and on the command's own path.
+func validateQAVerdict(cmd *cobra.Command, verdict string) error {
+	if !app.QAVerdict(verdict).Valid() {
+		return usageError(cmd, "unknown verdict %q; want pass or fail", verdict)
+	}
+	return nil
 }
 
 func (d *Deps) runQARecord(cmd *cobra.Command, captureID string, opts qaRecordOptions) error {
@@ -115,10 +130,10 @@ func (d *Deps) runQARecord(cmd *cobra.Command, captureID string, opts qaRecordOp
 	if err := requireFlags(cmd, "verdict"); err != nil {
 		return err
 	}
-	verdict := app.QAVerdict(opts.verdict)
-	if !verdict.Valid() {
-		return usageError(cmd, "unknown verdict %q; want pass or fail", opts.verdict)
+	if err := validateQAVerdict(cmd, opts.verdict); err != nil {
+		return err
 	}
+	verdict := app.QAVerdict(opts.verdict)
 	findings, err := qaFindings(opts)
 	if err != nil {
 		return usageError(cmd, "%v", err)

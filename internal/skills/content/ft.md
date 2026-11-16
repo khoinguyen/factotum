@@ -276,6 +276,9 @@ own, exiting non-zero when a check fails so a script can gate on it.
   database is rejected and an older one migrates only with `--store-opt migrate=yes` (after a backup);
   `ft version`/`ft skill` never open the store. If `ft` reports a newer schema, install a newer `ft`
   that matches it; never point an uninstalled branch binary at the real DB.
+- A value the command rejects for a name it must know (`--sandbox`, `--harness`,
+  `graph render --format`, `task next --rank`, a QA or architecture-review `--verdict`) is reported
+  before the store opens, so a mistyped flag never creates, migrates, or locks a database.
 - `ft task set <id> field=value ...` updates fields, including `not_before=YYYY-MM-DD`
   (or `+7d`) to defer a task and `not_before=` to clear it.
 

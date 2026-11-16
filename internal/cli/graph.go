@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -84,6 +85,12 @@ func newGraphCommand(deps *Deps) *cobra.Command {
 	renderCmd.Flags().StringVar(&out, "out", "", "write to a file instead of stdout (- for stdout)")
 	renderCmd.Flags().StringVar(&theme, "theme", "", "html theme: auto, light, or dark")
 	renderCmd.Flags().IntVar(&updates, "updates", 20, "number of recent events to include in the report")
+	deps.validateBeforeStore(renderCmd, func(cmd *cobra.Command) error {
+		if _, err := deps.Renderers.MustLookup(format); err != nil {
+			return usageError(cmd, "unknown format %q; available: %s", format, strings.Join(deps.Renderers.Names(), ", "))
+		}
+		return nil
+	})
 
 	cmd.AddCommand(renderCmd)
 	return requireSubcommand(cmd)

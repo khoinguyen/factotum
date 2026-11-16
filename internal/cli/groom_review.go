@@ -46,6 +46,12 @@ func newGroomReviewCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "tech-design verdict: "+verdictChoices())
 	cmd.Flags().StringVarP(&opts.body, "body", "b", "", "the reviewer's findings")
 	cmd.Flags().StringVarP(&opts.bodyFile, "body-file", "f", "", "read the reviewer's findings from a file")
+	deps.validateBeforeStore(cmd, func(cmd *cobra.Command) error {
+		if _, err := groom.ParseReviewVerdict(opts.verdict); err != nil {
+			return usageError(cmd, "%v", err)
+		}
+		return nil
+	})
 	return cmd
 }
 

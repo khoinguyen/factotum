@@ -493,6 +493,81 @@ func TestInitNonGreenfieldSkipsTechStack(t *testing.T) {
 	}
 }
 
+// TestInitReadmeOnlyRepoAsksTechStack pins the observed repro: a repository
+// created by `gh repo create --add-readme` holds README.md and other scaffolding
+// but no source files, so it is greenfield and must ask for the tech stack.
+func TestInitReadmeOnlyRepoAsksTechStack(t *testing.T) {
+	r := newRunner(t)
+	root := t.TempDir()
+	for _, name := range []string{"README.md", "LICENSE", ".gitignore"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("scaffolding\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", name, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	r.gitDetect = func(string) (gitRepo, bool) {
+		return gitRepo{Root: root, Remote: "git@github.com:acme/widget.git"}, true
+	}
+	r.isTerminal = terminal
+	p := &scriptedPrompter{t: t, confirms: []bool{true}, inputs: []string{"", "", "", "", "rust"}}
+	r.prompt = p
+
+	out := r.run("init", "-p")
+	if len(p.asked) != 6 || !strings.HasPrefix(p.asked[5], "input:Tech stack") {
+		t.Fatalf("prompt sequence = %v, want a tech-stack question after the README-only scaffolding", p.asked)
+	}
+	if !strings.Contains(out, "tech_stack: rust") {
+		t.Fatalf("init output missing the recorded tech stack:\n%s", out)
+	}
+	if project := readFile(t, r.projectPath); !strings.Contains(project, `tech_stack = "rust"`) {
+		t.Fatalf("project config missing the tech stack:\n%s", project)
+	}
+}
+
+// TestGreenfieldDir pins which directory shapes count as greenfield: repository
+// scaffolding alone is greenfield, while any real source entry is not.
+func TestGreenfieldDir(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup []string
+		want  bool
+	}{
+		{name: "empty", want: true},
+		{name: "readme", setup: []string{"README.md"}, want: true},
+		{name: "scaffolding", setup: []string{"README.md", "LICENSE", ".gitignore", ".github/", "docs/"}, want: true},
+		{name: "license only", setup: []string{"LICENSE.txt"}, want: true},
+		{name: "go source", setup: []string{"README.md", "main.go"}},
+		{name: "python source", setup: []string{"README.md", "app.py"}},
+		{name: "nested source", setup: []string{"README.md", "src/main.go"}},
+		{name: "unknown directory", setup: []string{"cmd/"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, entry := range tc.setup {
+				path := filepath.Join(dir, strings.TrimSuffix(entry, "/"))
+				if strings.HasSuffix(entry, "/") {
+					if err := os.MkdirAll(path, 0o755); err != nil {
+						t.Fatalf("MkdirAll(%q) error = %v", entry, err)
+					}
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
+				}
+				if err := os.WriteFile(path, []byte("x\n"), 0o644); err != nil {
+					t.Fatalf("WriteFile(%q) error = %v", entry, err)
+				}
+			}
+			if got := greenfieldDir(dir); got != tc.want {
+				t.Fatalf("greenfieldDir(%v) = %v, want %v", tc.setup, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestInitBareInRepoInteractiveNo(t *testing.T) {
 	r := newRunner(t)
 	r.gitDetect = fakeRepo

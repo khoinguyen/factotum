@@ -813,6 +813,12 @@ func newTaskNextCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&rankerName, "rank", "composite", "ranker: composite, unblock, milestone, or toward")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 0, "maximum number of tasks (0 means all)")
 	cmd.Flags().BoolVar(&explain, "explain", false, "list tasks excluded from the ready set with the reason, instead of ranking")
+	deps.validateBeforeStore(cmd, func(cmd *cobra.Command) error {
+		if _, err := deps.Rankers.MustLookup(rankerName); err != nil {
+			return usageError(cmd, "unknown ranker %q; available: %s", rankerName, strings.Join(deps.Rankers.Names(), ", "))
+		}
+		return nil
+	})
 	return cmd
 }
 

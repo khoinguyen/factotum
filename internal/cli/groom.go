@@ -64,6 +64,9 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.run.args, "arg", nil, "extra argument passed to the harness (repeatable)")
 	cmd.Flags().BoolVar(&opts.run.allowHost, "allow-host", false, "opt in to the unsandboxed local backend (dev-only)")
 	cmd.Flags().BoolVar(&opts.run.refresh, "refresh", false, "fetch and reset a reused workspace checkout before running")
+	deps.validateBeforeStore(cmd, func(cmd *cobra.Command) error {
+		return deps.validateRunFlags(cmd, opts.run)
+	})
 	cmd.AddCommand(newGroomListCommand(deps), newGroomShowCommand(deps), newGroomReviewCommand(deps))
 	return cmd
 }
@@ -71,9 +74,6 @@ func newGroomCommand(deps *Deps) *cobra.Command {
 // runGroom resolves the scope, runs the durable session prompt with the kickoff
 // appended, and captures the five outputs.
 func (d *Deps) runGroom(cmd *cobra.Command, args []string, opts groomOptions) error {
-	if err := d.validateRunFlags(cmd, opts.run); err != nil {
-		return err
-	}
 	ctx := cmd.Context()
 	projectID := d.resolveProject(opts.project)
 	if err := requireProject(cmd, projectID); err != nil {

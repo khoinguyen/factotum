@@ -195,6 +195,32 @@ type Deps struct {
 	// auto-groom, and interactive settings through the real command without
 	// keeping the serve loop up; nil is a no-op.
 	upProbe func(upSettings)
+
+	// flagChecks holds the flag-value checks commands registered with
+	// validateBeforeStore, keyed by the command that owns them. The root runs the
+	// check for the command being executed before it opens the caller's store.
+	flagChecks map[*cobra.Command]func(*cobra.Command) error
+}
+
+// validateBeforeStore registers fn to check this command's flag values after
+// cobra has parsed them and before the root opens the caller's store. A command
+// registers a value it must recognize (an isolation backend, a harness, a
+// renderer, a ranker, a closed-set verdict) here instead of in RunE, so a value
+// that can never run cannot create, migrate, or lock a database, nor open the
+// vector side index, on its way to failing.
+func (d *Deps) validateBeforeStore(cmd *cobra.Command, fn func(*cobra.Command) error) {
+	if d.flagChecks == nil {
+		d.flagChecks = map[*cobra.Command]func(*cobra.Command) error{}
+	}
+	d.flagChecks[cmd] = fn
+}
+
+// runFlagChecks runs the check cmd registered with validateBeforeStore, if any.
+func (d *Deps) runFlagChecks(cmd *cobra.Command) error {
+	if fn, ok := d.flagChecks[cmd]; ok {
+		return fn(cmd)
+	}
+	return nil
 }
 
 func NewDeps(clock app.Clock, ids app.IDGen, out, errOut io.Writer, getenv func(string) string) *Deps {

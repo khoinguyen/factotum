@@ -93,9 +93,6 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			if err := validateRunPrompt(cmd, opts); err != nil {
 				return err
 			}
-			if err := deps.validateRunFlags(cmd, opts); err != nil {
-				return err
-			}
 			return withRunInterrupts(cmd, func() error {
 				if opts.goal != "" {
 					return deps.runGoal(cmd, opts.goal, opts)
@@ -122,6 +119,9 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().IntVar(&opts.maxTasks, "max-tasks", 0, "stop the loop after this many task runs (0 = no budget)")
 	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "use this file's content as the harness prompt (single task or task-less run)")
 	cmd.Flags().StringVar(&opts.promptArtifact, "prompt-artifact", "", "use this artifact's body as the harness prompt (single task or task-less run)")
+	deps.validateBeforeStore(cmd, func(cmd *cobra.Command) error {
+		return deps.validateRunFlags(cmd, opts)
+	})
 	return cmd
 }
 
@@ -156,11 +156,10 @@ func withRunInterrupts(cmd *cobra.Command, run func() error) error {
 }
 
 // validateRunFlags rejects a name given on the command line that the registries
-// do not have, before the command's own work: resolving the target project,
-// scoping grooming items, reading a prompt, or minting a session. The root has
-// already opened the store for any store-backed command (pre-existing), so the
-// guarantee starts at the command, not the store; an unset name comes from
-// config and is resolved later, once the selection is built.
+// do not have. It is registered with validateBeforeStore, so the check runs
+// after cobra parses flags and before the root opens the caller's store: a name
+// that can never run must not create, migrate, or lock a database. An unset name
+// comes from config and is resolved later, once the selection is built.
 func (d *Deps) validateRunFlags(cmd *cobra.Command, opts runOptions) error {
 	if opts.sandbox != "" {
 		if _, err := d.RunBackends.MustLookup(opts.sandbox); err != nil {

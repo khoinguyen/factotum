@@ -70,13 +70,15 @@ func TestBoardAndRenderAgreeOnRoleAssignee(t *testing.T) {
 // the web work board and the render view. The render classifier used to fold in
 // progress into "blocked", so `ft graph render --format json` disagreed with
 // the board; a status that either surface classifies on its own must not drift
-// again. Statuses whose board class depends on the ready bucket (todo ->
-// waiting) are out of scope: render has no waiting class yet.
+// again. A todo's class depends on readiness rather than status alone, so the
+// subject waits on an unresolved blocker: both surfaces must call that
+// "waiting", the last parity gap render had.
 func TestBoardAndRenderAgreeOnStatusClasses(t *testing.T) {
 	tests := []struct {
 		status core.TicketStatus
 		want   string
 	}{
+		{core.StatusTodo, "waiting"},
 		{core.StatusInProgress, "in-progress"},
 		{core.StatusReadyForReview, "review"},
 		{core.StatusDone, "done"},
@@ -90,12 +92,14 @@ func TestBoardAndRenderAgreeOnStatusClasses(t *testing.T) {
 			if got := classify(core.Ticket{Status: tc.status}, false, false, false); got != tc.want {
 				t.Fatalf("board classify(%s) = %q, want %q", tc.status, got, tc.want)
 			}
+			blocker := core.Ticket{ID: "t-blocker", ProjectID: project.ID, Kind: core.KindTask, Title: "blocker", Status: core.StatusInProgress}
 			ticket := core.Ticket{ID: "t-1", ProjectID: project.ID, Kind: core.KindTask, Title: "work", Status: tc.status}
-			built, err := graph.New([]core.Ticket{ticket}, policy)
+			ticket.Deps = []core.TicketID{blocker.ID}
+			built, err := graph.New([]core.Ticket{blocker, ticket}, policy)
 			if err != nil {
 				t.Fatalf("graph.New() error = %v", err)
 			}
-			view := render.View{Project: project, Tasks: []*core.Ticket{&ticket}, Graph: built, Ready: built.ReadyByActor(nil)}
+			view := render.View{Project: project, Tasks: []*core.Ticket{&blocker, &ticket}, Graph: built, Ready: built.ReadyByActor(nil)}
 			if got := string(view.Classify(ticket)); got != tc.want {
 				t.Fatalf("render Classify(%s) = %q, board says %q", tc.status, got, tc.want)
 			}

@@ -313,8 +313,8 @@ its tasks share), so `ft event list --session` and the sessions page follow the 
 work. A run with an actor exports `FACTOTUM_ACTOR`, `FACTOTUM_TASK_ID`, `FACTOTUM_DEFAULT_ACTOR` (what
 a bare `ft msg send` is attributed to); every run exports `FACTOTUM_HARNESS`, so a registered run
 reports `opencode2`, not `opencode`. A run whose actor resolves to no record and no loop role registers
-no receiver, so it warns and names `ft actor create <name>` instead of an unreachable launch; a loop
-role is exempt. The warning is per launch: a `--goal` loop with no ready work is quiet.
+no receiver, so it warns and names `ft actor create <name>`; a caller has no role exemption. The
+warning is per launch: a `--goal` loop with no ready work is quiet.
 
 ```sh
 ft run t-abc123 --sandbox local --harness opencode2 --allow-host   # dev-only opt-in

@@ -29,8 +29,9 @@ export function CaptureModal({ onClose }: { onClose: () => void }) {
   const [promptBusy, setPromptBusy] = useState(false)
 
   // On open, validate any remembered token. A valid one skips straight to the
-  // prompt box; a rejected one is forgotten so the token step returns. The read
-  // also reports whether capture is enabled at all.
+  // prompt box; a rejected one is forgotten and cleared from the field so the
+  // token step returns empty. The read also reports whether capture is enabled
+  // at all.
   useEffect(() => {
     let cancelled = false
     const remembered = loadCaptureToken()
@@ -46,7 +47,11 @@ export function CaptureModal({ onClose }: { onClose: () => void }) {
           setPhase("prompt")
           return
         }
-        if (remembered) clearCaptureToken()
+        if (remembered) {
+          clearCaptureToken()
+          setToken("")
+          setTokenError("That remembered token is no longer valid — enter the current one.")
+        }
         setPhase("token")
       })
       .catch(() => {

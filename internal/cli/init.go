@@ -412,9 +412,9 @@ func projectDir(cwd string, repo gitRepo, inRepo bool) string {
 
 // greenfieldDir reports whether dir looks like a fresh project with no source
 // files yet: it holds nothing but repository scaffolding (dotfiles such as
-// .gitignore, README/LICENSE files, and a docs directory). A missing or
-// unreadable directory is treated as greenfield, so a git root that does not
-// exist locally still offers the setup question.
+// .gitignore, README/LICENSE/CHANGELOG/CONTRIBUTING files, and a docs
+// directory). A missing or unreadable directory is treated as greenfield, so a
+// git root that does not exist locally still offers the setup question.
 func greenfieldDir(dir string) bool {
 	if dir == "" {
 		return true
@@ -433,17 +433,34 @@ func greenfieldDir(dir string) bool {
 
 // scaffoldingEntry reports whether entry is repository scaffolding a checkout
 // can plausibly start with (`gh repo create --add-readme` yields README.md plus
-// dotfiles) rather than project source.
+// dotfiles and often a licence or community file) rather than project source.
 func scaffoldingEntry(entry os.DirEntry) bool {
 	name := entry.Name()
 	if strings.HasPrefix(name, ".") {
 		return true
 	}
-	switch strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name))) {
-	case "readme", "license", "licence":
-		return true
+	lower := strings.ToLower(name)
+	ext := filepath.Ext(lower)
+	if !scaffoldingExtension(ext) {
+		return false
+	}
+	// A hyphen suffix names a licence variant (LICENSE-MIT, LICENSE-APACHE).
+	stem, _, _ := strings.Cut(strings.TrimSuffix(lower, ext), "-")
+	switch stem {
 	case "docs":
-		return entry.IsDir()
+		return ext == "" && entry.IsDir()
+	case "readme", "license", "licence", "copying", "unlicense", "changelog", "contributing":
+		return true
+	}
+	return false
+}
+
+// scaffoldingExtension reports whether ext is one a documentation file may
+// carry; a bare README or LICENSE has none.
+func scaffoldingExtension(ext string) bool {
+	switch ext {
+	case "", ".md", ".rst", ".txt", ".adoc":
+		return true
 	}
 	return false
 }

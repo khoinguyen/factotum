@@ -91,8 +91,16 @@ func TestPluginLoadsOnInstalledOpenCodeV2(t *testing.T) {
 // carries, then - after the server is stopped, standing in for the restart - a
 // second launch with every FACTOTUM_* removed. It asserts the second launch
 // registers the actor the first one recorded, through the ft binary the record
-// carries (the stub; a fallback to the real `ft` would log nothing). Gated on the
-// binary, so CI without the isolated V2 runtime skips.
+// carries (the stub; a fallback to the real `ft` would log nothing).
+//
+// Registration is not delivery, so the restore is also given one queued message
+// and the guard asserts the receiver claimed it, acked it read, and that the
+// message text is a user turn in a session of the restored server: the claim the
+// restore path exists to make. CI cannot carry this half - the workflow installs
+// Go only and has no `opencode2` (the isolated V2 runtime, an npm alias or a
+// pinned V2 image) - so the guard skips there by design and the delivery half
+// runs wherever OPENCODE2 or `opencode2` on PATH provides it. The protocol logic
+// itself is covered deterministically by the plugin's Node unit tests.
 func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 	bin := opencode2Path(t)
 	dir, err := os.MkdirTemp("", "factotum-opencode2-cold-restore-")
@@ -135,14 +143,22 @@ func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 	)
 	launchPort := freeTCPPort(t)
 	launch, password, launchOut := startV2Server(t, bin, dir, launchEnv, launchPort)
+	// Activation (the first session) is what loads the plugin, so it can race the
+	// receiver's subscription. Wait for the register first, then give the
+	// receiver the session the record must carry.
 	createSessionV2(t, launchPort, password)
 	waitForStubCall(t, callsPath, "msg agent register", launchPort, password, launchOut)
+	recordedSession := waitForLaunchSession(t, launchPort, password, callsPath, launchOut)
 	launch.stop()
 
 	// The cold restore: the same location and OpenCode home, and no FACTOTUM_*
-	// at all - the environment V2's resume path runs with.
+	// at all - the environment V2's resume path runs with. The queue file stands
+	// in for a hand-off sent while the host was down: the stub serves it to the
+	// first claim from the restored receiver, and to no one before that.
 	_ = os.Remove(callsPath)
+	queuePath := queueFile(dir)
 	restoreEnv := append(withoutFactotumEnv(), isolated...)
+	restoreEnv = append(restoreEnv, "QUEUE="+queuePath)
 	restorePort := freeTCPPort(t)
 	restored, restorePassword, output := startV2Server(t, bin, dir, restoreEnv, restorePort)
 	defer restored.stop()
@@ -161,6 +177,100 @@ func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 	if !strings.Contains(string(calls), "--harness opencode2") {
 		t.Fatalf("the cold-restored receiver did not register with the recorded harness:\n%s", calls)
 	}
+
+	// Delivery, not just registration: the queued message is claimed, acked
+	// read, and visible as a user turn in a session of the restored server.
+	if err := os.WriteFile(queuePath, []byte("queued while the host was down\n"), 0o644); err != nil {
+		t.Fatalf("queue a message: %v", err)
+	}
+	waitForStubCall(t, callsPath, "msg agent ack m-restored", restorePort, restorePassword, output)
+	acked, _ := os.ReadFile(callsPath)
+	if !strings.Contains(string(acked), "--state read") {
+		t.Fatalf("the cold-restored receiver did not ack the queued message read:\n%s\nopencode2 output:\n%s", acked, output.String())
+	}
+	sessionID := waitForSessionText(t, callsPath, restorePort, restorePassword, restoredDeliveryProbe, output)
+	if sessionID != recordedSession {
+		t.Fatalf("the queued message was injected into session %s, not the session the record carries (%s): the restore delivered to the wrong session", sessionID, recordedSession)
+	}
+}
+
+// restoredDeliveryProbe is the body of the message the cold-restore guard queues
+// for the restored receiver. Unique enough that finding it as a session's user
+// turn can only mean this hand-off was injected.
+const restoredDeliveryProbe = "cold-restore-delivery-probe"
+
+// waitForLaunchSession gives the launch receiver a session to record, so the
+// restore has one to resume. The receiver learns its session from the event
+// stream and a session created before its subscription is missed, so the guard
+// creates one after the register and waits for the claim that only a receiver
+// holding a session makes - then lets the record's asynchronous session write
+// land before the host is stopped.
+func waitForLaunchSession(t *testing.T, port int, password, callsPath string, output *lockedBuffer) string {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		sessionID := createSessionV2(t, port, password)
+		settle := time.Now().Add(2 * time.Second)
+		for time.Now().Before(settle) {
+			if calls, _ := os.ReadFile(callsPath); strings.Contains(string(calls), "msg agent claim") {
+				time.Sleep(500 * time.Millisecond)
+				return sessionID
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	t.Fatalf("the launch receiver never claimed within 60s, so the record carried no session; opencode2 output:\n%s", output.String())
+	return ""
+}
+
+// queueFile is the stub's queue marker: its presence means one message is
+// waiting to be claimed.
+func queueFile(dir string) string { return filepath.Join(dir, "queue") }
+
+// v2SessionList is the slice of GET /api/session the guard reads.
+type v2SessionList struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+// v2MessageList is the slice of GET /api/session/<id>/message the guard reads.
+type v2MessageList struct {
+	Data []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"data"`
+}
+
+// waitForSessionText polls every session the restored server lists until one
+// carries a user message containing needle, and returns that session's id. It
+// asserts delivery where a person would see it - the session's turns - so a
+// receiver that only registered cannot satisfy it.
+func waitForSessionText(t *testing.T, callsPath string, port int, password, needle string, output *lockedBuffer) string {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		listURL := fmt.Sprintf("http://127.0.0.1:%d/api/session", port)
+		var sessions v2SessionList
+		if err := json.Unmarshal(v2Request(t, http.MethodGet, listURL, password, ""), &sessions); err == nil {
+			for _, session := range sessions.Data {
+				msgURL := fmt.Sprintf("http://127.0.0.1:%d/api/session/%s/message", port, session.ID)
+				var messages v2MessageList
+				if err := json.Unmarshal(v2Request(t, http.MethodGet, msgURL, password, ""), &messages); err != nil {
+					continue
+				}
+				for _, message := range messages.Data {
+					if message.Type == "user" && strings.Contains(message.Text, needle) {
+						return session.ID
+					}
+				}
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	calls, _ := os.ReadFile(callsPath)
+	t.Fatalf("no restored session carried %q within 60s; stub log:\n%s\nopencode2 output:\n%s", needle, calls, output.String())
+	return ""
 }
 
 // waitForStubCall polls the stub's call log until it contains needle, failing
@@ -414,18 +524,31 @@ func v2Request(t *testing.T, method, url, password string, body string) []byte {
 	return out
 }
 
-// createSessionV2 activates the location so OpenCode 2 loads its plugins.
-func createSessionV2(t *testing.T, port int, password string) {
+// createSessionV2 activates the location so OpenCode 2 loads its plugins, and
+// returns the session's id.
+func createSessionV2(t *testing.T, port int, password string) string {
 	t.Helper()
 	url := fmt.Sprintf("http://127.0.0.1:%d/api/session", port)
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		if body := v2Request(t, http.MethodPost, url, password, "{}"); len(body) > 0 {
-			return
+			var created v2SessionCreated
+			if err := json.Unmarshal(body, &created); err != nil {
+				t.Fatalf("decode created session: %v\n%s", err, body)
+			}
+			return created.Data.ID
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
 	t.Fatalf("could not create a session on the V2 server")
+	return ""
+}
+
+// v2SessionCreated is the slice of POST /api/session the guard reads.
+type v2SessionCreated struct {
+	Data struct {
+		ID string `json:"id"`
+	} `json:"data"`
 }
 
 // pluginStateV2 returns the state status of id in /api/plugin, or "" when the
@@ -487,12 +610,19 @@ func stagePluginAndStub(t *testing.T, dir string, plugin []byte) (callsPath, stu
 
 	callsPath = filepath.Join(dir, "calls.log")
 	stub = filepath.Join(dir, "ft-stub.sh")
+	// claim serves one queued message while the queue marker exists, then the
+	// queue is empty (a restore guard writes the marker after the host goes
+	// down, standing in for a hand-off queued during the outage).
 	stubScript := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> \"$CALLS\"\n" +
 		"if [ \"$1 $2\" = \"msg runs\" ]; then printf '[]'; exit 0; fi\n" +
 		"case \"$3\" in\n" +
 		"  register) printf '{\"run_id\":\"run-1\"}';;\n" +
-		"  claim) printf '{\"found\":false}';;\n" +
+		"  claim)\n" +
+		"    if [ -n \"$QUEUE\" ] && [ -f \"$QUEUE\" ]; then\n" +
+		"      rm -f \"$QUEUE\"\n" +
+		"      printf '{\"found\":true,\"message\":{\"id\":\"m-restored\",\"from\":\"act-x\",\"body\":\"" + restoredDeliveryProbe + "\"}}'\n" +
+		"    else sleep 0.05; printf '{\"found\":false}'; fi;;\n" +
 		"  *) printf '{\"ok\":true}';;\n" +
 		"esac\n"
 	if err := os.WriteFile(stub, []byte(stubScript), 0o755); err != nil {

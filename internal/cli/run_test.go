@@ -500,6 +500,49 @@ func TestRunCommandLoopBoundsItsSession(t *testing.T) {
 	}
 }
 
+// TestRunCommandRefusedInPreflightWritesNoSession pins the refusal an operator
+// meets most: `ft run` against the unsandboxed local backend without
+// --allow-host, or a goal loop stopped by the same refusal on its first task.
+// The run is refused before the harness starts, so it must not leave an empty
+// started/retired session row on the sessions page - a single-task run records
+// the session it minted only once every preflight check has passed, and the
+// loop records its one shared session at the same point.
+func TestRunCommandRefusedInPreflightWritesNoSession(t *testing.T) {
+	tests := []struct {
+		name string
+		loop bool
+	}{
+		{name: "a refused task run writes no session"},
+		{name: "a refused goal loop writes no session", loop: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRunner(t)
+			args := []string{"run"}
+			if tt.loop {
+				_, _, goal := loopContext(t, r)
+				args = append(args, "--goal", goal)
+			} else {
+				_, taskID := runContext(t, r)
+				args = append(args, taskID)
+			}
+			r.runHarness = harnessfake.New("opencode")
+
+			_, stderr := r.runSplit(append(args,
+				"--sandbox", "local", "--harness", "fake", "--workspace", t.TempDir())...)
+
+			if !strings.Contains(stderr, "pass --allow-host") {
+				t.Fatalf("run should have refused the local backend:\n%s", stderr)
+			}
+			for _, event := range listEvents(t, r) {
+				if event.Kind == "session.started" || event.Kind == "session.retired" {
+					t.Fatalf("a refused run recorded %s for session %q, want no session lifecycle", event.Kind, event.Session)
+				}
+			}
+		})
+	}
+}
+
 // TestRunCommandLoopInjectsHubEnvFromConfig proves the `--goal` loop reads the
 // configured messaging hub (FACTOTUM_MSG_URL/FACTOTUM_SERVE_TOKEN) and hands it
 // to each launched task harness, exactly as the single-task path does, so a

@@ -8,6 +8,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 	harnesspkg "github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/isolation"
+	"github.com/khoinguyen/factotum/pkg/isolation/local"
 	"github.com/khoinguyen/factotum/pkg/store"
 )
 
@@ -88,6 +89,64 @@ func TestRunBoundsTheSessionItMints(t *testing.T) {
 			}
 			if started != 1 || retired != 1 {
 				t.Fatalf("minted session %q started %d retired %d, want exactly one of each", sid, started, retired)
+			}
+		})
+	}
+}
+
+// sessionLifecycle counts the session lifecycle events across the whole store,
+// whatever session they name, so a test can prove a run left none at all.
+func sessionLifecycle(t *testing.T, backend store.Backend) (started, retired int) {
+	t.Helper()
+	events, err := backend.Events().List(context.Background(), store.EventFilter{})
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	for _, event := range events {
+		switch event.Kind {
+		case core.EventSessionStarted:
+			started++
+		case core.EventSessionRetired:
+			retired++
+		}
+	}
+	return started, retired
+}
+
+// TestRunRefusedInPreflightWritesNoSession pins that a run refused before its
+// harness starts leaves the sessions page untouched. The refusal - the local
+// backend without an opt-in, a backend that cannot prepare its image - happens
+// before any work runs, so writing the minted session's start and retirement
+// would leave an empty 0s row the run never filled.
+func TestRunRefusedInPreflightWritesNoSession(t *testing.T) {
+	tests := []struct {
+		name    string
+		project bool
+	}{
+		{name: "a task run refused in preflight writes no session"},
+		{name: "a project run refused in preflight writes no session", project: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var backend store.Backend
+			if tt.project {
+				f := newProjectRunFixture(t)
+				f.backend.FailWith(local.ErrNotOptedIn)
+				if _, err := f.run(t, ProjectRunInput{}); !errors.Is(err, local.ErrNotOptedIn) {
+					t.Fatalf("RunProject() error = %v, want ErrNotOptedIn", err)
+				}
+				backend = f.svc.backend
+			} else {
+				f := newRunFixture(t)
+				f.backend.FailWith(local.ErrNotOptedIn)
+				if _, err := f.run(t, RunInput{}); !errors.Is(err, local.ErrNotOptedIn) {
+					t.Fatalf("Run() error = %v, want ErrNotOptedIn", err)
+				}
+				backend = f.svc.backend
+			}
+
+			if started, retired := sessionLifecycle(t, backend); started != 0 || retired != 0 {
+				t.Fatalf("refused run recorded %d session.started %d session.retired, want none", started, retired)
 			}
 		})
 	}

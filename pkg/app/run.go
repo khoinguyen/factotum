@@ -101,6 +101,12 @@ type RunInput struct {
 	// repos were materialized. The callback returns nothing, so it cannot abort
 	// the run; the service always proceeds to the harness.
 	OnResolve func(*workspace.Plan)
+	// OnPrepared, when non-nil, is called once the backend has prepared the
+	// environment and the harness command is built, immediately before the
+	// harness starts. A caller that records a session the run shares with other
+	// runs - the --goal loop's one session - starts it here, so a run refused in
+	// preflight records no session row. An error aborts the run.
+	OnPrepared func(context.Context) error
 }
 
 // RunOutcome records what a run did. It is populated even when the harness fails
@@ -161,11 +167,8 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		in.OnResolve(plan)
 	}
 
-	endSession, err := s.bracketMintedSession(ctx, project.ID, session, minted)
-	if err != nil {
-		return nil, err
-	}
-	defer endSession()
+	bracket := s.bracketMintedSession(project.ID, session, minted)
+	defer bracket.end(ctx)
 
 	res, err := s.runHarness(ctx, harnessRun{
 		backend:     in.Backend,
@@ -177,8 +180,19 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 		interactive: in.Interactive,
 		env:         mergeEnv(runEnv(project, task, in.Actor, in.MsgURL, in.ServeToken), harnessEnv(in.Harness.Name()), in.StoreEnv, sessionEnv(session)),
 		labels:      map[string]string{"project": string(project.ID), "task": string(task.ID)},
-		// The run is about to start: record it before Exec so a harness or wait
-		// failure is observable, and abort if the event cannot be written.
+		// The run is about to start: record its session first, then that it
+		// started, so a run refused in preflight records neither.
+		onPrepared: func(ctx context.Context) error {
+			if err := bracket.start(ctx); err != nil {
+				return err
+			}
+			if in.OnPrepared == nil {
+				return nil
+			}
+			return in.OnPrepared(ctx)
+		},
+		// Record the run before Exec so a harness or wait failure is
+		// observable, and abort if the event cannot be written.
 		onStart: func() error {
 			return s.appendRunEvent(ctx, task, core.EventTaskRunStarted,
 				fmt.Sprintf("run started for %s with %s/%s", task.ID, in.Backend.Name(), in.Harness.Name()),
@@ -343,11 +357,8 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		in.OnResolve(plan)
 	}
 
-	endSession, err := s.bracketMintedSession(ctx, project.ID, session, minted)
-	if err != nil {
-		return nil, err
-	}
-	defer endSession()
+	bracket := s.bracketMintedSession(project.ID, session, minted)
+	defer bracket.end(ctx)
 
 	res, err := s.runHarness(ctx, harnessRun{
 		backend:     in.Backend,
@@ -360,6 +371,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 		env:         mergeEnv(runEnv(project, nil, in.Actor, in.MsgURL, in.ServeToken), harnessEnv(in.Harness.Name()), in.StoreEnv, sessionEnv(session)),
 		labels:      map[string]string{"project": string(project.ID)},
 		capture:     in.Capture,
+		onPrepared:  bracket.start,
 	})
 	if err != nil {
 		return nil, err
@@ -401,6 +413,11 @@ type harnessRun struct {
 	// capture names workspace-relative paths read out of the environment after
 	// the command exits and before the environment is deleted.
 	capture []string
+	// onPrepared runs once the backend has prepared the environment and the
+	// harness command is built, immediately before onStart and Exec. A run
+	// records its minted session's start here, so a refusal during preparation
+	// leaves no session row behind. Nil means no preparation hook.
+	onPrepared func(context.Context) error
 	// onStart runs after the command is built and before Exec; a task run uses
 	// it to record the run-started event and abort if it cannot be written. Nil
 	// means no pre-exec hook.
@@ -444,6 +461,11 @@ func (s *RunService) runHarness(ctx context.Context, r harnessRun) (harnessResul
 	command, err := r.harness.Command(req)
 	if err != nil {
 		return harnessResult{}, err
+	}
+	if r.onPrepared != nil {
+		if err := r.onPrepared(ctx); err != nil {
+			return harnessResult{}, err
+		}
 	}
 	if r.onStart != nil {
 		if err := r.onStart(); err != nil {
@@ -552,26 +574,52 @@ func runSessionContext(ctx context.Context, explicit string, ids IDGen) (context
 	return WithCaller(ctx, actor, session), session, minted
 }
 
-// bracketMintedSession records a run-minted session's start and returns the
-// function that retires it, so a finished run does not leave a permanently alive
-// session on the sessions page. A session the caller owns - inherited from its
-// environment or named explicitly - is not bracketed: its lifetime belongs to
-// whoever started it. The returned function is never nil, so a caller can always
-// defer it.
-func (s *RunService) bracketMintedSession(ctx context.Context, project core.ProjectID, sid string, minted bool) (func(), error) {
-	if !minted {
-		return func() {}, nil
+// bracketMintedSession returns the lifecycle of a run-minted session. The start
+// is recorded lazily, once the run has passed every preflight check, so a run
+// refused before its harness starts (a local backend without --allow-host, an
+// image the backend cannot prepare) leaves no empty row behind; the retirement
+// is recorded only for a session that actually started. A session the caller
+// owns - inherited from its environment or named explicitly - is not bracketed:
+// its lifetime belongs to whoever started it.
+func (s *RunService) bracketMintedSession(project core.ProjectID, sid string, minted bool) *sessionBracket {
+	return &sessionBracket{
+		sessions: NewSessionService(s.backend, s.clock, s.ids),
+		project:  project,
+		sid:      sid,
+		minted:   minted,
 	}
-	sessions := NewSessionService(s.backend, s.clock, s.ids)
-	if _, err := sessions.Start(ctx, project, sid); err != nil {
-		return nil, err
+}
+
+// sessionBracket is a minted session's lifecycle, recorded on demand: start
+// before the harness runs, end on the way out. Both are no-ops for a session the
+// caller owns, and end is a no-op for a session whose start was never written.
+type sessionBracket struct {
+	sessions *SessionService
+	project  core.ProjectID
+	sid      string
+	minted   bool
+	started  bool
+}
+
+func (b *sessionBracket) start(ctx context.Context) error {
+	if !b.minted || b.started {
+		return nil
 	}
-	return func() {
-		// The run is over whether or not it finished cleanly, so retire on the
-		// way out even when the caller's context was cancelled. A failure to
-		// record it is not worth masking the run's own result.
-		_, _ = sessions.Retire(context.WithoutCancel(ctx), project, sid, "")
-	}, nil
+	if _, err := b.sessions.Start(ctx, b.project, b.sid); err != nil {
+		return err
+	}
+	b.started = true
+	return nil
+}
+
+func (b *sessionBracket) end(ctx context.Context) {
+	if !b.started {
+		return
+	}
+	// The run is over whether or not it finished cleanly, so retire on the way
+	// out even when the caller's context was cancelled. A failure to record it
+	// is not worth masking the run's own result.
+	_, _ = b.sessions.Retire(context.WithoutCancel(ctx), b.project, b.sid, "")
 }
 
 // sessionEnv is the environment a run's session identity rides in, or nil for an

@@ -107,6 +107,19 @@ test("a remembered valid token skips the token step", async () => {
   expect(screen.queryByLabelText(/capture token/i)).toBeNull()
 })
 
+test("forgets a remembered stale token and clears it from the field", async () => {
+  window.localStorage.setItem("factotum.capture.token", "stale-token-xyz")
+  stubCapture()
+  render(<CaptureEntry />)
+  open()
+
+  // The token step returns with an empty field: the rejected value must not sit
+  // there looking valid, or a bare Continue resubmits what the server refused.
+  const field = (await screen.findByLabelText(/capture token/i)) as HTMLInputElement
+  expect(field.value).toBe("")
+  expect(window.localStorage.getItem("factotum.capture.token")).toBeNull()
+})
+
 test("sends the prompt with the remembered token and opens the document", async () => {
   window.localStorage.setItem("factotum.capture.token", "s3cret")
   const writes = stubCapture()
@@ -135,6 +148,7 @@ test("re-asks for the token when the server rejects it at send time", async () =
 
   expect(await screen.findByLabelText(/capture token/i)).toBeTruthy()
   expect(window.localStorage.getItem("factotum.capture.token")).toBeNull()
+  expect((screen.getByLabelText(/capture token/i) as HTMLInputElement).value).toBe("")
 })
 
 test("closes when the close control is used", async () => {

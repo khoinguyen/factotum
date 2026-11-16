@@ -48,8 +48,9 @@ func TestRunUnregisteredActorWarnsNoReceiver(t *testing.T) {
 			if !strings.Contains(stderr, `no message receiver will register for actor "`+name+`"`) {
 				t.Fatalf("run stderr missing the no-receiver warning:\n%s", stderr)
 			}
-			if !strings.Contains(stderr, `ft actor create "`+name+`"`) {
-				t.Fatalf("run stderr missing the fix hint:\n%s", stderr)
+			// The --actor path accepts a loop role, so its hint names that exit.
+			if !strings.Contains(stderr, `create the actor with ft actor create "`+name+`", or pass a loop role`) {
+				t.Fatalf("run stderr missing the actor-path fix hint:\n%s", stderr)
 			}
 			if !strings.Contains(out, "run: finished") {
 				t.Fatalf("the run did not launch; it should warn, not fail:\n%s", out)
@@ -102,6 +103,14 @@ func TestRunUnregisteredCallerWarnsNoReceiver(t *testing.T) {
 	}
 	if !strings.Contains(stderr, `no message receiver will register for actor "ghost"`) {
 		t.Fatalf("run stderr missing the no-receiver warning:\n%s", stderr)
+	}
+	// A caller has no role exemption: only registering it fixes the receiver, so
+	// the hint must not offer the loop-role exit the caller path does not accept.
+	if !strings.Contains(stderr, `register the caller with ft actor create "ghost"`) {
+		t.Fatalf("run stderr missing the caller-path fix hint:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "loop role") {
+		t.Fatalf("the caller path accepts no loop role, but the hint offers one:\n%s", stderr)
 	}
 	if !strings.Contains(out, "run: finished") {
 		t.Fatalf("the run did not launch; it should warn, not fail:\n%s", out)
@@ -158,6 +167,73 @@ func TestRunAttributionOnlyRoleGetsNoReceiver(t *testing.T) {
 	}
 	if harnesspkg.MessagingEnabled(env) {
 		t.Fatalf("harness env enables messaging for a dropped identity: %v", env)
+	}
+}
+
+// goalWithNoReadyWork builds a goal whose only prerequisite is ungroomed, so
+// `ft run --goal` stops with no_ready_work and launches nothing.
+func goalWithNoReadyWork(t *testing.T, r *runner) string {
+	t.Helper()
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	r.run("project", "repo", "create", projectID, "web", "--path", t.TempDir())
+	r.run("actor", "create", "--kind", "agent", "claude")
+	prereq := firstField(t, r.run("task", "create",
+		"--project", projectID, "--repo", "web", "--title", "Prereq", "--body", "Do the first part."))
+	r.run("task", "assign", prereq, "--actor", "claude")
+	goal := firstField(t, r.run("task", "create",
+		"--project", projectID, "--repo", "web", "--title", "Goal", "--body", "Do the last part.",
+		"--groomed", "--acceptance", "the last part is done"))
+	r.run("task", "assign", goal, "--actor", "claude")
+	r.run("task", "dep", "create", goal, prereq)
+	return goal
+}
+
+// TestRunGoalZeroIterationsWarnsNoReceiver keeps the no-receiver warning tied to
+// a launched session: a --goal run that selects no work launches nothing, so an
+// unregistered actor has nothing to make unreachable and the warning would be a
+// false alarm.
+func TestRunGoalZeroIterationsWarnsNoReceiver(t *testing.T) {
+	r := newRunner(t)
+	goal := goalWithNoReadyWork(t, r)
+	r.runBackend = isofake.New("sandbox")
+	r.runHarness = harnessfake.New("opencode")
+
+	out, stderr := r.runSplit("run", "--goal", goal, "--actor", "qa-ghost",
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+
+	if !strings.Contains(out, "stop: no_ready_work") {
+		t.Fatalf("the loop should have run zero iterations:\n%s", out)
+	}
+	if strings.Contains(stderr, "no message receiver will register") {
+		t.Fatalf("a zero-iteration goal run launched no session, but warned:\n%s", stderr)
+	}
+}
+
+// TestRunGoalWarnsNoReceiverForLaunchedSession is the other side of the same
+// rule: once the loop does launch a task under an unregistered actor, the run
+// says the launched session is unreachable.
+func TestRunGoalWarnsNoReceiverForLaunchedSession(t *testing.T) {
+	r := newRunner(t)
+	_, _, goal := loopContext(t, r)
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+	r.runBackend = backend
+	r.runHarness = harnessfake.New("opencode")
+
+	out, stderr := r.runSplit("run", "--goal", goal, "--max-tasks", "1", "--actor", "qa-ghost",
+		"--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+
+	if !strings.Contains(out, "stop: budget_exhausted") {
+		t.Fatalf("the loop should have launched a task:\n%s", out)
+	}
+	if !strings.Contains(stderr, `no message receiver will register for actor "qa-ghost"`) {
+		t.Fatalf("a launched session with no receiver should warn:\n%s", stderr)
+	}
+	if got := backend.Prepared(); len(got) != 1 {
+		t.Fatalf("prepared %d harnesses, want 1", len(got))
+	}
+	if harnesspkg.MessagingEnabled(backend.Prepared()[0].Env) {
+		t.Fatalf("harness env enables messaging for an unresolvable actor: %v", backend.Prepared()[0].Env)
 	}
 }
 

@@ -309,12 +309,12 @@ the run's project, store, and session (`FACTOTUM_PROJECT`/`FACTOTUM_STORE`/`FACT
 this invocation inherited one (a nested run rolls up to the loop's timeline, exactly as
 `loop-agent.sh` does for its children), else a freshly minted run-scoped id; an explicitly named id
 (a groom session's own) wins. The run prints the id as `session:` (a `--goal` loop prints the one id
-all its tasks share, in the loop footer), so `ft event list --session` and the sessions page can
-follow both the run and the work its agent does. A run with an actor exports `FACTOTUM_ACTOR`, `FACTOTUM_TASK_ID`, and `FACTOTUM_DEFAULT_ACTOR` (what a bare
-`ft msg send` is attributed to); every run exports `FACTOTUM_HARNESS`, so a registered run
-reports `opencode2` rather than the receiver's `opencode` default. A run whose actor resolves to
-no record and no loop role registers no receiver, so it warns and names `ft actor create <name>`
-rather than launch an unreachable session; a loop role needs no record and still registers.
+its tasks share), so `ft event list --session` and the sessions page follow the run and its agent's
+work. A run with an actor exports `FACTOTUM_ACTOR`, `FACTOTUM_TASK_ID`, `FACTOTUM_DEFAULT_ACTOR` (what
+a bare `ft msg send` is attributed to); every run exports `FACTOTUM_HARNESS`, so a registered run
+reports `opencode2`, not `opencode`. A run whose actor resolves to no record and no loop role registers
+no receiver, so it warns and names `ft actor create <name>` instead of an unreachable launch; a loop
+role is exempt. The warning is per launch: a `--goal` loop with no ready work is quiet.
 
 ```sh
 ft run t-abc123 --sandbox local --harness opencode2 --allow-host   # dev-only opt-in

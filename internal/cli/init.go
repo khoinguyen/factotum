@@ -413,19 +413,23 @@ func projectDir(cwd string, repo gitRepo, inRepo bool) string {
 // greenfieldDir reports whether dir looks like a fresh project with no source
 // files yet. The test is a positive source signal, not a list of names to
 // ignore: a directory is greenfield unless it holds a file with a known source
-// or build-manifest extension, an extensionless build file (Makefile,
-// Dockerfile), or a directory other than docs/ (src/ or cmd/ may hold source).
-// Documentation of any name and extension, dotfiles and docs/ are scaffolding a
-// first-run checkout can plausibly start with: `gh repo create --add-readme`
-// plus GitHub's "add a code of conduct / security policy" yields README,
-// CODE_OF_CONDUCT.md, SECURITY.md, SUPPORT.md and a licence. A missing or
-// unreadable directory is treated as greenfield, so a git root that does not
-// exist locally still offers the setup question.
+// or build-manifest extension, or a directory other than docs/ (src/ or cmd/
+// may hold source). Documentation of any name and extension, dotfiles and
+// docs/ are scaffolding a first-run checkout can plausibly start with:
+// `gh repo create --add-readme` plus GitHub's "add a code of conduct / security
+// policy" yields README, CODE_OF_CONDUCT.md, SECURITY.md, SUPPORT.md and a
+// licence.
+//
+// A file with no extension carries no signal to match, so it is scaffolding
+// too: a bare Makefile or Dockerfile is greenfield and asked for its stack
+// (a fresh repo often adds a Makefile before any code), as is a bare CMake
+// build, because .txt is documentation. An unrecognized documentation name is
+// greenfield by default rather than a false "project already exists" answer,
+// and a missing or unreadable directory is treated as greenfield, so a git root
+// that does not exist locally still offers the setup question.
 //
 // The rule is a table, not an allowlist: a language or manifest this
-// classification misses is one row in sourceExtensions or buildFiles, while an
-// unrecognized documentation name is greenfield by default rather than a false
-// "project already exists" answer.
+// classification misses is one row in sourceExtensions.
 func greenfieldDir(dir string) bool {
 	if dir == "" {
 		return true
@@ -454,11 +458,7 @@ func sourceEntry(entry os.DirEntry) bool {
 	if entry.IsDir() {
 		return !strings.EqualFold(name, "docs")
 	}
-	lower := strings.ToLower(name)
-	if buildFiles[lower] {
-		return true
-	}
-	return sourceExtensions[filepath.Ext(lower)]
+	return sourceExtensions[filepath.Ext(strings.ToLower(name))]
 }
 
 // sourceExtensions lists the extensions that mark a checkout as holding real
@@ -477,7 +477,7 @@ var sourceExtensions = map[string]bool{
 	".vhd": true, ".vhdl": true, ".sol": true, ".pas": true, ".ml": true, ".mli": true,
 	".rkt": true, ".scm": true, ".lisp": true, ".el": true, ".raku": true, ".purs": true,
 	".re": true, ".rei": true, ".d": true, ".cr": true, ".tcl": true, ".awk": true,
-	".coffee": true, ".asm": true, ".s": true, ".ipynb": true,
+	".coffee": true, ".asm": true, ".s": true, ".ipynb": true, ".nix": true,
 	// Web source.
 	".js": true, ".jsx": true, ".mjs": true, ".cjs": true, ".ts": true, ".tsx": true,
 	".vue": true, ".svelte": true, ".html": true, ".htm": true, ".css": true,
@@ -485,26 +485,15 @@ var sourceExtensions = map[string]bool{
 	// Scripts.
 	".sh": true, ".bash": true, ".zsh": true, ".fish": true, ".ps1": true, ".bat": true,
 	// Build manifests and their lock files.
-	".mod": true, ".sum": true, ".toml": true, ".json": true, ".jsonc": true,
-	".json5": true, ".yaml": true, ".yml": true, ".xml": true, ".lock": true,
-	".gradle": true, ".sbt": true, ".csproj": true, ".fsproj": true, ".vbproj": true,
-	".sln": true, ".cabal": true, ".gemspec": true, ".podspec": true, ".nimble": true,
-	".rockspec": true, ".bzl": true, ".bazel": true, ".mk": true, ".cmake": true,
-	".build": true, ".props": true, ".targets": true, ".nuspec": true,
+	".mod": true, ".sum": true, ".work": true, ".toml": true, ".json": true,
+	".jsonc": true, ".json5": true, ".yaml": true, ".yml": true, ".xml": true,
+	".lock": true, ".gradle": true, ".sbt": true, ".csproj": true, ".fsproj": true,
+	".vbproj": true, ".sln": true, ".cabal": true, ".gemspec": true, ".podspec": true,
+	".nimble": true, ".rockspec": true, ".bzl": true, ".bazel": true, ".mk": true,
+	".cmake": true, ".props": true, ".targets": true, ".nuspec": true,
 	// Schema and generated source definitions.
 	".proto": true, ".thrift": true, ".graphql": true, ".gql": true, ".tf": true,
 	".hcl": true, ".sql": true,
-}
-
-// buildFiles lists extensionless build entry points, which the extension table
-// cannot see. A bare Makefile stays a real-project signal: the build exists, so
-// the stack is already chosen.
-var buildFiles = map[string]bool{
-	"makefile": true, "gnumakefile": true, "dockerfile": true, "containerfile": true,
-	"justfile": true, "rakefile": true, "gemfile": true, "pipfile": true,
-	"vagrantfile": true, "jenkinsfile": true, "procfile": true, "brewfile": true,
-	"earthfile": true, "pkgbuild": true, "sconstruct": true, "sconscript": true,
-	"build": true, "workspace": true,
 }
 
 // ensureProject opens the project's store and creates the project entity when it

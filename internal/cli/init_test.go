@@ -535,7 +535,9 @@ func TestInitCommunityDocsRepoAsksTechStack(t *testing.T) {
 // directory holding only documentation and other scaffolding is greenfield
 // (so the tech-stack question is asked), while any file with a known source or
 // build-manifest extension is not. The community-doc shapes are the miss this
-// rule replaces: they are greenfield by default rather than by name.
+// rule replaces: they are greenfield by default rather than by name. Files with
+// no extension (Makefile, Dockerfile, a bare CMakeLists.txt) carry no signal to
+// match, so they are greenfield too, by acceptance.
 func TestGreenfieldDir(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -560,16 +562,21 @@ func TestGreenfieldDir(t *testing.T) {
 			want:  true,
 		},
 		{name: "unknown extensionless file", setup: []string{"README.md", "NOTES"}, want: true},
+		{name: "docs as file", setup: []string{"README.md", "docs"}, want: true},
+		{name: "makefile", setup: []string{"README.md", "Makefile"}, want: true},
+		{name: "dockerfile", setup: []string{"README.md", "Dockerfile"}, want: true},
+		{name: "gemfile", setup: []string{"README.md", "Gemfile"}, want: true},
+		{name: "bare cmake", setup: []string{"README.md", "CMakeLists.txt"}, want: true},
 		{name: "go source", setup: []string{"README.md", "main.go"}},
 		{name: "python source", setup: []string{"README.md", "app.py"}},
 		{name: "typescript source", setup: []string{"README.md", "index.ts"}},
+		{name: "nix flake", setup: []string{"README.md", "flake.nix"}},
 		{name: "license source", setup: []string{"README.md", "license.go"}},
 		{name: "npm manifest", setup: []string{"README.md", "package.json"}},
 		{name: "go manifest", setup: []string{"README.md", "go.mod"}},
+		{name: "go workspace", setup: []string{"README.md", "go.work"}},
 		{name: "python manifest", setup: []string{"README.md", "pyproject.toml"}},
 		{name: "cargo manifest", setup: []string{"README.md", "Cargo.toml"}},
-		{name: "makefile", setup: []string{"README.md", "Makefile"}},
-		{name: "dockerfile", setup: []string{"README.md", "Dockerfile"}},
 		{name: "nested source", setup: []string{"README.md", "src/main.go"}},
 		{name: "unknown directory", setup: []string{"cmd/"}},
 	}

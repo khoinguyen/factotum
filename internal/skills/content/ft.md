@@ -320,9 +320,10 @@ and mutate files, so never use it for untrusted input; the isolating backends (`
 and `pi` also ship.
 
 `--sandbox`/`--harness` resolve flag > `FACTOTUM_RUN_*` > committed project `[run]` >
-machine `[run]`; on a terminal an unset one prompts once and saves to the chosen scope,
-while non-interactively it is an error. A committed project `[run]` may set only those
-two; the machine table holds the rest (workspace/model/image/user/args/allow_host/
+machine `[run]`; with stdin and stdout both on a terminal an unset one prompts once and
+saves to the chosen scope, while non-interactively it is an error and nothing is written.
+A committed project `[run]` may set only those two; the machine table holds the rest
+(workspace/model/image/user/args/allow_host/
 credential_env), and `--image` names an isolating backend's base image (`pi` needs one).
 `--user`/`run.user`/`FACTOTUM_RUN_USER` sets the container identity: on `docker` a uid, uid:gid,
 or name, defaulting to empty so the image's own `USER` applies (a root `USER` writes root-owned

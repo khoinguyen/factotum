@@ -264,6 +264,35 @@ func TestGroomResolvesSelectionFromConfig(t *testing.T) {
 	}
 }
 
+// TestGroomSelectionNeedsTerminalStdin pins that `ft groom` inherits the run
+// selection guard: a terminal stdout with a redirected stdin is non-interactive,
+// so an unset sandbox/harness errors clearly instead of reading EOF at the
+// prompt and saving defaults nobody chose.
+func TestGroomSelectionNeedsTerminalStdin(t *testing.T) {
+	r := newRunner(t)
+	projectID, cfgPath := tasklessContext(t, r)
+	r.run("task", "create", "-p", projectID, "-t", "Add widget")
+
+	promptPath := filepath.Join(t.TempDir(), "prompt.md")
+	mustWrite(t, promptPath, "# Grooming session prompt\n")
+	r.isTerminal = terminal
+	r.stdinTerminal = func(io.Reader) bool { return false }
+
+	err := r.runErr("--config", cfgPath, "groom", "-p", projectID, "--prompt-file", promptPath, "--workspace", t.TempDir())
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("groom error = %v, want a usage error", err)
+	}
+	if !strings.Contains(err.Error(), "run.sandbox") {
+		t.Fatalf("groom error does not name run.sandbox as the way out: %v", err)
+	}
+	if _, statErr := os.Stat(r.userPath); !os.IsNotExist(statErr) {
+		t.Fatalf("a non-interactive groom wrote the user config: %v", statErr)
+	}
+	if got := readFile(t, cfgPath); strings.Contains(got, "[run]") {
+		t.Fatalf("a non-interactive groom wrote run defaults:\n%s", got)
+	}
+}
+
 // newOptInDeps builds a Deps whose run adapters are in-memory fakes, so a test
 // can exercise the interactive selection without executing a real backend.
 func newOptInDeps(t *testing.T, p Prompter) *Deps {
@@ -290,6 +319,81 @@ func newOptInDeps(t *testing.T, p Prompter) *Deps {
 		t.Fatalf("register harness: %v", err)
 	}
 	return deps
+}
+
+// TestResolveRunSelectionNeedsTerminalStdin pins that the selection prompt
+// needs a terminal on stdin as well as stdout. Prompts that read a redirected
+// stdin hit EOF, accept every default, and persist a choice nobody made, so a
+// run with stdout attached but stdin not is non-interactive: it fails with the
+// same clear error and writes nothing. Only a real terminal asks once and saves.
+func TestResolveRunSelectionNeedsTerminalStdin(t *testing.T) {
+	tests := []struct {
+		name           string
+		stdoutTerminal bool
+		stdinTerminal  bool
+		wantErr        bool
+	}{
+		{"terminal stdout with redirected stdin errors", true, false, true},
+		{"piped stdout errors", false, true, true},
+		{"both terminals prompt and save", true, true, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// No injected prompter: the terminal seam must be what decides,
+			// which is the combination the bug slipped through.
+			deps := newOptInDeps(t, nil)
+			deps.IsTerminal = func(io.Writer) bool { return tc.stdoutTerminal }
+			deps.IsTerminalReader = func(io.Reader) bool { return tc.stdinTerminal }
+
+			cmd := &cobra.Command{Use: "run"}
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetIn(strings.NewReader("docker\nopencode\nuser\n"))
+			cfg := config.Run{}
+			err := deps.resolveRunSelection(cmd, &cfg)
+			if tc.wantErr {
+				if !errors.Is(err, ErrUsage) {
+					t.Fatalf("resolveRunSelection() error = %v, want a usage error", err)
+				}
+				if !strings.Contains(err.Error(), "run.sandbox") {
+					t.Fatalf("error does not name run.sandbox as the way out: %v", err)
+				}
+				for _, path := range []string{deps.UserConfigPath, deps.ProjectConfigPath} {
+					if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+						t.Fatalf("a non-interactive selection wrote %s: %v", path, statErr)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveRunSelection() error = %v", err)
+			}
+			if cfg.Sandbox != "docker" || cfg.Harness != "opencode" {
+				t.Fatalf("resolved = %q/%q, want docker/opencode", cfg.Sandbox, cfg.Harness)
+			}
+			user := readFile(t, deps.UserConfigPath)
+			for _, want := range []string{`sandbox = "docker"`, `harness = "opencode"`} {
+				if !strings.Contains(user, want) {
+					t.Fatalf("persisted user config missing %q:\n%s", want, user)
+				}
+			}
+
+			// The saved pick resolves the next run with no prompt and no flag,
+			// even from a redirected stdin.
+			loaded, err := config.Load(config.Input{
+				UserPath:    deps.UserConfigPath,
+				ProjectPath: deps.ProjectConfigPath,
+				Getenv:      func(string) string { return "" },
+			})
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			deps.IsTerminalReader = func(io.Reader) bool { return false }
+			if err := deps.resolveRunSelection(cmd, &loaded.Run); err != nil {
+				t.Fatalf("second run did not resolve the persisted pick: %v", err)
+			}
+		})
+	}
 }
 
 // TestResolveRunSelectionLocalOptIn pins the interactive local opt-in: choosing

@@ -5,7 +5,9 @@
 //
 // A package wires it in twice: TestMain re-executes the test binary as a
 // promotion child, and a test calls one of the scenarios, which starts one child
-// process per promotion and releases them together.
+// process per promotion — one at a time, so the machine never has a burst of
+// forks in flight (the contention under test is at promotion, not at start) —
+// and releases them together.
 package promotetest
 
 import (
@@ -29,14 +31,30 @@ import (
 type Open func(ctx context.Context, path string) (store.Backend, error)
 
 const (
-	childEnv = "FACTOTUM_PROMOTETEST_CHILD"
-	dirEnv   = "FACTOTUM_PROMOTETEST_DIR"
-	pathEnv  = "FACTOTUM_PROMOTETEST_PATH"
-	jobEnv   = "FACTOTUM_PROMOTETEST_JOB"
+	childEnv     = "FACTOTUM_PROMOTETEST_CHILD"
+	dirEnv       = "FACTOTUM_PROMOTETEST_DIR"
+	pathEnv      = "FACTOTUM_PROMOTETEST_PATH"
+	jobEnv       = "FACTOTUM_PROMOTETEST_JOB"
+	releaseByEnv = "FACTOTUM_PROMOTETEST_RELEASE_BY"
 
-	// startTimeout bounds the parent's wait for every child to open its handle,
-	// and a child's wait for the parent's release.
-	startTimeout = 60 * time.Second
+	// childStartBound bounds one child's start: fork, exec, open its handle and
+	// signal ready. Children opened their handles in 8-18ms idle and tailed at
+	// 163ms over 132 of them under two concurrent 'go test -race ./...' suites.
+	// A child that misses this bound stalled (the reported flake sat on one for
+	// over a minute while its siblings started in under 200ms), so the parent
+	// replaces it rather than waiting out a bound this generous.
+	childStartBound = 10 * time.Second
+
+	// startBudget bounds the whole readiness phase, which draws on it across
+	// every child and every replacement. It is the machine-is-broken backstop,
+	// not the expected cost: the 20-caller phase measured 1.2s idle and 1.6s at
+	// load average 35.
+	startBudget = 60 * time.Second
+
+	// releaseSlack is how long past startBudget a child keeps waiting for the
+	// release. It only matters when the parent died mid-phase: without it an
+	// orphaned child would poll forever.
+	releaseSlack = time.Minute
 )
 
 // Job is one child process's promotion: capture is promoted into task.
@@ -87,8 +105,8 @@ func child(open Open) {
 		writeResult(dir, job.Task, Result{Err: "signal ready: " + err.Error()})
 		return
 	}
-	if !waitForFile(filepath.Join(dir, "release")) {
-		writeResult(dir, job.Task, Result{Err: "timed out waiting for the parent to release the promotions"})
+	if !waitForFile(filepath.Join(dir, "release"), releaseDeadline()) {
+		writeResult(dir, job.Task, Result{Err: "the parent did not release the promotions before its deadline"})
 		return
 	}
 	result := Result{}
@@ -132,60 +150,79 @@ func writeResult(dir string, task core.TicketID, result Result) {
 	_ = os.WriteFile(filepath.Join(dir, "result-"+string(task)+".json"), data, 0o644)
 }
 
-func waitForFile(path string) bool {
-	deadline := time.Now().Add(startTimeout)
-	for {
+// releaseDeadline is when this child gives up waiting for the parent's release.
+// The parent stamps it from the one clock the whole readiness phase draws on, so
+// an early child cannot run out of time while the parent is still starting (and
+// replacing) the children after it.
+func releaseDeadline() time.Time {
+	if deadline, err := time.Parse(time.RFC3339Nano, os.Getenv(releaseByEnv)); err == nil {
+		return deadline
+	}
+	return time.Now().Add(startBudget + releaseSlack)
+}
+
+// waitForFile reports whether path exists before deadline. Polling backs off to
+// 10ms: every waiting child polls, and a millisecond loop across 20 of them would
+// burn a slice of the machine the test is trying to measure.
+func waitForFile(path string, deadline time.Time) bool {
+	for delay := time.Millisecond; ; {
 		if _, err := os.Stat(path); err == nil {
 			return true
 		}
-		if time.Now().After(deadline) {
+		if !time.Now().Before(deadline) {
 			return false
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(delay)
+		if delay < 10*time.Millisecond {
+			delay *= 2
+		}
 	}
 }
+
+// starter starts one child for job, returning its handle and captured output.
+type starter func(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error)
 
 // promote starts one process per job, waits until every child has opened its
 // handle, runs beforeRelease, releases them together and returns each child's
 // result in job order.
+//
+// Children start one at a time: a burst of forks only adds scheduling pressure
+// to a machine already running the rest of the suite, and the cross-process
+// claim is made when the children promote together after the release, not when
+// they start. All of them still hold a handle opened before the release.
 func promote(t *testing.T, path string, jobs []Job, beforeRelease func(t *testing.T)) []Result {
+	return promoteWith(t, startChild, path, jobs, beforeRelease, childStartBound, startBudget)
+}
+
+// promoteWith is promote with its starter and bounds injected, so the tests
+// here can drive a child that never signals without waiting out the real bound.
+func promoteWith(t *testing.T, start starter, path string, jobs []Job, beforeRelease func(t *testing.T), bound, budget time.Duration) []Result {
 	t.Helper()
 	dir := t.TempDir()
-	cmds := make([]*exec.Cmd, len(jobs))
 	outputs := make([]*bytes.Buffer, len(jobs))
+	cmds := make([]*exec.Cmd, len(jobs))
 	waited := make([]bool, len(jobs))
 	t.Cleanup(func() {
 		for i, cmd := range cmds {
-			if cmd != nil && !waited[i] && cmd.Process != nil {
+			if cmd != nil && !waited[i] {
 				_ = cmd.Process.Kill()
-				_, _ = cmd.Process.Wait()
+				_ = cmd.Wait()
 			}
 		}
 	})
+	deadline := time.Now().Add(budget)
+	releaseBy := deadline.Add(releaseSlack)
 	for i, job := range jobs {
-		encoded, err := json.Marshal(job)
+		cmd, output, attempts, err := startReady(start, dir, path, job, releaseBy, bound, deadline)
+		outputs[i] = output
 		if err != nil {
-			t.Fatalf("encode promotion %d: %v", i, err)
+			t.Fatalf("promotion %d of %s: %v", i, job.Capture, err)
 		}
-		output := &bytes.Buffer{}
-		cmd := exec.Command(os.Args[0], "-test.run=^$")
-		cmd.Env = append(os.Environ(),
-			childEnv+"=1",
-			dirEnv+"="+dir,
-			pathEnv+"="+path,
-			jobEnv+"="+string(encoded),
-		)
-		cmd.Stdout, cmd.Stderr = output, output
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("start promotion %d of %s into %s: %v", i, job.Capture, job.Task, err)
+		if attempts > 1 {
+			t.Logf("promotion %d of %s: replaced %d stalled child(ren) before one opened its handle",
+				i, job.Capture, attempts-1)
 		}
-		cmds[i], outputs[i] = cmd, output
-	}
-	for i, job := range jobs {
-		if !waitForFile(filepath.Join(dir, "ready-"+string(job.Task))) {
-			t.Fatalf("promotion %d of %s did not open its handle within %s; output:\n%s",
-				i, job.Capture, startTimeout, outputs[i])
-		}
+		cmds[i] = cmd
 	}
 	if beforeRelease != nil {
 		beforeRelease(t)
@@ -196,7 +233,7 @@ func promote(t *testing.T, path string, jobs []Job, beforeRelease func(t *testin
 	results := make([]Result, len(jobs))
 	for i, cmd := range cmds {
 		if err := cmd.Wait(); err != nil {
-			t.Fatalf("promotion %d of %s failed: %v; output:\n%s", i, jobs[i].Capture, err, outputs[i])
+			t.Fatalf("promotion %d of %s failed: %v; output:\n%s", i, jobs[i].Capture, err, outputText(outputs[i]))
 		}
 		waited[i] = true
 		data, err := os.ReadFile(filepath.Join(dir, "result-"+string(jobs[i].Task)+".json"))
@@ -208,6 +245,69 @@ func promote(t *testing.T, path string, jobs []Job, beforeRelease func(t *testin
 		}
 	}
 	return results
+}
+
+// startReady starts a child and waits for it to open its handle, replacing one
+// that misses bound so a stalled fork costs a replacement rather than the test.
+// Every attempt draws on the same deadline: a machine that cannot start a
+// process at all fails within the phase budget instead of retrying forever. It
+// returns how many children it started.
+func startReady(start starter, dir, path string, job Job, releaseBy time.Time, bound time.Duration, deadline time.Time) (*exec.Cmd, *bytes.Buffer, int, error) {
+	ready := filepath.Join(dir, "ready-"+string(job.Task))
+	for attempts := 1; ; attempts++ {
+		cmd, output, err := start(dir, path, job, releaseBy)
+		if err != nil {
+			return nil, output, attempts, fmt.Errorf("start a child after %d attempt(s): %w", attempts, err)
+		}
+		until := time.Now().Add(bound)
+		if until.After(deadline) {
+			until = deadline
+		}
+		if waitForFile(ready, until) {
+			return cmd, output, attempts, nil
+		}
+		// Cmd.Wait, not Process.Wait: it reaps the child and drains the pipe
+		// that os/exec is still copying its output through, so the output can be
+		// read afterwards (Process.Wait leaves that copy running: a data race).
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		if !time.Now().Before(deadline) {
+			return nil, output, attempts, fmt.Errorf(
+				"no child opened its handle before the phase budget ran out at %s: %d attempt(s), each given %s; output:\n%s",
+				deadline.Format(time.RFC3339Nano), attempts, bound, outputText(output))
+		}
+	}
+}
+
+// outputText is a started child's captured output, or "" when it never got far
+// enough to produce one.
+func outputText(output *bytes.Buffer) string {
+	if output == nil {
+		return ""
+	}
+	return output.String()
+}
+
+// startChild re-executes this test binary as a promotion child for job.
+func startChild(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error) {
+	encoded, err := json.Marshal(job)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode promotion of %s into %s: %w", job.Capture, job.Task, err)
+	}
+	output := &bytes.Buffer{}
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(),
+		childEnv+"=1",
+		dirEnv+"="+dir,
+		pathEnv+"="+path,
+		jobEnv+"="+string(encoded),
+		releaseByEnv+"="+releaseBy.Format(time.RFC3339Nano),
+	)
+	cmd.Stdout, cmd.Stderr = output, output
+	if err := cmd.Start(); err != nil {
+		return nil, output, err
+	}
+	return cmd, output, nil
 }
 
 // DistinctCaptures promotes a different capture from every process at once and

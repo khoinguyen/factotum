@@ -1,7 +1,9 @@
 package harness_test
 
 import (
+	"os"
 	"reflect"
+	"regexp"
 	"slices"
 	"testing"
 
@@ -51,4 +53,28 @@ func TestPortIsFullyConsumed(t *testing.T) {
 			t.Fatalf("harness.Harness methods = %v, want %v", got, want)
 		}
 	})
+}
+
+// harnessSubpackageRef is a `pkg/harness/<name>` reference in prose: the shape
+// a reader follows to find an adapter. The doc names them as examples, so a
+// stale name sends that reader to a directory that does not exist.
+var harnessSubpackageRef = regexp.MustCompile(`pkg/harness/([a-z0-9]+)`)
+
+// TestPackageDocNamesRealAdapters guards the package doc against drift: every
+// `pkg/harness/<name>` it names must exist, so a removed or renamed adapter
+// cannot stay advertised in the port's own documentation.
+func TestPackageDocNamesRealAdapters(t *testing.T) {
+	src, err := os.ReadFile("harness.go")
+	if err != nil {
+		t.Fatalf("read package doc: %v", err)
+	}
+	refs := harnessSubpackageRef.FindAllStringSubmatch(string(src), -1)
+	if len(refs) < 2 {
+		t.Fatalf("package doc names %d adapters, want at least 2", len(refs))
+	}
+	for _, ref := range refs {
+		if info, err := os.Stat(ref[1]); err != nil || !info.IsDir() {
+			t.Errorf("package doc names pkg/harness/%s, which is not a directory", ref[1])
+		}
+	}
 }

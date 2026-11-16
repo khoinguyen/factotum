@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	"github.com/khoinguyen/factotum/pkg/app"
@@ -588,6 +589,17 @@ func docFormat(filename, explicit string) string {
 	default:
 		return "json"
 	}
+}
+
+// validateDocFormat rejects an explicit document format outside json|yaml. The
+// root runs it before the store opens (validateBeforeStore) for `task apply` and
+// `task edit`, so a bad --format never creates a database; `task apply` allows an
+// empty format and infers it from the file extension.
+func validateDocFormat(cmd *cobra.Command, format string) error {
+	if format == "json" || format == "yaml" {
+		return nil
+	}
+	return usageError(cmd, "unknown format %q, want json or yaml", format)
 }
 
 // editTask opens contents in $VISUAL/$EDITOR (falling back to vi) and returns

@@ -30,7 +30,11 @@ func TestInvalidFlagTouchesNoStore(t *testing.T) {
 		{"groom sandbox", []string{"groom", "--sandbox", "nope"}, `unknown isolation backend "nope"`},
 		{"groom harness", []string{"groom", "--harness", "nope"}, `unknown harness "nope"`},
 		{"qa verdict", []string{"qa", "record", "cap-nope", "--verdict", "maybe", "-b", "x"}, `unknown verdict "maybe"`},
+		{"qa missing verdict", []string{"qa", "record", "cap-nope", "-b", "x"}, `--verdict required`},
 		{"groom review verdict", []string{"groom", "review", "groom-nope", "--verdict", "maybe", "-b", "x"}, `unknown architecture-review verdict "maybe"`},
+		{"msg ack state", []string{"msg", "agent", "ack", "msg-nope", "--run", "run-nope", "--state", "bogus"}, `--state must be read or failed`},
+		{"task apply format", []string{"task", "apply", "-f", "taskdoc.json", "--format", "nope"}, `unknown format "nope"`},
+		{"task edit format", []string{"task", "edit", "t-nope", "--format", "nope"}, `unknown format "nope"`},
 		{"graph format", []string{"graph", "render", "-p", "nope", "--format", "nope"}, `unknown format "nope"`},
 		{"task rank", []string{"task", "next", "-p", "nope", "--rank", "nope"}, `unknown ranker "nope"`},
 	}

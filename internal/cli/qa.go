@@ -108,8 +108,8 @@ func newQARecordCommand(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVarP(&opts.body, "body", "b", "", "the QA findings")
 	cmd.Flags().StringVarP(&opts.bodyFile, "body-file", "f", "", "read the QA findings from a file")
 	deps.validateBeforeStore(cmd, func(cmd *cobra.Command) error {
-		if !cmd.Flags().Changed("verdict") {
-			return nil // a missing --verdict is RunE's required-flag error
+		if err := requireFlags(cmd, "verdict"); err != nil {
+			return err
 		}
 		return validateQAVerdict(cmd, opts.verdict)
 	})

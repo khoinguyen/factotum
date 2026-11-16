@@ -133,7 +133,7 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 	if in.Harness == nil {
 		return nil, errors.New("run: no harness selected")
 	}
-	ctx, session := runSessionContext(ctx, in.Session, s.ids)
+	ctx, session, minted := runSessionContext(ctx, in.Session, s.ids)
 
 	task, err := s.backend.Tickets().Get(ctx, in.TicketID)
 	if err != nil {
@@ -160,6 +160,12 @@ func (s *RunService) Run(ctx context.Context, in RunInput) (*RunOutcome, error) 
 	if in.OnResolve != nil {
 		in.OnResolve(plan)
 	}
+
+	endSession, err := s.bracketMintedSession(ctx, project.ID, session, minted)
+	if err != nil {
+		return nil, err
+	}
+	defer endSession()
 
 	res, err := s.runHarness(ctx, harnessRun{
 		backend:     in.Backend,
@@ -315,7 +321,7 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 	if in.Harness == nil {
 		return nil, errors.New("run: no harness selected")
 	}
-	ctx, session := runSessionContext(ctx, in.Session, s.ids)
+	ctx, session, minted := runSessionContext(ctx, in.Session, s.ids)
 
 	project, err := s.backend.Projects().Get(ctx, in.ProjectID)
 	if err != nil {
@@ -336,6 +342,12 @@ func (s *RunService) RunProject(ctx context.Context, in ProjectRunInput) (*Proje
 	if in.OnResolve != nil {
 		in.OnResolve(plan)
 	}
+
+	endSession, err := s.bracketMintedSession(ctx, project.ID, session, minted)
+	if err != nil {
+		return nil, err
+	}
+	defer endSession()
 
 	res, err := s.runHarness(ctx, harnessRun{
 		backend:     in.Backend,
@@ -520,20 +532,46 @@ func runEnv(project *core.Project, task *core.Ticket, actor *core.ActorID, msgUR
 // runSessionContext resolves the session a run is attributed to and records it
 // on ctx, so the run's own events and everything its agent does share one
 // session. An explicit id wins, else the caller's session (FACTOTUM_SESSION) is
-// inherited, else a fresh run-scoped id is minted. The actor already on ctx is
-// kept, so attribution is unchanged.
-func runSessionContext(ctx context.Context, explicit string, ids IDGen) (context.Context, string) {
+// inherited, else a fresh run-scoped id is minted. The returned bool reports
+// whether the run minted the id, which is what makes it the run's to retire: a
+// caller's session is never closed by a run it merely lent to. The actor already
+// on ctx is kept, so attribution is unchanged.
+func runSessionContext(ctx context.Context, explicit string, ids IDGen) (context.Context, string, bool) {
 	session := explicit
 	if session == "" {
 		if _, inherited, ok := Caller(ctx); ok {
 			session = inherited
 		}
 	}
+	minted := false
 	if session == "" {
 		session = newSessionID(ids)
+		minted = true
 	}
 	actor, _, _ := Caller(ctx)
-	return WithCaller(ctx, actor, session), session
+	return WithCaller(ctx, actor, session), session, minted
+}
+
+// bracketMintedSession records a run-minted session's start and returns the
+// function that retires it, so a finished run does not leave a permanently alive
+// session on the sessions page. A session the caller owns - inherited from its
+// environment or named explicitly - is not bracketed: its lifetime belongs to
+// whoever started it. The returned function is never nil, so a caller can always
+// defer it.
+func (s *RunService) bracketMintedSession(ctx context.Context, project core.ProjectID, sid string, minted bool) (func(), error) {
+	if !minted {
+		return func() {}, nil
+	}
+	sessions := NewSessionService(s.backend, s.clock, s.ids)
+	if _, err := sessions.Start(ctx, project, sid); err != nil {
+		return nil, err
+	}
+	return func() {
+		// The run is over whether or not it finished cleanly, so retire on the
+		// way out even when the caller's context was cancelled. A failure to
+		// record it is not worth masking the run's own result.
+		_, _ = sessions.Retire(context.WithoutCancel(ctx), project, sid, "")
+	}, nil
 }
 
 // sessionEnv is the environment a run's session identity rides in, or nil for an

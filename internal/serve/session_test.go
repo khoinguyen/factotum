@@ -10,6 +10,9 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/app"
 	"github.com/khoinguyen/factotum/pkg/core"
+	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
+	"github.com/khoinguyen/factotum/pkg/isolation"
+	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
 )
 
 // stepClock is a mutable clock so a test can advance time between a session's
@@ -143,6 +146,67 @@ func TestSessionsListLifecycle(t *testing.T) {
 	}
 	if fresh.DurationSeconds != 3600 {
 		t.Fatalf("s-new duration = %d, want 3600 (now - start)", fresh.DurationSeconds)
+	}
+}
+
+// TestSessionsShowAFinishedRunAsRetired proves a run's minted session is bounded
+// on the sessions page: the run records the session's start and retirement, so
+// the session reads as retired at the moment the run ended, its duration stops
+// growing, and the document keeps its world-facing shape.
+func TestSessionsShowAFinishedRunAsRetired(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	project, err := f.projects.CreateWithID(ctx, core.ProjectID("acme"), "Acme", "", []core.Repository{
+		{Name: "web", Path: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateWithID(acme) error = %v", err)
+	}
+	task, err := f.tasks.Add(ctx, app.TicketInput{ProjectID: project.ID, Repo: "web", Title: "Add a widget"})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	clock := &stepClock{t: time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)}
+	backend := isofake.New("sandbox")
+	backend.Program(isolation.ExecResult{Stdout: []byte("done\n")})
+	outcome, err := app.NewRunService(f.backend, f.tasks, clock, f.ids).Run(ctx, app.RunInput{
+		TicketID:      task.ID,
+		Backend:       backend,
+		Harness:       harnessfake.New("opencode"),
+		WorkspaceRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	// A live session's duration keeps growing with the clock; a retired one is
+	// frozen at its stop.
+	clock.t = clock.t.Add(time.Hour)
+
+	ts := clockServer(t, f, clock, Options{Project: project.ID})
+	var doc sessionDoc
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+
+	if len(doc.Sessions) != 1 {
+		t.Fatalf("sessions = %+v, want the run's one session", doc.Sessions)
+	}
+	view := doc.Sessions[0]
+	if view.ID != outcome.Session {
+		t.Fatalf("session id = %q, want the run session %q", view.ID, outcome.Session)
+	}
+	if view.State != "retired" {
+		t.Fatalf("state = %q, want retired for a finished run", view.State)
+	}
+	if view.StartedAt != "2026-01-01T09:00:00Z" || view.StoppedAt != "2026-01-01T09:00:00Z" {
+		t.Fatalf("started_at = %q stopped_at = %q, want the run's start and end", view.StartedAt, view.StoppedAt)
+	}
+	if view.DurationSeconds != 0 {
+		t.Fatalf("duration = %d, want 0: the clock moved but the retired session must not keep growing", view.DurationSeconds)
+	}
+	// The projection's shape is unchanged: the delivered block is present with
+	// its arrays empty, not absent.
+	if view.Delivered.Tasks == nil || view.Delivered.PRs == nil {
+		t.Fatalf("delivered = %+v, want empty arrays", view.Delivered)
 	}
 }
 

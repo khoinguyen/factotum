@@ -753,10 +753,23 @@ func (d *Deps) driveLoop(cmd *cobra.Command, target projectTarget, targetID stri
 	svc := app.NewRunService(target.backend, target.tasks, d.Clock, d.IDs)
 	// One session for the whole loop: the caller's when this invocation inherited
 	// one, else a fresh id, so every task the loop runs lands on one timeline
-	// instead of each run minting its own.
+	// instead of each run minting its own. A minted session is the loop's to
+	// close: it is bracketed with session.started/session.retired so a finished
+	// goal run does not leave a permanently alive session. An inherited session
+	// belongs to the caller and is never retired here.
 	session := d.Session
-	if session == "" {
+	mintedSession := session == ""
+	if mintedSession {
 		session = d.Sessions.NewID()
+		if _, err := d.Sessions.Start(cmd.Context(), goal.ProjectID, session); err != nil {
+			return err
+		}
+		defer func() {
+			// The loop is over whether or not it finished cleanly, so retire on
+			// the way out even after an interrupt. Losing the event must not mask
+			// the loop's own result.
+			_, _ = d.Sessions.Retire(context.WithoutCancel(cmd.Context()), goal.ProjectID, session, "")
+		}()
 	}
 	// The actor (and the receiver it installs) is resolved when the loop first
 	// launches a task, so a run that selects no work never warns about a

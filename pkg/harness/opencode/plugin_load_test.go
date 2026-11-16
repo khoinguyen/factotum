@@ -84,23 +84,30 @@ func TestPluginLoadsOnInstalledOpenCodeV2(t *testing.T) {
 // `opencode -s <session>` with the original launch environment gone, so
 // FACTOTUM_* never reaches the plugin. It must recover the identity it recorded
 // on its previous load and register again; before the fix it registered nothing
-// and every hand-off queued behind a healthy-looking TUI.
+// and every hand-off queued behind a healthy-looking TUI. It is also the guard
+// for t-s6tlc5jqag: a restore that adopts a session but does not record it leaves
+// the next restore on a stale one.
 //
-// The guard runs a private `opencode2 serve` twice over one scratch directory and
-// one isolated OpenCode home: the first launch with the FACTOTUM_* a loop agent
-// carries, then - after the server is stopped, standing in for the restart - a
-// second launch with every FACTOTUM_* removed. It asserts the second launch
-// registers the actor the first one recorded, through the ft binary the record
-// carries (the stub; a fallback to the real `ft` would log nothing).
+// The guard runs a private `opencode2 serve` three times over one scratch
+// directory and one isolated OpenCode home: the first launch with the FACTOTUM_*
+// a loop agent carries, then two cold restores with every FACTOTUM_* removed.
+// Two restores are the minimum that can see the misroute - one cold restore
+// cannot distinguish adopting a session from recording it. Restore #1 resumes
+// the launch's session, then the restarted host starts another one; the receiver
+// must follow it *and* the record must follow the receiver. Restore #2 must then
+// hand its queued message to that same session. On the pre-fix code the record
+// still named the launch's session, so restore #2 injected the hand-off into the
+// stale one - the misroute, visible only on the second restore.
 //
-// Registration is not delivery, so the restore is also given one queued message
-// and the guard asserts the receiver claimed it, acked it read, and that the
-// message text is a user turn in a session of the restored server: the claim the
-// restore path exists to make. CI cannot carry this half - the workflow installs
-// Go only and has no `opencode2` (the isolated V2 runtime, an npm alias or a
-// pinned V2 image) - so the guard skips there by design and the delivery half
-// runs wherever OPENCODE2 or `opencode2` on PATH provides it. The protocol logic
-// itself is covered deterministically by the plugin's Node unit tests.
+// Registration is asserted on restore #1, through the ft binary the record
+// carries (the stub; a fallback to the real `ft` would log nothing). Delivery,
+// not just registration, is asserted on both restores: each queued message is
+// claimed, acked read, and found as a user turn in the session it was meant for.
+// CI cannot carry any of this - the workflow installs Go only and has no
+// `opencode2` (the isolated V2 runtime, an npm alias or a pinned V2 image) - so
+// the guard skips there by design and runs wherever OPENCODE2 or `opencode2` on
+// PATH provides it. The protocol logic itself is covered deterministically by the
+// plugin's Node unit tests.
 func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 	bin := opencode2Path(t)
 	dir, err := os.MkdirTemp("", "factotum-opencode2-cold-restore-")
@@ -122,13 +129,18 @@ func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 			t.Fatalf("MkdirAll(%s) error = %v", d, err)
 		}
 	}
-	// One OpenCode home for both launches: the receiver's durable identity and
-	// the session it resumes live here, exactly as they survive a restart.
+	// One OpenCode home for all three launches: the receiver's durable identity
+	// and the session it resumes live here, exactly as they survive a restart.
+	// The queue file stands in for a hand-off sent while the host was down: the
+	// stub serves it to the first claim from a restored receiver, and to no one
+	// before that.
+	queuePath := queueFile(dir)
 	isolated := []string{
 		"XDG_CONFIG_HOME=" + xdgConfig,
 		"XDG_DATA_HOME=" + xdgData,
 		"XDG_CACHE_HOME=" + xdgCache,
 		"CALLS=" + callsPath,
+		"QUEUE=" + queuePath,
 	}
 
 	// The loop agent's launch: a private server that carries its env.
@@ -148,26 +160,17 @@ func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 	// receiver the session the record must carry.
 	createSessionV2(t, launchPort, password)
 	waitForStubCall(t, callsPath, "msg agent register", launchPort, password, launchOut)
-	recordedSession := waitForLaunchSession(t, launchPort, password, callsPath, launchOut)
+	launchedSession := waitForLaunchSession(t, launchPort, password, callsPath, launchOut)
 	launch.stop()
 
-	// The cold restore: the same location and OpenCode home, and no FACTOTUM_*
-	// at all - the environment V2's resume path runs with. The queue file stands
-	// in for a hand-off sent while the host was down: the stub serves it to the
-	// first claim from the restored receiver, and to no one before that.
+	// The first cold restore: the same location and OpenCode home, and no
+	// FACTOTUM_* at all - the environment V2's resume path runs with.
 	_ = os.Remove(callsPath)
-	queuePath := queueFile(dir)
-	restoreEnv := append(withoutFactotumEnv(), isolated...)
-	restoreEnv = append(restoreEnv, "QUEUE="+queuePath)
-	restorePort := freeTCPPort(t)
-	restored, restorePassword, output := startV2Server(t, bin, dir, restoreEnv, restorePort)
-	defer restored.stop()
-	createSessionV2(t, restorePort, restorePassword)
-
-	waitForStubCall(t, callsPath, "msg agent register", restorePort, restorePassword, output)
+	firstPort := freeTCPPort(t)
+	first, firstPassword, firstOut := startRestoredServer(t, bin, dir, callsPath, isolated, firstPort)
 	calls, _ := os.ReadFile(callsPath)
 	if !strings.Contains(string(calls), "--actor act-test") {
-		t.Fatalf("the cold-restored receiver registered without the recorded actor:\n%s\nopencode2 output:\n%s", calls, output.String())
+		t.Fatalf("the cold-restored receiver registered without the recorded actor:\n%s\nopencode2 output:\n%s", calls, firstOut.String())
 	}
 	if !strings.Contains(string(calls), "--project prj-test") {
 		t.Fatalf("the cold-restored receiver registered against the wrong project:\n%s", calls)
@@ -178,26 +181,76 @@ func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 		t.Fatalf("the cold-restored receiver did not register with the recorded harness:\n%s", calls)
 	}
 
-	// Delivery, not just registration: the queued message is claimed, acked
-	// read, and visible as a user turn in a session of the restored server.
-	if err := os.WriteFile(queuePath, []byte("queued while the host was down\n"), 0o644); err != nil {
-		t.Fatalf("queue a message: %v", err)
+	// The restarted host is running a session it did not resume: the person
+	// opened one after the restart. Its subscription exists by now, so the event
+	// stream announces that session - the receiver must follow it, and it must
+	// record it, or the next restart resumes the launch's stale session.
+	restoredSession := createSessionV2(t, firstPort, firstPassword)
+	time.Sleep(coldRestoreSettle)
+	if landed := deliverProbe(t, queuePath, callsPath, firstPort, firstPassword, firstRestoreProbe, firstOut); landed != restoredSession {
+		t.Fatalf("the first restore delivered the hand-off into session %s, not the session the restarted host announced (%s): the receiver did not follow the host's session", landed, restoredSession)
 	}
-	waitForStubCall(t, callsPath, "msg agent ack m-restored", restorePort, restorePassword, output)
-	acked, _ := os.ReadFile(callsPath)
-	if !strings.Contains(string(acked), "--state read") {
-		t.Fatalf("the cold-restored receiver did not ack the queued message read:\n%s\nopencode2 output:\n%s", acked, output.String())
-	}
-	sessionID := waitForSessionText(t, callsPath, restorePort, restorePassword, restoredDeliveryProbe, output)
-	if sessionID != recordedSession {
-		t.Fatalf("the queued message was injected into session %s, not the session the record carries (%s): the restore delivered to the wrong session", sessionID, recordedSession)
+	// Let the record's write for that session land before the host is stopped.
+	time.Sleep(coldRestoreSettle)
+	first.stop()
+
+	// The second cold restore: same location and OpenCode home, again with no
+	// FACTOTUM_*. It must resume the session the first restore adopted, not the
+	// one the launch recorded.
+	_ = os.Remove(callsPath)
+	secondPort := freeTCPPort(t)
+	second, secondPassword, secondOut := startRestoredServer(t, bin, dir, callsPath, isolated, secondPort)
+	defer second.stop()
+	if landed := deliverProbe(t, queuePath, callsPath, secondPort, secondPassword, secondRestoreProbe, secondOut); landed != restoredSession {
+		t.Fatalf("the second restore delivered the hand-off into session %s, not the session the first restore adopted (%s; the launch recorded %s): the record did not follow the receiver", landed, restoredSession, launchedSession)
 	}
 }
 
-// restoredDeliveryProbe is the body of the message the cold-restore guard queues
-// for the restored receiver. Unique enough that finding it as a session's user
-// turn can only mean this hand-off was injected.
-const restoredDeliveryProbe = "cold-restore-delivery-probe"
+// coldRestoreSettle is how long the guard gives the restored receiver to follow
+// a session the host announced, and its record write to land, before it restarts
+// the host again. Both are local event and storage round trips; the window only
+// has to outlast them.
+const coldRestoreSettle = 2 * time.Second
+
+// firstRestoreProbe and secondRestoreProbe are the bodies of the messages the
+// cold-restore guard queues, one per restore. Each is unique, so finding it as a
+// session's user turn can only mean that hand-off was injected - the first
+// restore's probe cannot stand in for the second's.
+const (
+	firstRestoreProbe  = "cold-restore-first-probe"
+	secondRestoreProbe = "cold-restore-second-probe"
+)
+
+// startRestoredServer launches one cold restore: the same location and OpenCode
+// home, and no FACTOTUM_* at all. Activation (the first session) is what loads
+// the plugin, and a session created before its subscription is missed - which is
+// why the receiver keeps the session the record names until the host announces
+// another. It waits for the restored receiver to register before returning.
+func startRestoredServer(t *testing.T, bin, dir, callsPath string, isolated []string, port int) (*v2Server, string, *lockedBuffer) {
+	t.Helper()
+	env := append(withoutFactotumEnv(), isolated...)
+	server, password, output := startV2Server(t, bin, dir, env, port)
+	createSessionV2(t, port, password)
+	waitForStubCall(t, callsPath, "msg agent register", port, password, output)
+	return server, password, output
+}
+
+// deliverProbe queues one message for a restored receiver and returns the
+// session it was injected into. It asserts the receiver claimed the message and
+// acked it read, and finds it as a turn in a session of the restored server - so
+// a receiver that only registered cannot satisfy it.
+func deliverProbe(t *testing.T, queuePath, callsPath string, port int, password, probe string, output *lockedBuffer) string {
+	t.Helper()
+	if err := os.WriteFile(queuePath, []byte(probe), 0o644); err != nil {
+		t.Fatalf("queue a message: %v", err)
+	}
+	waitForStubCall(t, callsPath, "msg agent ack m-restored", port, password, output)
+	acked, _ := os.ReadFile(callsPath)
+	if !strings.Contains(string(acked), "--state read") {
+		t.Fatalf("the restored receiver did not ack the queued message read:\n%s\nopencode2 output:\n%s", acked, output.String())
+	}
+	return waitForSessionText(t, callsPath, port, password, probe, output)
+}
 
 // waitForLaunchSession gives the launch receiver a session to record, so the
 // restore has one to resume. The receiver learns its session from the event
@@ -610,9 +663,10 @@ func stagePluginAndStub(t *testing.T, dir string, plugin []byte) (callsPath, stu
 
 	callsPath = filepath.Join(dir, "calls.log")
 	stub = filepath.Join(dir, "ft-stub.sh")
-	// claim serves one queued message while the queue marker exists, then the
-	// queue is empty (a restore guard writes the marker after the host goes
-	// down, standing in for a hand-off queued during the outage).
+	// claim serves the queued file's content as one message while the marker
+	// exists, then the queue is empty (a restore guard writes the marker after the
+	// host goes down, standing in for a hand-off queued during the outage; the
+	// guard uses a distinct body per restore so a delivery can be attributed).
 	stubScript := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> \"$CALLS\"\n" +
 		"if [ \"$1 $2\" = \"msg runs\" ]; then printf '[]'; exit 0; fi\n" +
@@ -620,8 +674,9 @@ func stagePluginAndStub(t *testing.T, dir string, plugin []byte) (callsPath, stu
 		"  register) printf '{\"run_id\":\"run-1\"}';;\n" +
 		"  claim)\n" +
 		"    if [ -n \"$QUEUE\" ] && [ -f \"$QUEUE\" ]; then\n" +
+		"      body=$(cat \"$QUEUE\")\n" +
 		"      rm -f \"$QUEUE\"\n" +
-		"      printf '{\"found\":true,\"message\":{\"id\":\"m-restored\",\"from\":\"act-x\",\"body\":\"" + restoredDeliveryProbe + "\"}}'\n" +
+		"      printf '{\"found\":true,\"message\":{\"id\":\"m-restored\",\"from\":\"act-x\",\"body\":\"%s\"}}' \"$body\"\n" +
 		"    else sleep 0.05; printf '{\"found\":false}'; fi;;\n" +
 		"  *) printf '{\"ok\":true}';;\n" +
 		"esac\n"

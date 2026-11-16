@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	harnessfake "github.com/khoinguyen/factotum/pkg/harness/fake"
+	isofake "github.com/khoinguyen/factotum/pkg/isolation/fake"
 )
 
 // tasklessContext creates a project with two local repo checkouts and no task,
@@ -173,6 +174,7 @@ func TestRunCommandTasklessWithoutActorOmitsHubWarning(t *testing.T) {
 
 func TestRunCommandTasklessRequiresPromptSource(t *testing.T) {
 	r := newRunner(t)
+	r.runBackend = isofake.New("sandbox")
 	r.runHarness = harnessfake.New("opencode")
 
 	err := r.runErr("run", "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
@@ -183,6 +185,7 @@ func TestRunCommandTasklessRequiresPromptSource(t *testing.T) {
 
 func TestRunCommandTasklessRequiresProject(t *testing.T) {
 	r := newRunner(t)
+	r.runBackend = isofake.New("sandbox")
 	r.runHarness = harnessfake.New("opencode")
 	path := filepath.Join(t.TempDir(), "p.md")
 	if err := os.WriteFile(path, []byte("prompt"), 0o644); err != nil {
@@ -199,6 +202,7 @@ func TestRunCommandTasklessRequiresProject(t *testing.T) {
 // sibling --file/--body-file flags, not a usage error (exit 2).
 func TestRunCommandTasklessPromptFileMissingExitsOne(t *testing.T) {
 	r := newRunner(t)
+	r.runBackend = isofake.New("sandbox")
 	_, cfgPath := tasklessContext(t, r)
 	r.runHarness = harnessfake.New("opencode")
 	missing := filepath.Join(t.TempDir(), "nope.md")

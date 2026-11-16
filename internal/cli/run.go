@@ -85,6 +85,9 @@ func newRunCommand(deps *Deps) *cobra.Command {
 			if err := validateRunPrompt(cmd, opts); err != nil {
 				return err
 			}
+			if err := deps.validateRunFlags(cmd, opts); err != nil {
+				return err
+			}
 			if opts.goal != "" {
 				return deps.runGoal(cmd, opts.goal, opts)
 			}
@@ -96,8 +99,6 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&opts.project, "project", "p", "", "project id whose store the run reads and writes (defaults to the configured project)")
 	cmd.Flags().StringVar(&opts.sandbox, "sandbox", "", "isolation backend name (defaults to run.sandbox; e.g. local, openshell, docker)")
-	cmd.Flags().StringVar(&opts.sandbox, "backend", "", "deprecated alias for --sandbox")
-	_ = cmd.Flags().MarkHidden("backend")
 	cmd.Flags().StringVar(&opts.harness, "harness", "", "harness name (defaults to run.harness; e.g. opencode, opencode2, pi)")
 	cmd.Flags().StringVar(&opts.workspace, "workspace", "", "workspace root directory (default under the config dir)")
 	cmd.Flags().StringVar(&opts.model, "model", "", "model override passed to the harness")
@@ -114,18 +115,22 @@ func newRunCommand(deps *Deps) *cobra.Command {
 	return cmd
 }
 
-// resolveSandboxFlag returns the backend named by --sandbox, accepting the
-// deprecated --backend alias for one release. The two flags bind the same value;
-// naming both is rejected, and the alias warns so the user migrates.
-func (d *Deps) resolveSandboxFlag(cmd *cobra.Command, opts runOptions) (string, error) {
-	alias := cmd.Flags().Changed("backend")
-	if alias && cmd.Flags().Changed("sandbox") {
-		return "", usageError(cmd, "give either --sandbox or its deprecated alias --backend, not both")
+// validateRunFlags rejects a name given on the command line that the registries
+// do not have, before the command resolves a project, scopes a session, reads a
+// prompt, or opens a store: an unset name comes from config and is resolved
+// later, once the selection is built.
+func (d *Deps) validateRunFlags(cmd *cobra.Command, opts runOptions) error {
+	if opts.sandbox != "" {
+		if _, err := d.RunBackends.MustLookup(opts.sandbox); err != nil {
+			return usageError(cmd, "unknown isolation backend %q; available: %s", opts.sandbox, strings.Join(d.RunBackends.Names(), ", "))
+		}
 	}
-	if alias {
-		d.warnf("--backend is deprecated; use --sandbox instead")
+	if opts.harness != "" {
+		if _, err := d.RunHarnesses.MustLookup(opts.harness); err != nil {
+			return usageError(cmd, "unknown harness %q; available: %s", opts.harness, strings.Join(d.RunHarnesses.Names(), ", "))
+		}
 	}
-	return opts.sandbox, nil
+	return nil
 }
 
 // storeEnvFor is the store configuration a run hands its launched session, so
@@ -220,12 +225,8 @@ type runSelection struct {
 // default backend, and an unknown name is a usage error.
 func (d *Deps) prepareRun(cmd *cobra.Command, opts runOptions) (*runSelection, error) {
 	cfg := d.Config.Run
-	sandbox, err := d.resolveSandboxFlag(cmd, opts)
-	if err != nil {
-		return nil, err
-	}
-	if sandbox != "" {
-		cfg.Sandbox = sandbox
+	if opts.sandbox != "" {
+		cfg.Sandbox = opts.sandbox
 	}
 	if opts.harness != "" {
 		cfg.Harness = opts.harness

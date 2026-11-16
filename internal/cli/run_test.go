@@ -295,6 +295,7 @@ func TestRunCommandResolvesRelativeRepoPathFromProjectConfigRoot(t *testing.T) {
 
 func TestRunCommandRequiresExplicitSelection(t *testing.T) {
 	r := newRunner(t)
+	r.runBackend = isofake.New("sandbox")
 	r.runHarness = harnessfake.New("opencode")
 	workspace := t.TempDir()
 

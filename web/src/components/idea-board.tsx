@@ -19,7 +19,7 @@ function Count({
       <span data-count={name} className={`font-medium ${tone}`}>
         {value}
       </span>
-      <span data-count-label={name} className="text-[9px] text-muted-foreground">
+      <span data-count-label={name} className="text-xs text-muted-foreground">
         {label}
       </span>
     </span>

@@ -11,9 +11,15 @@ and the capture write side. Its tests are layered:
 - `reload_test.go` proves both file backends' sharing contract from a real
   second process: a hub that opened the store before that process wrote serves
   the write (snapshot, detail, and the SSE update) and keeps it when the hub
-  itself captures. jsonfile re-reads its document on every operation; jsondir
-  re-reads its directory when the store's generation changed, so a hub there
-  keeps its index between writes instead of re-parsing the whole directory.
+  itself captures. jsonfile re-parses its document on every operation; jsondir
+  re-reads its directory when the store's generation changed or a loaded
+  directory's modification time moved, so a hub there keeps its index between
+  writes instead of re-parsing the whole directory. The one change jsondir does
+  not notice is an edit made outside `ft` that rewrites an existing file in
+  place (no rename, no directory entry change): a running hub serves the record
+  it read until the next change it does notice, or a restart. That limit is
+  stated in the jsondir package doc and the README backend table, and pinned by
+  `TestInPlaceEditIsNotNoticed` in `pkg/store/jsondir`.
 - Visual layout is not asserted in Go because Go has no layout engine; the app's
   components (including the capture form) are exercised by the `web/` vitest
   suite instead.

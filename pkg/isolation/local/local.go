@@ -334,9 +334,12 @@ func (b *Backend) execAttached(c *exec.Cmd, env *environment, cmd isolation.Comm
 		if exited.Load() {
 			return nil
 		}
-		// Best effort: a descendant that already exited is not a stop failure.
+		// Walk the tree first: ft's own group is the only one this child shares,
+		// so the descendants have to be singled out. The direct child must die
+		// for Wait to return, so its kill is the one reported; the tree walk is
+		// best effort and a descendant that already exited is not a failure.
 		_ = procgroup.KillTree(c.Process.Pid)
-		return nil
+		return c.Process.Kill()
 	}
 
 	ex := newExecution()

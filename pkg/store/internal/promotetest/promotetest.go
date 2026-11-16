@@ -7,7 +7,11 @@
 // promotion child, and a test calls one of the scenarios, which starts one child
 // process per promotion — one at a time, so the machine never has a burst of
 // forks in flight (the contention under test is at promotion, not at start) —
-// and releases them together.
+// releases them together, and then starts every promotion with a single write.
+// The start is a gate, not a poll: a polled go-file woke the children over its
+// own backoff, up to 10ms apart, which was long enough for one promotion to
+// finish before its siblings looked, so a store with no cross-process lock
+// passed four runs in ten.
 package promotetest
 
 import (
@@ -16,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +41,7 @@ const (
 	pathEnv      = "FACTOTUM_PROMOTETEST_PATH"
 	jobEnv       = "FACTOTUM_PROMOTETEST_JOB"
 	releaseByEnv = "FACTOTUM_PROMOTETEST_RELEASE_BY"
+	gateEnv      = "FACTOTUM_PROMOTETEST_GATE"
 
 	// childStartBound bounds one child's start: fork, exec, open its handle and
 	// signal ready. Children opened their handles in 8-18ms idle and tailed at
@@ -64,11 +70,28 @@ type Job struct {
 }
 
 // Result is what one child's promotion observed. Err is the error string, empty
-// on success.
+// on success. Start and End bracket the CreatePromoted call on the host clock,
+// so the parent can tell whether any two promotions were ever in flight
+// together: a wave that never overlapped proves nothing about the guard.
 type Result struct {
 	ID      core.TicketID `json:"id"`
 	Created bool          `json:"created"`
 	Err     string        `json:"err"`
+	Start   int64         `json:"start"`
+	End     int64         `json:"end"`
+}
+
+// overlapped reports whether any two promotions were in flight at the same
+// time. Touching spans (one ending exactly as the other starts) do not count.
+func overlapped(results []Result) bool {
+	for i := range results {
+		for j := i + 1; j < len(results); j++ {
+			if results[i].Start < results[j].End && results[j].Start < results[i].End {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Child runs the test binary as a promotion child when the parent re-executed
@@ -109,11 +132,21 @@ func child(open Open) {
 		writeResult(dir, job.Task, Result{Err: "the parent did not release the promotions before its deadline"})
 		return
 	}
+	if err := os.WriteFile(filepath.Join(dir, "door-"+string(job.Task)), nil, 0o644); err != nil {
+		writeResult(dir, job.Task, Result{Err: "signal door: " + err.Error()})
+		return
+	}
+	if err := awaitGate(os.Stdin); err != nil {
+		writeResult(dir, job.Task, Result{Err: err.Error()})
+		return
+	}
 	result := Result{}
 	if openErr != nil {
 		result.Err = openErr.Error()
 	} else {
+		result.Start = time.Now().UnixNano()
 		promoted, created, err := backend.Tickets().CreatePromoted(context.Background(), job.Capture, candidate(job))
+		result.End = time.Now().UnixNano()
 		switch {
 		case err != nil:
 			result.Err = err.Error()
@@ -161,6 +194,23 @@ func releaseDeadline() time.Time {
 	return time.Now().Add(startBudget + releaseSlack)
 }
 
+// awaitGate blocks until the parent starts the promotions together. It reads one
+// byte from the pipe the parent handed this child as stdin: polling a file would
+// wake the children over the poll's own backoff (up to 10ms apart, which let one
+// promotion finish before its siblings looked), whereas the parent's one write
+// wakes every blocked reader at once. Gated only when the harness set the gate: a
+// child the tests run in-process has no such pipe on stdin.
+func awaitGate(gate io.Reader) error {
+	if os.Getenv(gateEnv) == "" {
+		return nil
+	}
+	var one [1]byte
+	if _, err := io.ReadFull(gate, one[:]); err != nil {
+		return fmt.Errorf("wait for the promotions to start together: %w", err)
+	}
+	return nil
+}
+
 // waitForFile reports whether path exists before deadline. Polling backs off to
 // 10ms: every waiting child polls, and a millisecond loop across 20 of them would
 // burn a slice of the machine the test is trying to measure.
@@ -180,16 +230,23 @@ func waitForFile(path string, deadline time.Time) bool {
 }
 
 // starter starts one child for job, returning its handle and captured output.
-type starter func(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error)
+// gate is the child's stdin: the parent writes one byte per child to start them
+// all together.
+type starter func(dir, path string, job Job, releaseBy time.Time, gate *os.File) (*exec.Cmd, *bytes.Buffer, error)
 
 // promote starts one process per job, waits until every child has opened its
-// handle, runs beforeRelease, releases them together and returns each child's
-// result in job order.
+// handle, runs beforeRelease, releases them together, starts every promotion in
+// one write and returns each child's result in job order.
 //
 // Children start one at a time: a burst of forks only adds scheduling pressure
 // to a machine already running the rest of the suite, and the cross-process
 // claim is made when the children promote together after the release, not when
 // they start. All of them still hold a handle opened before the release.
+//
+// The last step is the one that makes the race happen: each child signals that
+// it has reached its promotion and then blocks on its own stdin pipe, so once
+// every child is at the door the parent hands them all their first byte in a
+// single write and they enter the promotion within microseconds of each other.
 func promote(t *testing.T, path string, jobs []Job, beforeRelease func(t *testing.T)) []Result {
 	return promoteWith(t, startChild, path, jobs, beforeRelease, childStartBound, startBudget)
 }
@@ -210,10 +267,18 @@ func promoteWith(t *testing.T, start starter, path string, jobs []Job, beforeRel
 			}
 		}
 	})
+	gateRead, gateWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("open the promotion gate: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = gateRead.Close()
+		_ = gateWrite.Close()
+	})
 	deadline := time.Now().Add(budget)
 	releaseBy := deadline.Add(releaseSlack)
 	for i, job := range jobs {
-		cmd, output, attempts, err := startReady(start, dir, path, job, releaseBy, bound, deadline)
+		cmd, output, attempts, err := startReady(start, dir, path, job, releaseBy, gateRead, bound, deadline)
 		outputs[i] = output
 		if err != nil {
 			t.Fatalf("promotion %d of %s: %v", i, job.Capture, err)
@@ -230,6 +295,15 @@ func promoteWith(t *testing.T, start starter, path string, jobs []Job, beforeRel
 	if err := os.WriteFile(filepath.Join(dir, "release"), nil, 0o644); err != nil {
 		t.Fatalf("release promotions: %v", err)
 	}
+	if err := awaitDoors(dir, jobs, deadline); err != nil {
+		t.Fatal(err)
+	}
+	// Every child is now blocked on its own gate read, so this hands them all
+	// their first byte at once: one write per child, no other work in between.
+	if _, err := gateWrite.Write(make([]byte, len(jobs))); err != nil {
+		t.Fatalf("start the promotions together: %v", err)
+	}
+	_ = gateWrite.Close()
 	results := make([]Result, len(jobs))
 	for i, cmd := range cmds {
 		if err := cmd.Wait(); err != nil {
@@ -247,15 +321,29 @@ func promoteWith(t *testing.T, start starter, path string, jobs []Job, beforeRel
 	return results
 }
 
+// awaitDoors waits until every child has reached its promotion. A child that
+// dies on the way there fails the phase by name rather than being silently left
+// out of the start, which would leave the remaining promotions racing a field
+// the harness thinks is full.
+func awaitDoors(dir string, jobs []Job, deadline time.Time) error {
+	for i, job := range jobs {
+		if !waitForFile(filepath.Join(dir, "door-"+string(job.Task)), deadline) {
+			return fmt.Errorf("promotion %d of %s into %s never reached its promotion before the phase budget ran out at %s",
+				i, job.Capture, job.Task, deadline.Format(time.RFC3339Nano))
+		}
+	}
+	return nil
+}
+
 // startReady starts a child and waits for it to open its handle, replacing one
 // that misses bound so a stalled fork costs a replacement rather than the test.
 // Every attempt draws on the same deadline: a machine that cannot start a
 // process at all fails within the phase budget instead of retrying forever. It
 // returns how many children it started.
-func startReady(start starter, dir, path string, job Job, releaseBy time.Time, bound time.Duration, deadline time.Time) (*exec.Cmd, *bytes.Buffer, int, error) {
+func startReady(start starter, dir, path string, job Job, releaseBy time.Time, gate *os.File, bound time.Duration, deadline time.Time) (*exec.Cmd, *bytes.Buffer, int, error) {
 	ready := filepath.Join(dir, "ready-"+string(job.Task))
 	for attempts := 1; ; attempts++ {
-		cmd, output, err := start(dir, path, job, releaseBy)
+		cmd, output, err := start(dir, path, job, releaseBy, gate)
 		if err != nil {
 			return nil, output, attempts, fmt.Errorf("start a child after %d attempt(s): %w", attempts, err)
 		}
@@ -293,7 +381,7 @@ func outputText(output *bytes.Buffer) string {
 }
 
 // startChild re-executes this test binary as a promotion child for job.
-func startChild(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *bytes.Buffer, error) {
+func startChild(dir, path string, job Job, releaseBy time.Time, gate *os.File) (*exec.Cmd, *bytes.Buffer, error) {
 	encoded, err := json.Marshal(job)
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode promotion of %s into %s: %w", job.Capture, job.Task, err)
@@ -306,8 +394,10 @@ func startChild(dir, path string, job Job, releaseBy time.Time) (*exec.Cmd, *byt
 		pathEnv+"="+path,
 		jobEnv+"="+string(encoded),
 		releaseByEnv+"="+releaseBy.Format(time.RFC3339Nano),
+		gateEnv+"=1",
 	)
 	cmd.Stdout, cmd.Stderr = output, output
+	cmd.Stdin = gate
 	if err := cmd.Start(); err != nil {
 		return nil, output, err
 	}
@@ -378,6 +468,14 @@ func DistinctCaptures(t *testing.T, open Open, path string) {
 // guard to hold across processes: exactly one caller creates the task, every
 // caller is handed that same id, the store keeps one task and one origin edge,
 // and no loser's candidate id exists.
+//
+// It also requires the promotions to have actually overlapped. Every child
+// reaches its promotion behind one gate and the parent starts them with a single
+// write, so the window is as wide as the harness can make it — but "wide" is not
+// "proven": if no two promotions were ever in flight together, a duplicate would
+// be impossible no matter how broken the guard is, and passing would certify
+// nothing. The child stamps its promotion's start and end, so this fails rather
+// than reporting green on a store it never raced.
 func SameCapture(t *testing.T, open Open, path string) {
 	t.Helper()
 	ctx := context.Background()
@@ -398,6 +496,11 @@ func SameCapture(t *testing.T, open Open, path string) {
 	}
 
 	results := promote(t, path, jobs, nil)
+
+	if !overlapped(results) {
+		t.Fatalf("no two of the %d promotions were ever in flight together, so this run never raced the guard: %s spanned %d..%d and %s spanned %d..%d (host clock, ns). A host that cannot run two promotions at once cannot test a cross-process one.",
+			len(jobs), jobs[0].Task, results[0].Start, results[0].End, jobs[1].Task, results[1].Start, results[1].End)
+	}
 
 	fresh, err := open(ctx, path)
 	if err != nil {

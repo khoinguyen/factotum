@@ -156,11 +156,18 @@ export type SessionDelivered = {
 }
 
 // SessionView is one chief session: its lifecycle and the work it delivered.
+// state is alive, stale (no activity inside the server's idle window, so the
+// process is presumed gone), or retired (explicitly stopped and possibly
+// replaced by a successor).
 export type SessionView = {
   id: string
   state: string
   started_at?: string
   stopped_at?: string
+  // last_event_at is the last event attributed to the session, which bounds
+  // staleness; a live receiver run heartbeating under the session is separate
+  // evidence that keeps it alive.
+  last_event_at?: string
   duration_seconds: number
   reason?: string
   successor?: string

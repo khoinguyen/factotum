@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
@@ -21,6 +22,16 @@ type SessionService struct {
 func NewSessionService(backend store.Backend, clock Clock, ids IDGen) *SessionService {
 	return &SessionService{backend: backend, clock: clock, ids: ids}
 }
+
+// DefaultSessionIdle is how long a chief session may go without evidence of
+// activity — an event attributed to it, or a receiver run heartbeating under it
+// — before the dashboard projects it as stale rather than alive. A session's
+// record only changes when someone retires it, so a chief that exits or is
+// killed would otherwise stay "alive" forever; fading after this window is what
+// keeps the sessions page an answer to "who is working right now". The window is
+// deliberately looser than DefaultRunTTL: a live run lease is the primary
+// liveness signal, so this only bounds a session with no receiver at all.
+const DefaultSessionIdle = 15 * time.Minute
 
 // NewID mints a fresh, short session id. A reincarnation always gets a new one,
 // so no two chief sessions share an id.

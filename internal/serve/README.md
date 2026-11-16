@@ -31,8 +31,9 @@ The app (Vite + React + TypeScript + Tailwind) is served from `web/dist`, which
 build` embeds the result. The app shell answers the dashboard root `/` and the
 client routes `/capture`, `/sessions`, `/idea`, `/task`, `/memory`, `/doc`; the
 client router reads the id from the path. The data comes from `/api/snapshot`
-(dashboard), `/api/sessions` (the chief-session timeline: each session alive or
-retired, when it started and stopped and why, and the work it delivered), and
+(dashboard), `/api/sessions` (the chief-session timeline: each session alive,
+stale, or retired, when it started, its last event, and when and why it stopped,
+and the work it delivered), and
 `/api/<kind>/<id>` (drill-downs), and the app refetches on the `/events` SSE
 stream, so a mutation appears live. The dashboard's Capture button (a floating
 button on desktop, a sticky bar on mobile) opens a "prompt the chief" modal in

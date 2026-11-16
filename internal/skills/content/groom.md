@@ -48,8 +48,9 @@ non-terminal stderr prints none.
 A session that fails reports why: `ft groom` prints the harness's stderr tail
 (bounded to 4 KiB) as a `stderr:` block, the same shape `ft run` uses, so a
 harness that died without an API key or a missing image names the reason instead
-of only its exit code. That block is text output; `-o json|yaml` keeps the
-machine-readable error envelope alone.
+of only its exit code. That block is text output; with `-o json|yaml` the tail
+travels as the error envelope's `stderr` field instead - the same field `ft run`
+emits - so a machine consumer reads the reason without interleaved prose.
 
 `--sandbox` and `--harness` are optional: `ft groom` resolves them like `ft run`
 (flag, env, project `[run]`, machine `[run]`), prompting once on a terminal when

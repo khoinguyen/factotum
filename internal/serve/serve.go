@@ -3,13 +3,14 @@
 // readiness), ranks startable work through pkg/rank, and watches the event log
 // to push live updates over SSE. Reads are open.
 //
-// It is one app with a write side too: the dashboard's Capture button opens a
-// prompt modal that posts a natural-language idea or bug to /api/capture (the
-// standalone /capture page renders the same form as a fallback), which stores
-// it through the same pkg/app TicketService, gated by a shared token. The token
-// is the only authentication; the read side stays open and live. Enrichment of
-// a capture is deferred to the grooming step, so a capture stores the raw
-// sentence immediately.
+// It is one app with a write side too. The dashboard's Capture button opens a
+// "prompt the chief" modal: the free-form prompt is stored as a document
+// artifact (pkg/app ArtifactService) and the chief is messaged with it. The
+// standalone /capture page remains as a fallback form, storing a
+// natural-language idea or bug through the same pkg/app TicketService. Both
+// writes are gated by a shared token, the only authentication; the read side
+// stays open and live. Enrichment of a capture is deferred to the grooming step,
+// so a capture stores the raw sentence immediately.
 //
 // The dashboard is idea-centric: ideas are the primary unit, rolled up from the
 // tasks promoted from them (the origin edge), with drill-down to a task, idea,

@@ -350,9 +350,9 @@ ft groom review <session> --verdict needs-rework -f review.md   # record the arc
 ## Serve the dashboard
 
 `ft serve` is a live, idea-centric dashboard over the graph (reads are open and SSE-live; the read
-pages have no mutating endpoints). The dashboard's Capture button opens the prompt modal and turns a
-sentence into a stored idea or bug, gated by a shared token; the standalone `/capture` page remains
-as a fallback.
+pages have no mutating endpoints). The dashboard's Capture button opens the prompt box in place: the
+prompt is stored as a document and the chief is notified. The standalone `/capture` page remains as a
+fallback and turns a sentence into a stored idea or bug. Both are gated by a shared token.
 
 ```sh
 ft serve                          # 127.0.0.1:8484, configured project

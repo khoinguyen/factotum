@@ -505,6 +505,17 @@ long-poll claim, inject as a user turn, ack.
   opencode server API (a mid-turn agent queues it for the next turn; an idle agent starts a new
   turn), then `ack(read)`. A failure `ack(failed)` with the error. On unload: deregister.
 - The loop is off the agent's turn, so injection never blocks tool execution.
+- **Cold restore.** OpenCode V2 resumes a surviving session as `opencode -s <session>` with the
+  original launch environment gone, so `FACTOTUM_*` never reaches the plugin and an idle agent
+  would register nothing while its TUI looks healthy. Every load that has its configuration
+  records the identity it registered as (project, actor, task, harness, bin, store and its
+  options, hub URL) plus the session it injects into, keyed by the OpenCode location (the project
+  hash of the canonical directory). A load with no environment recovers that record and registers
+  again; two receivers for one actor split a mailbox, so the recovery waits while another run for
+  that actor is live and adopts once its lease lapses. The record never carries the hub token: a
+  restored remote receiver whose token is gone logs that and stays inert instead of registering
+  against the wrong store. The record is per location, so a location hosts one agent — the loop
+  gives every agent its own directory.
 - `ft run`'s opencode harness injects at launch when the run itself is the reason the session
   exists (it passes the initial message, and the plugin claims the rest).
 - **`ft` must be reachable where the receiver runs.** With the local transport the plugin shells

@@ -34,6 +34,18 @@
 // lets the reloaded receiver resume it instead of waiting for an event: an idle
 // agent gets none, so a reload would otherwise strand every queued handoff.
 //
+// A cold restore loses the environment too. OpenCode V2 resumes a surviving
+// session as `opencode -s <session>` without the original launch env, so
+// FACTOTUM_* never reaches the plugin and it would register nothing while the
+// TUI looks healthy. Every load that has its configuration therefore records the
+// identity it registered as (and the session it injects into) for its location,
+// and a load with no environment recovers it from storage. That recovery waits
+// while another receiver holds the actor live: two claimers of one mailbox split
+// a hand-off between them, and a human opening the checkout by hand must not
+// take over a running agent's queue. The record never carries the hub token, so
+// a remote receiver whose token is gone says so and stays inert rather than
+// registering against the wrong store.
+//
 // It is a thin client of the receiver protocol. With no hub URL it shells out to
 // the `ft msg agent` verbs (the stable local adapter interface); when
 // `FACTOTUM_MSG_URL` points at a remote `ft serve`, it speaks the token-gated
@@ -98,6 +110,12 @@ export function configFromEnv(env) {
     sessionWaitMs: num(env.FACTOTUM_MSG_SESSION_WAIT_MS, SESSION_WAIT_MS),
     msgUrl: normalizeMsgURL(env.FACTOTUM_MSG_URL),
     token: (env.FACTOTUM_SERVE_TOKEN || "").trim(),
+    // The store a run's receiver must speak to. A cold restore loses the
+    // environment that carried it, so the record keeps it: without this a
+    // restored receiver would quietly register against whatever store its new
+    // host resolves instead of the one its run was launched with.
+    store: (env.FACTOTUM_STORE || "").trim(),
+    storeOpts: (env.FACTOTUM_STORE_OPTS || "").trim(),
   };
 }
 
@@ -236,8 +254,21 @@ export function httpCall(config, { fetchFn = globalThis.fetch } = {}) {
   };
 }
 
+/**
+ * receiverEnv is the environment the receiver's child ft runs with: the host's
+ * own environment, with the store the receiver was configured for pinned onto
+ * it. The pin matters after a cold restore, when the host no longer carries the
+ * FACTOTUM_STORE* the run was launched with.
+ */
+export function receiverEnv(config, env = process.env) {
+  const merged = { ...env };
+  if (config?.store) merged.FACTOTUM_STORE = config.store;
+  if (config?.storeOpts) merged.FACTOTUM_STORE_OPTS = config.storeOpts;
+  return merged;
+}
+
 /** selectCall picks the transport: a hub URL means HTTP, otherwise local ft. */
-export function selectCall(config, { run = (argv) => spawnRunner(config.bin, argv), fetchFn } = {}) {
+export function selectCall(config, { run = (argv) => spawnRunner(config.bin, argv, { env: receiverEnv(config) }), fetchFn } = {}) {
   return config.msgUrl ? httpCall(config, { fetchFn }) : cliCall(config, run);
 }
 
@@ -619,6 +650,180 @@ export function msgSessionStore(ctx, config) {
 }
 
 /**
+ * agentRecordKey scopes a receiver's recorded identity to one OpenCode location.
+ * The context's storage is shared by every location OpenCode hosts, so the
+ * location itself must be part of the key; the project id (a hash of the
+ * canonical directory) is stable across a restart, which is exactly what a cold
+ * restore needs. The part is length-prefixed so its content cannot shift the
+ * boundary of the key.
+ */
+export function agentRecordKey(ctx) {
+  const location = ctx?.location?.project?.id || ctx?.location?.directory || "";
+  return `factotum.agent.${String(location).length}:${location}`;
+}
+
+/**
+ * msgAgentStore persists the identity a receiver registered as, so a load that
+ * arrives with no environment (a V2 cold restore) can register again. The token
+ * is deliberately not part of the record: a bearer token does not belong in
+ * durable plugin state, and a remote receiver that cannot authenticate must not
+ * silently fall back to the local store.
+ */
+export function msgAgentStore(ctx) {
+  const key = agentRecordKey(ctx);
+  return {
+    async load() {
+      let stored;
+      try {
+        stored = await ctx?.storage?.get(key);
+      } catch (_) {
+        return null;
+      }
+      if (!stored || typeof stored !== "object") return null;
+      if (!stored.project || !stored.actor) return null;
+      return {
+        config: configFromRecord(stored),
+        sessionID: typeof stored.sessionID === "string" ? stored.sessionID : "",
+      };
+    },
+    async save(config, sessionID) {
+      try {
+        await ctx?.storage?.set(key, recordFromConfig(config, sessionID));
+      } catch (_) {
+        // Best-effort: a failed save only costs a later cold restore its identity.
+      }
+    },
+  };
+}
+
+function recordFromConfig(config, sessionID) {
+  return {
+    version: 1,
+    project: config.project,
+    actor: config.actor,
+    task: config.task || "",
+    harness: config.harness,
+    bin: config.bin,
+    host: config.host || "",
+    waitMs: config.waitMs,
+    ttlMs: config.ttlMs,
+    retryMs: config.retryMs,
+    sessionWaitMs: config.sessionWaitMs,
+    msgUrl: config.msgUrl || "",
+    store: config.store || "",
+    storeOpts: config.storeOpts || "",
+    sessionID: sessionID || "",
+    savedAt: Date.now(),
+  };
+}
+
+function configFromRecord(record) {
+  return {
+    project: record.project,
+    actor: record.actor,
+    task: record.task || "",
+    bin: record.bin || "ft",
+    harness: record.harness || "opencode",
+    host: record.host || "",
+    // The restoring host is a new process, so the pid is its own - never the
+    // dead one from the record.
+    pid: process.pid,
+    waitMs: num(record.waitMs, DEFAULT_WAIT_MS),
+    ttlMs: num(record.ttlMs, DEFAULT_TTL_MS),
+    retryMs: num(record.retryMs, DEFAULT_RETRY_MS),
+    sessionWaitMs: num(record.sessionWaitMs, SESSION_WAIT_MS),
+    msgUrl: normalizeMsgURL(record.msgUrl),
+    token: "",
+    store: record.store || "",
+    storeOpts: record.storeOpts || "",
+  };
+}
+
+/** sessionAlive reports whether a session still exists to inject into. */
+async function sessionAlive(ctx, sid) {
+  try {
+    return !!(await ctx?.session?.get({ sessionID: sid }));
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * actorLive reports whether another live run is registered for the actor: true,
+ * false, or null when the store cannot say (`ft msg runs` failed). A null never
+ * blocks a restore - the register itself is retried, so an unreadable store
+ * costs a slow start, not a stranded mailbox.
+ */
+async function actorLive(run, config) {
+  let result;
+  try {
+    result = await run(["msg", "runs", "-p", config.project, "-o", "json"]);
+  } catch (_) {
+    return null;
+  }
+  if (result?.code !== 0) return null;
+  const rows = parseJSON(result?.stdout);
+  if (!Array.isArray(rows)) return null;
+  return rows.some((row) => row?.actor === config.actor && row?.live === true);
+}
+
+/**
+ * waitForActorFree holds a cold restore until no live receiver serves the actor,
+ * so the restore can never split a running agent's mailbox. A crashed receiver's
+ * lease lapses within its TTL, which is the case this waits out; a live peer
+ * keeps this parked (and says so once) until it is disposed.
+ */
+async function waitForActorFree(config, { run, log, stopped }) {
+  if (config.msgUrl) return true;
+  const call = run || ((argv) => spawnRunner(config.bin, argv, { env: receiverEnv(config) }));
+  const retryMs = num(config.retryMs, DEFAULT_RETRY_MS);
+  let told = false;
+  while (!stopped()) {
+    const live = await actorLive(call, config);
+    if (live !== true) return true;
+    if (!told) {
+      told = true;
+      log(`factotum msg: actor ${config.actor} already has a live receiver; registering again once its lease lapses`);
+    }
+    await sleep(retryMs);
+  }
+  return false;
+}
+
+/**
+ * setupRestoredReceiver recovers a receiver whose launch environment is gone
+ * (the V2 cold restore) from the identity the previous load recorded for this
+ * location. It runs entirely off the load path - V2 awaits setup, so probing the
+ * store here would block OpenCode startup - and returns the cleanup the host
+ * calls on unload.
+ */
+export function setupRestoredReceiver(ctx, { call, run, log = pluginLog } = {}) {
+  let disposed = false;
+  let cleanup = null;
+  const stopped = () => disposed;
+  void (async () => {
+    const record = await msgAgentStore(ctx).load();
+    if (!record) return;
+    if (record.config.msgUrl && !record.config.token) {
+      log(`factotum msg: recorded receiver for actor ${record.config.actor} talks to a hub, but this restore has no FACTOTUM_SERVE_TOKEN; staying inert instead of registering against the local store`);
+      return;
+    }
+    if (!(await waitForActorFree(record.config, { run, log, stopped }))) return;
+    if (record.sessionID && !(await sessionAlive(ctx, record.sessionID))) {
+      log(`factotum msg: recorded session ${record.sessionID} for actor ${record.config.actor} is gone; staying inert`);
+      return;
+    }
+    if (disposed) return;
+    log(`factotum msg: no launch environment; restoring actor ${record.config.actor} from this location's recorded identity`);
+    cleanup = startReceiver(ctx, record.config, { call, run, log, resume: record.sessionID });
+  })().catch((error) => log(`factotum msg: cold restore failed: ${error?.message || error}`));
+  return () => {
+    disposed = true;
+    if (cleanup) void cleanup();
+  };
+}
+
+/**
  * subscribeContextEvents forwards the V2 public event stream to onEvent in the
  * background, so the claim loop learns the session to inject into without
  * blocking setup. It returns a cleanup that aborts the subscription.
@@ -652,31 +857,50 @@ export function pluginLog(message) {
 }
 
 /**
- * setupV2 is the V2 entrypoint: it wires the shared receiver to the context's
- * session and event domains and returns the cleanup OpenCode calls on unload.
- * The `env`/`call`/`log` seams exist only so the protocol is testable without a
- * live OpenCode runtime.
+ * startReceiver wires the shared receiver to the context's session and event
+ * domains and returns the cleanup OpenCode calls on unload. `record` persists
+ * the identity for a later cold restore, `resume` supplies the session a restore
+ * recovered, and `run`/`call` are the test seams for the ft transport.
  */
-export function setupV2(ctx, { env = process.env, call, loadSession, saveSession, log = pluginLog } = {}) {
-  const config = configFromEnv(env);
-  if (!config) return undefined;
-  const store = msgSessionStore(ctx, config);
+export function startReceiver(ctx, config, { call, run, loadSession, saveSession, log = pluginLog, resume = "", record = false } = {}) {
+  const sessions = msgSessionStore(ctx, config);
+  const agents = msgAgentStore(ctx);
   const receiver = createFactotumReceiver({
     config,
-    call: call || selectCall(config),
+    call: call || selectCall(config, { run }),
     inject: makeContextInjector(ctx?.session),
-    loadSession: loadSession || store.load,
-    saveSession: saveSession || store.save,
+    loadSession: loadSession || (resume ? async () => resume : sessions.load),
+    saveSession: async (sid) => {
+      await sessions.save(sid);
+      if (record) await agents.save(config, sid);
+    },
     log,
   });
   const stop = subscribeContextEvents(ctx, (event) => receiver.onEvent(event));
-  // Registration and the claim loop run off the load path so the plugin never
-  // blocks OpenCode startup.
-  receiver.start().catch((error) => log(`factotum msg: receiver start failed: ${error?.message || error}`));
+  const start = async () => {
+    // Record the identity before any session is known: the service can restart
+    // before the agent's first turn, and a receiver registered without a session
+    // is still addressable (it injects once one appears).
+    if (record) await agents.save(config, "");
+    await receiver.start();
+  };
+  start().catch((error) => log(`factotum msg: receiver start failed: ${error?.message || error}`));
   return () => {
     stop();
     void receiver.dispose();
   };
+}
+
+/**
+ * setupV2 is the V2 entrypoint. With FACTOTUM_* it registers as usual; without
+ * it (a cold restore) it recovers the identity recorded for this location. Both
+ * run off the load path so the plugin never blocks OpenCode startup, and both
+ * return the cleanup OpenCode calls on unload.
+ */
+export function setupV2(ctx, { env = process.env, call, run, loadSession, saveSession, log = pluginLog } = {}) {
+  const config = configFromEnv(env);
+  if (!config) return setupRestoredReceiver(ctx, { call, run, log });
+  return startReceiver(ctx, config, { call, run, loadSession, saveSession, log, record: true });
 }
 
 // V2 runs `setup`; V1 runs `server`. OpenCode 2 ships the `@opencode/plugin`

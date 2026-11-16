@@ -44,11 +44,11 @@ lists each excluded task with its reason, applying the same
 ## Watch the factory
 
 ```sh
-ft serve                        # live dashboard + token-gated capture; also -p <project>, --all, --bind <host:port>, --token <secret>
+ft serve                        # live dashboard + capture; also -p <project>, --all, --bind <host:port>, --token <secret>
 ```
 `ft serve` is an idea-centric live dashboard: ideas roll up promoted tasks, a kanban groups by
-origin idea, idea/task/memory/doc drill down; reads open and SSE-live. The whole app is an embedded
-shadcn/ui SPA served at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`; `/capture` posts a sentence to the token-gated `/api/capture` as an idea or a bug, and its prompt box stores a free-form prompt as a document artifact and ft-msgs the chief at `/api/prompt`. The message port rides the same token at `/api/msg/*` so a receiver on another host can message through the project backend, and every write side authenticates with `Authorization: Bearer <token>`. The token is resolved from `--token`, then `FACTOTUM_SERVE_TOKEN`, then `serve.token` in the machine config, and an explicitly provided token is never printed; when none is set on a scoped serve, a fresh random token is minted each start and printed for you to copy, while with no token and `--all` (no single capture target) capture is disabled and the read side stays open.
+origin idea, idea/task/memory/doc drill down; reads open and SSE-live. The app is an embedded
+shadcn/ui SPA served at `/`,`/capture`,`/idea`,`/task`,`/memory`,`/doc`: the dashboard's floating Capture button (a sticky bar on mobile) opens a token-gated prompt modal that stores it as a document and ft-msgs the chief at `/api/prompt`, while `/capture` remains the fallback page that posts a sentence to `/api/capture` as an idea or a bug. The message port rides the same token at `/api/msg/*` so a receiver on another host can message through the project backend, and every write authenticates with `Authorization: Bearer <token>`. The token resolves from `--token`, then `FACTOTUM_SERVE_TOKEN`, then `serve.token` in the machine config; an explicit one is never printed, while a scoped serve with none mints and prints a fresh random one each start, and `--all` without a token (no single capture target) turns capture off and leaves reads open.
 
 ## Move work through its lifecycle
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -313,6 +314,115 @@ func TestAgentRenderCrossProjectCaptureIsReady(t *testing.T) {
 	}
 	if !strings.Contains(out, "external_deps: [foreign-task]") {
 		t.Fatalf("a real foreign task is still an external dep:\n%s", out)
+	}
+}
+
+// depBlockedSection returns the agent render's dep-blocked body: everything
+// between that header and the next top-level section.
+func depBlockedSection(t *testing.T, out string) string {
+	t.Helper()
+	const header = "dep-blocked:\n"
+	start := strings.Index(out, header)
+	if start < 0 {
+		t.Fatalf("agent output missing %q:\n%s", header, out)
+	}
+	section := out[start+len(header):]
+	for _, next := range []string{"cycles:\n", "external_deps: "} {
+		if end := strings.Index(section, next); end >= 0 {
+			section = section[:end]
+		}
+	}
+	return section
+}
+
+// depBlockedIDs lists the task ids in a dep-blocked section, which is one
+// "  - <id> ..." line per task.
+func depBlockedIDs(section string) []string {
+	var ids []string
+	for _, line := range strings.Split(section, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		if fields := strings.Fields(strings.TrimPrefix(line, "- ")); len(fields) > 0 {
+			ids = append(ids, fields[0])
+		}
+	}
+	return ids
+}
+
+// TestDepBlockedCountsOnlyUnmetDeps pins the reported bug: an in-progress task
+// was reported as dep_blocked=1 while its blocked_by list was empty, because
+// the stats counted every unresolved non-ready task. Dep-blocked means waiting
+// on an unmet dependency, and an in-progress task is being worked on, not
+// waiting, so the count and the list must agree with the board's
+// classification.
+func TestDepBlockedCountsOnlyUnmetDeps(t *testing.T) {
+	tests := []struct {
+		name     string
+		tasks    []*core.Ticket
+		want     int
+		wantList []string
+	}{
+		{
+			name:  "in progress with every dep done is not dep-blocked",
+			tasks: []*core.Ticket{task("done", core.StatusDone), task("doing", core.StatusInProgress, "done")},
+			want:  0,
+		},
+		{
+			name:     "todo waiting on an unresolved dep is dep-blocked",
+			tasks:    []*core.Ticket{task("blocker", core.StatusInProgress), task("waiting", core.StatusTodo, "blocker")},
+			want:     1,
+			wantList: []string{"waiting"},
+		},
+		{
+			name:  "in progress with an unmet dep is still being worked on",
+			tasks: []*core.Ticket{task("blocker", core.StatusTodo), task("doing", core.StatusInProgress, "blocker")},
+			want:  0,
+		},
+		{
+			name:  "blocked with no deps is blocked, not dep-blocked",
+			tasks: []*core.Ticket{task("parked", core.StatusBlocked)},
+			want:  0,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			view := statusView(t, tc.tasks...)
+
+			agent := renderString(t, Agent{}, view)
+			if want := fmt.Sprintf("dep_blocked=%d", tc.want); !strings.Contains(agent, want) {
+				t.Fatalf("agent stats missing %q:\n%s", want, agent)
+			}
+			section := depBlockedSection(t, agent)
+			if got := depBlockedIDs(section); !slices.Equal(got, tc.wantList) {
+				t.Fatalf("dep-blocked list = %v, want %v:\n%s", got, tc.wantList, agent)
+			}
+			// The reported symptom: a count with an empty blocked_by list.
+			if ids := depBlockedIDs(section); len(ids) != tc.want {
+				t.Fatalf("dep_blocked=%d but the list has %d entries:\n%s", tc.want, len(ids), agent)
+			}
+			if strings.Contains(section, "blocked_by=[]") {
+				t.Fatalf("a dep-blocked entry must name its unmet dep:\n%s", agent)
+			}
+
+			summary := renderString(t, Summary{}, view)
+			if want := fmt.Sprintf("dep_blocked=%d", tc.want); !strings.Contains(summary, want) {
+				t.Fatalf("summary stats missing %q:\n%s", want, summary)
+			}
+
+			var doc struct {
+				Stats struct {
+					DepBlocked int `json:"depBlocked"`
+				} `json:"stats"`
+			}
+			if err := json.Unmarshal([]byte(renderString(t, JSON{}, view)), &doc); err != nil {
+				t.Fatalf("json render invalid: %v", err)
+			}
+			if doc.Stats.DepBlocked != tc.want {
+				t.Fatalf("json depBlocked = %d, want %d", doc.Stats.DepBlocked, tc.want)
+			}
+		})
 	}
 }
 

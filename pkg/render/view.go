@@ -138,13 +138,27 @@ func (v View) info() *info {
 		if task.Status == core.StatusBlocked {
 			derived.stats.Blocked++
 		}
-		switch {
-		case task.Resolves(v.Project.Policy), derived.readyAgent[id] || derived.readyHuman[id], derived.cycles[id]:
-		default:
+		if v.depBlocked(derived, id) {
 			derived.stats.DepBlocked++
 		}
 	}
 	return derived
+}
+
+// depBlocked reports whether a task is waiting on at least one unmet
+// dependency. Resolved, ready, and cycle tasks are not waiting, and neither is
+// an in-progress task: it is being worked on, so the board classifies it
+// in-progress even when a dependency is unmet. Requiring an actual blocker
+// keeps the dep_blocked count and the dep-blocked list from disagreeing.
+func (v View) depBlocked(derived *info, id core.TicketID) bool {
+	task := derived.tasks[id]
+	if derived.cycles[id] || task.Status == core.StatusInProgress {
+		return false
+	}
+	if task.Resolves(v.Project.Policy) || derived.readyAgent[id] || derived.readyHuman[id] {
+		return false
+	}
+	return len(v.blockers(id)) > 0
 }
 
 func (v View) Classify(task core.Ticket) Class {

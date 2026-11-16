@@ -19,7 +19,6 @@ func (Summary) Render(_ context.Context, w io.Writer, view View) error {
 	derived := view.info()
 
 	counts := map[core.TicketStatus]int{}
-	depBlocked := 0
 	for _, id := range derived.ids {
 		task := derived.tasks[id]
 		// Captures have their own count: counting them under todo/done would
@@ -28,10 +27,6 @@ func (Summary) Render(_ context.Context, w io.Writer, view View) error {
 			continue
 		}
 		counts[task.Status]++
-		if task.Resolves(view.Project.Policy) || derived.readyAgent[id] || derived.readyHuman[id] || derived.cycles[id] {
-			continue
-		}
-		depBlocked++
 	}
 
 	var b strings.Builder
@@ -46,7 +41,7 @@ func (Summary) Render(_ context.Context, w io.Writer, view View) error {
 		counts[core.StatusCancelled],
 	)
 	fmt.Fprintf(&b, "ready_agent=%d ready_human=%d dep_blocked=%d cycles=%d\n",
-		derived.stats.ReadyAgent, derived.stats.ReadyHuman, depBlocked, derived.stats.Cycles)
+		derived.stats.ReadyAgent, derived.stats.ReadyHuman, derived.stats.DepBlocked, derived.stats.Cycles)
 
 	if ranked := view.ranked(); len(ranked) > 0 {
 		parts := make([]string, 0, 3)

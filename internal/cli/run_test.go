@@ -430,6 +430,76 @@ func TestRunCommandLoopSharesOneSession(t *testing.T) {
 	}
 }
 
+// TestRunCommandLoopBoundsItsSession proves the loop brackets the session it
+// mints with session.started and session.retired, so a finished goal run leaves
+// a retired session instead of a permanently alive one, while a session the
+// caller inherited (FACTOTUM_SESSION) is never retired by the loop.
+func TestRunCommandLoopBoundsItsSession(t *testing.T) {
+	const inherited = "sess-chief"
+	tests := []struct {
+		name    string
+		inherit bool
+		minted  bool
+	}{
+		{name: "a loop that mints its session retires it", minted: true},
+		{name: "a loop that inherits the caller's session leaves it alone", inherit: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRunner(t)
+			_, _, goal := loopContext(t, r)
+
+			backend := isofake.New("sandbox")
+			backend.Program(isolation.ExecResult{Stdout: []byte("done\n"), ExitCode: 0})
+			r.runBackend = backend
+			r.runHarness = harnessfake.New("opencode")
+			if tt.inherit {
+				r.getenv = func(key string) string {
+					if key == "FACTOTUM_SESSION" {
+						return inherited
+					}
+					return ""
+				}
+			}
+
+			r.run("run", "--goal", goal, "--sandbox", "fake", "--harness", "fake", "--workspace", t.TempDir())
+
+			sid := inherited
+			if tt.minted {
+				prepared := backend.Prepared()
+				if len(prepared) == 0 {
+					t.Fatal("the loop prepared no harness")
+				}
+				sid = prepared[0].Env[harnesspkg.EnvSession]
+				if sid == "" {
+					t.Fatal("the loop exported no FACTOTUM_SESSION")
+				}
+			}
+			var started, retired int
+			for _, event := range listEvents(t, r) {
+				if event.Session != sid {
+					continue
+				}
+				switch event.Kind {
+				case "session.started":
+					started++
+				case "session.retired":
+					retired++
+				}
+			}
+			if tt.minted {
+				if started != 1 || retired != 1 {
+					t.Fatalf("minted loop session %q started %d retired %d, want one of each", sid, started, retired)
+				}
+				return
+			}
+			if started != 0 || retired != 0 {
+				t.Fatalf("inherited session %q started %d retired %d, want it untouched", sid, started, retired)
+			}
+		})
+	}
+}
+
 // TestRunCommandLoopInjectsHubEnvFromConfig proves the `--goal` loop reads the
 // configured messaging hub (FACTOTUM_MSG_URL/FACTOTUM_SERVE_TOKEN) and hands it
 // to each launched task harness, exactly as the single-task path does, so a

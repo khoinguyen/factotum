@@ -3,21 +3,29 @@
 Status: **evaluation and recommendation** (t-y3h7fl22ml). No code change in this document.
 t-xbacgizanl landed `ft init` with an in-repo `Prompter` and left the question "use a prompt
 library for a more polished interactive session" open for this evaluation. The measurements below
-were taken on Go 1.26.4 / darwin / arm64 on 2026-11-16; the commands are in the appendix.
+were taken on Go 1.26.4 / darwin / arm64 on 2026-11-16; the commands are in the appendix. Binary
+sizes vary by a few tenths of a percent between builds (build id), so read them as approximate.
 
 ## 1. Recommendation
 
-**Keep the in-repo `Prompter`.** It is not a stopgap that we are failing to replace: for the shape
-of interaction `ft init` actually has, a terminal prompt library costs 6–39 extra modules and
-2.3–3.7 MB of binary to improve the look of five single-line questions, and the most polished
-candidate (`huh`) **hangs** when stdin is not a terminal — the exact situation
-`ft init` is required to handle cleanly.
+**Keep the in-repo `Prompter`.** This is not a stopgap we are failing to replace: for the shape of
+interaction `ft init` actually has, a terminal prompt library costs 3–37 extra third-party packages
+and up to 3.75 MB of binary to improve the look of five single-line questions — and the most
+polished candidate, `huh`, **breaks when stdin is not a terminal**: as written it exits 1 with
+`could not open TTY`, and once it is given explicit streams (which keeping prompts on stderr
+requires) it paints a full-screen UI and blocks instead. The shape that breaks it is not the headless
+one, it is the ordinary one: a shell or agent run with **stdout on a terminal and stdin redirected**
+(`ft init < /dev/null`). Today that invocation silently takes every default; under `huh` it would
+fail or hang.
 
-Revisit when a command needs a real **form**: cross-field validation, multi-select, live filtering,
-or an in-place re-prompt loop instead of "unknown value, here are the valid ones" as an error. At
-that point adopt `charm.land/huh/v2` **behind the existing `Prompter` port**, with accessible mode
-forced whenever stdout/stdin is not a terminal. That is the only actively maintained candidate whose
-non-TTY path is scriptable, which is what keeps the real terminal implementation testable.
+Revisit when a command needs a widget the port cannot express. The first of those exists today:
+`ft run` picks one of N registered adapters through an `Input` with the options in the label and
+rejects a typo as an error (`run.go:444`); a **select** is the concrete polish win for a site that
+is already here. The others are cross-field validation, multi-select, live filtering, and an
+in-place re-prompt loop. When one of them is wanted, adopt `charm.land/huh/v2` behind the existing
+`Prompter` port, with the non-TTY gate widened to stdin (see §6) — it is the only actively
+maintained candidate with a scriptable non-TTY path, which is what keeps the real terminal
+implementation testable.
 
 ## 2. What `ft init` needs today
 
@@ -57,82 +65,96 @@ weigh against a library:
   derived defaults. This is tested (`TestInitBareInRepoNonInteractiveDoesNotRegister`,
   `TestInitGreenfieldNonInteractiveDefault`).
 - **Stderr prompts, stdout machine output.** The prompter writes to `d.Err`, so `-o json|yaml` and
-  the `key: value` block on stdout stay parseable. The flow is sequential: at most five questions,
+  the `key: value` block on stdout stay parseable. The flow is sequential: at most six questions,
   each answerable by one line and each skippable by a flag.
 
 What the flow is **not**: it is not a form. Nothing is answered side by side, nothing re-prompts in
 place, nothing is filtered or multi-selected. The one enumerated choice (`ft run`) is an `Input`
-with the options in the label whose rejection is an error listing the valid set.
+with the options in the label whose rejection is an error listing the valid set — the single site
+where a library would visibly change what the user sees.
 
 ## 3. Method
 
 For each candidate I built a throwaway module with a minimal program that mirrors the port — one
 `Input` with a default and one `Confirm` — and measured:
 
-- **Weight:** modules in the module graph (`go list -m all`), third-party packages actually
-  compiled (`go list -deps`, non-standard only), and binary size against a `bufio`-only baseline
-  program built in the same environment.
-- **Non-TTY behavior:** the program run with stdin from `/dev/null`, killed after 4 s if still
-  alive. This is the case `ft init` must never get wrong.
-- **Scriptability:** the same program fed a pipe (`printf 'demo\ny\n'`) to see whether a *test*
-  can drive the real implementation without a pty.
+- **Weight.** Modules in the module graph (`go list -m all`) and third-party packages actually
+  compiled (`go list -deps`, non-standard only). Both are reported **net-new against `ft`**: the
+  probe's own `probe/lib` package and module are removed, then every package and module `ft` already
+  compiles is subtracted (`ft` already has `dustin/go-humanize`, `golang.org/x/sys/unix`, and the
+  `x/sys`/`x/sync` modules). The raw numbers are in the appendix.
+- **Non-TTY stdin behavior.** The program run with stdin from `/dev/null`, killed after 6 s if still
+  alive. This is the case `ft init` must never get wrong. `huh` was tested in both configurations a
+  caller might reach for — a bare form, and a form with explicit streams — because they fail
+  differently (§4).
+- **Scriptability.** Whether a *test* can drive the two-method port off a pipe
+  (`printf 'demo\ny\n'`): one prompt is easy, two prompts in sequence is the port's actual shape.
 
-The baseline (`bufio` line read, no library) is 1 module, 0 third-party packages, 2,510,210 bytes.
+Baseline: a `bufio` line read with no library, 0 net-new packages, 2,510,210-byte binary.
+`ft` itself today: 35 modules, 41 third-party compiled packages, 25.1 MB binary (dominated by
+sqlite).
 
 ## 4. Results
 
-| Candidate (version) | Modules | 3rd-party pkgs | Binary | Non-TTY stdin | Driveable from a pipe | Last release | License | Maintained |
+| Candidate (version) | Modules net-new | 3rd-party pkgs net-new | Binary | Non-TTY stdin | Pipe-driveable (2 prompts) | Last release | License | Maintained |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| in-repo `Prompter` | 0 | 0 | 0 | no prompts, by design | yes (fake + real) | — | repo | yes |
-| `charm.land/huh/v2` v2.0.3 | 39 | 40 | 6,255,650 (+3.75 MB) | **blocks forever**, full-screen UI on stdout | only in accessible mode | 2026-03-10 | MIT | active |
-| `github.com/manifoldco/promptui` v0.9.0 | 6 | 5 | 4,839,042 (+2.33 MB) | works, but emits ANSI redraw noise | yes | 2021-10-30 | BSD-3 | pushes, no releases |
-| `github.com/AlecAivazis/survey/v2` v2.3.7 | 25 | 20 | 5,300,450 (+2.79 MB) | **`ERR: EOF`** after escape sequences | no | 2023-06-13 | MIT | **archived** (2024-04) |
-| `github.com/c-bata/go-prompt` v0.2.6 | 9 | 10 | 3,166,354 (+0.66 MB) | **panics**: `device not configured` | no | v0.2.6 (2021) | MIT | no 2026 commits |
-| `github.com/peterh/liner` v1.2.3 | 5 | 4 | 2,788,866 (+0.28 MB) | works, plain output | yes | v1.2.3 | MIT | active |
+| in-repo `Prompter` | 0 | 0 | +0 | no prompts, by design | yes (fake + real) | — | repo | yes |
+| `charm.land/huh/v2` v2.0.3 | 35 | 37 | 6.26 MB (+3.75) | `could not open TTY`, exit 1; **blocks** with explicit streams | accessible mode only | 2026-03-10 | MIT | active |
+| `github.com/manifoldco/promptui` v0.9.0 | 4 | 4 | 4.84 MB (+2.33) | prompt then EOF error, no default | **no** — first prompt drains the pipe, second always EOF | 2021-10-30 | BSD-3 | pushes, no releases |
+| `github.com/AlecAivazis/survey/v2` v2.3.7 | 17 | 17 | 5.30 MB (+2.79) | **`ERR: EOF`** | no | 2023-06-13 | MIT | **archived** (2024-04) |
+| `github.com/c-bata/go-prompt` v0.2.6 | 5 | 8 | 3.17 MB (+0.66) | **panics**: `device not configured` | no | v0.2.6 (2021) | MIT | no 2026 commits |
+| `github.com/peterh/liner` v1.2.3 | 3 | 3 | 2.79 MB (+0.28) | prompt then EOF error, no default | yes | v1.2.3 | MIT | active |
 
-For scale: the repository today has 35 modules in its graph and 96 third-party compiled packages,
-with a 25.1 MB `ft` binary (dominated by sqlite). `huh` alone would add 40 packages — a 42% increase
-in the third-party closure — plus 39 checksums in `go.sum` and a dependency on the `charm.land`
-vanity import path.
+For scale: `huh` alone would take the third-party closure from 41 packages to 78, **+90%**, adding
+35 modules and their checksums to `go.sum`.
 
 ### Per candidate
 
-- **`huh` v2.** The polished option: forms, groups, validation, themes. Two things disqualify it
-  for today's flow. First, in default mode it starts a full-screen bubbletea program even when
-  stdin is `/dev/null` — it painted escape-sequence UI (still writing when killed at 4 s) and never
-  returned; in an agent or CI run of `ft init` that is a hang, not an error. Second, its module path moved to the `charm.land`
-  vanity domain, and it drags in the pty/terminal stack (`creack/pty`, `x/term`, `x/termios`,
-  `x/conpty`). Its accessible mode (`WithAccessible(true)`) *does* work from a pipe and gives a
-  scriptable path — that is why it is the one to pick when a form is genuinely needed.
-- **`promptui`.** Cheap, and degrades to line reads off a pipe, but it re-renders with escape
-  sequences when not a terminal, and it is effectively frozen: last release 2021, built on
-  `chzyer/readline` from 2018. Its surface (prompt, select, confirm) is what we would want; its
-  maintenance is not.
+- **`huh` v2.** The polished option: forms, groups, validation, themes. It is disqualified for
+  today's flow by its non-TTY behavior, which fails in two different ways. A bare `form.Run()`
+  opens `/dev/tty` itself and exits 1 with
+  `huh: bubbletea: error opening TTY: ... open /dev/tty: device not configured` — a hard failure on
+  a redirected `ft init`, including in a `setsid` session with no controlling terminal. Give the
+  form explicit streams instead (`.WithInput(os.Stdin).WithOutput(...)`, which §6.4 needs to keep
+  prompts off stdout) and it no longer fails: it painted escape-sequence UI to a pty and was still
+  running at 6 s. Redirected stdout is not respected either, so an unguarded form would both hang
+  and corrupt the `key: value` output contract. Its accessible mode (`WithAccessible(true)`) *does*
+  work from a pipe, returns defaults on EOF, and is the one scriptable path in the field — which is
+  why it, and only it, is named as the later adoption target.
+- **`promptui`.** Cheap, but it re-renders with escape sequences off a terminal, and it cannot run
+  the port from a pipe: the first prompt's readline consumes the buffered input, so the second
+  prompt gets EOF no matter how much is piped. On `/dev/null` it returns `^D` rather than the
+  default. It is also effectively frozen: last release 2021, built on `chzyer/readline` from 2018.
 - **`survey`.** Excluded on maintenance alone: the repo is archived (last push 2024-04, last
-  release 2023-06). It also cannot run from a pipe.
-- **`go-prompt`.** Excluded: it is a full-screen line editor, the wrong shape for five sequential
+  release 2023-06). It cannot run from a pipe either.
+- **`go-prompt`.** Excluded: a full-screen line editor, the wrong shape for five sequential
   questions, and it panics outright when stdin is not a terminal.
-- **`liner`.** Honest and small (4 packages, +0.28 MB), and it degrades cleanly. But it is a line
-  editor: history, completion, masking. It would replace ~50 lines with ~50 lines and give no
-  confirmation or selection polish — no UX win for the cost.
+- **`liner`.** Honest and small (3 packages, +0.28 MB), and it is the only candidate that runs the
+  two-prompt port off a pipe. But on `/dev/null` it returns an EOF error instead of the default, so
+  §2's EOF contract becomes the caller's problem, and it is a line editor: history, completion,
+  masking. It would replace ~50 lines with ~50 lines and give no confirmation or selection polish —
+  no UX win for the cost.
 
 ## 5. Analysis against the three criteria
 
 **Dependency weight.** `ft` has five direct dependencies, each doing real work (cobra, toml, yaml,
-sqlite, isatty). `huh` would multiply the third-party closure by 42% and add ~3.7 MB (an upper
-bound: `ft` already links a few of its leaf deps) to serve five single-line questions.
-`promptui` and `liner` are light enough not to matter, but see above: they buy nothing that the
-existing 49-line prompter does not already do. The ratio of dependency weight to behavior gained is
-the entire argument, and it is bad for every candidate on today's flow.
+sqlite, isatty), and 41 third-party packages in total. `huh` would take that closure to 78 (+90%)
+and add ~3.75 MB (an upper bound: `ft` already links two of its leaf packages) to serve five
+single-line questions. `promptui` and `liner` are light enough not to matter, but see above: they
+buy nothing the existing 49-line prompter does not do, and `liner` sheds the EOF-means-default
+behavior. The ratio of dependency weight to behavior gained is the whole argument, and it is bad
+for every candidate on today's flow.
 
 **Testability.** Any choice keeps the `Prompter` port and the scripted fake, so the fake criterion
 is already satisfied and is *not* what separates the candidates — a library only replaces the
 terminal implementation. What differs is whether that real implementation can be driven by a test
-at all. It cannot be for `survey` (EOF) or `go-prompt` (panic). It can for `liner` and `promptui`
-via a pipe, but with `promptui` the assertions would have to match its escape sequences. Only `huh`'s
-accessible mode produces clean plain-text prompts from a pipe (`Project id ` then
-`Register this repository? [Y/n] `), which is scriptable in a normal `go test` — at the cost of a
-second, differently-behaving prompt mode that must be selected deliberately.
+at all, and the port's shape is two prompts in sequence, not one. It cannot be for `survey` (EOF),
+`go-prompt` (panic), or `promptui` (first prompt drains the pipe, second gets EOF). `liner` can, but
+only if the test also supplies the EOF-means-default logic that today's prompter already has. Only
+`huh`'s accessible mode drives both prompts from a pipe — and even that is not plain text: it emits
+SGR colour escapes (`\x1b[1;38;2;90;86;224mProject id\x1b[0m`), so assertions need ANSI stripping
+or colour disabled. It works, but it is a second, differently-behaving prompt mode that must be
+selected deliberately.
 
 **The repository's posture.** AGENTS.md asks for small interfaces, explicit dependencies, and no
 speculative flexibility, and CI is deliberately Go-and-network only. A TUI framework for a
@@ -146,14 +168,28 @@ The port makes this a one-file swap, and these are the constraints to keep:
 
 1. Keep `Prompter` and the scripted fake; only `terminalPrompter` changes. Tests never construct a
    library form.
-2. Gate on `d.interactive()` **before** constructing a form. `huh` does not fail on a non-TTY
-   stdin — it blocks — so a library whose prompt cannot see a terminal must never be reached.
-3. Force accessible mode when the terminal is present but stdin/stdout is not a TTY, so piped and
-   redirected sessions keep working and stay testable.
+2. **Gate on stdin, not just stdout.** Today's check is `d.interactive()` =
+   `d.IsTerminal(d.Out)` — stdout only (`init.go:509`). With stdout on a terminal and stdin
+   redirected — a common way scripts and agents invoke `ft init` — today's prompter runs all five
+   questions and silently accepts every default:
+
+   ```sh
+   script -q /tmp/x.log /bin/sh -c 'HOME=$T ft init </dev/null'   # T is a throwaway HOME
+   # Register this repository as a Factotum project? [Y/n] Project id [repo]: ... created: true
+   ```
+
+   A `huh` form behind that same gate does not inherit that behavior: with default streams it exits 1
+   with `could not open TTY`, and with explicit streams it blocks (verified with stdout on a pty and
+   stdin on `/dev/null`). So the gate must become stdout-TTY **and** stdin-TTY *before* any form is
+   constructed. The fully headless case is the easy one; terminal-stdout with piped stdin is the one
+   that gets through today.
+3. Accessible mode is for terminals where raw mode is unavailable, and for tests — never the
+   non-TTY path. A non-TTY stdin keeps today's behavior: no prompts at all.
 4. Keep prompts on `d.Err`. A library that renders to stdout would corrupt `-o json|yaml`.
-5. Preserve blank → default and EOF → default. `huh` returns an error on an aborted form; the
-   init flow needs the EOF case to continue with derived defaults.
-6. Re-measure weight at adoption time — the numbers above are dated, and `huh` v2 is young.
+5. Preserve blank → default and EOF → default. `huh`'s accessible mode does this already; its
+   default mode does not (the form aborts), so the mapping is not free.
+6. Strip colour in tests, or disable it: accessible mode still emits SGR escapes when piped.
+7. Re-measure weight at adoption time — the numbers above are dated, and `huh` v2 is young.
 
 ## 7. Limits of this evaluation
 
@@ -171,12 +207,23 @@ Run in a scratch directory outside the repository, one module per candidate:
 go mod init probe
 # lib/main.go: one Input-with-default and one Confirm, mirroring the Prompter port
 go mod tidy
-go list -m all | wc -l                                     # module graph
-go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./lib | grep -c .   # compiled 3rd-party packages
-go build -o bin/probe ./lib && ls -l bin/probe             # binary size
-./bin/probe </dev/null & pid=$!; sleep 4; kill -0 $pid && echo "still running"   # non-TTY behavior
-printf 'demo\ny\n' | ./bin/probe                          # pipe-driveable?
+go list -m all | tail -n +2 | awk '{print $1}' | grep -vx probe | sort -u    # modules
+go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./lib | grep -v '^probe/lib$' | sort -u
+go build -o bin/probe ./lib && ls -l bin/probe                               # binary size
+./bin/probe </dev/null & pid=$!; sleep 6; kill -0 $pid && echo "still running"   # non-TTY
+printf 'demo\ny\n' | ./bin/probe                                             # two prompts from a pipe
 ```
 
-Repository baseline: `go list -m all | wc -l` → 35; non-standard compiled packages → 96;
-`mise run build` → 25,140,322 bytes.
+Net-new is those sets minus what `ft` already compiles
+(`go list -deps ... ./... | grep -v '^github.com/khoinguyen/factotum'` → 41 packages, 35 modules).
+
+| Candidate | Modules (raw) | 3rd-party pkgs (raw) | overlap with `ft` |
+| --- | --- | --- | --- |
+| `huh` v2 | 38 | 39 | 3 modules, 2 packages |
+| `promptui` | 5 | 4 | 1 module, 0 packages |
+| `survey` | 24 | 19 | 7 modules, 2 packages |
+| `go-prompt` | 8 | 9 | 3 modules, 1 package |
+| `liner` | 4 | 3 | 1 module, 0 packages |
+
+Repository baseline: `go list -m all | wc -l` → 35; third-party compiled packages → 41;
+`mise run build` → 25.1 MB.

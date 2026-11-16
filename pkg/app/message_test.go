@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -350,6 +351,69 @@ func TestMessageSendRefusesAmbiguousTaskSugar(t *testing.T) {
 	}
 	if len(messages) != 0 {
 		t.Fatalf("an ambiguous ticket send stored a message: %+v", messages)
+	}
+}
+
+// TestMessageSendAmbiguousRefusalNamesThePeerFirst guards the guidance half of
+// that refusal: the candidate the message tells the sender to copy must be the
+// peer, never the sender. --from already says who is sending, so the sender
+// sorts last and the example names its counterpart, whichever run registered
+// first.
+func TestMessageSendAmbiguousRefusalNamesThePeerFirst(t *testing.T) {
+	ctx := context.Background()
+	builder := core.ActorID("builder-t-1")
+	reviewer := core.ActorID("reviewer-t-1")
+	cases := []struct {
+		name  string
+		order []core.ActorID
+		from  core.ActorID
+		peer  core.ActorID
+	}{
+		{"builder sender, builder run first", []core.ActorID{builder, reviewer}, builder, reviewer},
+		{"builder sender, reviewer run first", []core.ActorID{reviewer, builder}, builder, reviewer},
+		{"reviewer sender, builder run first", []core.ActorID{builder, reviewer}, reviewer, builder},
+		{"reviewer sender, reviewer run first", []core.ActorID{reviewer, builder}, reviewer, builder},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newMessageFixture(t)
+			f.addTask(t, "t-1", nil)
+			lease := f.clock.Now().Add(time.Hour)
+			for i, actor := range tc.order {
+				run := &core.Run{
+					ID:         core.RunID("run-" + strconv.Itoa(i+1)),
+					ProjectID:  "prj-1",
+					ActorID:    actor,
+					TaskID:     taskPtr("t-1"),
+					Host:       "h",
+					PID:        i + 1,
+					CreatedAt:  f.clock.Now(),
+					SeenAt:     f.clock.Now(),
+					LeaseUntil: lease,
+				}
+				if _, err := f.backend.Runs().Register(ctx, run); err != nil {
+					t.Fatalf("register run: %v", err)
+				}
+			}
+
+			from := tc.from
+			_, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", From: &from, Target: "t-1", Body: "hi"})
+			if !errors.Is(err, core.ErrInvalid) {
+				t.Fatalf("Send(t-1) error = %v, want ErrInvalid", err)
+			}
+			if want := fmt.Sprintf("(%s, %s)", core.ActorAddress(tc.peer), core.ActorAddress(tc.from)); !strings.Contains(err.Error(), want) {
+				t.Fatalf("Send(t-1) error = %v, want the candidates ordered %s (peer first)", err, want)
+			}
+			if want := fmt.Sprintf("you are %s", core.ActorAddress(tc.from)); !strings.Contains(err.Error(), want) {
+				t.Fatalf("Send(t-1) error = %v, want it to say %q", err, want)
+			}
+			if want := fmt.Sprintf("ft msg send %s", core.ActorAddress(tc.peer)); !strings.Contains(err.Error(), want) {
+				t.Fatalf("Send(t-1) error = %v, want the example to name the peer %q", err, want)
+			}
+			if self := fmt.Sprintf("ft msg send %s", core.ActorAddress(tc.from)); strings.Contains(err.Error(), self) {
+				t.Fatalf("Send(t-1) error = %v, want the example not to name the sender %q", err, self)
+			}
+		})
 	}
 }
 

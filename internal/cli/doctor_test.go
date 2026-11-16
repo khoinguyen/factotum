@@ -99,18 +99,92 @@ func fixFlowWords(o doctorObservation) string {
 	}
 }
 
-// helpSentences flattens help text so a claim can be checked against the sentence
-// that makes it, not against the document as a whole.
-func helpSentences(text string) []string {
-	return strings.Split(strings.Join(strings.Fields(text), " "), ". ")
+// doctorScopes are the caller conditions the help must keep apart. A claim that
+// holds for one of them must not be readable as holding for another.
+var doctorScopes = []string{"--fix", "non-terminal", "terminal"}
+
+// helpClauses splits help text into the individual statements it makes: on
+// sentence ends, semicolons, commas, and " and ". A claim is then matched in the
+// clause that governs it, because one sentence covering two callers would
+// otherwise satisfy either caller's claim.
+func helpClauses(text string) []string {
+	flat := strings.Join(strings.Fields(text), " ")
+	split := strings.NewReplacer(". ", "\x00", "; ", "\x00", ", ", "\x00", " and ", "\x00")
+	clauses := strings.Split(split.Replace(flat), "\x00")
+	for i, clause := range clauses {
+		clauses[i] = strings.ToLower(clause)
+	}
+	return clauses
 }
 
-// sentenceWith reports whether one help sentence pairs the flow's words with the
-// caller condition, so wording that is true for every caller cannot satisfy a
-// claim that only holds for one.
-func sentenceWith(sentences []string, phrase, scope string) bool {
-	for _, sentence := range sentences {
-		if strings.Contains(sentence, phrase) && strings.Contains(sentence, scope) {
+// isWordByte extends the word characters with "-", so a scope token cannot match
+// inside a hyphenated compound: "terminal" must not match "non-terminal".
+func isWordByte(b byte) bool {
+	return b == '-' || b == '_' || ('a' <= b && b <= 'z') || ('0' <= b && b <= '9') || ('A' <= b && b <= 'Z')
+}
+
+// indexWord finds token in text where it stands as a whole word, or -1.
+func indexWord(text, token string) int {
+	for from := 0; from <= len(text)-len(token); {
+		at := strings.Index(text[from:], token)
+		if at < 0 {
+			return -1
+		}
+		at += from
+		end := at + len(token)
+		if (at == 0 || !isWordByte(text[at-1])) && (end == len(text) || !isWordByte(text[end])) {
+			return at
+		}
+		from = at + 1
+	}
+	return -1
+}
+
+// absenceWords say that a flow or flag is missing, which is the opposite of it
+// happening.
+var absenceWords = []string{"not", "never", "no", "without", "unless", "lacks", "cannot"}
+
+// negated reports whether text denies what follows it.
+func negated(text string) bool {
+	if strings.Contains(text, "n't") {
+		return true
+	}
+	for _, word := range absenceWords {
+		if indexWord(text, word) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// statesFlow reports whether the help claims, in one clause governed by this
+// caller condition alone, that the flow happens. A clause that denies the claim
+// ("does not ask before") or names another caller ("a terminal and a
+// non-terminal") does not count, so an unconditional or contradictory statement
+// cannot stand in for a flow specific to this caller.
+func statesFlow(clauses []string, claim, scope string) bool {
+	for _, clause := range clauses {
+		at := indexWord(clause, scope)
+		if at < 0 || negated(clause[:at]) {
+			continue
+		}
+		claimAt := strings.Index(clause, claim)
+		if claimAt < 0 || negated(clause[:claimAt]) {
+			continue
+		}
+		if sharesClauseWithOtherScope(clause, scope) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// sharesClauseWithOtherScope reports whether the clause also names a different
+// caller condition, which makes its claim ambiguous about who it describes.
+func sharesClauseWithOtherScope(clause, scope string) bool {
+	for _, other := range doctorScopes {
+		if other != scope && indexWord(clause, other) >= 0 {
 			return true
 		}
 	}
@@ -128,8 +202,8 @@ func TestDoctorHelpMatchesBehaviour(t *testing.T) {
 		name     string
 		terminal bool
 		fix      bool
-		// scope is the condition the help must name in the same sentence as the
-		// flow it qualifies.
+		// scope is the caller condition the help must name in the same clause as
+		// the flow it qualifies.
 		scope string
 	}{
 		{name: "non-terminal without --fix", scope: "non-terminal"},
@@ -148,13 +222,13 @@ func TestDoctorHelpMatchesBehaviour(t *testing.T) {
 		t.Fatalf("--help must print doctor's Long text:\n%s", help)
 	}
 
-	sentences := helpSentences(long)
+	clauses := helpClauses(long)
 	for _, shape := range shapes {
 		observed := observeDoctorFix(t, shape.terminal, shape.fix)
-		phrase := fixFlowWords(observed)
-		if !sentenceWith(sentences, phrase, shape.scope) {
-			t.Errorf("%s behaves as %q (ran=%v, asked=%v), so --help must say so of a %s:\n%s",
-				shape.name, phrase, observed.ran, observed.asked, shape.scope, long)
+		claim := fixFlowWords(observed)
+		if !statesFlow(clauses, claim, shape.scope) {
+			t.Errorf("%s behaves as %q (ran=%v, asked=%v), so --help must say so, scoped to %s:\n%s",
+				shape.name, claim, observed.ran, observed.asked, shape.scope, long)
 		}
 	}
 }

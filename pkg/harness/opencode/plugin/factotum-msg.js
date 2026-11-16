@@ -25,9 +25,15 @@
 // claim loop is running, it has a session to inject into, and its current claim
 // round trip keeps settling within two long-poll windows; while parked or
 // wedged it lets the lease lapse, so `ft msg runs --live` reports the peer as
-// gone instead of healthy. Neither a failed registration nor a failed claim may
-// end the receiver silently: registration is retried, the claim loop catches
-// every error and keeps polling, and every transition is logged.
+// gone instead of healthy. A failed claim is not progress either: a run of
+// consecutive failures ages the same clock, so a receiver that claims nothing
+// stops renewing instead of reading healthy. The reverse direction matters too:
+// when a heartbeat is answered not_found (a hub restored from a backup forgets
+// runs registered after it), the receiver re-registers the run once and logs it,
+// so a receiver that is in fact delivering cannot stay out of `--live` forever.
+// Neither a failed registration nor a failed claim may end the receiver
+// silently: registration is retried, the claim loop catches every error and
+// keeps polling, and every transition is logged.
 //
 // OpenCode reloads a plugin when its staged file changes, which restarts the
 // receiver with no session. Persisting the session in the V2 context's storage
@@ -160,6 +166,17 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * isRunNotFound reports whether a receiver call failed because the hub no longer
+ * knows the run. The transport decides how it can tell: the hub's HTTP transport
+ * answers 404, while the local CLI exits non-zero with the store's `not found`
+ * error. A hub restored from an old backup forgets runs registered after it, so
+ * this is a recoverable condition, not a failure to give up on.
+ */
+function isRunNotFound(error) {
+  return error?.notFound === true || /not found/i.test(String(error?.message || error));
+}
+
 /** cliArgs maps a receiver operation to the hidden `ft msg agent` argv. */
 function cliArgs(project, op) {
   switch (op.op) {
@@ -248,7 +265,12 @@ export function httpCall(config, { fetchFn = globalThis.fetch } = {}) {
     });
     const text = await response.text();
     if (!response.ok) {
-      throw new Error(`ft msg ${op.op} failed (${response.status}): ${(text || "").trim()}`);
+      const error = new Error(`ft msg ${op.op} failed (${response.status}): ${(text || "").trim()}`);
+      // A 404 is the hub not knowing the run, which the receiver recovers from
+      // by re-registering; carrying it structurally beats matching the body.
+      error.status = response.status;
+      error.notFound = response.status === 404;
+      throw error;
     }
     return parseJSON(text);
   };
@@ -306,6 +328,9 @@ export function createFactotumReceiver({
   let sessionID = "";
   let stopped = false;
   let heartbeatTimer = null;
+  // reRegistering coalesces the heartbeat's ticks: one registration can outlast
+  // a tick, and one forgotten run is not a reason to run two registrations.
+  let reRegistering = false;
   // loopRunning, parked, stalled and lastProgressAt describe what the receiver
   // can do right now, not whether its process is up. healthy() is the lease gate;
   // the flags drive the one-shot log lines. All of them exist so an inert
@@ -327,9 +352,11 @@ export function createFactotumReceiver({
     return !stopped && loopRunning && !!sessionID && Date.now() - lastProgressAt <= stallMs;
   }
 
-  // startRoundTrip and settleRoundTrip bound a round trip rather than the loop's
-  // lifetime: a promise that never settles keeps the loop "running" forever, so
-  // only progress may count as health.
+  // startRoundTrip seeds the health clock and settleRoundTrip advances it. The
+  // pair bounds a round trip rather than the loop's lifetime: a promise that
+  // never settles keeps the loop "running" forever, so only a poll that actually
+  // returned may count as progress. A failed poll is not progress either - the
+  // loop is alive but completing nothing - so it does not settle.
   function startRoundTrip() {
     lastProgressAt = Date.now();
   }
@@ -395,8 +422,42 @@ export function createFactotumReceiver({
     await call({ op: "nack", id, run: runID, error: reason || "" });
   }
 
+  // reRegisterAfterForget restores this receiver's identity when the hub answers
+  // not_found. Registration is upsert, so the run is recreated and the claim loop
+  // (which reads runID) follows the new id. It tries once per answer: a failed
+  // re-registration is logged and the next heartbeat tick tries again, so a hub
+  // that stays unreadable costs a logged heartbeat rather than a receiver that is
+  // delivering but permanently invisible to `ft msg runs --live`.
+  async function reRegisterAfterForget() {
+    if (reRegistering) return;
+    reRegistering = true;
+    const forgotten = runID;
+    try {
+      log(`factotum msg: heartbeat answered not found for run ${forgotten} (the hub no longer knows it); re-registering`);
+      await register();
+      if (stopped) {
+        // Disposed mid-registration: the lease dispose tried to drop belonged to
+        // the old id, so drop the new one too instead of orphaning it until TTL.
+        await deregister().catch(() => {});
+        return;
+      }
+      log(`factotum msg: re-registered actor ${config.actor} as run ${runID} after the hub forgot run ${forgotten}`);
+    } catch (error) {
+      log(`factotum msg: re-register after a forgotten run failed: ${error?.message || error}`);
+    } finally {
+      reRegistering = false;
+    }
+  }
+
   async function heartbeat() {
-    await call({ op: "heartbeat", run: runID, ttl: `${config.ttlMs}ms` });
+    try {
+      await call({ op: "heartbeat", run: runID, ttl: `${config.ttlMs}ms` });
+    } catch (error) {
+      // A forgotten run is the one heartbeat error with a recovery: the receiver
+      // is still claiming, so it must not fall out of the live list for good.
+      if (!isRunNotFound(error)) throw error;
+      await reRegisterAfterForget();
+    }
   }
 
   async function deregister() {
@@ -476,9 +537,9 @@ export function createFactotumReceiver({
 
   // poll runs one claim step: with no session there is nowhere to inject, so it
   // parks rather than claiming (a claimed message it cannot inject would be
-  // dropped or burn an attempt); otherwise it claims and delivers.
+  // dropped or burn an attempt); otherwise it claims and delivers. It does not
+  // touch the health clock: only its return (a completed round trip) is progress.
   async function poll() {
-    startRoundTrip();
     if (!sessionID) {
       await park();
       return;
@@ -490,7 +551,10 @@ export function createFactotumReceiver({
 
   // The loop never ends on an error. A rejection here would otherwise stop
   // claiming for the life of the process while the heartbeat kept renewing the
-  // run, which is exactly the inert receiver this receiver must not become.
+  // run, which is exactly the inert receiver this receiver must not become. A
+  // failed poll is logged and retried, and deliberately does not settle a round
+  // trip: a run of failures must age the health clock so the stall line fires and
+  // the lease lapses, instead of reading healthy while claiming nothing.
   async function loop() {
     loopRunning = true;
     try {
@@ -499,9 +563,6 @@ export function createFactotumReceiver({
           await poll();
           settleRoundTrip();
         } catch (error) {
-          // A failed poll still completed a round trip: the loop is alive and
-          // retrying, not wedged, so the lease may keep being renewed.
-          settleRoundTrip();
           log(`factotum msg: claim failed: ${error?.message || error}`);
           await sleep(retryMs);
         }
@@ -534,7 +595,7 @@ export function createFactotumReceiver({
           noteStall();
           return;
         }
-        heartbeat().catch((error) => log(`factotum msg: heartbeat failed: ${error?.message || error}`));
+        return heartbeat().catch((error) => log(`factotum msg: heartbeat failed: ${error?.message || error}`));
       }, Math.max(1000, Math.floor(config.ttlMs / 3)));
       void loop();
     },

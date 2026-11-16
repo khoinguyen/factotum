@@ -764,6 +764,237 @@ test("the V2 entrypoint logs receiver state so an inert session leaves evidence"
   assert.ok(entries.length >= 2, `log entries = ${JSON.stringify(entries)}; want registration and the session-less park`);
 });
 
+// --- forgotten run and failing claims (t-rmws6mklmo) -----------------------
+//
+// The liveness work above closed the false-positive direction (an inert receiver
+// that still reads live). These are the two false-negative directions: a receiver
+// that IS delivering can stay out of `ft msg runs --live` forever once the hub
+// forgets its run, and a receiver whose every claim fails keeps its lease fresh
+// while claiming nothing.
+
+// heartbeatReceiver wires a receiver whose single claim never returns, so the
+// only traffic a test steers is the heartbeat tick. The long window keeps manual
+// ticks well inside the stall bound; a test that wants a stall shortens waitMs.
+function heartbeatReceiver({ run, config = {}, logs = [] } = {}) {
+  let tick = null;
+  const receiverConfig = { ...BASE_CONFIG, waitMs: 1000, ...config };
+  const receiver = createFactotumReceiver({
+    config: receiverConfig,
+    call: cliCall(receiverConfig, run),
+    inject: async () => {},
+    setIntervalFn: (fn) => { tick = fn; return 1; },
+    clearIntervalFn: () => {},
+    log: (entry) => logs.push(entry),
+  });
+  return { receiver, tick: () => tick() };
+}
+
+test("a heartbeat answered not found re-registers the run once and logs it", async (t) => {
+  // A hub restored from a backup forgets runs registered after it. The receiver
+  // keeps claiming and delivering, but every heartbeat answers not_found; without
+  // re-registering it can never reappear in `ft msg runs --live`. Registration is
+  // upsert, so one re-register recreates the run under a new id and the claim loop
+  // follows it.
+  const calls = [];
+  const logs = [];
+  let registers = 0;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        registers += 1;
+        return { code: 0, stdout: JSON.stringify({ run_id: `run-${registers}` }), stderr: "" };
+      case "claim":
+        return new Promise(() => {});
+      case "heartbeat": {
+        const id = argv[argv.indexOf("--run") + 1];
+        if (id === "run-1") return { code: 1, stdout: "", stderr: "Error: not found: run run-1" };
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+      }
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const { receiver, tick } = heartbeatReceiver({ run, logs });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => calls.some((c) => c.includes("msg agent claim")));
+
+  await tick();
+  await waitFor(() => registers === 2);
+  assert.equal(receiver.runID(), "run-2", "the receiver follows the re-registered run");
+  assert.ok(
+    logs.some((entry) => /re-registered actor act-1 as run run-2/i.test(entry)),
+    `logs = ${JSON.stringify(logs)}; want one re-registration line`,
+  );
+
+  // The next renewal goes to the new run and does not re-register again: one
+  // re-registration per forgotten run, not one per heartbeat.
+  await tick();
+  assert.ok(calls.some((c) => c.includes("msg agent heartbeat --run run-2")));
+  assert.equal(registers, 2, "a forgotten run is re-registered once, not on every tick");
+});
+
+test("a heartbeat that fails for another reason does not re-register", async (t) => {
+  // Only a forgotten run (not_found) is re-registered. A transient store or
+  // transport error must not churn registrations - against a healthy hub that
+  // would create a second run for the same agent.
+  const calls = [];
+  const logs = [];
+  let registers = 0;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        registers += 1;
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        return new Promise(() => {});
+      case "heartbeat":
+        return { code: 1, stdout: "", stderr: "Error: store locked" };
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const { receiver, tick } = heartbeatReceiver({ run, logs });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => calls.some((c) => c.includes("msg agent claim")));
+
+  await tick();
+  await waitFor(() => logs.some((entry) => /heartbeat failed/i.test(entry)));
+  assert.equal(registers, 1, "a non-not_found heartbeat error must not re-register");
+});
+
+test("httpCall marks a 404 as not found so the receiver can re-register", async () => {
+  const fetchFn = async () => ({ ok: false, status: 404, text: async () => '{"error":"msg: not found: run run-1"}' });
+  const call = httpCall({ ...BASE_CONFIG, msgUrl: "http://hub:8484", token: "s3cret" }, { fetchFn });
+  await assert.rejects(call({ op: "heartbeat", run: "run-1" }), (error) => {
+    assert.equal(error.notFound, true);
+    return true;
+  });
+});
+
+test("a remote hub's 404 heartbeat also re-registers the run", async (t) => {
+  // The transport must not change the rule: a hub answers a forgotten run with
+  // 404, which is the same "answer not_found" as the local CLI's error.
+  const registers = [];
+  let tick = null;
+  const fetchFn = async (url, options) => {
+    const body = JSON.parse(options.body);
+    if (url.endsWith("/register")) {
+      registers.push(body.actor);
+      return jsonResponse({ run_id: `run-${registers.length}` });
+    }
+    if (url.endsWith("/claim")) return new Promise(() => {});
+    if (url.endsWith("/heartbeat")) {
+      return body.run_id === "run-1" ? jsonResponse({ error: "msg: not found" }, 404) : jsonResponse({ ok: true });
+    }
+    return jsonResponse({ ok: true });
+  };
+  const config = { ...BASE_CONFIG, msgUrl: "http://hub:8484", token: "s3cret" };
+  const logs = [];
+  const receiver = createFactotumReceiver({
+    config,
+    call: httpCall(config, { fetchFn }),
+    inject: async () => {},
+    setIntervalFn: (fn) => { tick = fn; return 1; },
+    clearIntervalFn: () => {},
+    log: (entry) => logs.push(entry),
+  });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await tick();
+  await waitFor(() => receiver.runID() === "run-2");
+  assert.deepEqual(registers, ["act-1", "act-1"]);
+  assert.ok(logs.some((entry) => /re-registered actor act-1 as run run-2/i.test(entry)));
+});
+
+test("a run of failing claims is no progress: the stall line fires and the lease lapses", async (t) => {
+  // A permanently failing claim (a broken store, a rejected actor) used to settle
+  // the round trip in the catch: the loop looked like it was progressing, so the
+  // lease stayed fresh and the run read healthy while every handoff sat queued.
+  // Health is a *completed* round trip; a claim that always throws completes none.
+  const calls = [];
+  const logs = [];
+  let claims = 0;
+  let broken = true;
+  let recovered = 0;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        claims += 1;
+        if (broken) return { code: 1, stdout: "", stderr: "Error: store locked" };
+        recovered += 1;
+        // One completing claim proves progress; then park so the loop cannot spin
+        // on an instantly empty queue (which would starve the test's timers).
+        if (recovered > 1) return new Promise(() => {});
+        return { code: 0, stdout: JSON.stringify({ found: false }), stderr: "" };
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const { receiver, tick } = heartbeatReceiver({ run, config: { retryMs: 5, waitMs: 10 }, logs });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => claims >= 2);
+
+  // Twice the long-poll window (the stall bound) of consecutive failures.
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await tick();
+  assert.equal(calls.some((c) => c.includes("msg agent heartbeat")), false, "a failing claim must not keep the lease fresh");
+  assert.equal(
+    logs.filter((entry) => /round trip/.test(entry)).length,
+    1,
+    `logs = ${JSON.stringify(logs)}; want one stall line`,
+  );
+
+  // A claim that completes again is progress: the lease is renewed, once.
+  broken = false;
+  await waitFor(() => logs.some((entry) => /resumed/.test(entry)), 1000);
+  await tick();
+  await waitFor(() => calls.some((c) => c.includes("msg agent heartbeat")), 500);
+});
+
+test("a single failed claim inside the stall window still renews the lease", async (t) => {
+  // The rule is a *run* of failures, not one: a claim that fails once and then
+  // completes proves the loop is alive, so the lease must not drop on it.
+  const calls = [];
+  const logs = [];
+  let claims = 0;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        claims += 1;
+        if (claims === 1) return { code: 1, stdout: "", stderr: "Error: store busy" };
+        return new Promise(() => {});
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const { receiver, tick } = heartbeatReceiver({ run, config: { retryMs: 5 }, logs });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => claims >= 2);
+
+  await tick();
+  assert.ok(
+    calls.some((c) => c.includes("msg agent heartbeat")),
+    `one failed claim inside the stall window is not a stall; calls = ${JSON.stringify(calls)}`,
+  );
+});
+
 test("setupV2 resumes the persisted session after a reload and delivers without an event", async () => {
   const injected = [];
   const store = new Map();

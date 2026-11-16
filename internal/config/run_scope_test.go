@@ -84,3 +84,23 @@ harness = "opencode"
 		t.Fatalf("Load() error = %v, want it to name the offending file %s", err, project)
 	}
 }
+
+// TestRunProjectScopeRejectsBothSandboxAndBackend pins that a project-scoped
+// sandbox does not rescue a stale backend key either: the exact actionable
+// error still names sandbox and the committed file.
+func TestRunProjectScopeRejectsBothSandboxAndBackend(t *testing.T) {
+	dir := t.TempDir()
+	project := writeConfig(t, dir, "project.toml", `
+project = "acme"
+
+[run]
+sandbox = "docker"
+backend = "local"
+harness = "opencode"
+`)
+	_, err := Load(Input{UserPath: filepath.Join(dir, "none.toml"), ProjectPath: project, Getenv: emptyEnv})
+	want := "parse config " + project + ": [run] backend was removed; use sandbox instead"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Load() with both project sandbox and backend error = %v, want %q", err, want)
+	}
+}

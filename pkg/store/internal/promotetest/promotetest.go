@@ -271,6 +271,10 @@ func startReady(start starter, dir, path string, job Job, releaseBy time.Time, b
 		// read afterwards (Process.Wait leaves that copy running: a data race).
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		// A child killed as it created the file leaves it behind, and the next
+		// attempt would adopt that signal before its own child opened anything.
+		// The child is reaped, so only this removal can touch the file now.
+		_ = os.Remove(ready)
 		if !time.Now().Before(deadline) {
 			return nil, output, attempts, fmt.Errorf(
 				"no child opened its handle before the phase budget ran out at %s: %d attempt(s), each given %s; output:\n%s",

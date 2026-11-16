@@ -46,7 +46,8 @@ func stubChild(script string) starter {
 // TestPromoteReplacesAChildThatNeverSignals is the regression guard for the
 // flake: a child that does not open its handle is replaced, and the promotions
 // still run and report. The old harness waited out its whole bound on that one
-// child and failed the test.
+// child and failed the test. Its 2s bound is 12x the measured 163ms tail, so load
+// cannot make a healthy replacement miss it.
 func TestPromoteReplacesAChildThatNeverSignals(t *testing.T) {
 	var stalled *exec.Cmd
 	starts := 0
@@ -62,7 +63,7 @@ func TestPromoteReplacesAChildThatNeverSignals(t *testing.T) {
 	}
 
 	results := promoteWith(t, start, t.TempDir(),
-		[]Job{{Capture: "cap-1", Task: "t-1"}}, nil, 200*time.Millisecond, 10*time.Second)
+		[]Job{{Capture: "cap-1", Task: "t-1"}}, nil, 2*time.Second, 10*time.Second)
 
 	if starts != 2 {
 		t.Fatalf("started %d children, want a stalled one and its replacement", starts)

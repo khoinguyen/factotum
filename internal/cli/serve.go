@@ -31,9 +31,10 @@ func newServeCommand(deps *Deps) *cobra.Command {
 		Short: "Serve the live PO dashboard, token-gated capture, and the message transport",
 		Long: "Serve a local dashboard of project and task graph state, with a capture write side.\n" +
 			"The read side reloads itself over Server-Sent Events as tasks change; the read pages\n" +
-			"have no mutating endpoints. The dashboard's Capture button turns a natural-language\n" +
-			"sentence into a stored idea or bug (the standalone /capture page remains as a\n" +
-			"fallback), gated by a shared token sent as 'Authorization: Bearer <token>'.\n" +
+			"have no mutating endpoints. The dashboard's Capture button opens a prompt box in place,\n" +
+			"storing the prompt as a document and notifying the chief. The standalone /capture page\n" +
+			"remains as a fallback, storing a natural-language idea or bug. Both writes are gated by a\n" +
+			"shared token sent as 'Authorization: Bearer <token>'.\n" +
 			"The token is resolved from --token, then FACTOTUM_SERVE_TOKEN, then serve.token in the\n" +
 			"machine config; when none is set, a fresh random token is generated for each start and\n" +
 			"printed to the console for you to copy (the same header authenticates /api/prompt and\n" +

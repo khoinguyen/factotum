@@ -2,11 +2,12 @@ package config
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// TestLoadReadsRunSandboxKey pins the renamed primary key: the isolation backend
-// is selected with `sandbox`, matching the `--sandbox` flag.
+// TestLoadReadsRunSandboxKey pins the primary key: the isolation backend is
+// selected with `sandbox`, matching the `--sandbox` flag.
 func TestLoadReadsRunSandboxKey(t *testing.T) {
 	dir := t.TempDir()
 	user := writeConfig(t, dir, "user.toml", `
@@ -23,74 +24,33 @@ harness = "opencode"
 	}
 }
 
-// TestLoadReadsDeprecatedRunBackendKey pins the one-release compatibility path:
-// the old `backend` key still selects the sandbox.
-func TestLoadReadsDeprecatedRunBackendKey(t *testing.T) {
+// TestLoadRejectsRemovedRunBackendKey pins the end of the rename: the old
+// `backend` key is gone, so a config that still sets it fails with an error
+// naming the replacement instead of being silently accepted.
+func TestLoadRejectsRemovedRunBackendKey(t *testing.T) {
 	dir := t.TempDir()
 	user := writeConfig(t, dir, "user.toml", `
 [run]
 backend = "local"
 harness = "opencode"
 `)
-	cfg, err := Load(Input{UserPath: user, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+	_, err := Load(Input{UserPath: user, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
+	if err == nil {
+		t.Fatal("Load() with the removed backend key = nil error, want an error naming sandbox")
 	}
-	if cfg.Run.Sandbox != "local" {
-		t.Fatalf("Run.Sandbox = %q, want local from the deprecated backend key", cfg.Run.Sandbox)
+	if !strings.Contains(err.Error(), "[run] backend") || !strings.Contains(err.Error(), "sandbox") {
+		t.Fatalf("Load() error = %v, want it to name [run] backend and sandbox", err)
 	}
-}
-
-// TestRunSandboxKeyWinsOverDeprecatedBackendKey pins precedence when both keys
-// are present: the new key wins.
-func TestRunSandboxKeyWinsOverDeprecatedBackendKey(t *testing.T) {
-	dir := t.TempDir()
-	user := writeConfig(t, dir, "user.toml", `
-[run]
-sandbox = "docker"
-backend = "local"
-harness = "opencode"
-`)
-	cfg, err := Load(Input{UserPath: user, ProjectPath: filepath.Join(dir, "none.toml"), Getenv: emptyEnv})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Run.Sandbox != "docker" {
-		t.Fatalf("Run.Sandbox = %q, want docker (the new key wins)", cfg.Run.Sandbox)
+	if !strings.Contains(err.Error(), user) {
+		t.Fatalf("Load() error = %v, want it to name the offending file %s", err, user)
 	}
 }
 
-// TestRunSandboxEnvWinsOverDeprecatedBackendEnv pins that FACTOTUM_RUN_SANDBOX
-// takes precedence over the deprecated FACTOTUM_RUN_BACKEND.
-func TestRunSandboxEnvWinsOverDeprecatedBackendEnv(t *testing.T) {
-	cfg, err := Load(Input{
-		UserPath:    filepath.Join(t.TempDir(), "none.toml"),
-		ProjectPath: filepath.Join(t.TempDir(), "none.toml"),
-		Getenv: func(key string) string {
-			switch key {
-			case "FACTOTUM_RUN_SANDBOX":
-				return "openshell"
-			case "FACTOTUM_RUN_BACKEND":
-				return "local"
-			case "FACTOTUM_RUN_HARNESS":
-				return "opencode"
-			default:
-				return ""
-			}
-		},
-	})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Run.Sandbox != "openshell" {
-		t.Fatalf("Run.Sandbox = %q, want openshell (the new env wins)", cfg.Run.Sandbox)
-	}
-}
-
-// TestRunDeprecatedBackendEnvStillWorks pins that FACTOTUM_RUN_BACKEND still
-// selects the sandbox for one release.
-func TestRunDeprecatedBackendEnvStillWorks(t *testing.T) {
-	cfg, err := Load(Input{
+// TestLoadRejectsRemovedRunBackendEnv pins the same removal on the environment:
+// FACTOTUM_RUN_BACKEND no longer selects anything, and the error names
+// FACTOTUM_RUN_SANDBOX.
+func TestLoadRejectsRemovedRunBackendEnv(t *testing.T) {
+	_, err := Load(Input{
 		UserPath:    filepath.Join(t.TempDir(), "none.toml"),
 		ProjectPath: filepath.Join(t.TempDir(), "none.toml"),
 		Getenv: func(key string) string {
@@ -104,10 +64,10 @@ func TestRunDeprecatedBackendEnvStillWorks(t *testing.T) {
 			}
 		},
 	})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+	if err == nil {
+		t.Fatal("Load() with FACTOTUM_RUN_BACKEND = nil error, want an error naming FACTOTUM_RUN_SANDBOX")
 	}
-	if cfg.Run.Sandbox != "local" {
-		t.Fatalf("Run.Sandbox = %q, want local from the deprecated env", cfg.Run.Sandbox)
+	if !strings.Contains(err.Error(), "FACTOTUM_RUN_BACKEND") || !strings.Contains(err.Error(), "FACTOTUM_RUN_SANDBOX") {
+		t.Fatalf("Load() error = %v, want it to name FACTOTUM_RUN_BACKEND and FACTOTUM_RUN_SANDBOX", err)
 	}
 }

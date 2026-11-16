@@ -222,8 +222,9 @@ type serveFile struct {
 // sandbox, see projectRunFile); the rest are host properties, so they live here.
 type runFile struct {
 	Sandbox string `toml:"sandbox"`
-	// Backend is the deprecated one-release alias for Sandbox. Sandbox wins when
-	// both are set.
+	// Backend is the removed one-release alias for Sandbox. It is kept only so
+	// a config that still sets it fails with an error naming sandbox, rather
+	// than being silently ignored.
 	Backend          string   `toml:"backend"`
 	Harness          string   `toml:"harness"`
 	Workspace        string   `toml:"workspace"`
@@ -244,8 +245,9 @@ type runFile struct {
 // host path or opt into the unsandboxed backend.
 type projectRunFile struct {
 	Sandbox string `toml:"sandbox"`
-	// Backend is the deprecated one-release alias for Sandbox. Sandbox wins when
-	// both are set.
+	// Backend is the removed one-release alias for Sandbox. It is kept only so
+	// a config that still sets it fails with an error naming sandbox, rather
+	// than being silently ignored.
 	Backend string `toml:"backend"`
 	Harness string `toml:"harness"`
 }
@@ -292,9 +294,15 @@ func Load(in Input) (Config, error) {
 	if err := decode(in.UserPath, &user); err != nil {
 		return Config{}, err
 	}
+	if user.Run.Backend != "" {
+		return Config{}, removedRunBackendKey(in.UserPath)
+	}
 	var project projectFile
 	if err := decode(in.ProjectPath, &project); err != nil {
 		return Config{}, err
+	}
+	if project.Run.Backend != "" {
+		return Config{}, removedRunBackendKey(in.ProjectPath)
 	}
 
 	cfg := Default()
@@ -328,7 +336,7 @@ func Load(in Input) (Config, error) {
 	// Harness and sandbox are two-scope (project over user); the remaining run
 	// settings are machine-scoped and read from the user file only.
 	cfg.Run = Run{
-		Sandbox:          firstNonEmpty(project.Run.Sandbox, project.Run.Backend, user.Run.Sandbox, user.Run.Backend),
+		Sandbox:          firstNonEmpty(project.Run.Sandbox, user.Run.Sandbox),
 		Harness:          firstNonEmpty(project.Run.Harness, user.Run.Harness),
 		Workspace:        expand(user.Run.Workspace, cfg.Project),
 		Model:            user.Run.Model,
@@ -340,7 +348,9 @@ func Load(in Input) (Config, error) {
 		Image:            user.Run.Image,
 		User:             user.Run.User,
 	}
-	applyRunEnv(&cfg.Run, getenv)
+	if err := applyRunEnv(&cfg.Run, getenv); err != nil {
+		return Config{}, err
+	}
 	cfg.Serve = Serve{Token: user.Serve.Token, URL: user.Serve.URL}
 	applyServeEnv(&cfg.Serve, getenv)
 	cfg.Up = resolveUp(project.Up, user.Up)
@@ -572,12 +582,12 @@ func applyAgentEnv(agent *Agent, getenv func(string) string) {
 
 // applyRunEnv overlays the FACTOTUM_RUN_* environment variables on the [run]
 // table, so a launcher can be selected without editing a config file.
-func applyRunEnv(run *Run, getenv func(string) string) {
+func applyRunEnv(run *Run, getenv func(string) string) error {
+	if backend := getenv("FACTOTUM_RUN_BACKEND"); backend != "" {
+		return errors.New("FACTOTUM_RUN_BACKEND was removed; use FACTOTUM_RUN_SANDBOX instead")
+	}
 	if sandbox := getenv("FACTOTUM_RUN_SANDBOX"); sandbox != "" {
 		run.Sandbox = sandbox
-	} else if backend := getenv("FACTOTUM_RUN_BACKEND"); backend != "" {
-		// FACTOTUM_RUN_BACKEND is the deprecated one-release alias.
-		run.Sandbox = backend
 	}
 	if harness := getenv("FACTOTUM_RUN_HARNESS"); harness != "" {
 		run.Harness = harness
@@ -606,6 +616,14 @@ func applyRunEnv(run *Run, getenv func(string) string) {
 	if user := getenv("FACTOTUM_RUN_USER"); user != "" {
 		run.User = user
 	}
+	return nil
+}
+
+// removedRunBackendKey reports the removed [run] backend key, naming its
+// replacement, so a stale config fails loudly instead of selecting a sandbox
+// under a name the CLI and docs no longer use.
+func removedRunBackendKey(path string) error {
+	return fmt.Errorf("parse config %s: [run] backend was removed; use sandbox instead", path)
 }
 
 // applyServeEnv overlays the environment on the [serve] table, so the hub URL

@@ -2,15 +2,18 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/harness/opencode"
 	"github.com/khoinguyen/factotum/pkg/harness/pi"
 )
@@ -378,5 +381,60 @@ func TestMessageSendResolvesTicket(t *testing.T) {
 	inbox := r.run("msg", "inbox", "--project", projectID)
 	if !strings.Contains(inbox, taskID) {
 		t.Fatalf("inbox should carry the originating task:\n%s", inbox)
+	}
+}
+
+// TestMessageSendRefusesAmbiguousTicket pins the ticket rule at the CLI surface:
+// the normal loop state has a builder and a reviewer live on the same task, so
+// `ft msg send <ticket>` must refuse and name both actor addresses instead of
+// delivering to whichever run id sorts first. The refusal stores nothing.
+func TestMessageSendRefusesAmbiguousTicket(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "work"))
+	builder, reviewer := "builder-"+taskID, "reviewer-"+taskID
+	for i, actor := range []string{builder, reviewer} {
+		runJSON(t, r, "msg", "agent", "register", "--actor", actor, "--task", taskID,
+			"--pid", strconv.Itoa(i+1), "--project", projectID)
+	}
+
+	_, _, err := r.runSplitErr("msg", "send", taskID, "hand off", "--project", projectID)
+	if !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("ambiguous ticket send error = %v, want ErrInvalid", err)
+	}
+	for _, want := range []string{"actor:" + builder, "actor:" + reviewer, "ft msg send actor:"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("ambiguous ticket send error = %v, want it to name %q", err, want)
+		}
+	}
+	if inbox := r.run("msg", "inbox", "--project", projectID); strings.Contains(inbox, "hand off") {
+		t.Fatalf("an ambiguous ticket send stored the message:\n%s", inbox)
+	}
+}
+
+// TestMessageSendWarnsWhenTicketResolvesToMailboxWithoutLiveRun pins the other
+// silent half of ticket sugar: when the ticket falls back to a mailbox (here the
+// agent assignee) that has no live run, the send must say so on stderr, because
+// until a receiver registers the message sits queued. A live run for the
+// mailbox silences the warning.
+func TestMessageSendWarnsWhenTicketResolvesToMailboxWithoutLiveRun(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	actorID := firstField(t, r.run("actor", "create", "claude", "--kind", "agent"))
+	taskID := firstField(t, r.run("task", "create", "--project", projectID, "--title", "work"))
+	r.run("task", "assign", taskID, "--actor", actorID)
+
+	stdout, stderr := r.runSplit("msg", "send", taskID, "on it", "--project", projectID)
+	if !strings.Contains(stdout, "to: actor:"+actorID) {
+		t.Fatalf("send should resolve the ticket to the assignee mailbox:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "no live run") || !strings.Contains(stderr, "actor:"+actorID) {
+		t.Fatalf("send stderr:\n%s\nwant a warning that no live run can claim actor:%s", stderr, actorID)
+	}
+
+	runJSON(t, r, "msg", "agent", "register", "--actor", actorID, "--project", projectID)
+	_, stderr = r.runSplit("msg", "send", taskID, "again", "--project", projectID)
+	if strings.Contains(stderr, "no live run") {
+		t.Fatalf("send stderr:\n%s\nwant no warning once a live run can claim the mailbox", stderr)
 	}
 }

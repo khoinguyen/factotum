@@ -42,6 +42,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/khoinguyen/factotum/internal/procgroup"
 	"github.com/khoinguyen/factotum/pkg/isolation"
 )
 
@@ -268,12 +269,12 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 		return b.execAttached(c, env, cmd, cancel)
 	}
 
-	configureProcessGroup(c)
+	procgroup.Isolate(c)
 	c.Cancel = func() error {
 		if exited.Load() {
 			return nil
 		}
-		return killProcessGroup(c)
+		return procgroup.KillGroup(c)
 	}
 	if cmd.Stdin != nil {
 		c.Stdin = bytes.NewReader(cmd.Stdin)
@@ -311,8 +312,9 @@ func (b *Backend) Exec(ctx context.Context, h isolation.Handle, cmd isolation.Co
 // execAttached runs an interactive command with the host terminal attached, so a
 // TUI agent can render and read input. The child keeps the caller's process
 // group: the terminal's foreground group owns job control, so signals like
-// Ctrl-C reach the agent. Its output is shown live rather than captured through
-// a pipe; a session that must leave a record writes it inside the environment.
+// Ctrl-C reach the agent, and ft turns the same Ctrl-C into the run's graceful
+// stop. Its output is shown live rather than captured through a pipe; a session
+// that must leave a record writes it inside the environment.
 func (b *Backend) execAttached(c *exec.Cmd, env *environment, cmd isolation.Command, cancel context.CancelFunc) (isolation.Execution, error) {
 	if cmd.Stdin != nil {
 		c.Stdin = bytes.NewReader(cmd.Stdin)
@@ -321,6 +323,21 @@ func (b *Backend) execAttached(c *exec.Cmd, env *environment, cmd isolation.Comm
 	}
 	c.Stdout = b.terminalStdout()
 	c.Stderr = b.terminalStderr()
+
+	// Sharing ft's process group is what keeps the terminal usable, and it is
+	// exactly why Stop cannot signal the group here the way the detached path
+	// does: that group is ft's own, so the signal would kill ft and its launcher
+	// with the harness. Walk the child's tree instead, so a worker the agent
+	// forked does not outlive the stop.
+	var exited atomic.Bool
+	c.Cancel = func() error {
+		if exited.Load() {
+			return nil
+		}
+		// Best effort: a descendant that already exited is not a stop failure.
+		_ = procgroup.KillTree(c.Process.Pid)
+		return nil
+	}
 
 	ex := newExecution()
 	if err := c.Start(); err != nil {
@@ -332,6 +349,7 @@ func (b *Backend) execAttached(c *exec.Cmd, env *environment, cmd isolation.Comm
 	env.track(proc)
 	go func() {
 		waitErr := c.Wait()
+		exited.Store(true)
 		env.untrack(proc)
 		cancel()
 		ex.finish(c.ProcessState, waitErr)

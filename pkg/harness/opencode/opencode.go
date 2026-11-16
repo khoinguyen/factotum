@@ -160,6 +160,10 @@ func probeVariant(binary string, timeout time.Duration) Variant {
 	// bounds the drain, where the group kill bounds the tree.
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
+	// The probe is over, but the group is not: a binary that answered can leave a
+	// worker it forked in the group, and no bound expires on a normal exit to
+	// signal it. End what is left; a group with no survivors makes this a no-op.
+	_ = procgroup.KillGroup(cmd)
 	if err != nil {
 		return V1
 	}

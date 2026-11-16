@@ -140,16 +140,6 @@ func TestCommandCarriesModelFlag(t *testing.T) {
 	}
 }
 
-func TestDoneDetectsSentinel(t *testing.T) {
-	h := fake.New("agent").WithSentinel("TASK_COMPLETE")
-	if h.Done(isolation.Event{Kind: isolation.EventOutput, Message: "still working"}) {
-		t.Fatal("Done() = true before the sentinel")
-	}
-	if !h.Done(isolation.Event{Kind: isolation.EventOutput, Message: "ok TASK_COMPLETE"}) {
-		t.Fatal("Done() = false at the sentinel")
-	}
-}
-
 func TestResultParsesOutput(t *testing.T) {
 	h := fake.New("agent")
 	got, err := h.Result([]byte("  the answer  \n"))

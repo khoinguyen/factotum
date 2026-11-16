@@ -10,7 +10,6 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/harness"
 	"github.com/khoinguyen/factotum/pkg/harness/pi"
-	"github.com/khoinguyen/factotum/pkg/isolation"
 	"github.com/khoinguyen/factotum/pkg/isolation/local"
 )
 
@@ -308,51 +307,23 @@ func TestCommandRequiresPrompt(t *testing.T) {
 	}
 }
 
-func TestDoneDetectsSentinel(t *testing.T) {
-	tests := []struct {
-		name     string
-		sentinel string
-		ev       isolation.Event
-		want     bool
-	}{
-		{"no sentinel configured", "", isolation.Event{Kind: isolation.EventOutput, Message: "PI_DONE"}, false},
-		{"sentinel in output", "PI_DONE", isolation.Event{Kind: isolation.EventOutput, Message: "all done\nPI_DONE"}, true},
-		{"sentinel absent", "PI_DONE", isolation.Event{Kind: isolation.EventOutput, Message: "still working"}, false},
-		{"sentinel only counts on output", "PI_DONE", isolation.Event{Kind: isolation.EventStatus, Message: "PI_DONE"}, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			h := pi.New(pi.Options{Sentinel: tc.sentinel})
-			if got := h.Done(tc.ev); got != tc.want {
-				t.Fatalf("Done(%v) = %v, want %v", tc.ev, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestResultParsesOutput(t *testing.T) {
 	tests := []struct {
-		name         string
-		sentinel     string
-		out          string
-		wantOutput   string
-		wantComplete bool
+		name string
+		out  string
+		want string
 	}{
-		{"trims whitespace", "", "  the answer  \n", "the answer", false},
-		{"strips the sentinel and reports completion", "PI_DONE", "the answer\nPI_DONE\n", "the answer", true},
-		{"sentinel absent leaves completion false", "PI_DONE", "partial", "partial", false},
+		{"trims whitespace", "  the answer  \n", "the answer"},
+		{"keeps a completion-looking line verbatim", "the answer\nPI_DONE\n", "the answer\nPI_DONE"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := pi.New(pi.Options{Sentinel: tc.sentinel}).Result([]byte(tc.out))
+			got, err := pi.New(pi.Options{}).Result([]byte(tc.out))
 			if err != nil {
 				t.Fatalf("Result() error = %v", err)
 			}
-			if got.Output != tc.wantOutput {
-				t.Errorf("Output = %q, want %q", got.Output, tc.wantOutput)
-			}
-			if got.Complete != tc.wantComplete {
-				t.Errorf("Complete = %v, want %v", got.Complete, tc.wantComplete)
+			if got.Output != tc.want {
+				t.Errorf("Output = %q, want %q", got.Output, tc.want)
 			}
 		})
 	}
@@ -381,8 +352,8 @@ func TestLocateBinary(t *testing.T) {
 
 // TestRunsThroughLocalBackend drives the harness end to end against a real
 // (echo) process through the local isolation backend, so the port composition is
-// exercised without the real pi binary. This pins the argv, prompt delivery,
-// completion, and parsing.
+// exercised without the real pi binary. This pins the argv, prompt delivery, and
+// parsing.
 func TestRunsThroughLocalBackend(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "pi")
@@ -392,9 +363,8 @@ func TestRunsThroughLocalBackend(t *testing.T) {
 	}
 
 	h := pi.New(pi.Options{
-		Binary:   bin,
-		Model:    "provider/model-1",
-		Sentinel: "PI_DONE",
+		Binary: bin,
+		Model:  "provider/model-1",
 	})
 	req := harness.Request{Prompt: "summarize the issue", Workdir: dir}
 
@@ -418,12 +388,6 @@ func TestRunsThroughLocalBackend(t *testing.T) {
 		t.Fatalf("Exec() error = %v", err)
 	}
 
-	complete := false
-	for ev := range exec.Events() {
-		if h.Done(ev) {
-			complete = true
-		}
-	}
 	res, err := exec.Wait(context.Background())
 	if err != nil {
 		t.Fatalf("Wait() error = %v", err)
@@ -431,9 +395,6 @@ func TestRunsThroughLocalBackend(t *testing.T) {
 	got, err := h.Result(res.Stdout)
 	if err != nil {
 		t.Fatalf("Result() error = %v", err)
-	}
-	if !complete || !got.Complete {
-		t.Errorf("Complete: events=%v result=%v, want both true", complete, got.Complete)
 	}
 	if res.ExitCode != 0 {
 		t.Errorf("ExitCode = %d, want 0", res.ExitCode)

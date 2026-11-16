@@ -190,9 +190,8 @@ func TestRunPromptOverrideReplacesTaskPrompt(t *testing.T) {
 }
 
 // TestRunCompleteReportsSuccess pins that the run's `complete` flag means the
-// run succeeded, not that a harness completion sentinel fired. A harness with
-// no sentinel exits zero on success; reporting complete:false there reads as a
-// failure alongside run:finished and exit_code:0.
+// run succeeded, which for a run is a zero exit code. Reporting complete:false
+// alongside run:finished and exit_code:0 would read as a failure.
 func TestRunCompleteReportsSuccess(t *testing.T) {
 	tests := []struct {
 		name       string

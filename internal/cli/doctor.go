@@ -34,8 +34,9 @@ func newDoctorCommand(deps *Deps) *cobra.Command {
 			"cannot be reached, a model that is missing, a vector index left on an old model,\n" +
 			"or a judge without a key. Each check reports what it observed and the concrete\n" +
 			"fix, and only a fix it was asked to run touches the machine: it never starts a\n" +
-			"server on its own. --fix applies every fix without prompting. Without --fix, a\n" +
-			"terminal asks before each fix, and a non-terminal stays read-only.",
+			"server on its own. --fix applies the fixes without prompting, stopping at the\n" +
+			"first that fails. Without --fix, when stdout is a terminal it asks before each\n" +
+			"fix, and a non-terminal stays read-only.",
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			project := string(deps.resolveProject(projectID))

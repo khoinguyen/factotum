@@ -256,8 +256,9 @@ concrete recommendation: a provider configured but unknown, an endpoint that doe
 answer, a model it does not serve (`ollama pull <model>`), a stdio command not on
 `PATH`, a vector index on an old model (`ft memory reindex`), or a judge without a
 key. It is read-only without `--fix` unless stdout is a terminal, where it asks before
-each fix; `--fix` applies them without prompting and it never starts a server or
-downloads a model, exiting non-zero when a check fails so a script can gate on it.
+each fix; `--fix` applies them without prompting, stopping at the first one that
+fails, and it never starts a server on its own, exiting non-zero when a check fails
+so a script can gate on it.
 
 ## Conventions that matter
 

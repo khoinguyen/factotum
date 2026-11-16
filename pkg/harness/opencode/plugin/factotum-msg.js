@@ -949,8 +949,12 @@ export function startReceiver(ctx, config, { call, run, loadSession, saveSession
   // writes keeps the record on the newest session the receiver learned.
   let writes = Promise.resolve();
   const enqueue = (write) => {
-    writes = writes.then(write).catch(() => {});
-    return writes;
+    const writeNow = writes.then(write);
+    // The chain moves past a failed write; the write's own caller still handles
+    // it (the seed's surfaces as "receiver start failed", a session refresh is
+    // best-effort and rememberSession already swallows it).
+    writes = writeNow.catch(() => {});
+    return writeNow;
   };
   // Record the identity before any session is known: the service can restart
   // before the agent's first turn, and a receiver registered without a session

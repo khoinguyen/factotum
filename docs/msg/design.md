@@ -244,9 +244,16 @@ type Run struct {
   never returns (a hung local `ft`, a remote hub stalling mid-poll, a session prompt that never
   resolves) must not renew, so its lease lapses and `ft msg runs --live` reports the peer as gone
   instead of healthy. That is the point of the lease: a live-looking TUI with no claim child is the
-  failure this rule makes observable (t-vo7dpanzuu). Claimability still does not depend on liveness, so
-  a lapsed receiver that wakes drains its mailbox; and registration is retried rather than attempted
-  once, so a transient store error at load cannot leave a session registered-in-name-only.
+  failure this rule makes observable (t-vo7dpanzuu). A failed claim is the same absence of progress as
+  a hung one: a run of consecutive failures ages the clock just as a wedged round trip does, so a
+  receiver whose every claim fails cannot read healthy while claiming nothing. Claimability still does
+  not depend on liveness, so a lapsed receiver that wakes drains its mailbox; and registration is
+  retried rather than attempted once, so a transient store error at load cannot leave a session
+  registered-in-name-only.
+- **The inverse:** a heartbeat answered `not_found` (the hub forgot the run - a hub restored from a
+  backup does not know runs registered after it) re-registers the run once and logs it. The receiver
+  is still claiming, so without this it would deliver every handoff while staying out of
+  `ft msg runs --live` forever.
 - Deregister on clean shutdown; staleness is the crash path.
 
 ## 6. Store port and conformance
@@ -396,7 +403,8 @@ The store is the hub; a receiver is any client of these verbs.
   stops redelivery; `failed` is terminal and records the reason.
 - **nack(message_id, run_id, reason)** — the receiver could not handle it now; requeue (or park
   as failed past `MaxAttempts`).
-- **heartbeat(run_id)** — renew the run lease.
+- **heartbeat(run_id)** — renew the run lease. `not_found` (a hub that forgot the run) makes the
+  receiver re-register once; it is not a receiver failure.
 - **deregister(run_id)** — clean shutdown.
 
 Lease and retry defaults (configurable, machine-scoped like `serve.token`):

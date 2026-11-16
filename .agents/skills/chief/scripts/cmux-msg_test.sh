@@ -154,6 +154,9 @@ assert_ambiguous_fail() {
   case "$got" in
     *paste*) echo "FAIL $name: pasted into a surface: $got"; fail=$((fail + 1)); return ;;
   esac
+  case "$out" in
+    *$'\t'*) echo "FAIL $name: error output leaks a raw column separator: $out"; fail=$((fail + 1)); return ;;
+  esac
   if [ "$got" != "$want" ]; then
     echo "FAIL $name"
     echo "  want: $want"
@@ -346,6 +349,86 @@ agent message workspace:71 --json -- ping
 agent inbox --surface surface:471 --state queued --mark-read" \
   -- chief ping
 unset CMUX_STUB_NO_AGENT
+
+# The incident shape: duplicate workspace titles where only the stale copy has a
+# tab titled the same as the workspace. A lone surface match must not short-circuit
+# to the paste fallback while a same-titled workspace elsewhere holds the agent.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1
+└── workspace workspace:61 "chief"
+    └── pane pane:21
+        └── surface surface:461 [terminal] "chief" [selected]
+window window:2 [current] ◀ active
+└── workspace workspace:71 "chief" [selected] ◀ active
+    └── pane pane:22 [focused] ◀ active
+        └── surface surface:471 [terminal] "ft serve" [selected] ◀ active
+TREE
+
+export CMUX_STUB_NO_AGENT="surface:461"
+assert_run "a lone stale surface does not hide the live workspace" \
+  "agent message workspace:71 --json -- ping" \
+  -- chief ping
+unset CMUX_STUB_NO_AGENT
+
+# A lone top-ranked bare surface plus a same-titled bare workspace is still
+# ambiguous: probe both and fail loudly, never paste.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1
+└── workspace workspace:61 "chief"
+    └── pane pane:21
+        └── surface surface:461 [terminal] "restored bare" [selected]
+window window:2 [current] ◀ active
+└── workspace workspace:20 "live" [selected] ◀ active
+    └── pane pane:22 [focused] ◀ active
+        └── surface surface:38 [terminal] "chief" [selected] ◀ active
+TREE
+
+export CMUX_STUB_NO_AGENT="surface:38 workspace:61"
+assert_ambiguous_fail "a bare surface plus a bare same-titled workspace fails loudly" \
+  "ambiguous target 'chief'" \
+"agent message surface:38 --json -- ping
+agent inbox --surface surface:38 --state queued --mark-read
+agent message workspace:61 --json -- ping
+agent inbox --surface surface:461 --state queued --mark-read" \
+  -- chief ping
+unset CMUX_STUB_NO_AGENT
+
+# A surface and its OWN same-titled workspace are one match, not an ambiguity:
+# the single-match paste fallback must survive.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1 [current] ◀ active
+└── workspace workspace:10 "chief" [selected] ◀ active
+    └── pane pane:21 [focused] ◀ active
+        └── surface surface:37 [terminal] "chief" [selected] ◀ active
+TREE
+
+export CMUX_STUB_HAS_AGENT=false
+assert_log "a surface and its own same-titled workspace keep the paste fallback" \
+"agent message surface:37 --json -- ping
+paste --surface surface:37 --submit -- ping
+agent inbox --surface surface:37 --state queued --mark-read" \
+  -- chief ping
+unset CMUX_STUB_HAS_AGENT
+
+# Several stale surfaces plus a live same-titled workspace whose tab has another
+# title: the workspace is a candidate too, so the live agent still wins.
+cat >"$CMUX_STUB_TREE" <<'TREE'
+window window:1
+├── workspace workspace:61 "chief"
+│   └── pane pane:21
+│       └── surface surface:461 [terminal] "chief" [selected]
+└── workspace workspace:62 "chief"
+    └── pane pane:22
+        └── surface surface:462 [terminal] "chief" [selected]
+window window:2 [current] ◀ active
+└── workspace workspace:71 "chief" [selected] ◀ active
+    └── pane pane:23 [focused] ◀ active
+        └── surface surface:471 [terminal] "ft serve" [selected] ◀ active
+TREE
+
+assert_run "a live workspace joins several same-titled surfaces" \
+  "agent message workspace:71 --json -- ping" \
+  -- chief ping
 
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

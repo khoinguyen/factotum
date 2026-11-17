@@ -1150,6 +1150,74 @@ test("an outage that ends closes its summary once, and a later outage logs its f
   );
 });
 
+test("a heartbeat outage while the queue is empty is bounded the same way", async (t) => {
+  // The steady state of a receiver is an empty queue: an empty claim writes
+  // nothing, so a read-only store fails no claim and the claim path says nothing
+  // - while every heartbeat, once per ttl/3, fails. That is the other half of the
+  // QA's log flood, and it gets the same bound: the first failure in full, one
+  // summary per 20 consecutive failures, one closing line when renewal works
+  // again, and the next outage logs its first failure afresh.
+  const logs = [];
+  let claims = 0;
+  let heartbeats = 0;
+  let broken = true;
+  const run = async (argv) => {
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        claims += 1;
+        // One completed (empty) claim, then a long poll that never returns: the
+        // real shape of an idle queue, and it keeps the loop off the CPU.
+        if (claims > 1) return new Promise(() => {});
+        return { code: 0, stdout: JSON.stringify({ found: false }), stderr: "" };
+      case "heartbeat":
+        heartbeats += 1;
+        if (broken) return { code: 1, stdout: "", stderr: "Error: create temp file: /tmp/db.json: permission denied" };
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  // A long poll window keeps every manual tick inside the stall bound, so the
+  // heartbeat ticks below are all sent (an unhealthy receiver sends none).
+  const { receiver, tick } = heartbeatReceiver({ run, config: { retryMs: 5, waitMs: 60000 }, logs });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => claims >= 2, 2000);
+
+  for (let ticked = 0; ticked < 25; ticked += 1) await tick();
+  assert.equal(heartbeats, 25, "every tick inside the stall bound renewed");
+  const first = logs.filter((entry) => /heartbeat failed:/.test(entry));
+  assert.equal(first.length, 1, `want one full heartbeat-failure entry, got ${first.length}: ${JSON.stringify(logs)}`);
+  assert.match(first[0], /create temp file: .*permission denied/);
+  const summaries = logs.filter((entry) => /consecutive heartbeat failures/.test(entry));
+  assert.deepEqual(
+    summaries.map((entry) => /^factotum msg: (\d+) consecutive heartbeat failures/.exec(entry)?.[1]),
+    ["20"],
+    `want exactly the 20-failure summary, got ${JSON.stringify(summaries)}`,
+  );
+
+  // Renewal works again: one closing line names the run that ended.
+  broken = false;
+  await tick();
+  assert.equal(
+    logs.filter((entry) => /heartbeat failures stopped after 25 consecutive attempts/.test(entry)).length,
+    1,
+    `want one closing line: ${JSON.stringify(logs)}`,
+  );
+
+  // And a later outage is not silent behind the first one's suppression.
+  broken = true;
+  await tick();
+  assert.equal(
+    logs.filter((entry) => /heartbeat failed:/.test(entry)).length,
+    2,
+    `want a fresh first-failure line for the second outage: ${JSON.stringify(logs)}`,
+  );
+});
+
 test("setupV2 resumes the persisted session after a reload and delivers without an event", async () => {
   const injected = [];
   const store = new Map();

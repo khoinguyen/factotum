@@ -30,7 +30,10 @@
 // stops renewing instead of reading healthy. That run is logged once in full and
 // then summarised periodically rather than once per retry, so a store outage
 // leaves a readable log instead of a flood that buries the stall line; when the
-// run ends, one line says so. The reverse direction matters too:
+// run ends, one line says so. Heartbeat failures are bounded the same way, and
+// an empty queue is where they matter: an empty claim writes nothing, so a
+// locked store fails no claim at all while every heartbeat fails. The reverse
+// direction matters too:
 // when a heartbeat is answered not_found (a hub restored from a backup forgets
 // runs registered after it), the receiver re-registers the run once and logs it,
 // so a receiver that is in fact delivering cannot stay out of `--live` forever.
@@ -176,13 +179,14 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// CLAIM_FAILURE_SUMMARY_EVERY bounds outage logging. A failing claim repeats
-// every retry delay, and a store outage lasts minutes: one entry per retry buries
-// the one line an operator reads the log for - the stall line. The first failure
-// is logged in full (the store's own error, which can run to several lines), then
-// one summary per this many consecutive failures, so the count still says the
-// store is down rather than the receiver wedged.
-const CLAIM_FAILURE_SUMMARY_EVERY = 20;
+// FAILURE_SUMMARY_EVERY bounds outage logging. A failing call repeats on its
+// own cadence (a claim every retry delay, a heartbeat every ttl/3), and a store
+// outage lasts minutes: one entry per attempt buries the one-shot stall line an
+// operator reads the log for. Each kind of failure logs its first attempt in
+// full (the store's own error, which can run to several lines), then one summary
+// per this many consecutive failures, so the count still says the store is down
+// rather than the receiver wedged.
+const FAILURE_SUMMARY_EVERY = 20;
 
 /** oneLine collapses a child ft error for the periodic summary. */
 function oneLine(text) {
@@ -375,10 +379,6 @@ export function createFactotumReceiver({
   let stalled = false;
   let lastProgressAt = 0;
   let lastRestoreAt = 0;
-  // claimFailures counts the current run of consecutive failed claim rounds and
-  // firstClaimFailureAt dates it; together they bound what an outage logs.
-  let claimFailures = 0;
-  let firstClaimFailureAt = 0;
 
   // healthy reports whether this receiver can actually deliver a message: it is
   // not disposing, its claim loop is running, it has a session to inject into,
@@ -415,37 +415,41 @@ export function createFactotumReceiver({
     log(`factotum msg: no claim round trip settled in ${stallMs}ms; not renewing this run's lease until one does (a hung claim or injection)`);
   }
 
-  // noteClaimFailure bounds what a store outage writes to the log. Every retry
-  // fails with the same store error, so logging each one (multi-line, every few
-  // hundred milliseconds) buries the stall line; the first failure keeps its full
-  // message - that is the "the store is down" signal - and the run is then
-  // summarised periodically. The stall line is untouched by this: it fires once,
-  // independently, and says the receiver is wedged instead.
-  function noteClaimFailure(error) {
-    const detail = String(error?.message || error);
-    claimFailures += 1;
-    if (claimFailures === 1) {
-      firstClaimFailureAt = Date.now();
-      log(`factotum msg: claim failed: ${detail}`);
-      return;
-    }
-    if (claimFailures % CLAIM_FAILURE_SUMMARY_EVERY === 0) {
-      const secs = Math.round((Date.now() - firstClaimFailureAt) / 1000);
-      log(`factotum msg: ${claimFailures} consecutive claim failures over ${secs}s; still retrying every ${retryMs}ms (last: ${oneLine(detail)})`);
-    }
+  // boundedFailures bounds what repeated failures of one kind write to the log.
+  // Every attempt fails with the same store error, so logging each one (often
+  // multi-line, every retry delay) buries the stall line; the first failure keeps
+  // its full message - that is the "the store is down" signal - and the run is
+  // then summarised periodically. fail() and recovered() are the two edges, and
+  // a run that ends logs once so the next outage is never silent behind this
+  // one's suppression.
+  function boundedFailures(kind, cadence) {
+    let failures = 0;
+    let firstAt = 0;
+    const secsSinceFirst = () => Math.round((Date.now() - firstAt) / 1000);
+    return {
+      fail(error) {
+        const detail = String(error?.message || error);
+        failures += 1;
+        if (failures === 1) {
+          firstAt = Date.now();
+          log(`factotum msg: ${kind} failed: ${detail}`);
+          return;
+        }
+        if (failures % FAILURE_SUMMARY_EVERY === 0) {
+          log(`factotum msg: ${failures} consecutive ${kind} failures over ${secsSinceFirst()}s${cadence} (last: ${oneLine(detail)})`);
+        }
+      },
+      recovered() {
+        const run = failures;
+        failures = 0;
+        if (run < 2) return;
+        log(`factotum msg: ${kind} failures stopped after ${run} consecutive attempts over ${secsSinceFirst()}s`);
+      },
+    };
   }
 
-  // noteClaimRecovered closes a failure run once, so the log says when claims
-  // started completing again and the next outage logs its own first failure
-  // instead of hiding behind a counter that never reset. A run of one is left
-  // unremarked: the failure line already said it, and a single retry is noise.
-  function noteClaimRecovered() {
-    const failures = claimFailures;
-    claimFailures = 0;
-    if (failures < 2) return;
-    const secs = Math.round((Date.now() - firstClaimFailureAt) / 1000);
-    log(`factotum msg: claim failures stopped after ${failures} consecutive attempts over ${secs}s`);
-  }
+  const claimFailures = boundedFailures("claim", `; still retrying every ${retryMs}ms`);
+  const heartbeatFailures = boundedFailures("heartbeat", "");
 
   async function register() {
     const out = await call({
@@ -626,17 +630,17 @@ export function createFactotumReceiver({
   // failed poll is retried, and deliberately does not settle a round trip: a run
   // of failures must age the health clock so the stall line fires and the lease
   // lapses, instead of reading healthy while claiming nothing. An outage logs its
-  // first failure and then a periodic summary (see noteClaimFailure).
+  // first failure and then a periodic summary (see boundedFailures).
   async function loop() {
     loopRunning = true;
     try {
       while (!stopped) {
         try {
           await poll();
-          noteClaimRecovered();
+          claimFailures.recovered();
           settleRoundTrip();
         } catch (error) {
-          noteClaimFailure(error);
+          claimFailures.fail(error);
           await sleep(retryMs);
         }
       }
@@ -668,7 +672,10 @@ export function createFactotumReceiver({
           noteStall();
           return;
         }
-        return heartbeat().catch((error) => log(`factotum msg: heartbeat failed: ${error?.message || error}`));
+        return heartbeat().then(
+          () => heartbeatFailures.recovered(),
+          (error) => heartbeatFailures.fail(error),
+        );
       }, Math.max(1000, Math.floor(config.ttlMs / 3)));
       void loop();
     },

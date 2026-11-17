@@ -657,8 +657,6 @@ func (d *Deps) parseWhen(ctx context.Context, value string, now time.Time) (time
 	return when, err
 }
 
-// rerankArtifacts reorders a lexical shortlist by meaning. With no judge it reports
-// that --rerank needs a key, rather than silently returning lexical order.
 // maybeRerank reorders a lexical shortlist by meaning when a judge is configured and
 // rerank is not disabled. Search must never fail because the judge is absent or slow,
 // so it falls back to the lexical order; a real failure is reported as a warning. An

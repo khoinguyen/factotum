@@ -172,6 +172,10 @@ func taskDocFrom(task *core.Ticket) taskDoc {
 		notBefore := *task.NotBefore
 		doc.NotBefore = &notBefore
 	}
+	if task.OriginArtifact != nil {
+		originArtifact := string(*task.OriginArtifact)
+		doc.OriginArtifact = &originArtifact
+	}
 	if task.Snooze != nil {
 		doc.Snooze = snoozeDocFrom(*task.Snooze)
 	}
@@ -274,6 +278,16 @@ func taskListEntryFrom(task *core.Ticket) taskListEntry {
 		entry.Assignee = string(*task.AssigneeID)
 	}
 	return entry
+}
+
+// taskListEntries renders a list of tickets as the stable list document every
+// list verb emits.
+func taskListEntries(tasks []*core.Ticket) []taskListEntry {
+	entries := make([]taskListEntry, 0, len(tasks))
+	for _, task := range tasks {
+		entries = append(entries, taskListEntryFrom(task))
+	}
+	return entries
 }
 
 func snoozeDocFrom(snooze core.Snooze) *snoozeDoc {

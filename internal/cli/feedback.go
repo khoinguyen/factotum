@@ -62,7 +62,7 @@ func newFeedbackCreateCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() {
+			return deps.emit(taskDocFrom(task), func() {
 				deps.printFields(deps.taskFields(task, f("created", true))...)
 			})
 		},

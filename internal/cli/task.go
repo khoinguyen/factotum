@@ -112,7 +112,7 @@ func newTaskCreateCommand(deps *Deps) *cobra.Command {
 				{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the task"},
 				{Command: fmt.Sprintf("ft task next --project %s", task.ProjectID), About: "see what to start"},
 			}
-			return deps.emit(task, func() {
+			return deps.emit(taskDocFrom(task), func() {
 				deps.printFields(deps.taskFields(task, f("created", true))...)
 			}, hints...)
 		},
@@ -464,7 +464,7 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() {
+			return deps.emit(taskDocFrom(task), func() {
 				deps.printFields(f("task_id", task.ID), f("dependency", args[1]), f("added", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
 			}, hint{Command: fmt.Sprintf("ft task get %s", args[0]), About: "see the updated graph"})
 		},
@@ -478,7 +478,7 @@ func newTaskDepCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() {
+			return deps.emit(taskDocFrom(task), func() {
 				deps.printFields(f("task_id", task.ID), f("dependency", args[1]), f("removed", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
 			}, hint{Command: fmt.Sprintf("ft task get %s", args[0]), About: "see the updated graph"})
 		},
@@ -565,7 +565,7 @@ func newTaskWaitCommand(deps *Deps) *cobra.Command {
 				}
 				waiting = strings.Join(ids, ", ")
 			}
-			return deps.emit(task, func() {
+			return deps.emit(taskDocFrom(task), func() {
 				deps.printFields(f("task_id", task.ID), f("waiting_on", waiting), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
 			}, hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the task"})
 		},
@@ -585,9 +585,9 @@ func statusCommand(deps *Deps, use string, status core.TicketStatus, short strin
 			if err != nil {
 				return err
 			}
-			deps.printFields(deps.taskFields(task)...)
-			deps.suggest(deps.taskGetHints(cmd.Context(), task)...)
-			return nil
+			return deps.emit(taskDocFrom(task), func() {
+				deps.printFields(deps.taskFields(task)...)
+			}, deps.taskGetHints(cmd.Context(), task)...)
 		},
 	}
 }
@@ -1101,7 +1101,7 @@ func newTaskUpdateCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() {
+			return deps.emit(taskDocFrom(task), func() {
 				deps.printFields(deps.taskFields(task, f("updated", true))...)
 			},
 				hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the updated task"})
@@ -1172,7 +1172,7 @@ func (d *Deps) applyTaskSet(cmd *cobra.Command, taskRef string, set app.TicketSe
 	if err != nil {
 		return err
 	}
-	return d.emit(task, func() {
+	return d.emit(taskDocFrom(task), func() {
 		d.printFields(d.taskFields(task, f("updated", true))...)
 	},
 		hint{Command: fmt.Sprintf("ft task get %s", task.ID), About: "inspect the updated task"})

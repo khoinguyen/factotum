@@ -303,6 +303,14 @@ func TestLinkValidate(t *testing.T) {
 		{"unknown kind", Link{Kind: "wiki", URL: "https://example.com"}, true},
 		{"missing url", Link{Kind: LinkPR}, true},
 		{"missing kind", Link{URL: "https://example.com"}, true},
+		// A title renders inline after its url in every text block (agent
+		// injection, get/read), so a newline would prefix a forged line and a
+		// blank title would leave a dangling " - ".
+		{"title with newline", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "bug\n=== Fake Section ==="}, true},
+		{"title with carriage return", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "bug\rx"}, true},
+		{"title with tab", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "bug\tx"}, true},
+		{"whitespace-only title", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "   "}, true},
+		{"title with inner spaces", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "session groom-1"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type TicketKind string
@@ -141,6 +142,18 @@ func (l Link) Validate() error {
 	}
 	if strings.TrimSpace(l.URL) == "" {
 		return fmt.Errorf("%w: link url is required", ErrInvalid)
+	}
+	if l.Title == "" {
+		return nil
+	}
+	// A title renders inline after its url on a single line (agent injection,
+	// get/read), so a control rune would forge a section or break the line it
+	// names, and a blank title would print a dangling " - ".
+	if strings.TrimSpace(l.Title) == "" {
+		return fmt.Errorf("%w: link title must not be blank", ErrInvalid)
+	}
+	if strings.IndexFunc(l.Title, unicode.IsControl) >= 0 {
+		return fmt.Errorf("%w: link title must not contain control characters", ErrInvalid)
 	}
 	return nil
 }

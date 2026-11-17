@@ -149,9 +149,20 @@ export function formatMessage(message) {
   const task = message.task_id ? ` (task ${message.task_id})` : "";
   const links = Array.isArray(message.links) ? message.links : [];
   const attachments = links.length
-    ? `\n\n=== Links ===\n${links.map((link) => `[${link.kind}] ${link.url}`).join("\n")}`
+    ? `\n\n=== Links ===\n${links.map(linkLine).join("\n")}`
     : "";
   return `${header}${task}\n${message.body}${attachments}`;
+}
+
+/**
+ * linkLine renders one attachment. The title is the sender's name for it, and
+ * the claim wire carries it, so the injected turn must show it exactly as the
+ * human surfaces do; an untitled link keeps its previous "[kind] url" line.
+ */
+function linkLine(link) {
+  return link.title
+    ? `[${link.kind}] ${link.url} - ${link.title}`
+    : `[${link.kind}] ${link.url}`;
 }
 
 function sleep(ms) {

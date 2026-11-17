@@ -67,7 +67,8 @@ func (f *fixture) addBug(t *testing.T, projectID core.ProjectID, title, body str
 	return task
 }
 
-func (f *fixture) promote(t *testing.T, ideaID core.TicketID) *core.Ticket {
+// agent resolves the fixture's agent actor, creating it on first use.
+func (f *fixture) agent(t *testing.T) *core.Actor {
 	t.Helper()
 	agent, err := f.actors.Resolve(context.Background(), "claude")
 	if err != nil {
@@ -76,12 +77,34 @@ func (f *fixture) promote(t *testing.T, ideaID core.TicketID) *core.Ticket {
 			t.Fatalf("Add(agent) error = %v", err)
 		}
 	}
+	return agent
+}
+
+func (f *fixture) promote(t *testing.T, ideaID core.TicketID) *core.Ticket {
+	t.Helper()
+	agent := f.agent(t)
 	task, err := f.tasks.Promote(context.Background(), ideaID, app.PromoteInput{
 		AssigneeID:         &agent.ID,
 		AcceptanceCriteria: []string{"it works"},
 	})
 	if err != nil {
 		t.Fatalf("Promote(%s) error = %v", ideaID, err)
+	}
+	return task
+}
+
+// addGroomedAgentTask adds a task readiness buckets as agent work: groomed and
+// assigned to the fixture's agent, the two facts ReadyByActor needs.
+func (f *fixture) addGroomedAgentTask(t *testing.T, projectID core.ProjectID, title string) *core.Ticket {
+	t.Helper()
+	task := f.addTask(t, projectID, title)
+	agent := f.agent(t)
+	if _, err := f.tasks.Assign(context.Background(), task.ID, &agent.ID); err != nil {
+		t.Fatalf("Assign(%s) error = %v", task.ID, err)
+	}
+	groomed := true
+	if _, err := f.tasks.Set(context.Background(), task.ID, app.TicketSet{Groomed: &groomed, AcceptanceCriteria: []string{"it works"}}); err != nil {
+		t.Fatalf("Set(%s, groomed) error = %v", task.ID, err)
 	}
 	return task
 }
@@ -228,6 +251,92 @@ func TestIdeaRollupStates(t *testing.T) {
 	// The block is a needs-unblock signal: it outranks a sibling still being built.
 	if got := page.ActiveIdeas[0].State; got != "active" {
 		t.Fatalf("active lane state = %q", got)
+	}
+}
+
+// TestIdeaRollupMixedTaskStates pins the classification of a capture whose
+// promoted tasks disagree, so the rollup precedence cannot regress silently:
+// finished work makes a capture active while a sibling is still todo,
+// ready-for-review counts as started, and an unresolved dependency or an
+// explicitly blocked sibling keeps the capture blocked even beside finished work.
+func TestIdeaRollupMixedTaskStates(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+
+	// One done + one todo: the finished task is started work, so the capture is
+	// active, not captured.
+	mixed := f.addIdea(t, project.ID, "Half shipped", "")
+	mixedDone := f.promote(t, mixed.ID)
+	f.setStatus(t, mixedDone.ID, core.StatusDone)
+	mixedTodo := f.addGroomedAgentTask(t, project.ID, "still todo")
+	f.groupTask(t, mixedTodo, mixed)
+
+	// Ready for review is work that started, so the capture is active.
+	review := f.addIdea(t, project.ID, "In review", "")
+	reviewTask := f.promote(t, review.ID)
+	f.setStatus(t, reviewTask.ID, core.StatusReadyForReview)
+
+	// A todo task waiting on an unresolved dependency is blocked, not captured.
+	waiting := f.addIdea(t, project.ID, "Waiting on a dependency", "")
+	waitingTask := f.promote(t, waiting.ID)
+	blocker := f.addGroomedAgentTask(t, project.ID, "unfinished blocker")
+	if _, err := f.tasks.AddDep(context.Background(), waitingTask.ID, blocker.ID); err != nil {
+		t.Fatalf("AddDep() error = %v", err)
+	}
+
+	// A blocked sibling outranks the finished one: a needs-unblock signal is not
+	// overridden by work that shipped.
+	doneAndBlocked := f.addIdea(t, project.ID, "Shipped beside a block", "")
+	shipped := f.promote(t, doneAndBlocked.ID)
+	f.setStatus(t, shipped.ID, core.StatusDone)
+	stuck := f.addTask(t, project.ID, "stuck")
+	f.groupTask(t, stuck, doneAndBlocked)
+	f.setStatus(t, stuck.ID, core.StatusBlocked)
+
+	server, err := New(Options{Backend: f.backend, Clock: f.clock, Project: project.ID})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	page, err := server.page(context.Background())
+	if err != nil {
+		t.Fatalf("page() error = %v", err)
+	}
+
+	cases := []struct {
+		name     string
+		id       core.TicketID
+		state    string
+		chip     string
+		laneName string
+		lane     []ideaView
+	}{
+		{"done plus todo", mixed.ID, "active", "ready-agent", "active", page.ActiveIdeas},
+		{"ready for review", review.ID, "active", "ready-agent", "active", page.ActiveIdeas},
+		{"todo waiting on a dep", waiting.ID, "blocked", "blocked", "blocked", page.BlockedIdeas},
+		{"done plus blocked", doneAndBlocked.ID, "blocked", "blocked", "blocked", page.BlockedIdeas},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			idea, ok := findIdea(tc.lane, tc.id)
+			if !ok {
+				t.Fatalf("idea %s not in the %s lane", tc.id, tc.laneName)
+			}
+			if idea.State != tc.state {
+				t.Fatalf("idea %s state = %q, want %q", tc.id, idea.State, tc.state)
+			}
+			if idea.Chip != tc.chip {
+				t.Fatalf("idea %s chip = %q, want %q", tc.id, idea.Chip, tc.chip)
+			}
+		})
+	}
+
+	// Each capture lands in exactly one lane: two active, two blocked, none in
+	// finished or captured.
+	if len(page.ActiveIdeas) != 2 || len(page.BlockedIdeas) != 2 {
+		t.Fatalf("active lanes = %d, blocked lanes = %d, want 2 and 2", len(page.ActiveIdeas), len(page.BlockedIdeas))
+	}
+	if len(page.FinishedIdeas) != 0 || len(page.CapturedIdeas) != 0 {
+		t.Fatalf("finished lanes = %d, captured lanes = %d, want none", len(page.FinishedIdeas), len(page.CapturedIdeas))
 	}
 }
 

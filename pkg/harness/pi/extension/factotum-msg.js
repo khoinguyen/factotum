@@ -3,9 +3,11 @@
 // This extension default-exports a factory `(pi) => ...` (the shape pi's loader
 // requires), NOT an object. On `session_start` it registers the session with
 // `ft`, long-polls the message queue, injects each claimed message as a user
-// turn through pi's `sendUserMessage`, and acks it. The poll loop runs off the
-// agent's turn, so injection never blocks tool execution, and because
-// `sendUserMessage` triggers a turn when pi is idle it wakes an idle session.
+// turn through pi's `sendUserMessage`, and acks it; a message it can no longer
+// deliver (a claim that completes after shutdown) is nacked, never left claimed.
+// The poll loop runs off the agent's turn, so injection never blocks tool
+// execution, and because `sendUserMessage` triggers a turn when pi is idle it
+// wakes an idle session.
 //
 // Health means "claiming", not "the process is up". The hub reads a renewed run
 // lease as a working peer, so a receiver that cannot claim while still
@@ -194,6 +196,11 @@ function cliArgs(project, op) {
       if (op.error) args.push("-e", op.error);
       return args;
     }
+    case "nack": {
+      const args = ["msg", "agent", "nack", op.id, "--run", op.run, "--project", project];
+      if (op.error) args.push("-e", op.error);
+      return args;
+    }
     case "heartbeat":
       return ["msg", "agent", "heartbeat", "--run", op.run, "--project", project, "--ttl", op.ttl];
     case "deregister":
@@ -225,6 +232,8 @@ function httpPayload(op) {
       return { run_id: op.run, actor: op.actor, task: op.task, wait: op.wait };
     case "ack":
       return { id: op.id, run_id: op.run, state: op.state, error: op.error || "" };
+    case "nack":
+      return { id: op.id, run_id: op.run, reason: op.error || "" };
     case "heartbeat":
       return { run_id: op.run, ttl: op.ttl };
     case "deregister":
@@ -457,6 +466,13 @@ export function createFactotumReceiver({
     await call({ op: "ack", id, run: runID, state, error: error || "" });
   }
 
+  // nack releases a claimed message back to the queue (or parks it failed once
+  // the attempt cap is reached). It is the safe outcome for a message this
+  // receiver cannot inject: never silently left `delivered` with no owner.
+  async function nack(id, reason) {
+    await call({ op: "nack", id, run: runID, error: reason || "" });
+  }
+
   // reRegisterAfterForget restores this receiver's identity when the hub answers
   // not_found. Registration is upsert, so the run is recreated and the claim loop
   // (which reads runID) follows the new id. It tries once per answer: a failed
@@ -500,7 +516,14 @@ export function createFactotumReceiver({
   }
 
   async function deliver(message) {
-    if (stopped) return;
+    if (stopped) {
+      // Claimed but shutting down: the claim was already in flight when dispose()
+      // ran, and this receiver can no longer inject, so release it rather than
+      // leave it `delivered` with no owner until a lease sweep. A nack that fails
+      // (the run is already gone) is best-effort.
+      await nack(message.id, "receiver stopped before delivery").catch(() => {});
+      return;
+    }
     try {
       await inject(formatMessage(message), message);
       await ack(message.id, "read", "");

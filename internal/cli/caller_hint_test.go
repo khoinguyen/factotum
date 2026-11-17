@@ -44,6 +44,81 @@ func TestDetectCallerHintFromEnv(t *testing.T) {
 	}
 }
 
+// TestDetectCallerHintEvidenceNamesTheVariableNotItsValue drives every marker
+// with a session-id-shaped value: the evidence may name the variable, never echo
+// what it holds, so a marker that carries a token is safe to detect. AI_AGENT is
+// included because it is the one marker whose value the heuristic reads.
+func TestDetectCallerHintEvidenceNamesTheVariableNotItsValue(t *testing.T) {
+	const secret = "ses_9f3c2a1b4d5e6f70"
+	for _, marker := range callerHintEnvMarkers {
+		for _, name := range marker.vars {
+			t.Run(name, func(t *testing.T) {
+				hint := detectCallerHint(callerProbe{getenv: envLookup(map[string]string{name: secret})})
+				if hint == nil || hint.Agent != marker.agent {
+					t.Fatalf("hint = %+v, want agent %s", hint, marker.agent)
+				}
+				if want := "environment variable " + name; hint.Evidence != want {
+					t.Fatalf("evidence = %q, want %q", hint.Evidence, want)
+				}
+				if strings.Contains(hint.Evidence, secret) {
+					t.Fatalf("evidence = %q, want it to never echo the variable's value", hint.Evidence)
+				}
+			})
+		}
+	}
+	for _, prefix := range callerHintAIAgentPrefixes {
+		t.Run("AI_AGENT "+prefix.prefix, func(t *testing.T) {
+			hint := detectCallerHint(callerProbe{
+				getenv: envLookup(map[string]string{"AI_AGENT": prefix.prefix + "-" + secret}),
+			})
+			if hint == nil || hint.Agent != prefix.agent {
+				t.Fatalf("hint = %+v, want agent %s", hint, prefix.agent)
+			}
+			if hint.Evidence != "environment variable AI_AGENT" {
+				t.Fatalf("evidence = %q, want it to name AI_AGENT", hint.Evidence)
+			}
+			if strings.Contains(hint.Evidence, secret) {
+				t.Fatalf("evidence = %q, want it to never echo the variable's value", hint.Evidence)
+			}
+		})
+	}
+}
+
+// TestHeuristicCallerNeverRecordsAnEnvValue runs the real detection over a
+// runner's environment, then checks both the warning and everything the
+// invocation records: the evidence names the variable, and no session-id-shaped
+// value reaches stderr or the event payload.
+func TestHeuristicCallerNeverRecordsAnEnvValue(t *testing.T) {
+	const secret = "ses_9f3c2a1b4d5e6f70"
+	r := newRunner(t)
+	r.getenv = func(key string) string {
+		if key == "OPENCODE_SESSION_ID" {
+			return secret
+		}
+		return ""
+	}
+	r.callerHint = func() *callerHint {
+		return detectCallerHint(callerProbe{getenv: r.getenv})
+	}
+
+	_, stderr := r.runSplit("project", "create", "Acme")
+
+	if !strings.Contains(stderr, "OPENCODE_SESSION_ID") {
+		t.Fatalf("stderr = %q, want the evidence to name the marker", stderr)
+	}
+	if strings.Contains(stderr, secret) {
+		t.Fatalf("stderr = %q, want it to never echo the variable's value", stderr)
+	}
+	created := findEvent(t, listEvents(t, r), "project.created")
+	if created.By != nil {
+		t.Fatalf("project.created By = %v, want none for a heuristic guess", created.By)
+	}
+	recorded := r.run("event", "list", "-o", "json")
+	if strings.Contains(recorded, secret) {
+		t.Fatalf("event payload leaked the env value %q:\n%s", secret, recorded)
+	}
+}
+
 // TestDetectCallerHintFromAncestry pins the process half: a known agent binary
 // among the ancestors is a guess, the nearest one wins when two are present,
 // and a wrapper name that starts with the binary's name counts.
@@ -176,6 +251,70 @@ func TestHeuristicCallerWarningIsSilentWithoutAGuess(t *testing.T) {
 	}
 	if strings.Contains(stderr, "heuristic") || strings.Contains(stderr, "probable") {
 		t.Fatalf("stderr = %q, want no caller guess", stderr)
+	}
+}
+
+// TestActorFlagNeverFallsBackToTheHeuristic pins the --actor path end to end:
+// a registered name and a loop role attribute silently, a dropped name keeps
+// its own unregistered-actor warning, and none of them falls through to the
+// heuristic. A guess must never contradict an identity the user named, and a
+// dropped --actor must not be papered over with a probable agent.
+func TestActorFlagNeverFallsBackToTheHeuristic(t *testing.T) {
+	cases := []struct {
+		name        string
+		actor       string // --actor
+		registered  bool   // the actor has a store record before the command
+		wantBy      string // "" means the invocation stays unattributed
+		wantWarning string // "" means no attribution warning at all
+	}{
+		{name: "registered name attributes silently", actor: "alice", registered: true, wantBy: "alice"},
+		{name: "loop role needs no record", actor: "builder-t-1", wantBy: "builder-t-1"},
+		{name: "dropped name keeps its own warning", actor: "ghost", wantWarning: `actor "ghost" is not a registered actor`},
+		// grooming-agent is only ever a configured default, so naming it as
+		// --actor is a dropped typo, not a role the --actor grammar trusts.
+		{name: "untrusted role shape is dropped", actor: "grooming-agent-art-7", wantWarning: `actor "grooming-agent-art-7" is not a registered actor`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunner(t)
+			r.getenv = func(string) string { return "" }
+			if tc.registered {
+				r.run("actor", "create", tc.actor)
+			}
+			// A hint that would fire on the no-identity path, so a fallthrough is
+			// visible below as the heuristic warning.
+			r.callerHint = func() *callerHint {
+				return &callerHint{Agent: "opencode", Evidence: "environment variable OPENCODE"}
+			}
+
+			_, stderr := r.runSplit("project", "create", "Acme", "--actor", tc.actor)
+
+			created := findEvent(t, listEvents(t, r), "project.created")
+			if tc.wantBy == "" {
+				if created.By != nil {
+					t.Fatalf("project.created By = %v, want none", created.By)
+				}
+			} else if created.By == nil || *created.By != tc.wantBy {
+				t.Fatalf("project.created By = %v, want %s", created.By, tc.wantBy)
+			}
+			if tc.wantWarning == "" {
+				if strings.Contains(stderr, "not a registered actor") || strings.Contains(stderr, "unattributed") {
+					t.Fatalf("stderr = %q, want no attribution warning", stderr)
+				}
+			} else if !strings.Contains(stderr, tc.wantWarning) {
+				t.Fatalf("stderr = %q, want %q", stderr, tc.wantWarning)
+			}
+			if strings.Contains(stderr, "heuristic") || strings.Contains(stderr, "probable agent caller") {
+				t.Fatalf("stderr = %q, want the heuristic withheld for an explicit --actor", stderr)
+			}
+			// A role is a mailbox, not a record: neither a loop role nor a dropped
+			// name may be auto-created behind the user's back.
+			if !tc.registered {
+				if actors := r.run("actor", "list"); strings.Contains(actors, tc.actor) {
+					t.Fatalf("--actor %q was auto-created:\n%s", tc.actor, actors)
+				}
+			}
+		})
 	}
 }
 

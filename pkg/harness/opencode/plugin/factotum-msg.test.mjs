@@ -495,7 +495,15 @@ test("msgSessionStore does not read the legacy key when a part is dotted", async
   // "a"/"b.c"; falling back to it would inject into the wrong session.
   store.set("session.a.b.c.7", "ses-other");
   const dotted = { ...BASE_CONFIG, project: "a.b", actor: "c" };
-  assert.equal(await msgSessionStore(ctx, dotted).load(), "");
+  const glean = msgSessionStore(ctx, dotted);
+  assert.equal(await glean.load(), "");
+
+  // The collision case is only covered if the store can read at all: a load
+  // that always returned "" would satisfy the assertion above. A save under the
+  // length-prefixed key must round-trip even with a dotted part, and it must
+  // beat the legacy key that belongs to the other agent.
+  await glean.save("ses-mine");
+  assert.equal(await glean.load(), "ses-mine");
 });
 
 test("makeInjector prefers promptAsync and falls back to prompt", async () => {

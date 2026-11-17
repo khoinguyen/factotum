@@ -173,6 +173,7 @@ test("httpCall posts each receiver verb to /api/msg/<verb> with the bearer token
   await call({ op: "register", actor: "act-1", session: "s-1", harness: "pi", host: "host-a", pid: 7, ttl: "90000ms", task: "t-1" });
   await call({ op: "claim", run: "run-1", actor: "act-1", wait: "25000ms", task: "t-1" });
   await call({ op: "ack", id: "m-1", run: "run-1", state: "read", error: "" });
+  await call({ op: "nack", id: "m-2", run: "run-1", error: "receiver stopped before delivery" });
   await call({ op: "heartbeat", run: "run-1", ttl: "90000ms" });
   await call({ op: "deregister", run: "run-1" });
 
@@ -180,6 +181,7 @@ test("httpCall posts each receiver verb to /api/msg/<verb> with the bearer token
     "http://hub:8484/api/msg/register",
     "http://hub:8484/api/msg/claim",
     "http://hub:8484/api/msg/ack",
+    "http://hub:8484/api/msg/nack",
     "http://hub:8484/api/msg/heartbeat",
     "http://hub:8484/api/msg/deregister",
   ]);
@@ -196,6 +198,9 @@ test("httpCall posts each receiver verb to /api/msg/<verb> with the bearer token
   });
   assert.deepEqual(JSON.parse(requests[2].options.body), {
     id: "m-1", run_id: "run-1", state: "read", error: "",
+  });
+  assert.deepEqual(JSON.parse(requests[3].options.body), {
+    id: "m-2", run_id: "run-1", reason: "receiver stopped before delivery",
   });
 });
 
@@ -300,6 +305,45 @@ test("receiver acks failed when injection throws", async () => {
   await receiver.dispose();
 });
 
+test("a claim that lands after dispose releases the message instead of dropping it", async () => {
+  // The loop's stop check is not enough: a claim already in flight completes
+  // after dispose(), and a claimed message this receiver can no longer inject
+  // must go back to the queue (nack) instead of sitting `delivered` until a
+  // later register's lease sweep. opencode has the same rule.
+  const calls = [];
+  const injected = [];
+  const hung = deferred();
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        return hung.promise;
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const receiver = createFactotumReceiver({
+    config: BASE_CONFIG,
+    call: cliCall(BASE_CONFIG, run),
+    inject: async (text) => { injected.push({ text }); },
+    setIntervalFn: () => 1,
+    clearIntervalFn: () => {},
+  });
+  await receiver.start();
+  await waitFor(() => calls.some((c) => c.includes("msg agent claim")));
+  await receiver.dispose();
+
+  hung.resolve({ code: 0, stdout: JSON.stringify({ found: true, message: { id: "m-late", body: "too late" } }), stderr: "" });
+  await waitFor(() => calls.some((c) => c.includes("msg agent nack m-late")));
+  assert.deepEqual(injected, [], "a disposed receiver must not inject");
+  assert.ok(
+    calls.some((c) => c.includes("msg agent nack m-late --run run-1") && c.includes("receiver stopped before delivery")),
+    `calls = ${JSON.stringify(calls)}; want the claimed message released, not dropped`,
+  );
+});
+
 test("dispose waits for an in-flight register and deregisters", async () => {
   let releaseRegister;
   const calls = [];
@@ -391,8 +435,9 @@ test("the factory wires session_start to register and session_shutdown to deregi
   process.env.CALLS = callsPath;
   try {
     factotumMsg(pi);
-    // session_start resolves once registration completes, so the shutdown below
-    // cannot race the run id.
+    // session_start returns without awaiting registration (a store outage retries
+    // in the background), so the shutdown below is what must not race the run id:
+    // dispose() awaits the registration promise and deregisters the run it made.
     await handlers.get("session_start")();
     await handlers.get("session_shutdown")();
   } finally {

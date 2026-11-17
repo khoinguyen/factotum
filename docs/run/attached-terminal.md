@@ -27,12 +27,13 @@ ft exit=0
 WORKER ALIVE pid=70938
 ```
 
-An interrupt is a different shape: the tree walk `Stop` uses does reap the worker, but only while the
-harness is still alive to walk from. If the terminal's `^C` also ends the harness - a cooked harness
-in ft's group takes the same signal - ft has nothing left to walk by the time it tears down, and a
-worker that ignores `SIGINT` (which a non-interactive shell's `&` job does) survives the interrupt
-too. Measured: `ft: run interrupted`, `ft exit=1`, worker alive, already reparented to init and still
-in ft's group.
+An interrupt is a different shape, and a race. `Stop`'s tree walk reaps the worker when its
+enumeration still sees the harness; when the harness's own `^C` has already ended it - a cooked
+harness in ft's group takes the same signal - there is nothing left to walk, and a worker that
+ignores `SIGINT` (which a non-interactive shell's `&` job does) then survives. Both outcomes were
+measured on the same shape: worker gone (`ft: run interrupted`, `ft exit=1`) when the walk still sees
+the harness, and worker alive (`ft: run interrupted`, `ft exit=1`, already reparented to init and
+still in ft's group) when it does not.
 
 ## 2. Why the attached path is a different problem
 
@@ -54,15 +55,15 @@ and to nothing else. Handing it to the child takes them away from ft:
   that owns the message, the teardown, and the exit status: `withRunInterrupts` catches INT and TERM,
   cancels the run with `errRunInterrupted`, and the cancellation unwinds through the ordinary error
   path - retiring the minted session, deleting the sandbox - before printing `ft: run interrupted`
-  with exit 1, with the documented escape that a second Ctrl-C ends the process on the spot. The
+  with exit 1, with the escape the code documents, that a second Ctrl-C ends the process on the spot. The
   terminal's part is only the delivery, and with the child's group foreground it delivers to the
   child and nothing else. The run then ends the way the harness ends: one killed by the signal
   surfaces as death-by-signal (`ExitCode -1` in the port), and one that traps it and exits - as
-  opencode on Node/Bun does with `130` - surfaces as that code. Either way ft reports a failed run
-  with the harness's status: no graceful teardown, no `ft: run interrupted` and exit 1, and no
-  second-Ctrl-C hatch either, because that escape cannot reach ft. Measured with the child's group
-  foreground: the parent received no `SIGINT` in any shape tried - a bare `exec sleep`, `sh -c`,
-  `bash -c`, and a `bash` wrapper.
+  Node/Bun CLIs commonly do with `130`, opencode included - surfaces as that code. Either way ft
+  reports a failed run with the harness's status: no graceful teardown, no `ft: run interrupted` and
+  exit 1, and no second-Ctrl-C hatch either, because that escape cannot reach ft. Measured with the
+  child's group foreground: the parent received no `SIGINT` in any shape tried - a bare `exec sleep`,
+  `sh -c`, `bash -c`, and a `bash` wrapper.
 - **A stop strands the run.** `^Z` (or a TUI that suspends itself on `^Z`, as several do) now stops
   only the child's group. `Wait` returns on *exit*, never on a stop, so nothing tells ft; `^C` sent
   to a stopped group stays pending; and the shell that launched ft sees a job that never stopped, so

@@ -27,9 +27,12 @@ ft exit=0
 WORKER ALIVE pid=70938
 ```
 
-The same survives an interrupt (`ft: run interrupted`, `ft exit=1`, worker alive): the tree walk
-`Stop` uses is taken while the harness is alive, so it finds the worker for a stop, but a command
-that exits on its own gives no such moment.
+An interrupt is a different shape: the tree walk `Stop` uses does reap the worker, but only while the
+harness is still alive to walk from. If the terminal's `^C` also ends the harness - a cooked harness
+in ft's group takes the same signal - ft has nothing left to walk by the time it tears down, and a
+worker that ignores `SIGINT` (which a non-interactive shell's `&` job does) survives the interrupt
+too. Measured: `ft: run interrupted`, `ft exit=1`, worker alive, already reparented to init and still
+in ft's group.
 
 ## 2. Why the attached path is a different problem
 
@@ -47,20 +50,30 @@ ends its own.
 A terminal has exactly one foreground process group, and terminal-generated signals go to that group
 and to nothing else. Handing it to the child takes them away from ft:
 
-- **`^C` no longer reaches ft.** Measured with the child's group foreground: `^C` killed the child
-  (a shell-wrapped harness reports `129` as an ordinary exit) and ft received no signal at all. ft
-  cannot reliably tell "the operator interrupted this" from "the harness exited with a code", so the
-  run would report the harness's exit instead of `ft: run interrupted` (exit 1). Note that today's
-  message is really the tty's, not ft's: it is what a cooked terminal produces when the interrupt
-  reaches ft's group.
+- **`^C` no longer reaches ft, so ft's own interrupt path never runs.** It is ft, not the terminal,
+  that owns the message, the teardown, and the exit status: `withRunInterrupts` catches INT and TERM,
+  cancels the run with `errRunInterrupted`, and the cancellation unwinds through the ordinary error
+  path - retiring the minted session, deleting the sandbox - before printing `ft: run interrupted`
+  with exit 1, with the documented escape that a second Ctrl-C ends the process on the spot. The
+  terminal's part is only the delivery, and with the child's group foreground it delivers to the
+  child and nothing else. The run then ends the way the harness ends: one killed by the signal
+  surfaces as death-by-signal (`ExitCode -1` in the port), and one that traps it and exits - as
+  opencode on Node/Bun does with `130` - surfaces as that code. Either way ft reports a failed run
+  with the harness's status: no graceful teardown, no `ft: run interrupted` and exit 1, and no
+  second-Ctrl-C hatch either, because that escape cannot reach ft. Measured with the child's group
+  foreground: the parent received no `SIGINT` in any shape tried - a bare `exec sleep`, `sh -c`,
+  `bash -c`, and a `bash` wrapper.
 - **A stop strands the run.** `^Z` (or a TUI that suspends itself on `^Z`, as several do) now stops
   only the child's group. `Wait` returns on *exit*, never on a stop, so nothing tells ft; `^C` sent
   to a stopped group stays pending; and the shell that launched ft sees a job that never stopped, so
   `fg` has nothing to resume and does not own the terminal to hand back. Measured: the run hangs
   with no output until something outside kills it.
-- **ft cannot re-join to keep the signals.** Moving ft into the child's group (which would keep
-  `^C` delivered to both, as today) is refused when ft is a session leader - POSIX forbids changing
-  a session leader's process group - which is exactly the shape ft has under a pty supervisor.
+- **ft cannot re-join to keep the signals.** Moving ft into the child's group would keep `^C`
+  delivered to both, as today. That is refused when ft is a session leader - POSIX forbids changing
+  a session leader's process group - which is ft's shape under a pty supervisor. Under a plain
+  terminal it is permitted, and the reason not to is a different one: it moves ft out of the process
+  group the launching shell tracks as the job, so the shell's `fg` would foreground and resume a
+  group ft is no longer in.
 
 Closing this needs a job-control loop over the child (a `WUNTRACED` wait, suspend/resume forwarding,
 and re-foregrounding on `fg`), which `os/exec` does not expose: `Cmd.Wait` reports exits only. The
@@ -91,10 +104,12 @@ same group would be a real casualty - a footgun to document, not a law of the de
 ### C. Give the attached child its own pty and session (the complete fix)
 
 Keep the real terminal for ft and relay through a pty the child owns, which is what `ssh -t` and
-`docker -it` do. The child becomes a session leader with that pty as its controlling terminal, so
-the whole session is ft's to reap (`kill(-session)`), including workers that reparent away. ft keeps
-the terminal, so `^C` still reaches it and the interrupt path, the message, the exit status, and
-`^Z`/`fg` are unchanged.
+`docker -it` do. The child becomes a session leader with that pty as its controlling terminal and a
+process group of its own, so that group is ft's to reap (`kill(-pgid)`), including workers that
+reparent away. What it does not own is the tree: a worker that calls `setsid`/`setpgid` itself
+leaves the group and escapes - exactly as it escapes B - so C buys an owned group, not every
+descendant. ft keeps the terminal, so `^C` still reaches it and the interrupt path, the message, the
+exit status, and `^Z`/`fg` are unchanged.
 
 The cost is real: pty allocation and teardown, putting ft's terminal in raw mode and restoring it on
 every path (which moves the "terminal left broken" risk from the harness to ft), an input relay that
@@ -115,8 +130,13 @@ the worker that started this note, which is a waste rather than a hazard.
 ## 6. How the measurements were taken
 
 A throwaway store (`--store jsonfile --store-opt path=...`), a throwaway project and task, a fake
-`opencode` on `PATH` that forks `sleep 300` and exits, and `script -q /dev/null bash -c '...'` for
-the pty, with `bash` - not ft - as the session leader so the leak is the real one rather than a pty
-hangup. `^C` is `printf '\003'` into `script`'s stdin. The group handoff itself was probed with a
-pty pair (`/dev/ptmx` + `setsid`/`TIOCSCTTY` on the slave) so the child's group could be made
-foreground and the parent's signal delivery observed directly.
+`opencode` on `PATH` that forks `sleep 300`, records its pid, and exits (or sleeps first, when the
+interrupt shape is the one being measured), and `script -q /dev/null bash -c '...'` for the pty, with
+`bash` - not ft - as the session leader so the leak is the real one rather than a pty hangup. `^C` is
+`printf '\003'` into `script`'s stdin, and the worker's fate is checked with `kill -0` plus `ps`
+before the shell exits. The group handoff itself was probed with a pty pair (`/dev/ptmx` +
+`setsid`/`TIOCSCTTY` on the slave) so the child's group could be made foreground and the parent's
+signal delivery observed directly; there the parent received no `SIGINT` under an `exec sleep`,
+`sh -c`, `bash -c`, or a `bash` wrapper. Signal disposition explains the two interrupt shapes above:
+a job a non-interactive shell forks with `&` ignores `SIGINT`, so whether a worker survives an
+interrupt depends on whether the harness is still alive for `Stop` to walk.

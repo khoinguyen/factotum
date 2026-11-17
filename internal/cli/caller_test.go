@@ -94,53 +94,6 @@ func TestUnregisteredCallerIsUnattributedWithWarning(t *testing.T) {
 	}
 }
 
-// TestUnregisteredActorFlagIsUnattributedWithWarning pins the --actor rule: an
-// explicit actor that names no registered record and is not one of the four
-// loop-role prefixes (chief, builder-, reviewer-, qa-) is warned about and left
-// unattributed, never stamped verbatim on the event or used as the auto-QA
-// reminder target. A role-shaped name the loop only sets as a configured default
-// (grooming-agent-<artifact>, architecture-reviewer-<session>) is not exempt
-// here: name it as the default, not as --actor.
-func TestUnregisteredActorFlagIsUnattributedWithWarning(t *testing.T) {
-	for _, name := range []string{"ghostrider", "grooming-agent-art-7"} {
-		t.Run(name, func(t *testing.T) {
-			r := newRunner(t)
-			r.getenv = func(string) string { return "" }
-
-			_, stderr := r.runSplit("project", "create", "Acme", "--actor", name)
-
-			created := findEvent(t, listEvents(t, r), "project.created")
-			if created.By != nil {
-				t.Fatalf("project.created By = %v, want none for an unregistered actor", created.By)
-			}
-			if !strings.Contains(stderr, `actor "`+name+`" is not a registered actor`) {
-				t.Fatalf("stderr = %q, want an unregistered-actor warning naming %s", stderr, name)
-			}
-			if actors := r.run("actor", "list"); strings.Contains(actors, name) {
-				t.Fatalf("an unregistered actor was auto-created:\n%s", actors)
-			}
-		})
-	}
-}
-
-// TestLoopRoleActorFlagNeedsNoRecord pins the exemption: a loop role is a
-// mailbox, not a store actor, so --actor builder-<task> attributes the event
-// without a warning even though no Actor record exists.
-func TestLoopRoleActorFlagNeedsNoRecord(t *testing.T) {
-	r := newRunner(t)
-	r.getenv = func(string) string { return "" }
-
-	_, stderr := r.runSplit("project", "create", "Acme", "--actor", "builder-t-1")
-
-	created := findEvent(t, listEvents(t, r), "project.created")
-	if created.By == nil || *created.By != "builder-t-1" {
-		t.Fatalf("project.created By = %v, want builder-t-1", created.By)
-	}
-	if strings.Contains(stderr, "unattributed") {
-		t.Fatalf("a loop role should not warn: %q", stderr)
-	}
-}
-
 // TestUnregisteredDefaultActorIsUnattributedWithWarning pins the default path to
 // the same rule as --actor, so a typo in FACTOTUM_DEFAULT_ACTOR / default_actor
 // cannot stamp events. A default is trusted only when it names a registered

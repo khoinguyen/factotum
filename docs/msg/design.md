@@ -525,12 +525,12 @@ long-poll claim, inject as a user turn, ack.
   location (the project hash of the canonical directory). A load with no environment recovers that
   record and registers again; two receivers for one actor split a mailbox, so the recovery waits
   while another run for that actor is live (backing off its liveness poll, because a live peer
-  can hold the actor for hours) and adopts once its lease lapses. A restore keeps the record's session current with the
-  one it injects into, so a second restart resumes the live session instead of a stale id (the
-  record's writes are ordered, so the seed a restore starts from cannot overwrite a session the
-  host announces while that write is in flight). The record never carries the hub token: a
-  restored remote receiver whose token is gone logs that and stays inert instead of registering
-  against the wrong store. The record is per location, so a location hosts one agent — the loop
+  can hold the actor for hours) and adopts once its lease lapses. A restore keeps the record's
+  OpenCode session current with the one it injects into, so a second restart resumes the live
+  session instead of a stale id (the record's writes are ordered, so the seed a restore starts
+  from cannot overwrite a session the host announces while that write is in flight). The record
+  never carries the hub token: a restored remote receiver whose token is gone logs that and stays
+  inert instead of registering against the wrong store. The record is per location, so a location hosts one agent — the loop
   gives every agent its own directory.
 - `ft run`'s opencode harness injects at launch when the run itself is the reason the session
   exists (it passes the initial message, and the plugin claims the rest).

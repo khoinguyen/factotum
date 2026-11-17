@@ -13,6 +13,7 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/harness/opencode"
 	"github.com/khoinguyen/factotum/pkg/harness/pi"
+	"github.com/khoinguyen/factotum/pkg/store"
 )
 
 // These tests prove the shipped receivers reach a hub over the cross-host
@@ -32,6 +33,9 @@ const (
 	opencodeModelGate = "FACTOTUM_MSG_E2E_OPENCODE_MODEL"
 	piModelGate       = "FACTOTUM_MSG_E2E_PI_MODEL"
 	crossHostPrompt   = "Do not use any tools. Reply with the single word READY."
+	// crossHostSession is the chief session the receiver is launched in, so the
+	// register is checked to carry it over the remote transport.
+	crossHostSession = "s-crosshost"
 )
 
 type crossHostReceiver struct {
@@ -125,6 +129,7 @@ func TestCrossHostDeliveryRealReceivers(t *testing.T) {
 				"FACTOTUM_HARNESS="+receiver.name,
 				"FACTOTUM_MSG_URL="+hub.URL,
 				"FACTOTUM_SERVE_TOKEN="+testToken,
+				"FACTOTUM_SESSION="+crossHostSession,
 				// Deliberately not a real binary: the local ft path must not be
 				// what delivers the message.
 				"FACTOTUM_BIN="+filepath.Join(dir, "no-local-ft"),
@@ -150,6 +155,16 @@ func TestCrossHostDeliveryRealReceivers(t *testing.T) {
 				final, _ := f.messages.Get(context.Background(), message.ID)
 				t.Fatalf("message %s was not claimed over the HTTP transport (final state %v); %s output:\n%s",
 					message.ID, finalState(final), receiver.name, output.String())
+			}
+			// The register carries the chief session over the hub too: the run
+			// row names it, which is what lets the sessions page count this
+			// receiver's lease as that session's liveness.
+			runs, err := f.backend.Runs().List(context.Background(), store.RunFilter{ProjectID: project.ID, ActorID: &actor})
+			if err != nil {
+				t.Fatalf("List(runs) error = %v", err)
+			}
+			if len(runs) == 0 || runs[0].Session != crossHostSession {
+				t.Fatalf("registered run session = %+v, want %s: the HTTP register carries the chief session", runs, crossHostSession)
 			}
 		})
 	}

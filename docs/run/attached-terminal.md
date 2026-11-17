@@ -124,9 +124,9 @@ Do not ship A: it trades a leaked worker for a terminal that can hang.
 Do not ship B either: killing by membership in a group ft shares with its caller can reach a process
 ft never owned, and a misfired kill loses work where a leaked sleeper only wastes memory.
 
-C is the fix, and it gets its own task and its own review - it wants a human in front of a terminal
-to sign off on the raw-mode and restore behaviour. Until it lands, the attached path keeps leaking
-the worker that started this note, which is a waste rather than a hazard.
+C is the fix, and it is filed as `t-xdyh6mipzw` with its own review - it wants a human in front of a
+terminal to sign off on the raw-mode and restore behaviour. Until it lands, the attached path keeps
+leaking the worker that started this note, which is a waste rather than a hazard.
 
 ## 6. How the measurements were taken
 

@@ -205,7 +205,7 @@ func TestTaskDepCreateStillRecordsDependency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete -o json error = %v\nstderr:\n%s", err, jsonErr)
 	}
-	if !strings.Contains(jsonOut, `"ID": "`+taskID+`"`) || !strings.Contains(jsonOut, `"Deps": []`) {
+	if !strings.Contains(jsonOut, `"id": "`+taskID+`"`) || !strings.Contains(jsonOut, `"deps": []`) {
 		t.Fatalf("delete -o json must emit the task document without the dependency:\n%s", jsonOut)
 	}
 

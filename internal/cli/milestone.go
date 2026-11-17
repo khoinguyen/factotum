@@ -34,7 +34,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(task, func() {
+			return deps.emit(taskDocFrom(task), func() {
 				deps.printFields(deps.taskFields(task, f("created", true))...)
 			},
 				hint{Command: fmt.Sprintf("ft task dep create <task> %s", task.ID), About: "gate a task behind this milestone"},
@@ -56,7 +56,7 @@ func newMilestoneCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(tasks, func() {
+			return deps.emit(taskListEntries(tasks), func() {
 				rows := make([][]string, 0, len(tasks))
 				for _, task := range tasks {
 					rows = append(rows, []string{string(task.ID), task.Title, string(task.Status), string(task.ProjectID)})

@@ -403,7 +403,10 @@ Global flags: `-c/--config`, `--user-config`, `--store`, `--store-opt key=value`
 
 Text output has one shape: single results print yaml-like `key: value` lines
 (`task_id`, `kind`, `title`, `status`, ending `project`, `repo`); lists print a table; `get` prints a
-human block. `-o json|yaml` is the machine-readable interface.
+human block. `-o json|yaml` is the machine-readable interface: every task-object verb emits the
+same snake_case task document that `task get` and `task apply` exchange (`id`, `project_id`,
+`acceptance_criteria`, ...), so one parser reads `task create` and `task update` as well as
+`task get`.
 
 ## Storage backends
 

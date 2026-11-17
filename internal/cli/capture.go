@@ -113,7 +113,7 @@ func newCaptureCreateCommand(deps *Deps, s captureSurface) *cobra.Command {
 				return err
 			}
 			deps.warnDuplicateTitle(cmd.Context(), capture)
-			return deps.emit(capture, func() {
+			return deps.emit(taskDocFrom(capture), func() {
 				deps.printFields(deps.taskFields(capture, f("created", true))...)
 			}, captureCreateHints(s, capture)...)
 		},
@@ -141,7 +141,7 @@ func newCaptureListCommand(deps *Deps, s captureSurface) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(captureListEntries(captures), func() {
+			return deps.emit(taskListEntries(captures), func() {
 				deps.printTable(captureTableHeader(), captureTableRows(deps, captures))
 			}, captureListHints(s, project, captures)...)
 		},
@@ -169,7 +169,7 @@ func newCaptureSearchCommand(deps *Deps, s captureSurface) *cobra.Command {
 				return err
 			}
 			captures = deps.maybeRerankTasks(cmd, args[0], captures, noRerank)
-			return deps.emit(captureListEntries(captures), func() {
+			return deps.emit(taskListEntries(captures), func() {
 				deps.printTable(captureTableHeader(), captureTableRows(deps, captures))
 			}, captureSearchHints(s, captures, project)...)
 		},
@@ -214,14 +214,6 @@ func captureFilter(kind core.TicketKind, projectID, repo string, statuses, label
 		filter.Statuses = append(filter.Statuses, core.TicketStatus(status))
 	}
 	return filter
-}
-
-func captureListEntries(captures []*core.Ticket) []taskListEntry {
-	entries := make([]taskListEntry, 0, len(captures))
-	for _, capture := range captures {
-		entries = append(entries, taskListEntryFrom(capture))
-	}
-	return entries
 }
 
 func captureTableHeader() []string {

@@ -70,7 +70,7 @@ STUB
 # behind.
 interrupt_case() {
   local signal="$1" want_status="$2" want_name="$3"
-  local dir rc secs
+  local dir rc secs stub
   dir="$(mktemp -d)"
   write_case "$dir"
   (
@@ -105,6 +105,14 @@ interrupt_case() {
     if wait "$child"; then printf '0\n' >"$dir/rc"; else printf '%s\n' "$?" >"$dir/rc"; fi
     printf '%s\n' "$((SECONDS - started))" >"$dir/secs"
   ) 2>/dev/null
+  # Reap the stub however this case turns out. The failing outcome is the one
+  # that leaks: after the deadline SIGKILLs the script, its quickstart block is
+  # still running against a scratch dir this case is about to delete, so the
+  # `sleep 300` behind it would outlive the whole suite. The RETURN trap runs
+  # after the assertions below, so the `gone` check still proves the script
+  # itself stopped the block rather than this test tidying up after it.
+  stub="$(cat "$dir/stub-child.pid" 2>/dev/null || true)"
+  trap 'if [ -n "$stub" ]; then kill -9 "$stub" 2>/dev/null || true; fi; trap - RETURN' RETURN
   if [ -f "$dir/note" ]; then
     bad "a $signal during the quickstart block: $(cat "$dir/note")"
   else
@@ -120,7 +128,6 @@ interrupt_case() {
       ok
     else
       bad "an interrupted run left its quickstart block running"
-      kill -9 "$(cat "$dir/stub-child.pid")" 2>/dev/null || true
     fi
     if [ -n "$(ls -A "$dir/tmp" 2>/dev/null)" ]; then
       bad "an interrupted run left its scratch dir behind: $(ls -A "$dir/tmp" | tr '\n' ' ')"

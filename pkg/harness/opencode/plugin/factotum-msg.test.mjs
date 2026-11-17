@@ -1218,6 +1218,101 @@ test("a heartbeat outage while the queue is empty is bounded the same way", asyn
   );
 });
 
+// Registration is the third repeating failure path: the store being down at
+// startup makes every attempt fail once per retry delay, before a run exists.
+// start() owns that loop (registerWithRetry), so the outage bound is pinned
+// there: one full failure, one line naming the state, then periodic summaries.
+
+// registerOutageRun fails register `failures` times (forever when it is
+// Infinity) with the store's own error, then succeeds.
+function registerOutageRun(failures) {
+  let registers = 0;
+  const run = async (argv) => {
+    switch (argv[2]) {
+      case "register":
+        registers += 1;
+        if (registers <= failures) {
+          return { code: 1, stdout: "", stderr: "Error: create temp file: /tmp/db.json: permission denied" };
+        }
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        return new Promise(() => {});
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  return { run, registers: () => registers };
+}
+
+test("a registration outage logs the first failure and periodic summaries, not one entry per retry", async (t) => {
+  const logs = [];
+  const { run } = registerOutageRun(Infinity);
+  const { receiver } = heartbeatReceiver({ run, config: { retryMs: 1 }, logs });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  // start() cannot resolve while registration keeps failing; the loop is what
+  // is under test, and dispose() ends it.
+  void receiver.start();
+  await waitFor(() => logs.some((entry) => /40 consecutive register failures/.test(entry)), 5000);
+
+  const first = logs.filter((entry) => /register failed:/.test(entry));
+  assert.equal(
+    first.length,
+    1,
+    `want exactly one full registration-failure entry, got ${first.length}: ${JSON.stringify(logs.slice(0, 6))}`,
+  );
+  // The full entry keeps the store's own error: that is the signal that says the
+  // store is down rather than the receiver wedged.
+  assert.match(first[0], /create temp file: .*permission denied/);
+
+  // The state an operator needs once, not once per attempt.
+  assert.equal(
+    logs.filter((entry) => /not registered yet/.test(entry)).length,
+    1,
+    `want exactly one "not registered yet" line: ${JSON.stringify(logs)}`,
+  );
+
+  const summaries = logs.filter((entry) => /consecutive register failures/.test(entry));
+  assert.ok(summaries.length >= 2, `want periodic summaries: ${JSON.stringify(summaries)}`);
+  for (const summary of summaries) {
+    assert.ok(!summary.includes("\n"), `a summary stays on one line: ${JSON.stringify(summary)}`);
+  }
+
+  // Nothing per retry: the outage wrote the full failure, the state line and one
+  // entry per summary, however many attempts failed in between.
+  assert.equal(
+    logs.filter((entry) => /register failed:|consecutive register failures|not registered yet/.test(entry)).length,
+    2 + summaries.length,
+    `registration outage output is bounded: ${JSON.stringify(logs)}`,
+  );
+});
+
+test("a registration outage that ends logs once and registers the run", async (t) => {
+  const logs = [];
+  const { run, registers } = registerOutageRun(2);
+  const { receiver } = heartbeatReceiver({ run, config: { retryMs: 1 }, logs });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+
+  await receiver.start();
+  assert.equal(receiver.runID(), "run-1", "the retry loop registers the run after the store recovers");
+  assert.equal(registers(), 3, "two failures then a success");
+  assert.equal(
+    logs.filter((entry) => /register failures stopped after 2 consecutive attempts/.test(entry)).length,
+    1,
+    `want one closing line for the outage that ended: ${JSON.stringify(logs)}`,
+  );
+  assert.equal(
+    logs.filter((entry) => /not registered yet/.test(entry)).length,
+    1,
+    `want the "not registered yet" line once for the outage: ${JSON.stringify(logs)}`,
+  );
+  assert.ok(
+    logs.some((entry) => /registered actor act-1 as run run-1/.test(entry)),
+    `want the registration line after recovery: ${JSON.stringify(logs)}`,
+  );
+});
+
 test("setupV2 resumes the persisted session after a reload and delivers without an event", async () => {
   const injected = [];
   const store = new Map();

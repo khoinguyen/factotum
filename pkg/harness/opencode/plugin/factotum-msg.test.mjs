@@ -27,6 +27,7 @@ const BASE_CONFIG = {
   project: "prj-1",
   actor: "act-1",
   task: "t-1",
+  session: "s-chief",
   bin: "ft",
   harness: "opencode",
   host: "",
@@ -182,6 +183,15 @@ test("configFromEnv defaults to the local ft transport", () => {
   assert.equal(config.token, "");
 });
 
+test("configFromEnv reads the chief session a run exports", () => {
+  // `ft run` and loop-agent.sh export FACTOTUM_SESSION for the whole session, so
+  // the receiver registers under it: the sessions page derives a run's liveness
+  // only when the run names the session it belongs to.
+  const config = configFromEnv({ FACTOTUM_PROJECT: "prj", FACTOTUM_ACTOR: "act", FACTOTUM_SESSION: " s-1 " });
+  assert.equal(config.session, "s-1");
+  assert.equal(configFromEnv({ FACTOTUM_PROJECT: "prj", FACTOTUM_ACTOR: "act" }).session, "");
+});
+
 test("normalizeMsgURL trims trailing slashes and an /api/msg suffix", () => {
   assert.equal(normalizeMsgURL(""), "");
   assert.equal(normalizeMsgURL("  "), "");
@@ -210,7 +220,7 @@ test("httpCall posts each receiver verb to /api/msg/<verb> with the bearer token
   const config = { ...BASE_CONFIG, msgUrl: "http://hub:8484", token: "s3cret" };
   const call = httpCall(config, { fetchFn });
 
-  await call({ op: "register", actor: "act-1", harness: "opencode", host: "host-a", pid: 7, ttl: "90000ms", task: "t-1" });
+  await call({ op: "register", actor: "act-1", session: "s-1", harness: "opencode", host: "host-a", pid: 7, ttl: "90000ms", task: "t-1" });
   await call({ op: "claim", run: "run-1", actor: "act-1", wait: "25000ms", task: "t-1" });
   await call({ op: "ack", id: "m-1", run: "run-1", state: "read", error: "" });
   await call({ op: "nack", id: "m-2", run: "run-1", error: "no session" });
@@ -231,7 +241,7 @@ test("httpCall posts each receiver verb to /api/msg/<verb> with the bearer token
     assert.equal(request.options.headers["Content-Type"], "application/json");
   }
   assert.deepEqual(JSON.parse(requests[0].options.body), {
-    actor: "act-1", task: "t-1", harness: "opencode", host: "host-a", pid: 7, ttl: "90000ms",
+    actor: "act-1", task: "t-1", session: "s-1", harness: "opencode", host: "host-a", pid: 7, ttl: "90000ms",
   });
   assert.deepEqual(JSON.parse(requests[1].options.body), {
     run_id: "run-1", actor: "act-1", task: "t-1", wait: "25000ms",
@@ -253,9 +263,11 @@ test("httpCall surfaces a non-2xx response as an error", async () => {
 test("receiver speaks the /api/msg/* transport when a hub URL is set", async () => {
   const injected = [];
   const urls = [];
+  const bodies = new Map();
   let claims = 0;
-  const fetchFn = async (url) => {
+  const fetchFn = async (url, options) => {
     urls.push(url);
+    bodies.set(url, JSON.parse(options.body));
     if (url.endsWith("/register")) return jsonResponse({ run_id: "run-http" });
     if (url.endsWith("/claim")) {
       claims += 1;
@@ -281,6 +293,11 @@ test("receiver speaks the /api/msg/* transport when a hub URL is set", async () 
   await waitFor(() => injected.length === 1);
   assert.match(injected[0].text, /remote hi/);
   assert.ok(urls.includes("http://hub:8484/api/msg/register"));
+  assert.equal(
+    bodies.get("http://hub:8484/api/msg/register").session,
+    "s-chief",
+    "the receiver registers its chief session over the hub",
+  );
   await receiver.dispose();
 });
 
@@ -316,7 +333,7 @@ test("receiver registers, claims, injects, and acks", async () => {
 
   await receiver.start();
   assert.equal(receiver.runID(), "run-1");
-  assert.ok(calls.some((c) => c === "msg agent register --actor act-1 --project prj-1 --harness opencode --pid 7 --ttl 90000ms --task t-1 -o json"));
+  assert.ok(calls.some((c) => c === "msg agent register --actor act-1 --project prj-1 --harness opencode --pid 7 --ttl 90000ms --session s-chief --task t-1 -o json"));
 
   await waitFor(() => injected.length === 1);
   assert.equal(injected[0].sid, "ses-1");
@@ -1417,6 +1434,7 @@ test("a receiver records the identity and session a cold-restored host must resu
     FACTOTUM_BIN: "/opt/ft",
     FACTOTUM_STORE: "jsonfile",
     FACTOTUM_STORE_OPTS: "path=/tmp/db.json",
+    FACTOTUM_SESSION: "s-chief",
     FACTOTUM_SERVE_TOKEN: "secret",
   };
   const { run } = restoreRun();
@@ -1432,6 +1450,7 @@ test("a receiver records the identity and session a cold-restored host must resu
   assert.equal(record.bin, "/opt/ft");
   assert.equal(record.store, "jsonfile", "the store the run was launched with survives the restore");
   assert.equal(record.storeOpts, "path=/tmp/db.json");
+  assert.equal(record.session, "s-chief", "the chief session the run belongs to survives the restore");
   assert.equal(record.token, undefined, "a bearer token is never written to durable storage");
   assert.equal(record.version, undefined, "the record carries only what a restore reads");
   assert.equal(record.savedAt, undefined, "the record carries only what a restore reads");
@@ -1439,7 +1458,7 @@ test("a receiver records the identity and session a cold-restored host must resu
 
 test("a cold-restored host re-registers from the recorded identity and delivers", async (t) => {
   const store = new Map();
-  const env = { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1" };
+  const env = { FACTOTUM_PROJECT: "prj-1", FACTOTUM_ACTOR: "act-1", FACTOTUM_SESSION: "s-chief" };
   const first = restoreRun();
   const cleanupFirst = setupV2(restoreCtx(store, { sessionID: "ses-restored" }), { env, run: first.run });
   t.after(cleanupFirst);
@@ -1455,6 +1474,10 @@ test("a cold-restored host re-registers from the recorded identity and delivers"
   await waitFor(() => injected.length === 1, 2000);
   assert.deepEqual(injected[0], { sessionID: "ses-restored", text: "[ft msg from act-x]\nafter the restart" });
   assert.ok(second.calls.some((c) => c.includes("msg agent register") && c.includes("--actor act-1")));
+  assert.ok(
+    second.calls.some((c) => c.includes("msg agent register") && c.includes("--session s-chief")),
+    "the restore registers the recorded chief session, so the run still keeps its session alive",
+  );
   assert.ok(second.calls.some((c) => c.includes("msg agent ack m-restore") && c.includes("--state read")));
 });
 

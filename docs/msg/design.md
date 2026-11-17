@@ -393,9 +393,12 @@ t-q7iwpouhr5 is done.
 One small vocabulary, used identically by the CLI, the `ft serve` transport, and both plugins.
 The store is the hub; a receiver is any client of these verbs.
 
-- **register(run)** — announce a session. Payload: `project`, `actor`, `task?`, `harness`, `host`,
-  `pid`, `can_inject`, `ttl`. Returns `run_id` and `lease_until`. Idempotent per session (section
-  5). The adapter then heartbeats at `ttl/3`.
+- **register(run)** — announce a session. Payload: `project`, `actor`, `task?`, `session?`,
+  `harness`, `host`, `pid`, `can_inject`, `ttl`. Returns `run_id` and `lease_until`. `session` is
+  the chief session the receiver belongs to (`FACTOTUM_SESSION`); the sessions page counts a live
+  run lease as that session's liveness evidence, so a remote role that is quiet past the idle
+  window still reads as working. Idempotent per session (section 5). The adapter then heartbeats at
+  `ttl/3`.
 - **claim(run_id, wait?)** — atomically take the oldest message claimable by the run (section 4)
   and mark it `delivered` with `lease_until = now + lease`. With `wait`, it long-polls up to
   `wait` before returning empty. This is the poll loop.
@@ -466,7 +469,7 @@ POST /api/msg/ack        {id, run_id, state, error?}               -> {ok}      
 POST /api/msg/nack       {id, run_id, reason}                      -> {ok}           ft msg agent nack
 POST /api/msg/retry      {id, to?}                                 -> {ok}           (proposed, section 11)
 POST /api/msg/prune      {before, states?}                         -> {removed}      (proposed, section 11)
-POST /api/msg/register   {actor, task?, harness, host, pid, ...}   -> {run_id, lease_until}
+POST /api/msg/register   {actor, task?, session?, harness, host, pid, ...}   -> {run_id, lease_until}
 POST /api/msg/claim      {run_id, wait?}                           -> {message?}
 POST /api/msg/heartbeat  {run_id}                                  -> {ok}
 POST /api/msg/deregister {run_id}                                  -> {ok}
@@ -507,8 +510,9 @@ long-poll claim, inject as a user turn, ack.
 - A local plugin that **default-exports an object with `server()`** — the shape opencode 1.18.35
   requires and the one cmux's plugin got wrong. `server()` starts the claim loop.
 - Reads `FACTOTUM_PROJECT`, `FACTOTUM_ACTOR`, `FACTOTUM_RUN_ID`, `FACTOTUM_TASK_ID` (set by
-  `ft run`), and `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` for a remote hub; with no URL it talks
-  to the local `ft` store.
+  `ft run`), `FACTOTUM_SESSION` (the chief session it registers, which keeps that session alive
+  while the run leases), and `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` for a remote hub; with no
+  URL it talks to the local `ft` store.
 - On load: register. Loop: `claim({wait})`; on a message, inject it as a new user turn through the
   opencode server API (a mid-turn agent queues it for the next turn; an idle agent starts a new
   turn), then `ack(read)`. A failure `ack(failed)` with the error. On unload: deregister.
@@ -516,12 +520,12 @@ long-poll claim, inject as a user turn, ack.
 - **Cold restore.** OpenCode V2 resumes a surviving session as `opencode -s <session>` with the
   original launch environment gone, so `FACTOTUM_*` never reaches the plugin and an idle agent
   would register nothing while its TUI looks healthy. Every load that has its configuration
-  records the identity it registered as (project, actor, task, harness, bin, store and its
-  options, hub URL) plus the session it injects into, keyed by the OpenCode location (the project
-  hash of the canonical directory). A load with no environment recovers that record and registers
-  again; two receivers for one actor split a mailbox, so the recovery waits while another run for
-  that actor is live (backing off its liveness poll, because a live peer can hold the actor for
-  hours) and adopts once its lease lapses. A restore keeps the record's session current with the
+  records the identity it registered as (project, actor, task, chief session, harness, bin, store
+  and its options, hub URL) plus the OpenCode session it injects into, keyed by the OpenCode
+  location (the project hash of the canonical directory). A load with no environment recovers that
+  record and registers again; two receivers for one actor split a mailbox, so the recovery waits
+  while another run for that actor is live (backing off its liveness poll, because a live peer
+  can hold the actor for hours) and adopts once its lease lapses. A restore keeps the record's session current with the
   one it injects into, so a second restart resumes the live session instead of a stale id (the
   record's writes are ordered, so the seed a restore starts from cannot overwrite a session the
   host announces while that write is in flight). The record never carries the hub token: a

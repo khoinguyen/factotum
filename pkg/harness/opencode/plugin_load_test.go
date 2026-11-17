@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -56,10 +57,10 @@ func TestPluginLoadGuardRejectsWrongShape(t *testing.T) {
 }
 
 // TestPluginLoadsOnInstalledOpenCodeV2 loads the receiver plugin in OpenCode 2
-// (the isolated `opencode2` V2 binary) through the V2 entrypoint: the same
-// default export must expose `id` + `setup(ctx)` (Plugin.define) that V2 runs,
-// while V1 keeps calling `server()`. It is the V2 counterpart to
-// TestPluginLoadsOnInstalledOpenCode.
+// (the isolated `opencode2` V2 binary, or a V2 `opencode`) through the V2
+// entrypoint: the same default export must expose `id` + `setup(ctx)`
+// (Plugin.define) that V2 runs, while V1 keeps calling `server()`. It is the V2
+// counterpart to TestPluginLoadsOnInstalledOpenCode.
 //
 // OpenCode 2 loads project plugins only once a location is activated, so the
 // guard creates a session and then polls `/api/plugin` until the plugin appears
@@ -103,10 +104,10 @@ func TestPluginLoadsOnInstalledOpenCodeV2(t *testing.T) {
 // carries (the stub; a fallback to the real `ft` would log nothing). Delivery,
 // not just registration, is asserted on both restores: each queued message is
 // claimed, acked read, and found as a user turn in the session it was meant for.
-// CI cannot carry any of this - the workflow installs Go only and has no
-// `opencode2` (the isolated V2 runtime, an npm alias or a pinned V2 image) - so
-// the guard skips there by design and runs wherever OPENCODE2 or `opencode2` on
-// PATH provides it. The protocol logic itself is covered deterministically by the
+// CI cannot carry any of this - the workflow installs Go only and no OpenCode 2
+// runtime (the `opencode2` alias, a pinned V2 image, or a V2 `opencode` in
+// place) - so the guard skips there by design and runs wherever opencode2Path
+// resolves one. The protocol logic itself is covered deterministically by the
 // plugin's Node unit tests.
 func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 	bin := opencode2Path(t)
@@ -229,8 +230,8 @@ func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 // for the pre-upgrade receiver's deregister before queueing, so an undisposed
 // old receiver cannot claim the hand-off and mask a broken fallback.
 //
-// CI has no `opencode2`, so the guard skips there by design; the plugin's Node
-// unit tests keep the fallback's shape covered deterministically.
+// CI has no OpenCode 2 runtime, so the guard skips there by design; the plugin's
+// Node unit tests keep the fallback's shape covered deterministically.
 func TestPluginResumesAcrossSessionKeyUpgradeOnOpenCodeV2(t *testing.T) {
 	bin := opencode2Path(t)
 	dir, err := os.MkdirTemp("", "factotum-opencode2-key-upgrade-")
@@ -480,22 +481,158 @@ func withoutFactotumEnv() []string {
 	return env
 }
 
-// opencode2Path locates the isolated OpenCode 2 binary: an explicit OPENCODE2
-// path first, then `opencode2` on PATH. The installed V1 `opencode` is never
-// used, so the two guards stay independent.
+// opencode2Path locates the OpenCode 2 binary the V2 guards drive: an explicit
+// OPENCODE2 path, then `opencode2` on PATH, then `opencode` on PATH when its
+// `--version` banner reports major 2. Homebrew and in-place upgrades ship V2
+// under the plain `opencode` name, so without the last step the guards skip on a
+// machine that does have V2. A V1 `opencode` is never returned: the guards pass
+// V2-only flags, so a V1 pick would fail them for the wrong reason.
 func opencode2Path(t *testing.T) string {
 	t.Helper()
+	p, err := findOpenCode2()
+	if err != nil {
+		if errors.Is(err, errOpenCode2Unusable) {
+			t.Fatal(err)
+		}
+		t.Skip(err)
+	}
+	return p
+}
+
+// errOpenCode2Unusable marks a broken explicit OPENCODE2 override: the operator
+// asked for that binary, so skip would hide a misconfigured environment.
+var errOpenCode2Unusable = errors.New("OPENCODE2 is set but not usable")
+
+// findOpenCode2 resolves the OpenCode 2 binary, preferring an explicit
+// OPENCODE2 path and the `opencode2` alias, then falling back to a PATH
+// `opencode` only when its version banner reports major 2 or later.
+func findOpenCode2() (string, error) {
 	if p := os.Getenv("OPENCODE2"); p != "" {
 		if _, err := os.Stat(p); err != nil {
-			t.Fatalf("OPENCODE2=%q is not usable: %v", p, err)
+			return "", fmt.Errorf("%w: OPENCODE2=%q: %w", errOpenCode2Unusable, p, err)
+		}
+		return p, nil
+	}
+	if p, err := exec.LookPath("opencode2"); err == nil {
+		return p, nil
+	}
+	p, err := exec.LookPath("opencode")
+	if err != nil {
+		return "", fmt.Errorf("neither opencode2 nor opencode (OpenCode 2) is on PATH: %w", err)
+	}
+	if opencode.VariantForBinary(p) != opencode.V2 {
+		return "", fmt.Errorf("opencode at %s is not OpenCode 2 (set OPENCODE2 to a V2 binary)", p)
+	}
+	return p, nil
+}
+
+// TestFindOpenCode2 pins the resolution order and, above all, that the helper
+// resolves a V2 binary installed as `opencode` instead of skipping: Homebrew
+// ships V2 under that name, which is how every helper-dependent V2 guard went
+// unexercised on the machine the bug was reported from. A V1 `opencode` must
+// still be rejected, never returned.
+func TestFindOpenCode2(t *testing.T) {
+	// writeBin writes an executable fake reporting banner from --version.
+	writeBin := func(t *testing.T, dir, name, banner string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo %q; fi\n", banner)
+		if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", p, err)
 		}
 		return p
 	}
-	p, err := exec.LookPath("opencode2")
-	if err != nil {
-		t.Skipf("opencode2 (OpenCode 2) is not on PATH: %v", err)
+	// pathDir puts fake binaries named after the map keys on PATH and returns
+	// their paths by name.
+	pathDir := func(t *testing.T, bins map[string]string) map[string]string {
+		t.Helper()
+		dir := t.TempDir()
+		paths := map[string]string{}
+		for name, banner := range bins {
+			paths[name] = writeBin(t, dir, name, banner)
+		}
+		t.Setenv("PATH", dir)
+		return paths
 	}
-	return p
+
+	t.Run("v2 opencode fallback", func(t *testing.T) {
+		t.Setenv("OPENCODE2", "")
+		paths := pathDir(t, map[string]string{"opencode": "opencode v2.3.0"})
+		got, err := findOpenCode2()
+		if err != nil {
+			t.Fatalf("findOpenCode2() error = %v, want the V2 `opencode` fallback", err)
+		}
+		if got != paths["opencode"] {
+			t.Fatalf("findOpenCode2() = %q, want %q", got, paths["opencode"])
+		}
+	})
+	t.Run("v1 opencode rejected", func(t *testing.T) {
+		t.Setenv("OPENCODE2", "")
+		pathDir(t, map[string]string{"opencode": "1.19.0"})
+		if got, err := findOpenCode2(); err == nil {
+			t.Fatalf("findOpenCode2() = %q, want an error: a V1 binary must never drive the V2 guards", got)
+		}
+	})
+	t.Run("opencode2 alias wins", func(t *testing.T) {
+		t.Setenv("OPENCODE2", "")
+		paths := pathDir(t, map[string]string{"opencode2": "opencode v2.3.0", "opencode": "1.19.0"})
+		got, err := findOpenCode2()
+		if err != nil {
+			t.Fatalf("findOpenCode2() error = %v", err)
+		}
+		if got != paths["opencode2"] {
+			t.Fatalf("findOpenCode2() = %q, want the alias %q", got, paths["opencode2"])
+		}
+	})
+	t.Run("OPENCODE2 override wins", func(t *testing.T) {
+		dir := t.TempDir()
+		bin := writeBin(t, dir, "pinned", "anything")
+		pathDir(t, map[string]string{"opencode": "opencode v2.3.0"})
+		t.Setenv("OPENCODE2", bin)
+		got, err := findOpenCode2()
+		if err != nil {
+			t.Fatalf("findOpenCode2() error = %v", err)
+		}
+		if got != bin {
+			t.Fatalf("findOpenCode2() = %q, want the override %q", got, bin)
+		}
+	})
+	t.Run("no binary", func(t *testing.T) {
+		t.Setenv("OPENCODE2", "")
+		t.Setenv("PATH", t.TempDir())
+		if got, err := findOpenCode2(); err == nil {
+			t.Fatalf("findOpenCode2() = %q, want an error when no OpenCode is on PATH", got)
+		}
+	})
+	t.Run("unusable OPENCODE2 fails rather than skips", func(t *testing.T) {
+		t.Setenv("OPENCODE2", filepath.Join(t.TempDir(), "missing"))
+		pathDir(t, map[string]string{"opencode": "opencode v2.3.0"})
+		_, err := findOpenCode2()
+		if !errors.Is(err, errOpenCode2Unusable) {
+			t.Fatalf("findOpenCode2() error = %v, want errOpenCode2Unusable", err)
+		}
+	})
+}
+
+// TestOpenCode2PathResolvesInstalledV2 pins the reported bug at the helper the
+// guards actually call: on a host whose `opencode` is V2 (Homebrew installs it
+// under that name) opencode2Path must return a binary, not skip. It skips only
+// on a host with no V2 anywhere, where skipping is correct.
+func TestOpenCode2PathResolvesInstalledV2(t *testing.T) {
+	hostPath, err := exec.LookPath("opencode")
+	if err != nil {
+		t.Skipf("opencode is not on PATH: %v", err)
+	}
+	if opencode.VariantForBinary(hostPath) != opencode.V2 {
+		t.Skipf("opencode at %s is not OpenCode 2; the fallback has nothing to resolve", hostPath)
+	}
+	if _, err := exec.LookPath("opencode2"); err == nil {
+		t.Skip("opencode2 is on PATH, so the plain-`opencode` fallback is not what resolves here")
+	}
+	t.Setenv("OPENCODE2", "")
+	if got := opencode2Path(t); got != hostPath {
+		t.Fatalf("opencode2Path() = %q, want the installed V2 binary %q (it skipped or picked another binary)", got, hostPath)
+	}
 }
 
 // v2PluginEntry is the slice of /api/plugin's Plugin.Info the guard reads.

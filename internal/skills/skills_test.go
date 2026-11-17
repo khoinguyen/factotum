@@ -65,3 +65,20 @@ func TestFTSkillStatesWorkspaceXOR(t *testing.T) {
 		}
 	}
 }
+
+// TestFTSkillStatesLiveRunMeansClaiming pins the rule the channel check rests
+// on: a run in `ft msg runs --live` is one renewing its lease by claiming, so a
+// receiver that stops claiming drops out and says why in one stall line. Without
+// it a chief reads an absent peer as idle instead of stalled and keeps waiting
+// on a handoff that can never land.
+func TestFTSkillStatesLiveRunMeansClaiming(t *testing.T) {
+	skill, err := Get("ft")
+	if err != nil {
+		t.Fatalf("Get(ft) error = %v", err)
+	}
+	for _, want := range []string{"only a receiver that is actually claiming renews its lease", "stall line", "stalled, not silent"} {
+		if !strings.Contains(skill.Body, want) {
+			t.Errorf("ft skill does not state the live-lease rule: missing %q", want)
+		}
+	}
+}

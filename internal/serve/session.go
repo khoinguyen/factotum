@@ -25,8 +25,10 @@ type deliveredView struct {
 
 // sessionView is one chief session projected for the sessions page: its
 // lifecycle (alive, stale, or retired, when it started and stopped, why) and the
-// work it delivered. A session is defined by the events that carry its id, so a
-// session whose events exist but whose start was not recorded still appears.
+// work it delivered. A session is defined by the events that carry its id, or by
+// a live run that names it: a session whose events exist but whose start was not
+// recorded still appears, and so does one that has not recorded an event at all
+// while its receiver heartbeats.
 type sessionView struct {
 	ID              string        `json:"id"`
 	State           string        `json:"state"`
@@ -44,13 +46,17 @@ type sessionsJSON struct {
 	Sessions []sessionView `json:"sessions"`
 }
 
-// sessionAcc accumulates one session's events while the log is folded.
+// sessionAcc accumulates one session's evidence while the log and the live runs
+// are folded: its events bracket its lifecycle, its live runs prove it is still
+// working when the events are quiet, and events says which of the two supplied
+// its start.
 type sessionAcc struct {
 	started *core.Event
 	retired *core.Event
 	first   time.Time
 	last    time.Time
 	done    map[core.TicketID]bool
+	events  bool
 }
 
 // handleSessions serves the chief-session timeline as JSON. Like every read
@@ -64,11 +70,13 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, sessionsJSON{Sessions: sessions})
 }
 
-// sessions folds the event log into one projection per chief session. Every
-// event carrying a Session belongs to that session's timeline; the session
-// events bracket it (start, retire), and the work events inside it are the
-// delivered work. The snapshot resolves the done tasks' titles and pull-request
-// links, which the events carry only by ticket id.
+// sessions folds the event log and the live runs into one projection per chief
+// session. Every event carrying a Session belongs to that session's timeline;
+// the session events bracket it (start, retire), and the work events inside it
+// are the delivered work. Session ids that only a live run names are added, so a
+// receiver working its first turn is not missing from the page. The snapshot
+// resolves the done tasks' titles and pull-request links, which the events carry
+// only by ticket id.
 func (s *Server) sessions(ctx context.Context) ([]sessionView, error) {
 	now := s.options.Clock.Now()
 	scope := core.ProjectID("")
@@ -106,6 +114,7 @@ func (s *Server) sessions(ctx context.Context) ([]sessionView, error) {
 			byID[sid] = acc
 			order = append(order, sid)
 		}
+		acc.events = true
 		if acc.first.IsZero() || event.CreatedAt.Before(acc.first) {
 			acc.first = event.CreatedAt
 		}
@@ -134,11 +143,29 @@ func (s *Server) sessions(ctx context.Context) ([]sessionView, error) {
 	}
 	// A run whose lease is still valid is a session's strongest liveness
 	// evidence: its receiver is heartbeating right now, even if the session has
-	// not recorded an event for a while.
+	// not recorded an event for a while. It can also be the session's only
+	// evidence - a receiver registers before its first event - so a live run's
+	// session joins the list rather than merely keeping an existing entry alive.
+	// The union is by session id, so several of a session's roles registering
+	// still make one entry, and the event timeline owns the start of a session
+	// that has one.
 	liveSession := make(map[string]bool)
 	for _, run := range runs {
-		if run.Session != "" {
-			liveSession[run.Session] = true
+		sid := run.Session
+		if sid == "" {
+			continue
+		}
+		liveSession[sid] = true
+		acc := byID[sid]
+		if acc == nil {
+			acc = &sessionAcc{done: make(map[core.TicketID]bool)}
+			byID[sid] = acc
+			order = append(order, sid)
+		}
+		// An event-free session has no recorded start; its earliest run
+		// registration is the evidence of when it began.
+		if !acc.events && (acc.first.IsZero() || run.CreatedAt.Before(acc.first)) {
+			acc.first = run.CreatedAt
 		}
 	}
 

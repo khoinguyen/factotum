@@ -421,7 +421,8 @@ export function createFactotumReceiver({
   // its full message - that is the "the store is down" signal - and the run is
   // then summarised periodically. fail() and recovered() are the two edges, and
   // a run that ends logs once so the next outage is never silent behind this
-  // one's suppression.
+  // one's suppression. fail() returns true for the first failure of a run, so a
+  // caller can add its own once-per-outage line next to the full detail.
   function boundedFailures(kind, cadence) {
     let failures = 0;
     let firstAt = 0;
@@ -433,11 +434,12 @@ export function createFactotumReceiver({
         if (failures === 1) {
           firstAt = Date.now();
           log(`factotum msg: ${kind} failed: ${detail}`);
-          return;
+          return true;
         }
         if (failures % FAILURE_SUMMARY_EVERY === 0) {
           log(`factotum msg: ${failures} consecutive ${kind} failures over ${secsSinceFirst()}s${cadence} (last: ${oneLine(detail)})`);
         }
+        return false;
       },
       recovered() {
         const run = failures;
@@ -450,6 +452,10 @@ export function createFactotumReceiver({
 
   const claimFailures = boundedFailures("claim", `; still retrying every ${retryMs}ms`);
   const heartbeatFailures = boundedFailures("heartbeat", "");
+  // Registration repeats on the same retry delay as a claim, but only until it
+  // succeeds: a store outage at startup used to write one line per attempt before
+  // a run existed, so it gets the same bound.
+  const registerFailures = boundedFailures("register", `; still retrying every ${retryMs}ms`);
 
   async function register() {
     const out = await call({
@@ -466,13 +472,18 @@ export function createFactotumReceiver({
   // no run and no claim loop for as long as it lived. Retrying turns that silent
   // death into a slow start.
   async function registerWithRetry() {
-    for (let attempt = 1; !stopped; attempt += 1) {
+    while (!stopped) {
       try {
         await register();
+        registerFailures.recovered();
         log(`factotum msg: registered actor ${config.actor} as run ${runID}`);
         return true;
       } catch (error) {
-        log(`factotum msg: register attempt ${attempt} failed: ${error?.message || error}; retrying in ${retryMs}ms`);
+        if (registerFailures.fail(error)) {
+          // One line names the state the flood used to imply on every attempt:
+          // this receiver has no run yet, so it claims and delivers nothing.
+          log(`factotum msg: not registered yet; retrying every ${retryMs}ms until the store accepts a registration`);
+        }
         await sleep(retryMs);
       }
     }

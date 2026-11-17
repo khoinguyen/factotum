@@ -35,16 +35,17 @@ type messageSendResult struct {
 // a message sees what it said in the same call instead of following up with
 // `ft msg get`.
 type messageReadResult struct {
-	ID      string `json:"id" yaml:"id"`
-	Read    bool   `json:"read" yaml:"read"`
-	From    string `json:"from,omitempty" yaml:"from,omitempty"`
-	To      string `json:"to" yaml:"to"`
-	TaskID  string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
-	ReplyTo string `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
-	State   string `json:"state" yaml:"state"`
-	Created string `json:"created_at" yaml:"created_at"`
-	Body    string `json:"body" yaml:"body"`
-	Project string `json:"project" yaml:"project"`
+	ID      string    `json:"id" yaml:"id"`
+	Read    bool      `json:"read" yaml:"read"`
+	From    string    `json:"from,omitempty" yaml:"from,omitempty"`
+	To      string    `json:"to" yaml:"to"`
+	TaskID  string    `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+	ReplyTo string    `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
+	State   string    `json:"state" yaml:"state"`
+	Created string    `json:"created_at" yaml:"created_at"`
+	Body    string    `json:"body" yaml:"body"`
+	Links   []linkDoc `json:"links,omitempty" yaml:"links,omitempty"`
+	Project string    `json:"project" yaml:"project"`
 }
 
 // messageRunEntry is one row of `ft msg runs`.
@@ -66,26 +67,28 @@ type messageRunEntry struct {
 // plus the content and reply edge, so a machine consumer can read the message
 // the text block prints instead of falling back to the inbox row.
 type messageDetail struct {
-	ID      string `json:"id" yaml:"id"`
-	From    string `json:"from,omitempty" yaml:"from,omitempty"`
-	To      string `json:"to" yaml:"to"`
-	TaskID  string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
-	ReplyTo string `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
-	State   string `json:"state" yaml:"state"`
-	Created string `json:"created_at" yaml:"created_at"`
-	Body    string `json:"body" yaml:"body"`
-	Project string `json:"project" yaml:"project"`
+	ID      string    `json:"id" yaml:"id"`
+	From    string    `json:"from,omitempty" yaml:"from,omitempty"`
+	To      string    `json:"to" yaml:"to"`
+	TaskID  string    `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+	ReplyTo string    `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
+	State   string    `json:"state" yaml:"state"`
+	Created string    `json:"created_at" yaml:"created_at"`
+	Body    string    `json:"body" yaml:"body"`
+	Links   []linkDoc `json:"links,omitempty" yaml:"links,omitempty"`
+	Project string    `json:"project" yaml:"project"`
 }
 
 // messageEntry is one row of `ft msg inbox`.
 type messageEntry struct {
-	ID      string `json:"id" yaml:"id"`
-	From    string `json:"from,omitempty" yaml:"from,omitempty"`
-	To      string `json:"to" yaml:"to"`
-	TaskID  string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
-	State   string `json:"state" yaml:"state"`
-	Created string `json:"created_at" yaml:"created_at"`
-	Project string `json:"project" yaml:"project"`
+	ID      string    `json:"id" yaml:"id"`
+	From    string    `json:"from,omitempty" yaml:"from,omitempty"`
+	To      string    `json:"to" yaml:"to"`
+	TaskID  string    `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+	Links   []linkDoc `json:"links,omitempty" yaml:"links,omitempty"`
+	State   string    `json:"state" yaml:"state"`
+	Created string    `json:"created_at" yaml:"created_at"`
+	Project string    `json:"project" yaml:"project"`
 }
 
 func newMessageCommand(deps *Deps) *cobra.Command {
@@ -444,14 +447,15 @@ type agentRegisterResult struct {
 
 // agentMessage is the wire shape of a claimed message for the receiver verbs.
 type agentMessage struct {
-	ID        string `json:"id" yaml:"id"`
-	From      string `json:"from,omitempty" yaml:"from,omitempty"`
-	To        string `json:"to" yaml:"to"`
-	TaskID    string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
-	Body      string `json:"body" yaml:"body"`
-	ReplyTo   string `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
-	State     string `json:"state" yaml:"state"`
-	CreatedAt string `json:"created_at" yaml:"created_at"`
+	ID        string    `json:"id" yaml:"id"`
+	From      string    `json:"from,omitempty" yaml:"from,omitempty"`
+	To        string    `json:"to" yaml:"to"`
+	TaskID    string    `json:"task_id,omitempty" yaml:"task_id,omitempty"`
+	Body      string    `json:"body" yaml:"body"`
+	Links     []linkDoc `json:"links,omitempty" yaml:"links,omitempty"`
+	ReplyTo   string    `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
+	State     string    `json:"state" yaml:"state"`
+	CreatedAt string    `json:"created_at" yaml:"created_at"`
 }
 
 // agentClaimResult is the JSON shape `ft msg agent claim` returns. Found is
@@ -697,6 +701,7 @@ func agentMessageFrom(message *core.Message) *agentMessage {
 		ID:        string(message.ID),
 		To:        string(message.To),
 		Body:      message.Body,
+		Links:     linkDocs(message.Links),
 		State:     string(message.State),
 		CreatedAt: message.CreatedAt.UTC().Format(time.RFC3339),
 	}
@@ -726,6 +731,7 @@ func messageEntryFrom(message *core.Message) messageEntry {
 	entry := messageEntry{
 		ID:      string(message.ID),
 		To:      string(message.To),
+		Links:   linkDocs(message.Links),
 		State:   string(message.State),
 		Created: message.CreatedAt.UTC().Format(time.RFC3339),
 		Project: string(message.ProjectID),
@@ -753,6 +759,7 @@ func messageReadResultFrom(message *core.Message) messageReadResult {
 		State:   detail.State,
 		Created: detail.Created,
 		Body:    detail.Body,
+		Links:   detail.Links,
 		Project: detail.Project,
 	}
 }
@@ -764,6 +771,7 @@ func messageDetailFrom(message *core.Message) messageDetail {
 		State:   string(message.State),
 		Created: message.CreatedAt.UTC().Format(time.RFC3339),
 		Body:    message.Body,
+		Links:   linkDocs(message.Links),
 		Project: string(message.ProjectID),
 	}
 	if message.From != nil {
@@ -795,6 +803,26 @@ func printMessageBlock(deps *Deps, message *core.Message) {
 	if message.Body != "" {
 		deps.printf("\n=== Body ===\n%s\n", message.Body)
 	}
+	if len(message.Links) > 0 {
+		deps.printf("\n=== Links ===\n")
+		for _, link := range message.Links {
+			deps.printf("[%s] %s\n", link.Kind, link.URL)
+		}
+	}
+}
+
+// linkDocs renders a message's links in the shape every CLI link field uses
+// (see linkDoc), so a receiver parses one link shape across get, inbox, read,
+// and the claim wire.
+func linkDocs(links []core.Link) []linkDoc {
+	if len(links) == 0 {
+		return nil
+	}
+	out := make([]linkDoc, 0, len(links))
+	for _, link := range links {
+		out = append(out, linkDoc{Kind: string(link.Kind), URL: link.URL, Title: link.Title})
+	}
+	return out
 }
 
 // resolveMessageFrom resolves the sender actor: the flag when set, else the

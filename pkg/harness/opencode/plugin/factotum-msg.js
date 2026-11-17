@@ -179,7 +179,11 @@ export function spawnRunner(bin, argv, { spawnFn = spawn, env = process.env, cwd
 export function formatMessage(message) {
   const header = message.from ? `[ft msg from ${message.from}]` : "[ft msg]";
   const task = message.task_id ? ` (task ${message.task_id})` : "";
-  return `${header}${task}\n${message.body}`;
+  const links = Array.isArray(message.links) ? message.links : [];
+  const attachments = links.length
+    ? `\n\n=== Links ===\n${links.map((link) => `[${link.kind}] ${link.url}`).join("\n")}`
+    : "";
+  return `${header}${task}\n${message.body}${attachments}`;
 }
 
 function sleep(ms) {

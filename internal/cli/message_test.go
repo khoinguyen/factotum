@@ -368,6 +368,154 @@ func TestMessageGetJSONCarriesContent(t *testing.T) {
 	}
 }
 
+// TestMessageGetShowsLinks pins that `ft msg get` and `ft msg read` show the
+// attachments a sender added with --link, in the text block and in -o json/yaml.
+// A link the store holds but no read surface prints is not a hand-off: the
+// receiver never learns the artifact exists.
+func TestMessageGetShowsLinks(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	messageID := firstField(t, r.run("msg", "send", "actor:linker", "see the issue", "--project", projectID,
+		"--from", "builder-t-1", "--link", "issue=https://example.invalid/2", "--link", "doc=https://example.invalid/spec"))
+
+	wantBlock := "\n=== Links ===\n[issue] https://example.invalid/2\n[doc] https://example.invalid/spec\n"
+	if got := r.run("msg", "get", messageID); !strings.Contains(got, wantBlock) {
+		t.Fatalf("get should print a Links section after the body:\n%s", got)
+	}
+	if got := r.run("msg", "read", messageID); !strings.Contains(got, wantBlock) {
+		t.Fatalf("read should print the same Links section as get:\n%s", got)
+	}
+
+	var gotJSON map[string]any
+	out := r.run("msg", "get", messageID, "-o", "json")
+	if err := json.Unmarshal([]byte(out), &gotJSON); err != nil {
+		t.Fatalf("get -o json is not JSON: %v\n%s", err, out)
+	}
+	assertMessageLinks(t, gotJSON["links"], "https://example.invalid/2", "https://example.invalid/spec")
+
+	readJSON := runJSON(t, r, "msg", "read", messageID)
+	assertMessageLinks(t, readJSON["links"], "https://example.invalid/2", "https://example.invalid/spec")
+
+	yamlOut := r.run("msg", "get", messageID, "-o", "yaml")
+	for _, want := range []string{"links:", "kind: issue", "url: https://example.invalid/2"} {
+		if !strings.Contains(yamlOut, want) {
+			t.Fatalf("get -o yaml missing %q:\n%s", want, yamlOut)
+		}
+	}
+}
+
+// TestMessageInboxJSONCarriesLinks pins the list entry's links: a receiver that
+// scans the inbox machine-readably must see the attachment without a follow-up
+// get.
+func TestMessageInboxJSONCarriesLinks(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	messageID := firstField(t, r.run("msg", "send", "actor:linker", "see the issue", "--project", projectID,
+		"--link", "issue=https://example.invalid/2"))
+
+	var entries []map[string]any
+	out := r.run("msg", "inbox", "--project", projectID, "-o", "json")
+	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+		t.Fatalf("inbox -o json is not a JSON array: %v\n%s", err, out)
+	}
+	if len(entries) != 1 || entries[0]["id"] != messageID {
+		t.Fatalf("inbox -o json = %v, want the sent message %s", entries, messageID)
+	}
+	assertMessageLinks(t, entries[0]["links"], "https://example.invalid/2")
+}
+
+// TestMessageClaimWireCarriesLinks pins the receiver's claim payload: the
+// plugin parses this JSON, so a link dropped here is a link no injected turn
+// can show even though get and inbox are correct.
+func TestMessageClaimWireCarriesLinks(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	messageID := firstField(t, r.run("msg", "send", "actor:linker", "see the issue", "--project", projectID,
+		"--link", "issue=https://example.invalid/2"))
+
+	registered := runJSON(t, r, "msg", "agent", "register", "--actor", "linker", "--harness", "opencode", "--project", projectID)
+	runID, _ := registered["run_id"].(string)
+	if runID == "" {
+		t.Fatalf("register json missing run_id: %v", registered)
+	}
+	claimed := runJSON(t, r, "msg", "agent", "claim", "--run", runID, "--actor", "linker", "--project", projectID)
+	if claimed["found"] != true {
+		t.Fatalf("claim found = %v, want true: %v", claimed["found"], claimed)
+	}
+	message, ok := claimed["message"].(map[string]any)
+	if !ok || message["id"] != messageID {
+		t.Fatalf("claim message = %v, want %s", claimed["message"], messageID)
+	}
+	assertMessageLinks(t, message["links"], "https://example.invalid/2")
+}
+
+// TestMessagesWithoutLinksKeepTheirShape pins the other half: a message with no
+// attachments prints no empty Links section and gains no links key, so the
+// link fix does not churn every existing output.
+func TestMessagesWithoutLinksKeepTheirShape(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	messageID := firstField(t, r.run("msg", "send", "actor:linker", "plain text", "--project", projectID))
+
+	if got := r.run("msg", "get", messageID); strings.Contains(got, "Links") {
+		t.Fatalf("a linkless message should print no Links section:\n%s", got)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal([]byte(r.run("msg", "get", messageID, "-o", "json")), &detail); err != nil {
+		t.Fatalf("get -o json is not JSON: %v", err)
+	}
+	if _, ok := detail["links"]; ok {
+		t.Fatalf("a linkless get -o json should omit links: %v", detail)
+	}
+
+	var entries []map[string]any
+	if err := json.Unmarshal([]byte(r.run("msg", "inbox", "--project", projectID, "-o", "json")), &entries); err != nil {
+		t.Fatalf("inbox -o json is not a JSON array: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("inbox -o json = %v, want one entry", entries)
+	}
+	if _, ok := entries[0]["links"]; ok {
+		t.Fatalf("a linkless inbox entry should omit links: %v", entries[0])
+	}
+
+	registered := runJSON(t, r, "msg", "agent", "register", "--actor", "linker", "--harness", "opencode", "--project", projectID)
+	runID, _ := registered["run_id"].(string)
+	claimed := runJSON(t, r, "msg", "agent", "claim", "--run", runID, "--actor", "linker", "--project", projectID)
+	message, ok := claimed["message"].(map[string]any)
+	if !ok {
+		t.Fatalf("claim message = %v, want a message", claimed["message"])
+	}
+	if _, ok := message["links"]; ok {
+		t.Fatalf("a linkless claim message should omit links: %v", message)
+	}
+}
+
+// assertMessageLinks checks the links field of a read surface against the URLs
+// the sender attached, in the {kind, url} shape every CLI link field uses.
+func assertMessageLinks(t *testing.T, got any, urls ...string) {
+	t.Helper()
+	links, ok := got.([]any)
+	if !ok {
+		t.Fatalf("links = %v (%T), want an array", got, got)
+	}
+	if len(links) != len(urls) {
+		t.Fatalf("links = %v, want %d", links, len(urls))
+	}
+	for i, url := range urls {
+		link, ok := links[i].(map[string]any)
+		if !ok {
+			t.Fatalf("link %d = %v, want an object", i, links[i])
+		}
+		if link["url"] != url {
+			t.Fatalf("link %d url = %v, want %s", i, link["url"], url)
+		}
+		if kind, _ := link["kind"].(string); kind == "" {
+			t.Fatalf("link %d has no kind: %v", i, link)
+		}
+	}
+}
+
 func TestMessageSendResolvesTicket(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))

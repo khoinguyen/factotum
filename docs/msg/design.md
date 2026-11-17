@@ -481,6 +481,10 @@ call (`send`→`Create`, `get`/`inbox`→`Get`/`List`, `ack`/`nack`/`retry`→`A
 there is one behavior with two transports; `ft msg get` is the non-mutating fetch and `ft msg read`
 is the mutating fetch-and-mark-read (the transport's `ack` is `ft msg agent ack` for a receiver).
 
+Every item (`inbox`, `get`, and `claim`) carries the sender's `links` (`[{kind, url, title?}]`,
+reusing `core.Link`) beside the body, so a remote reader or receiver sees the attachment without a
+second fetch. A message without links omits the key.
+
 Auth and trust:
 
 - All `/api/msg/*` endpoints require the serve token in the `Authorization: Bearer` header,
@@ -564,6 +568,11 @@ ft msg runs [--live]       # list registered runs (adapter liveness)
 ft msg install [--harness opencode|opencode2|pi] [--dir <path>]   # stage a receiver for a harness
 ft msg agent <register|claim|ack|nack|heartbeat|deregister>   # hidden, stable adapter verbs
 ```
+
+`ft msg get`/`read` print the body, then a `=== Links ===` block when the sender attached links;
+`get`, `read`, `inbox`, and the `agent claim` wire all carry the same `links` array, and a linkless
+message omits it (no empty section, no empty key). The inbox's text table stays a summary row — the
+links are in its `-o json|yaml` entry and in `get`.
 
 **Proposed, not built.** Four operator verbs were considered for the first slice and are kept here
 so the intent is not lost, but none of them exists yet: the fence is marked `design` for exactly

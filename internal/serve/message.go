@@ -26,8 +26,9 @@ const maxMsgBytes = 64 << 10
 // list entry (see msgWire); the envelopes match design section 9.
 
 type msgLink struct {
-	Kind string `json:"kind"`
-	URL  string `json:"url"`
+	Kind  string `json:"kind"`
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
 }
 
 type msgSendRequest struct {
@@ -56,19 +57,20 @@ type msgReadResponse struct {
 
 // msgWire is the item shape for inbox/get/claim. It is a superset of the
 // `ft msg inbox` list entry: it carries the same id/from/to/state/created_at/
-// project plus body/task_id/reply_to, which claim needs and which a remote
-// reader should not have to fetch separately. (The CLI's own get -o json is
-// deliberately richer still to come; see t-ovcacn224s.)
+// project plus body/task_id/reply_to and the sender's links, which claim needs
+// and which a remote reader should not have to fetch separately. (The CLI's own
+// get -o json is deliberately richer still to come; see t-ovcacn224s.)
 type msgWire struct {
-	ID        string `json:"id"`
-	From      string `json:"from,omitempty"`
-	To        string `json:"to"`
-	TaskID    string `json:"task_id,omitempty"`
-	Body      string `json:"body"`
-	ReplyTo   string `json:"reply_to,omitempty"`
-	State     string `json:"state"`
-	CreatedAt string `json:"created_at"`
-	Project   string `json:"project"`
+	ID        string    `json:"id"`
+	From      string    `json:"from,omitempty"`
+	To        string    `json:"to"`
+	TaskID    string    `json:"task_id,omitempty"`
+	Body      string    `json:"body"`
+	Links     []msgLink `json:"links,omitempty"`
+	ReplyTo   string    `json:"reply_to,omitempty"`
+	State     string    `json:"state"`
+	CreatedAt string    `json:"created_at"`
+	Project   string    `json:"project"`
 }
 
 type msgInboxResponse struct {
@@ -512,6 +514,7 @@ func msgWireOf(message *core.Message) msgWire {
 		ID:        string(message.ID),
 		To:        string(message.To),
 		Body:      message.Body,
+		Links:     msgLinkWire(message.Links),
 		State:     string(message.State),
 		CreatedAt: message.CreatedAt.UTC().Format(time.RFC3339),
 		Project:   string(message.ProjectID),
@@ -541,7 +544,21 @@ func msgActor(raw string) *core.ActorID {
 func msgLinks(links []msgLink) []core.Link {
 	out := make([]core.Link, 0, len(links))
 	for _, link := range links {
-		out = append(out, core.Link{Kind: core.LinkKind(link.Kind), URL: link.URL})
+		out = append(out, core.Link{Kind: core.LinkKind(link.Kind), URL: link.URL, Title: link.Title})
+	}
+	return out
+}
+
+// msgLinkWire renders a message's links for the transport item. An empty slice
+// is nil so the `links` key is omitted on a message without attachments, the
+// same way the local CLI output omits it.
+func msgLinkWire(links []core.Link) []msgLink {
+	if len(links) == 0 {
+		return nil
+	}
+	out := make([]msgLink, 0, len(links))
+	for _, link := range links {
+		out = append(out, msgLink{Kind: string(link.Kind), URL: link.URL, Title: link.Title})
 	}
 	return out
 }

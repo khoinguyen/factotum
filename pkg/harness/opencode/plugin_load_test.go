@@ -209,6 +209,118 @@ func TestPluginRegistersAfterColdRestoreOnOpenCodeV2(t *testing.T) {
 	}
 }
 
+// TestPluginResumesAcrossSessionKeyUpgradeOnOpenCodeV2 is the cross-upgrade
+// guard for the receiver's length-prefixed session key (t-2u3w6ddwkz): a host
+// whose receiver persisted its session under the old dotted key must still
+// resume it when the plugin file is hot-reloaded under the new key.
+//
+// A cold restart cannot exercise this, and neither can fake storage: the key
+// carries the plugin host's pid, so a restarted host looks under a new key and
+// never consults the old one. Only a reload in the same process can. This guard
+// therefore stages the receiver as it ran before the upgrade (the same plugin
+// with the old dot-joined key), lets it register and persist a session under
+// that key, then swaps in the current plugin file. V2 disposes the old receiver
+// and loads the new one in the same process, with the launch environment still
+// present - the reload path msgSessionStore.load's legacy fallback exists for.
+//
+// Delivery is the assertion: no event announces a session after the reload, so
+// a hand-off queued then can only land if the reloaded receiver resumed a
+// session from storage - and the new key was never written. The guard also waits
+// for the pre-upgrade receiver's deregister before queueing, so an undisposed
+// old receiver cannot claim the hand-off and mask a broken fallback.
+//
+// CI has no `opencode2`, so the guard skips there by design; the plugin's Node
+// unit tests keep the fallback's shape covered deterministically.
+func TestPluginResumesAcrossSessionKeyUpgradeOnOpenCodeV2(t *testing.T) {
+	bin := opencode2Path(t)
+	dir, err := os.MkdirTemp("", "factotum-opencode2-key-upgrade-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := removeAllEventually(dir); err != nil {
+			t.Logf("scratch dir %s not fully removed (OpenCode's detached install may still be writing): %v", dir, err)
+		}
+	})
+	callsPath, stub := stagePluginAndStub(t, dir, legacySessionKeyPlugin(t))
+
+	// One OpenCode home across the reload: the receiver's session save lives
+	// here, exactly as it survives the swap.
+	xdgConfig := filepath.Join(dir, "xdg")
+	xdgData := filepath.Join(dir, "xdg-data")
+	xdgCache := filepath.Join(dir, "xdg-cache")
+	for _, d := range []string{xdgConfig, xdgData, xdgCache} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", d, err)
+		}
+	}
+	queuePath := queueFile(dir)
+	env := append(withoutFactotumEnv(),
+		"XDG_CONFIG_HOME="+xdgConfig,
+		"XDG_DATA_HOME="+xdgData,
+		"XDG_CACHE_HOME="+xdgCache,
+		"CALLS="+callsPath,
+		"QUEUE="+queuePath,
+		"FACTOTUM_PROJECT=prj-test",
+		"FACTOTUM_ACTOR=act-test",
+		"FACTOTUM_HARNESS=opencode2",
+		"FACTOTUM_BIN="+stub,
+		"FACTOTUM_MSG_WAIT_MS=10",
+		"FACTOTUM_MSG_TTL_MS=1000",
+	)
+	port := freeTCPPort(t)
+	server, password, output := startV2Server(t, bin, dir, env, port)
+	defer server.stop()
+
+	// Activation loads the pre-upgrade receiver; the claim that follows proves
+	// it learned a session, and the settle lets its fire-and-forget save of the
+	// dotted key land before the host reloads.
+	createSessionV2(t, port, password)
+	waitForStubCall(t, callsPath, "msg agent register", port, password, output)
+	legacySession := waitForLaunchSession(t, port, password, callsPath, output)
+	time.Sleep(coldRestoreSettle)
+	preReloadSessions := sessionIDsV2(t, port, password)
+
+	// Swap in the current plugin. V2 hot-reloads the location's plugin in the
+	// same process, so the pid in the key is unchanged - the only window in
+	// which the old dotted key can still be found.
+	registers := countStubCalls(callsPath, "msg agent register")
+	stagePlugin(t, dir, opencode.MsgPluginBytes())
+	waitForStubCalls(t, callsPath, "msg agent register", registers+1, port, password, output)
+	waitForStubCalls(t, callsPath, "msg agent deregister", 1, port, password, output)
+
+	// Nothing announces a session after the reload, so a hand-off can only land
+	// in a session that already existed - and the only place the reloaded
+	// receiver can have learned it from is the dotted key the previous format
+	// wrote.
+	landed := deliverProbe(t, queuePath, callsPath, port, password, keyUpgradeProbe, output)
+	if !containsString(preReloadSessions, landed) {
+		t.Fatalf("the reloaded receiver delivered the hand-off into session %s, not a session from before the reload (%v; the pre-upgrade receiver recorded %s): the legacy session key was not resumed", landed, preReloadSessions, legacySession)
+	}
+}
+
+// keyUpgradeProbe is the body of the hand-off the cross-upgrade guard queues
+// after the reload. It is unique, so finding it as a session turn can only mean
+// that hand-off was injected.
+const keyUpgradeProbe = "key-upgrade-probe"
+
+// legacySessionKeyPlugin returns the receiver as it ran before the session key
+// was length-prefixed: the current plugin with msgSessionKey's body restored to
+// the old dot-joined key. That body is the whole upgrade, so the session it
+// persists is exactly what a reload under the new format must still resume.
+// Failing loudly on a missing marker keeps the guard honest if the key moves.
+func legacySessionKeyPlugin(t *testing.T) []byte {
+	t.Helper()
+	plugin := string(opencode.MsgPluginBytes())
+	const current = "  const parts = [config.project, config.actor, config.pid].map(sessionKeyPart);\n" +
+		"  return `session.${parts.map((part) => `${part.length}:${part}`).join(\".\")}`;"
+	const legacy = "  return `session.${config.project}.${config.actor}.${config.pid}`;"
+	if !strings.Contains(plugin, current) {
+		t.Fatalf("the plugin no longer builds its session key from %q; update this guard's pre-upgrade rewrite", current)
+	}
+	return []byte(strings.Replace(plugin, current, legacy, 1))
+}
+
 // coldRestoreSettle is how long the guard gives the restored receiver to follow
 // a session the host announced, and its record write to land, before it restarts
 // the host again. Both are local event and storage round trips; the window only
@@ -659,13 +771,7 @@ type loadGuardResult struct {
 // log and the stub path.
 func stagePluginAndStub(t *testing.T, dir string, plugin []byte) (callsPath, stub string) {
 	t.Helper()
-	pluginDir := filepath.Join(dir, ".opencode", "plugin")
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(pluginDir, "factotum-msg.js"), plugin, 0o644); err != nil {
-		t.Fatalf("write plugin: %v", err)
-	}
+	stagePlugin(t, dir, plugin)
 
 	callsPath = filepath.Join(dir, "calls.log")
 	stub = filepath.Join(dir, "ft-stub.sh")
@@ -690,6 +796,77 @@ func stagePluginAndStub(t *testing.T, dir string, plugin []byte) (callsPath, stu
 		t.Fatalf("write stub: %v", err)
 	}
 	return callsPath, stub
+}
+
+// stagePlugin writes plugin where both OpenCode majors load project plugins.
+// The write is atomic (temp file then rename) so a guard can swap it under a
+// running host: a half-written file would make the hot reload fail for the
+// wrong reason.
+func stagePlugin(t *testing.T, dir string, plugin []byte) {
+	t.Helper()
+	pluginDir := filepath.Join(dir, ".opencode", "plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	path := filepath.Join(pluginDir, "factotum-msg.js")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, plugin, 0o644); err != nil {
+		t.Fatalf("write plugin: %v", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatalf("swap plugin: %v", err)
+	}
+}
+
+// countStubCalls counts the stub-log lines that contain needle.
+func countStubCalls(callsPath, needle string) int {
+	calls, _ := os.ReadFile(callsPath)
+	return strings.Count(string(calls), needle)
+}
+
+// waitForStubCalls polls the stub's call log until needle has appeared want
+// times, failing after 60s. A guard that hot-reloads the plugin must see a
+// second register, which waitForStubCall (already satisfied by the first)
+// cannot distinguish. Each poll touches /api/plugin so the host loads the newly
+// staged file.
+func waitForStubCalls(t *testing.T, callsPath, needle string, want, port int, password string, output *lockedBuffer) {
+	t.Helper()
+	state := ""
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		if state = pluginStateV2(t, port, password, "factotum.msg"); countStubCalls(callsPath, needle) >= want {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	calls, _ := os.ReadFile(callsPath)
+	t.Fatalf("no %d %q in the stub's call log within 60s (plugin state %q); log:\n%s\nopencode2 output:\n%s", want, needle, state, calls, output.String())
+}
+
+// sessionIDsV2 lists the sessions the host already has, so a reload guard can
+// require delivery into one that existed before the reload.
+func sessionIDsV2(t *testing.T, port int, password string) []string {
+	t.Helper()
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/session", port)
+	var sessions v2SessionList
+	if err := json.Unmarshal(v2Request(t, http.MethodGet, url, password, ""), &sessions); err != nil {
+		t.Fatalf("decode session list: %v", err)
+	}
+	ids := make([]string, 0, len(sessions.Data))
+	for _, session := range sessions.Data {
+		ids = append(ids, session.ID)
+	}
+	return ids
+}
+
+// containsString reports whether values holds want.
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // runLoadGuard stages plugin where OpenCode loads project plugins and runs

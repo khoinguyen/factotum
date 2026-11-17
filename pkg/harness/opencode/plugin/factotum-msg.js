@@ -760,6 +760,15 @@ function sessionKeyPart(part) {
  * upgrade still resumes its session. It is deliberately skipped when a part
  * contains '.': that is exactly the case where the old format could not tell
  * two agents apart, so the key may belong to someone else.
+ *
+ * Remove this fallback once no host can still be running a receiver older than
+ * the length-prefixed key. The window is one host process, not one release: the
+ * pid in the key changes with every new process, so only a host started before
+ * the upgrade can ever reload a dotted-key save. The condition is therefore
+ * "the release carrying this key has replaced every pre-upgrade host" - after
+ * it has been installed for longer than the longest-lived OpenCode host, no
+ * pre-upgrade process remains to hot-reload. Removing it sooner silently
+ * orphans the session of a host that upgrades mid-run.
  */
 function legacyMsgSessionKey(config) {
   const parts = [config.project, config.actor, config.pid].map(sessionKeyPart);

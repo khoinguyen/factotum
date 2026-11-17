@@ -806,7 +806,11 @@ func printMessageBlock(deps *Deps, message *core.Message) {
 	if len(message.Links) > 0 {
 		deps.printf("\n=== Links ===\n")
 		for _, link := range message.Links {
-			deps.printf("[%s] %s\n", link.Kind, link.URL)
+			if link.Title == "" {
+				deps.printf("[%s] %s\n", link.Kind, link.URL)
+				continue
+			}
+			deps.printf("[%s] %s - %s\n", link.Kind, link.URL, link.Title)
 		}
 	}
 }

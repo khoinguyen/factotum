@@ -396,9 +396,12 @@ func TestMsgItemCarriesLinks(t *testing.T) {
 	ts := msgServer(t, f, project.ID)
 
 	sent := decodeMsg[msgSendResponse](t, postMsg(t, ts.URL+"/api/msg/send", testToken,
-		`{"from":"alice","to":"actor:bob","body":"see the issue","links":[{"kind":"issue","url":"https://example.invalid/2"}]}`))
+		`{"from":"alice","to":"actor:bob","body":"see the issue","links":[{"kind":"issue","url":"https://example.invalid/2","title":"issue 2"}]}`))
 
-	want := msgLink{Kind: "issue", URL: "https://example.invalid/2"}
+	// The title is part of the round trip: a sender's name for the attachment
+	// must survive the request parse and every item a receiver reads, or the
+	// exact drop this test guards against is back.
+	want := msgLink{Kind: "issue", URL: "https://example.invalid/2", Title: "issue 2"}
 	fetched := decodeMsg[msgGetResponse](t, getMsg(t, ts.URL+"/api/msg/get/"+sent.ID, testToken))
 	if len(fetched.Message.Links) != 1 || fetched.Message.Links[0] != want {
 		t.Fatalf("get links = %+v, want %+v", fetched.Message.Links, want)

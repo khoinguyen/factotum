@@ -516,25 +516,47 @@ long-poll claim, inject as a user turn, ack.
 
 ### opencode plugin (t-fn2gndufxa)
 
-- A local plugin that **default-exports an object with `server()`** — the shape opencode 1.18.35
-  requires and the one cmux's plugin got wrong. `server()` starts the claim loop.
-- Reads `FACTOTUM_PROJECT`, `FACTOTUM_ACTOR`, `FACTOTUM_RUN_ID`, `FACTOTUM_TASK_ID` (set by
-  `ft run`), `FACTOTUM_SESSION` (the chief session it registers, which keeps that session alive
-  while the run leases), and `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` for a remote hub; with no
-  URL it talks to the local `ft` store.
+- One local plugin, `factotum-msg.js`, **default-exports a single object that serves both OpenCode
+  plugin majors** from the one file; neither half is a fallback for the other. OpenCode 1.x
+  (1.18.35 included) finds and calls `server(input)` and, on unload, the `dispose` hook it
+  returns — the shape cmux's plugin got wrong. OpenCode 2 finds `id` and `setup(ctx)` and has no
+  `server`, so each major ignores the other's half.
+- V2 is feature-detected, not configured. At load the module tries
+  `await import("@opencode/plugin")` and, when that package exposes `Plugin.define`, spreads
+  `Plugin.define({ id: "factotum.msg", setup })` into the default export. OpenCode 1 ships no such
+  package, so the import rejects and the plain `id`/`setup` keys already on the export keep it valid
+  without the wrapper; a V2 host where the package cannot be resolved still loads a working
+  receiver.
+- The entrypoints reach the host by different APIs. V1 gets `input.client.session` and injects with
+  `promptAsync` (or `prompt`), returning `{ event, dispose }` hooks. V2 gets the context's domains:
+  it reads `ctx.event.subscribe` on a background loop, so an awaited `setup` never blocks OpenCode
+  startup, and injects with `ctx.session.prompt({ sessionID, text })`. Both feed the same `onEvent`,
+  which takes the session id from V2's `event.data` or V1's `event.properties`. Durable state
+  (`ctx.storage`, `ctx.session.get`) is a V2 context domain only, so the persisted session and the
+  cold-restore record below are V2-only; V1 learns its session from an event.
+- Staging is the same file for either major: `ft msg install --harness opencode2` writes
+  `factotum-msg.js` into `<config>/opencode/plugins` (`$XDG_CONFIG_HOME`, else `~/.config`), the
+  directory `--harness opencode` writes to as well, because V1 and V2 share the config root and both
+  load global plugins from there. `ft run`'s harness stages the same bytes at
+  `.opencode/plugin/factotum-msg.js` in the run's workspace instead.
+- Reads `FACTOTUM_PROJECT`, `FACTOTUM_ACTOR`, `FACTOTUM_TASK_ID` (set by `ft run`),
+  `FACTOTUM_SESSION` (the chief session it registers, which the sessions page lists and counts live
+  while the run leases — even before the session records an event), and
+  `FACTOTUM_MSG_URL`/`FACTOTUM_SERVE_TOKEN` for a remote hub; with no URL it talks to the local `ft`
+  store.
 - On load: register. Loop: `claim({wait})`; on a message, inject it as a new user turn through the
-  opencode server API (a mid-turn agent queues it for the next turn; an idle agent starts a new
+  entrypoint's session API (a mid-turn agent queues it for the next turn; an idle agent starts a new
   turn), then `ack(read)`. A failure `ack(failed)` with the error. On unload: deregister.
 - The loop is off the agent's turn, so injection never blocks tool execution.
 - **Cold restore.** OpenCode V2 resumes a surviving session as `opencode -s <session>` with the
   original launch environment gone, so `FACTOTUM_*` never reaches the plugin and an idle agent
-  would register nothing while its TUI looks healthy. Every load that has its configuration
+  would register nothing while its TUI looks healthy. Every V2 load that has its configuration
   records the identity it registered as (project, actor, task, chief session, harness, bin, store
   and its options, hub URL) plus the OpenCode session it injects into, keyed by the OpenCode
-  location (the project hash of the canonical directory). A load with no environment recovers that
-  record and registers again; two receivers for one actor split a mailbox, so the recovery waits
-  while another run for that actor is live (backing off its liveness poll, because a live peer
-  can hold the actor for hours) and adopts once its lease lapses. A restore keeps the record's
+  location (the project hash of the canonical directory). A V2 load with no environment recovers
+  that record and registers again; two receivers for one actor split a mailbox, so the recovery
+  waits while another run for that actor is live (backing off its liveness poll, because a live
+  peer can hold the actor for hours) and adopts once its lease lapses. A restore keeps the record's
   OpenCode session current with the one it injects into, so a second restart resumes the live
   session instead of a stale id (the record's writes are ordered, so the seed a restore starts
   from cannot overwrite a session the host announces while that write is in flight). The record

@@ -340,6 +340,62 @@ func TestSessionsLiveRunKeepsSessionAlive(t *testing.T) {
 	}
 }
 
+// TestSessionsRemoteRegisterKeepsSessionAlive proves the hub's HTTP register is
+// a liveness signal on the remote path too: a receiver that registers its chief
+// session over /api/msg/register and only heartbeats - no events for longer than
+// the idle window - keeps that session alive, and it goes stale once the
+// receiver stops and the lease lapses.
+func TestSessionsRemoteRegisterKeepsSessionAlive(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ctx := context.Background()
+
+	clock := &stepClock{t: time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)}
+	if _, err := app.NewSessionService(f.backend, clock, f.ids).Start(ctx, project.ID, "s-remote"); err != nil {
+		t.Fatalf("Start(s-remote) error = %v", err)
+	}
+	// A remote receiver talks to this hub over HTTP instead of the local store,
+	// so registration and heartbeats go through the transport. Its own service
+	// shares the test clock, which is what makes the idle window measurable.
+	messages := app.NewMessageService(f.backend, clock, f.ids)
+	ts := clockServer(t, f, clock, Options{Project: project.ID, Token: testToken, Messages: messages})
+
+	// The chief delegates and goes quiet past the idle window.
+	clock.t = clock.t.Add(2 * app.DefaultSessionIdle)
+	registered := decodeMsg[msgRegisterResponse](t, postMsg(t, ts.URL+"/api/msg/register", testToken,
+		`{"actor":"chief","session":"s-remote","harness":"opencode2","ttl":"1m"}`))
+	if registered.RunID == "" {
+		t.Fatalf("register = %+v, want a run id", registered)
+	}
+
+	var doc sessionDoc
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+	alive := findSession(t, doc, "s-remote")
+	if alive.State != "alive" {
+		t.Fatalf("state = %q, want alive: the remote run's session is a live lease", alive.State)
+	}
+
+	// It keeps working, heartbeating past another whole idle window without
+	// recording an event of its own.
+	clock.t = clock.t.Add(2 * app.DefaultSessionIdle)
+	if out := decodeMsg[msgOKResponse](t, postMsg(t, ts.URL+"/api/msg/heartbeat", testToken,
+		`{"run_id":"`+registered.RunID+`","ttl":"1m"}`)); !out.OK {
+		t.Fatalf("heartbeat = %+v, want ok", out)
+	}
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+	if again := findSession(t, doc, "s-remote"); again.State != "alive" {
+		t.Fatalf("state = %q, want alive after the heartbeat", again.State)
+	}
+
+	// The remote process dies: no heartbeat renews the lease, and with no fresh
+	// event the session stops counting as alive.
+	clock.t = clock.t.Add(2 * time.Minute)
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+	if stale := findSession(t, doc, "s-remote"); stale.State != "stale" {
+		t.Fatalf("state = %q, want stale after the lease lapsed", stale.State)
+	}
+}
+
 // TestSessionsQuietSessionStaysAlive proves the idle window is wider than a
 // chief's normal quiet spell: a chief that delegated a task and is waiting for
 // the builder emits no events for 20-40 minutes, and must not read as dead.

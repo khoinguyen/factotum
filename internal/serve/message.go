@@ -87,6 +87,11 @@ type msgRegisterRequest struct {
 	PID       int    `json:"pid"`
 	CanInject bool   `json:"can_inject"`
 	TTL       string `json:"ttl"`
+	// Session is the chief session the receiver belongs to. It rides the
+	// register so a remote run keeps its session alive on the dashboard: the
+	// sessions page treats a live run lease as evidence only when the run names
+	// the session it belongs to.
+	Session string `json:"session"`
 }
 
 type msgRegisterResponse struct {
@@ -376,6 +381,7 @@ func (s *Server) handleMsgRegister(w http.ResponseWriter, r *http.Request) {
 	in := app.RegisterRunInput{
 		ProjectID: s.options.Project,
 		ActorID:   core.ActorID(strings.TrimSpace(req.Actor)),
+		Session:   strings.TrimSpace(req.Session),
 		Harness:   req.Harness,
 		Host:      req.Host,
 		PID:       req.PID,

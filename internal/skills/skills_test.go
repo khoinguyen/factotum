@@ -76,7 +76,7 @@ func TestFTSkillStatesLiveRunMeansClaiming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get(ft) error = %v", err)
 	}
-	for _, want := range []string{"only a receiver that is actually claiming renews its lease", "stall line", "stalled, not silent"} {
+	for _, want := range []string{"only a receiver that is actually claiming renews its lease", "stall line", "treat a missing peer as stalled, not idle", "read its log for the reason"} {
 		if !strings.Contains(skill.Body, want) {
 			t.Errorf("ft skill does not state the live-lease rule: missing %q", want)
 		}

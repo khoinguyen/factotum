@@ -285,6 +285,23 @@ test("formatMessage renders the links a claim carries", () => {
   );
 });
 
+test("formatMessage renders a link's title when the claim carries one", () => {
+  const text = formatMessage({
+    from: "act-x",
+    task_id: "t-9",
+    body: "see the issue",
+    links: [
+      { kind: "issue", url: "https://example.invalid/2", title: "issue two" },
+      { kind: "doc", url: "https://example.invalid/doc" },
+    ],
+  });
+  assert.equal(
+    text,
+    "[ft msg from act-x] (task t-9)\nsee the issue\n\n=== Links ===\n" +
+      "[issue] https://example.invalid/2 - issue two\n[doc] https://example.invalid/doc",
+  );
+});
+
 test("formatMessage leaves a linkless message unchanged", () => {
   assert.equal(formatMessage({ from: "act-x", body: "hello" }), "[ft msg from act-x]\nhello");
 });

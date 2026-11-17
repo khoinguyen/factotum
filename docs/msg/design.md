@@ -597,10 +597,12 @@ ft msg agent <register|claim|ack|nack|heartbeat|deregister>   # hidden, stable a
 ```
 
 `ft msg get`/`read` print the body, then a `=== Links ===` block when the sender attached links
-(each line is `[kind] url - title`, the title left off when the link has none); `get`, `read`,
-`inbox`, and the `agent claim` wire all carry the same `links` array, and a linkless message omits
-it (no empty section, no empty key). The inbox's text table stays a summary row — the links are in
-its `-o json|yaml` entry and in `get`.
+(each line is `[kind] url - title`, the title left off when the link has none); a receiver's
+injected turn renders the same line, so the agent sees the attachment's name the human does. A
+title is one line — `core.Link` rejects a blank/whitespace-only title and any control rune — so
+the block cannot forge a section. `get`, `read`, `inbox`, and the `agent claim` wire all carry the
+same `links` array, and a linkless message omits it (no empty section, no empty key). The inbox's
+text table stays a summary row — the links are in its `-o json|yaml` entry and in `get`.
 
 **Proposed, not built.** Four operator verbs were considered for the first slice and are kept here
 so the intent is not lost, but none of them exists yet: the fence is marked `design` for exactly

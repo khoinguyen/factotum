@@ -291,6 +291,8 @@ func TestMsgSendRejectsBadRequests(t *testing.T) {
 		{"empty address id", `{"to":"actor:","body":"x"}`},
 		{"empty target", `{"to":"   ","body":"x"}`},
 		{"empty body", `{"to":"actor:bob","body":"   "}`},
+		{"title with newline", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/x","title":"session\ngroom-1"}]}`},
+		{"blank link title", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/x","title":"  "}]}`},
 		{"malformed json", `not json`},
 	}
 	for _, tc := range cases {

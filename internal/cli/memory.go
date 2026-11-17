@@ -371,6 +371,9 @@ func newMemoryCommand(deps *Deps) *cobra.Command {
 				}
 				if len(artifact.Links) > 0 {
 					deps.printf("\n=== Links ===\n")
+					// Message links print "[kind] url - title"; no memory
+					// producer sets a title today, so this renderer keeps its
+					// old line rather than carry a branch nothing exercises.
 					for _, link := range artifact.Links {
 						deps.printf("[%s] %s\n", link.Kind, link.URL)
 					}

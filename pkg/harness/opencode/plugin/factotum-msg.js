@@ -71,6 +71,7 @@
 //	FACTOTUM_PROJECT   project the session belongs to (required)
 //	FACTOTUM_ACTOR     actor the session registers as (required)
 //	FACTOTUM_TASK_ID   task the session is working (optional)
+//	FACTOTUM_SESSION   chief session the run belongs to (optional)
 //	FACTOTUM_BIN       ft binary (default "ft")
 //	FACTOTUM_HARNESS   harness name (default "opencode")
 //	FACTOTUM_MSG_URL       remote ft serve hub base URL (default: local ft)
@@ -120,6 +121,11 @@ export function configFromEnv(env) {
     project,
     actor,
     task: (env.FACTOTUM_TASK_ID || "").trim(),
+    // The chief session the run belongs to. It rides the register so the hub
+    // can attribute this run's lease to its session; without it a remote role
+    // that is quiet past the sessions page's idle window reads as stale while
+    // it works.
+    session: (env.FACTOTUM_SESSION || "").trim(),
     bin: (env.FACTOTUM_BIN || "ft").trim() || "ft",
     harness: (env.FACTOTUM_HARNESS || "opencode").trim() || "opencode",
     host: (env.FACTOTUM_HOST || "").trim(),
@@ -211,6 +217,7 @@ function cliArgs(project, op) {
     case "register": {
       const args = ["msg", "agent", "register", "--actor", op.actor, "--project", project,
         "--harness", op.harness, "--pid", String(op.pid), "--ttl", op.ttl];
+      if (op.session) args.push("--session", op.session);
       if (op.task) args.push("--task", op.task);
       if (op.host) args.push("--host", op.host);
       return args;
@@ -257,7 +264,7 @@ export function cliCall(config, run) {
 function httpPayload(op) {
   switch (op.op) {
     case "register":
-      return { actor: op.actor, task: op.task, harness: op.harness, host: op.host, pid: op.pid, ttl: op.ttl };
+      return { actor: op.actor, task: op.task, session: op.session, harness: op.harness, host: op.host, pid: op.pid, ttl: op.ttl };
     case "claim":
       return { run_id: op.run, actor: op.actor, task: op.task, wait: op.wait };
     case "ack":
@@ -460,7 +467,7 @@ export function createFactotumReceiver({
 
   async function register() {
     const out = await call({
-      op: "register", actor: config.actor, harness: config.harness,
+      op: "register", actor: config.actor, session: config.session, harness: config.harness,
       host: config.host, pid: config.pid, ttl: `${config.ttlMs}ms`, task: config.task,
     });
     runID = out?.run_id || "";
@@ -854,6 +861,7 @@ function recordFromConfig(config, sessionID) {
     project: config.project,
     actor: config.actor,
     task: config.task || "",
+    session: config.session || "",
     harness: config.harness,
     bin: config.bin,
     host: config.host || "",
@@ -873,6 +881,7 @@ function configFromRecord(record) {
     project: record.project,
     actor: record.actor,
     task: record.task || "",
+    session: record.session || "",
     bin: record.bin || "ft",
     harness: record.harness || "opencode",
     host: record.host || "",

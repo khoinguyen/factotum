@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import plugin, {
@@ -1052,6 +1055,101 @@ test("a single failed claim inside the stall window still renews the lease", asy
   );
 });
 
+// --- a store outage must not flood the log (t-4fr25qsnc4) -------------------
+//
+// During an outage every claim fails, once per retry delay, and each failure
+// embeds the store's own (often multi-line) error. One entry per retry buries
+// the one line an operator reads the log for - the stall line that says this
+// receiver is not delivering - so the receiver logs the first failure in full
+// and then a periodic summary of the run.
+
+// outageRun is a receiver's ft whose every claim fails with the store's own
+// error, as a read-only or locked store does during an outage.
+function outageRun() {
+  const calls = [];
+  let claims = 0;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        claims += 1;
+        return { code: 1, stdout: "", stderr: "Error: create temp file: /tmp/db.json: permission denied" };
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  return { run, calls, claims: () => claims };
+}
+
+test("a sustained claim outage logs the first failure and periodic summaries, not one entry per retry", async (t) => {
+  const logs = [];
+  const { run, calls } = outageRun();
+  const { receiver } = heartbeatReceiver({ run, config: { retryMs: 1, waitMs: 1000 }, logs });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => calls.some((c) => c.includes("msg agent claim")) && logs.length > 0, 2000);
+
+  // Long enough to cross several summary periods (the bound is per failures).
+  await waitFor(() => logs.some((entry) => /40 consecutive claim failures/.test(entry)), 5000);
+
+  const first = logs.filter((entry) => /claim failed:/.test(entry));
+  assert.equal(
+    first.length,
+    1,
+    `want exactly one full failure entry, got ${first.length}: ${JSON.stringify(logs.slice(0, 6))}`,
+  );
+  // The first entry keeps the store's own message: that is the signal that says
+  // the store is down rather than the receiver wedged.
+  assert.match(first[0], /create temp file: .*permission denied/);
+
+  const summaries = logs.filter((entry) => /consecutive claim failures/.test(entry));
+  assert.ok(summaries.length >= 2, `want periodic summaries: ${JSON.stringify(summaries)}`);
+  for (const summary of summaries) {
+    assert.ok(!summary.includes("\n"), `a summary stays on one line: ${JSON.stringify(summary)}`);
+  }
+  // Nothing per retry: the outage wrote one full failure entry and one entry per
+  // summary, however many claims failed in between.
+  assert.equal(
+    logs.filter((entry) => /claim failed:|consecutive claim failures/.test(entry)).length,
+    1 + summaries.length,
+    `outage output is bounded: ${JSON.stringify(logs)}`,
+  );
+});
+
+test("an outage that ends closes its summary once, and a later outage logs its first failure again", async (t) => {
+  const logs = [];
+  let claims = 0;
+  const run = async (argv) => {
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        claims += 1;
+        // Two failures, one completed claim, then failures again: the counter
+        // must close the first run and start the second, so a second outage is
+        // never silent behind the first one's suppression.
+        if (claims <= 2 || claims > 3) return { code: 1, stdout: "", stderr: "Error: store locked" };
+        return { code: 0, stdout: JSON.stringify({ found: false }), stderr: "" };
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const { receiver } = heartbeatReceiver({ run, config: { retryMs: 1, waitMs: 1000 }, logs });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => logs.filter((entry) => /claim failed:/.test(entry)).length === 2, 5000);
+
+  assert.equal(
+    logs.filter((entry) => /claim failures stopped after 2 consecutive attempts/.test(entry)).length,
+    1,
+    `want one closing line for the run that ended: ${JSON.stringify(logs)}`,
+  );
+});
+
 test("setupV2 resumes the persisted session after a reload and delivers without an event", async () => {
   const injected = [];
   const store = new Map();
@@ -1203,6 +1301,39 @@ test("receiverEnv pins the configured store onto the child ft environment", () =
   const env = receiverEnv({ store: "jsonfile", storeOpts: "path=/tmp/db.json" }, { HOME: "/home/u", FACTOTUM_STORE: "sqlite" });
   assert.deepEqual(env, { HOME: "/home/u", FACTOTUM_STORE: "jsonfile", FACTOTUM_STORE_OPTS: "path=/tmp/db.json" });
   assert.deepEqual(receiverEnv({}, { HOME: "/home/u" }), { HOME: "/home/u" });
+});
+
+test("receiverEnv names the receiver's actor as each child ft's default actor", () => {
+  // Every `ft` the receiver spawns is a child of the agent host, not of a shell
+  // that named an identity: with none in its environment the CLI falls back to
+  // its agent heuristic and warns "probable agent caller ... this invocation
+  // stays unattributed" on every register/claim/ack, and that warning lands
+  // inside the receiver's own log lines. The receiver knows its actor, so it
+  // names it as the child's default actor. It is deliberately the default-actor
+  // path and not FACTOTUM_CALLER: a caller resolves only against registered
+  // Actor records, so the loop's role actors (builder-<task>, chief) would be
+  // dropped with a warning of their own, while the default path trusts them.
+  const env = receiverEnv({ actor: "builder-t-1" }, { HOME: "/home/u", FACTOTUM_DEFAULT_ACTOR: "stale" });
+  assert.deepEqual(env, { HOME: "/home/u", FACTOTUM_DEFAULT_ACTOR: "builder-t-1" });
+});
+
+test("a plugin-spawned ft child reads the receiver's actor from its environment", async () => {
+  // The pin above, over a real child process: this is the transport the receiver
+  // actually uses (selectCall -> spawnRunner -> receiverEnv), so the assertion is
+  // over the environment an ft binary would read, not a helper's return value.
+  const dir = mkdtempSync(join(tmpdir(), "ft-receiver-env-"));
+  const stub = join(dir, "ft-stub.js");
+  writeFileSync(
+    stub,
+    "#!/usr/bin/env node\n" +
+      "process.stdout.write(JSON.stringify({ run_id: \"run-1\", child_actor: process.env.FACTOTUM_DEFAULT_ACTOR || \"\" }));\n",
+    { mode: 0o755 },
+  );
+  const config = { ...BASE_CONFIG, actor: "builder-t-1", bin: stub };
+  const out = await selectCall(config)({
+    op: "register", actor: config.actor, harness: config.harness, pid: 1, ttl: "1000ms",
+  });
+  assert.equal(out?.child_actor, "builder-t-1");
 });
 
 test("a cold restore waits while another receiver holds the actor live", async (t) => {

@@ -272,6 +272,23 @@ test("formatMessage names the sender and task", () => {
   assert.match(text, /hello/);
 });
 
+test("formatMessage renders the links a claim carries", () => {
+  const text = formatMessage({
+    from: "act-x",
+    task_id: "t-9",
+    body: "see the issue",
+    links: [{ kind: "issue", url: "https://example.invalid/2" }],
+  });
+  assert.equal(
+    text,
+    "[ft msg from act-x] (task t-9)\nsee the issue\n\n=== Links ===\n[issue] https://example.invalid/2",
+  );
+});
+
+test("formatMessage leaves a linkless message unchanged", () => {
+  assert.equal(formatMessage({ from: "act-x", body: "hello" }), "[ft msg from act-x]\nhello");
+});
+
 test("receiver registers, claims, injects, and acks", async () => {
   const injected = [];
   const { receiver, calls, cleared } = receiverFor(

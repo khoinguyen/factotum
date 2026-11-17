@@ -386,6 +386,38 @@ func TestMsgItemShapePinsKeys(t *testing.T) {
 	}
 }
 
+// TestMsgItemCarriesLinks pins a sender's links onto every transport item a
+// receiver reads: get, inbox, and claim. The remote plugin renders the claimed
+// message, so a link missing from this payload never reaches the agent even
+// when the local store holds it.
+func TestMsgItemCarriesLinks(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ts := msgServer(t, f, project.ID)
+
+	sent := decodeMsg[msgSendResponse](t, postMsg(t, ts.URL+"/api/msg/send", testToken,
+		`{"from":"alice","to":"actor:bob","body":"see the issue","links":[{"kind":"issue","url":"https://example.invalid/2"}]}`))
+
+	want := msgLink{Kind: "issue", URL: "https://example.invalid/2"}
+	fetched := decodeMsg[msgGetResponse](t, getMsg(t, ts.URL+"/api/msg/get/"+sent.ID, testToken))
+	if len(fetched.Message.Links) != 1 || fetched.Message.Links[0] != want {
+		t.Fatalf("get links = %+v, want %+v", fetched.Message.Links, want)
+	}
+
+	inbox := decodeMsg[msgInboxResponse](t, getMsg(t, ts.URL+"/api/msg/inbox", testToken))
+	if len(inbox.Messages) != 1 || len(inbox.Messages[0].Links) != 1 || inbox.Messages[0].Links[0] != want {
+		t.Fatalf("inbox links = %+v, want %+v", inbox.Messages, want)
+	}
+
+	registered := decodeMsg[msgRegisterResponse](t, postMsg(t, ts.URL+"/api/msg/register", testToken,
+		`{"actor":"bob","harness":"opencode","host":"host-a","pid":42}`))
+	claimed := decodeMsg[msgClaimResponse](t, postMsg(t, ts.URL+"/api/msg/claim", testToken,
+		`{"run_id":"`+registered.RunID+`","actor":"bob"}`))
+	if !claimed.Found || claimed.Message == nil || len(claimed.Message.Links) != 1 || claimed.Message.Links[0] != want {
+		t.Fatalf("claim = %+v, want message links %+v", claimed, want)
+	}
+}
+
 func sortedKeys(obj map[string]any) []string {
 	keys := make([]string, 0, len(obj))
 	for key := range obj {

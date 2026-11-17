@@ -340,6 +340,119 @@ func TestSessionsLiveRunKeepsSessionAlive(t *testing.T) {
 	}
 }
 
+// TestSessionsLiveRunWithoutEventsAppears proves a session known only from a
+// live run lease is on the page at all. A receiver registers its session and
+// heartbeats while it works its first turn, before any event carries its id, so
+// a page that lists events alone would show a working role as absent - the
+// dashboard lying by omission. The run's registration is the only start evidence
+// there is; once its lease lapses with no event to freeze, the session has no
+// evidence left and leaves the page rather than sitting there as a zombie.
+func TestSessionsLiveRunWithoutEventsAppears(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ctx := context.Background()
+
+	clock := &stepClock{t: time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)}
+	if _, err := app.NewMessageService(f.backend, clock, f.ids).RegisterRun(ctx, app.RegisterRunInput{
+		ProjectID: project.ID,
+		ActorID:   core.ActorID("chief"),
+		Session:   "s-run-only",
+		TTL:       time.Minute,
+	}); err != nil {
+		t.Fatalf("RegisterRun() error = %v", err)
+	}
+	clock.t = clock.t.Add(30 * time.Second)
+
+	ts := clockServer(t, f, clock, Options{Project: project.ID})
+	var doc sessionDoc
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+
+	if len(doc.Sessions) != 1 {
+		t.Fatalf("sessions = %+v, want the live run's event-free session", doc.Sessions)
+	}
+	view := findSession(t, doc, "s-run-only")
+	if view.State != "alive" {
+		t.Fatalf("state = %q, want alive: the run's lease is live", view.State)
+	}
+	if view.StartedAt != "2026-01-01T09:00:00Z" {
+		t.Fatalf("started_at = %q, want the run's registration time", view.StartedAt)
+	}
+	if view.DurationSeconds != 30 {
+		t.Fatalf("duration = %d, want 30 (now - registration)", view.DurationSeconds)
+	}
+	if view.LastEventAt != "" {
+		t.Fatalf("last_event_at = %q, want empty: the session has no events", view.LastEventAt)
+	}
+	if view.Delivered.Tasks == nil || view.Delivered.PRs == nil {
+		t.Fatalf("delivered = %+v, want empty arrays", view.Delivered)
+	}
+
+	// The lease lapses with no event to fall back on, so nothing on the page
+	// claims the session is still there.
+	clock.t = clock.t.Add(2 * time.Minute)
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+	if len(doc.Sessions) != 0 {
+		t.Fatalf("sessions = %+v, want none once the run-only lease lapsed", doc.Sessions)
+	}
+}
+
+// TestSessionsLiveRunMergesWithEventSession proves the run-derived and
+// event-derived evidence is unioned by session id, not concatenated: two live
+// runs under one session (a chief and its builder) plus the session's own events
+// make one entry, and the event timeline still owns the start and last activity
+// rather than a later registration rewriting them. A retirement also still wins
+// over the live runs, so folding them in cannot resurrect a dead session.
+func TestSessionsLiveRunMergesWithEventSession(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ctx := context.Background()
+
+	clock := &stepClock{t: time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)}
+	sessions := app.NewSessionService(f.backend, clock, f.ids)
+	if _, err := sessions.Start(ctx, project.ID, "s-both"); err != nil {
+		t.Fatalf("Start(s-both) error = %v", err)
+	}
+	clock.t = clock.t.Add(5 * time.Minute)
+
+	messages := app.NewMessageService(f.backend, clock, f.ids)
+	for _, actor := range []core.ActorID{"chief", "builder-t-x"} {
+		if _, err := messages.RegisterRun(ctx, app.RegisterRunInput{
+			ProjectID: project.ID,
+			ActorID:   actor,
+			Session:   "s-both",
+			TTL:       time.Minute,
+		}); err != nil {
+			t.Fatalf("RegisterRun(%s) error = %v", actor, err)
+		}
+	}
+
+	ts := clockServer(t, f, clock, Options{Project: project.ID})
+	var doc sessionDoc
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+
+	if len(doc.Sessions) != 1 {
+		t.Fatalf("sessions = %+v, want one entry for the session's two runs and its events", doc.Sessions)
+	}
+	view := findSession(t, doc, "s-both")
+	if view.StartedAt != "2026-01-01T09:00:00Z" {
+		t.Fatalf("started_at = %q, want the recorded session start", view.StartedAt)
+	}
+	if view.LastEventAt != "2026-01-01T09:00:00Z" {
+		t.Fatalf("last_event_at = %q, want the session's own last event", view.LastEventAt)
+	}
+
+	// The runs are still within their leases when the session is retired, and
+	// the explicit retirement wins over them.
+	if _, err := sessions.Retire(ctx, project.ID, "s-both", ""); err != nil {
+		t.Fatalf("Retire() error = %v", err)
+	}
+	getDoc(t, ts.URL+"/api/sessions", &doc)
+	retired := findSession(t, doc, "s-both")
+	if retired.State != "retired" {
+		t.Fatalf("state = %q, want retired: a live run does not resurrect a retired session", retired.State)
+	}
+}
+
 // TestSessionsRemoteRegisterKeepsSessionAlive proves the hub's HTTP register is
 // a liveness signal on the remote path too: a receiver that registers its chief
 // session over /api/msg/register and only heartbeats - no events for longer than

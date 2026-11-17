@@ -395,10 +395,10 @@ The store is the hub; a receiver is any client of these verbs.
 
 - **register(run)** — announce a session. Payload: `project`, `actor`, `task?`, `session?`,
   `harness`, `host`, `pid`, `can_inject`, `ttl`. Returns `run_id` and `lease_until`. `session` is
-  the chief session the receiver belongs to (`FACTOTUM_SESSION`); the sessions page counts a live
-  run lease as that session's liveness evidence, so a remote role that is quiet past the idle
-  window still reads as working. Idempotent per session (section 5). The adapter then heartbeats at
-  `ttl/3`.
+  the chief session the receiver belongs to (`FACTOTUM_SESSION`); the sessions page lists that
+  session while the run leases and counts the lease as its liveness evidence, so a role that has
+  recorded no event yet, or is quiet past the idle window, still reads as working. Idempotent per
+  session (section 5). The adapter then heartbeats at `ttl/3`.
 - **claim(run_id, wait?)** — atomically take the oldest message claimable by the run (section 4)
   and mark it `delivered` with `lease_until = now + lease`. With `wait`, it long-polls up to
   `wait` before returning empty. This is the poll loop.

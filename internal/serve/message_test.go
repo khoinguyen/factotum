@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/khoinguyen/factotum/pkg/core"
+	"github.com/khoinguyen/factotum/pkg/store"
 )
 
 // postMsg sends a JSON body to the message transport with the token in the
@@ -168,6 +170,33 @@ func TestMsgRegisterClaimAckOverTransport(t *testing.T) {
 	if out := decodeMsg[msgOKResponse](t, postMsg(t, ts.URL+"/api/msg/deregister", testToken,
 		`{"run_id":"`+registered.RunID+`"}`)); !out.OK {
 		t.Fatalf("deregister = %+v, want ok", out)
+	}
+}
+
+// TestMsgRegisterCarriesSession proves a remote receiver's register threads the
+// chief session it reports onto the run. The sessions page derives liveness from
+// a run only when the run names a session, so dropping the field here leaves a
+// remote role that is quiet past the idle window looking stale while it works.
+func TestMsgRegisterCarriesSession(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ts := msgServer(t, f, project.ID)
+
+	registered := decodeMsg[msgRegisterResponse](t, postMsg(t, ts.URL+"/api/msg/register", testToken,
+		`{"actor":"chief","session":" s-remote ","harness":"opencode2","host":"host-a","pid":42}`))
+	if registered.RunID == "" {
+		t.Fatalf("register = %+v, want a run id", registered)
+	}
+
+	runs, err := f.backend.Runs().List(context.Background(), store.RunFilter{ProjectID: project.ID})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v, want the registered run", runs)
+	}
+	if runs[0].Session != "s-remote" {
+		t.Fatalf("run session = %q, want s-remote: the register carried it", runs[0].Session)
 	}
 }
 

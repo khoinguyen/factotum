@@ -38,6 +38,11 @@
 // when a heartbeat is answered not_found (a hub restored from a backup forgets
 // runs registered after it), the receiver re-registers the run once and logs it,
 // so a receiver that is in fact delivering cannot stay out of `--live` forever.
+// A claim in flight across that re-register is still finalized under the run
+// id that took it, not the fresh one: the store accepts an ack only from the
+// claiming run, so acking with the current id would leave the message delivered
+// under the forgotten run. A rejection that still happens is logged with the
+// message id and reason instead of swallowed, and the lease sweep recovers it.
 // Neither a failed registration nor a failed claim may end the receiver
 // silently: registration is retried, the claim loop catches every error and
 // keeps polling, and every transition is logged.
@@ -499,21 +504,46 @@ export function createFactotumReceiver({
   }
 
   async function claim() {
+    // The run that issues the claim owns it for the whole round trip. A
+    // heartbeat answered not_found can re-register this receiver while the claim
+    // is in flight, and the store accepts an ack or nack only from the run it
+    // recorded on the claim, so capture the id here rather than reading runID at
+    // delivery time.
+    const claimRun = runID;
     const out = await call({
-      op: "claim", run: runID, actor: config.actor, wait: `${config.waitMs}ms`, task: config.task,
+      op: "claim", run: claimRun, actor: config.actor, wait: `${config.waitMs}ms`, task: config.task,
     });
-    return out?.found ? out.message : null;
+    return out?.found ? { message: out.message, runID: claimRun } : null;
   }
 
-  async function ack(id, state, error) {
-    await call({ op: "ack", id, run: runID, state, error: error || "" });
+  async function ack(id, state, error, run) {
+    await call({ op: "ack", id, run, state, error: error || "" });
   }
 
   // nack releases a claimed message back to the queue (or parks it failed once
   // the attempt cap is reached). It is the safe outcome for a message this
-  // receiver cannot inject: never silently lost.
-  async function nack(id, reason) {
-    await call({ op: "nack", id, run: runID, error: reason || "" });
+  // receiver cannot inject: never silently lost. Like ack, it names the run that
+  // took the claim.
+  async function nack(id, reason, run) {
+    await call({ op: "nack", id, run, error: reason || "" });
+  }
+
+  // ackClaimed finalizes a claim under the run that took it, not under this
+  // receiver's current run: a re-register after a forgotten run happens while a
+  // claim can be in flight, and the store rejects an ack from any other run. An
+  // ack that is still rejected (the lease swept the message, or another run owns
+  // it now) leaves it to the same lease sweep, and is logged once with the
+  // message id and reason - never swallowed, which used to leave a handoff
+  // stalled and invisible to both ends.
+  async function ackClaimed(message, claimRun, state, error) {
+    try {
+      await ack(message.id, state, error, claimRun);
+      if (claimRun !== runID) {
+        log(`factotum msg: acked message ${message.id} as ${state} under run ${claimRun}, which claimed it before this receiver re-registered as ${runID}`);
+      }
+    } catch (err) {
+      log(`factotum msg: ack of message ${message.id} as ${state} under run ${claimRun} failed: ${oneLine(err?.message || err)}; leaving it to the lease sweep to requeue`);
+    }
   }
 
   // reRegisterAfterForget restores this receiver's identity when the hub answers
@@ -607,26 +637,30 @@ export function createFactotumReceiver({
     await restoreSession();
   }
 
-  async function deliver(message) {
+  async function deliver({ message, runID: claimRun }) {
     if (stopped) {
       // Claimed but shutting down: release rather than drop. A nack that fails
       // (the run is already gone) is best-effort; the lease sweep recovers it.
-      await nack(message.id, "receiver stopped before delivery").catch(() => {});
+      // The nack names the claiming run, which may no longer be the current one.
+      await nack(message.id, "receiver stopped before delivery", claimRun).catch(() => {});
       return;
     }
     const sid = await waitForSession();
     if (!sid) {
       // Defensive: the loop only claims once it has a session, but a message we
       // cannot inject is always released, never acked failed-and-dropped.
-      await nack(message.id, "no opencode session available to inject into").catch(() => {});
+      await nack(message.id, "no opencode session available to inject into", claimRun).catch(() => {});
       return;
     }
     try {
       await inject(sid, formatMessage(message), message);
-      await ack(message.id, "read", "");
     } catch (error) {
-      await ack(message.id, "failed", String(error?.message || error)).catch(() => {});
+      await ackClaimed(message, claimRun, "failed", String(error?.message || error));
+      return;
     }
+    // A failed read ack is not retried as a failed ack: the turn was delivered,
+    // so recording it failed would discard a message the agent saw.
+    await ackClaimed(message, claimRun, "read", "");
   }
 
   // poll runs one claim step: with no session there is nowhere to inject, so it
@@ -638,9 +672,9 @@ export function createFactotumReceiver({
       await park();
       return;
     }
-    const message = await claim();
-    if (!message) return;
-    await deliver(message);
+    const claimed = await claim();
+    if (!claimed) return;
+    await deliver(claimed);
   }
 
   // The loop never ends on an error. A rejection here would otherwise stop

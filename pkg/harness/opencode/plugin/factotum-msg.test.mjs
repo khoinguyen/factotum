@@ -990,6 +990,150 @@ test("a remote hub's 404 heartbeat also re-registers the run", async (t) => {
   assert.ok(logs.some((entry) => /re-registered actor act-1 as run run-2/i.test(entry)));
 });
 
+// claimingStore fakes the receiver's side of one claim against a store that
+// enforces the real ownership rule: only the run recorded on the claim may finalize
+// it. The owner is read from the claim's own --run, exactly as the store records
+// it, so a receiver that acks with any other id is rejected here as it is there.
+// The claim loop feeds one message and then parks; registers are numbered so a
+// re-register mints a new run id like the hub does, and the hub has forgotten
+// run-1 (its heartbeat answers not_found).
+function claimingStore(message) {
+  const calls = [];
+  const owners = new Map();
+  const states = new Map();
+  const acks = [];
+  let claimed = false;
+  let registers = 0;
+  const flag = (argv, name) => argv[argv.indexOf(name) + 1];
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        registers += 1;
+        return { code: 0, stdout: JSON.stringify({ run_id: `run-${registers}` }), stderr: "" };
+      case "heartbeat":
+        if (flag(argv, "--run") === "run-1") {
+          return { code: 1, stdout: "", stderr: "Error: not found: run run-1" };
+        }
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+      case "claim": {
+        if (claimed) return new Promise(() => {});
+        claimed = true;
+        owners.set(message.id, flag(argv, "--run"));
+        states.set(message.id, "delivered");
+        return { code: 0, stdout: JSON.stringify({ found: true, message: { ...message, state: "delivered" } }), stderr: "" };
+      }
+      case "ack": {
+        const id = argv[3];
+        const ackRun = flag(argv, "--run");
+        const state = flag(argv, "--state");
+        acks.push({ id, run: ackRun, state });
+        if (owners.get(id) !== ackRun) {
+          return { code: 1, stdout: "", stderr: `Error: invalid: message ${id} is not owned by run ${ackRun}` };
+        }
+        states.set(id, state);
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+      }
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  return { run, calls, states, acks };
+}
+
+test("a claim in flight across a not_found re-register is acked under the run that claimed it", async (t) => {
+  // A hub restored from a backup forgets the run, so the heartbeat re-registers
+  // under a new id while a claim is still being delivered. The store expects the
+  // ack from the run it recorded on that claim; acking with the re-registered id
+  // is rejected, and the message stays delivered under the forgotten run with a
+  // lapsed lease - invisible to both ends until a later registration sweeps it.
+  const store = claimingStore({ id: "msg-1", body: "after the hub forgot us" });
+  const logs = [];
+  const release = deferred();
+  let tick = null;
+  const config = { ...BASE_CONFIG, waitMs: 60000 };
+  const receiver = createFactotumReceiver({
+    config,
+    call: cliCall(config, store.run),
+    inject: async () => { await release.promise; },
+    setIntervalFn: (fn) => { tick = fn; return 1; },
+    clearIntervalFn: () => {},
+    log: (entry) => logs.push(entry),
+  });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => store.states.get("msg-1") === "delivered");
+
+  // The claim is delivered but not yet acked: the hub forgets run-1, so the
+  // heartbeat re-registers this receiver under run-2 while that claim is in flight.
+  await tick();
+  await waitFor(() => receiver.runID() === "run-2");
+
+  release.resolve();
+  await waitFor(() => store.states.get("msg-1") === "read");
+
+  assert.deepEqual(store.acks, [{ id: "msg-1", run: "run-1", state: "read" }], "the in-flight claim is acked under the run that claimed it");
+  assert.ok(
+    logs.some((entry) => /acked message msg-1 as read under run run-1/.test(entry)),
+    `logs = ${JSON.stringify(logs)}; want the cross-run ack logged`,
+  );
+  assert.ok(
+    !logs.some((entry) => /ack of message msg-1/i.test(entry)),
+    `logs = ${JSON.stringify(logs)}; a successful ack must not log a rejection`,
+  );
+});
+
+test("a rejected ack is logged once with the message id and reason instead of swallowed", async (t) => {
+  // The turn was injected but the store rejects the ack (here: the lease lapsed
+  // and a sweep or another run took the message back). The receiver used to
+  // retry as failed and swallow both rejections, so the sender believed the
+  // handoff landed while the message sat delivered with nobody checking it. One
+  // line with the message id and reason is the evidence it did not.
+  const calls = [];
+  const logs = [];
+  let claimed = false;
+  const run = async (argv) => {
+    calls.push(argv.join(" "));
+    switch (argv[2]) {
+      case "register":
+        return { code: 0, stdout: JSON.stringify({ run_id: "run-1" }), stderr: "" };
+      case "claim":
+        if (claimed) return new Promise(() => {});
+        claimed = true;
+        return { code: 0, stdout: JSON.stringify({ found: true, message: { id: "msg-1", body: "boom" } }), stderr: "" };
+      case "ack":
+        return { code: 1, stdout: "", stderr: "Error: invalid: message msg-1 is not owned by run run-1" };
+      default:
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    }
+  };
+  const receiver = createFactotumReceiver({
+    config: BASE_CONFIG,
+    call: cliCall(BASE_CONFIG, run),
+    inject: async () => {},
+    setIntervalFn: () => 1,
+    clearIntervalFn: () => {},
+    log: (entry) => logs.push(entry),
+  });
+  t.after(() => receiver.dispose());
+  receiver.onEvent({ properties: { sessionID: "ses-1" } });
+  await receiver.start();
+  await waitFor(() => logs.some((entry) => /ack of message msg-1/i.test(entry)));
+  // Give a would-be second (failed) ack every chance to show up before asserting.
+  await waitFor(() => calls.filter((c) => c.includes("msg agent claim")).length >= 2);
+
+  const ackLogs = logs.filter((entry) => /ack of message msg-1/i.test(entry));
+  assert.equal(ackLogs.length, 1, `logs = ${JSON.stringify(logs)}; want exactly one ack-rejection line`);
+  assert.match(ackLogs[0], /msg-1/);
+  assert.match(ackLogs[0], /not owned by run run-1/);
+  assert.equal(
+    calls.filter((c) => c.includes("msg agent ack")).length,
+    1,
+    "a rejected read ack is not retried as a failed ack; the message stays delivered for the sweep",
+  );
+});
+
 test("a run of failing claims is no progress: the stall line fires and the lease lapses", async (t) => {
   // A permanently failing claim (a broken store, a rejected actor) used to settle
   // the round trip in the catch: the loop looked like it was progressing, so the

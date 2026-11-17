@@ -403,7 +403,12 @@ The store is the hub; a receiver is any client of these verbs.
   and mark it `delivered` with `lease_until = now + lease`. With `wait`, it long-polls up to
   `wait` before returning empty. This is the poll loop.
 - **ack(message_id, run_id, state=read|failed, error?)** — finalize a delivered message. `read`
-  stops redelivery; `failed` is terminal and records the reason.
+  stops redelivery; `failed` is terminal and records the reason. The `run_id` is the run that took
+  the claim, captured when the claim was issued, not necessarily the receiver's current run: a
+  heartbeat answered `not_found` can re-register it while a claim is in flight, and the store
+  accepts an ack only from the claiming run. Acking with the fresh id is rejected and leaves the
+  message `delivered` under the forgotten run, so a receiver that still gets a rejection logs it
+  with the message id and reason and leaves the message to the lease sweep.
 - **nack(message_id, run_id, reason)** — the receiver could not handle it now; requeue (or park
   as failed past `MaxAttempts`).
 - **heartbeat(run_id)** — renew the run lease. `not_found` (a hub that forgot the run) makes the

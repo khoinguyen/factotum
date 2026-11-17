@@ -1620,9 +1620,6 @@ func reasonLabel(reason graph.NotReadyReason) string {
 	return fmt.Sprintf("%s: %s", reason.Code, reason.Detail)
 }
 
-// taskFields is the canonical single-result field set for a task: identity, an
-// optional action field (created/updated), then kind/title/status/project, with
-// repo last.
 // warnDuplicateTitle advises (without blocking) when a new task looks like an
 // existing one. An exact title match always warns; otherwise, when a judge is
 // configured, a shortlist is scored for related or duplicate work.
@@ -1861,6 +1858,9 @@ func (d *Deps) referenceHints(ctx context.Context, task *core.Ticket, text strin
 	}}
 }
 
+// taskFields is the canonical single-result field set for a task: identity, an
+// optional action field (created/updated), then kind/title/status/project, with
+// repo last.
 func (d *Deps) taskFields(task *core.Ticket, action ...field) []field {
 	fields := []field{f("task_id", task.ID)}
 	fields = append(fields, action...)

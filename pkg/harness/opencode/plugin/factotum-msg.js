@@ -31,7 +31,8 @@
 // then summarised periodically rather than once per retry, so a store outage
 // leaves a readable log instead of a flood that buries the stall line; when the
 // run ends, one line says so. Heartbeat failures are bounded the same way, and
-// an empty queue is where they matter: an empty claim writes nothing, so a
+// so are the registration retries that precede a run at startup. An empty queue
+// is where heartbeat failures matter: an empty claim writes nothing, so a
 // locked store fails no claim at all while every heartbeat fails. The reverse
 // direction matters too:
 // when a heartbeat is answered not_found (a hub restored from a backup forgets

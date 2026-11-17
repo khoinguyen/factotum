@@ -27,7 +27,10 @@
 // wedged it lets the lease lapse, so `ft msg runs --live` reports the peer as
 // gone instead of healthy. A failed claim is not progress either: a run of
 // consecutive failures ages the same clock, so a receiver that claims nothing
-// stops renewing instead of reading healthy. The reverse direction matters too:
+// stops renewing instead of reading healthy. That run is logged once in full and
+// then summarised periodically rather than once per retry, so a store outage
+// leaves a readable log instead of a flood that buries the stall line; when the
+// run ends, one line says so. The reverse direction matters too:
 // when a heartbeat is answered not_found (a hub restored from a backup forgets
 // runs registered after it), the receiver re-registers the run once and logs it,
 // so a receiver that is in fact delivering cannot stay out of `--live` forever.
@@ -173,6 +176,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// CLAIM_FAILURE_SUMMARY_EVERY bounds outage logging. A failing claim repeats
+// every retry delay, and a store outage lasts minutes: one entry per retry buries
+// the one line an operator reads the log for - the stall line. The first failure
+// is logged in full (the store's own error, which can run to several lines), then
+// one summary per this many consecutive failures, so the count still says the
+// store is down rather than the receiver wedged.
+const CLAIM_FAILURE_SUMMARY_EVERY = 20;
+
+/** oneLine collapses a child ft error for the periodic summary. */
+function oneLine(text) {
+  return String(text).replace(/\s+/g, " ").trim();
+}
+
 /**
  * isRunNotFound reports whether a receiver call failed because the hub no longer
  * knows the run. The transport decides how it can tell: the hub's HTTP transport
@@ -288,11 +304,23 @@ export function httpCall(config, { fetchFn = globalThis.fetch } = {}) {
  * own environment, with the store the receiver was configured for pinned onto
  * it. The pin matters after a cold restore, when the host no longer carries the
  * FACTOTUM_STORE* the run was launched with.
+ *
+ * It also names the receiver's actor as the child's default actor. Every one of
+ * these children is spawned by an agent host, not by a shell that named an
+ * identity, so without it each invocation falls back to the CLI's agent
+ * heuristic and warns "probable agent caller ... this invocation stays
+ * unattributed" - which lands inside the receiver's own log lines. The path is
+ * the default actor, not FACTOTUM_CALLER: a caller is resolved only against
+ * registered Actor records, so the loop's role actors (builder-<task>, chief)
+ * would be dropped with a warning of their own, while the default path trusts
+ * them. An inherited default is replaced, because the receiver knows the actor
+ * its run belongs to.
  */
 export function receiverEnv(config, env = process.env) {
   const merged = { ...env };
   if (config?.store) merged.FACTOTUM_STORE = config.store;
   if (config?.storeOpts) merged.FACTOTUM_STORE_OPTS = config.storeOpts;
+  if (config?.actor) merged.FACTOTUM_DEFAULT_ACTOR = config.actor;
   return merged;
 }
 
@@ -347,6 +375,10 @@ export function createFactotumReceiver({
   let stalled = false;
   let lastProgressAt = 0;
   let lastRestoreAt = 0;
+  // claimFailures counts the current run of consecutive failed claim rounds and
+  // firstClaimFailureAt dates it; together they bound what an outage logs.
+  let claimFailures = 0;
+  let firstClaimFailureAt = 0;
 
   // healthy reports whether this receiver can actually deliver a message: it is
   // not disposing, its claim loop is running, it has a session to inject into,
@@ -381,6 +413,38 @@ export function createFactotumReceiver({
     if (!loopRunning || !sessionID || stalled) return;
     stalled = true;
     log(`factotum msg: no claim round trip settled in ${stallMs}ms; not renewing this run's lease until one does (a hung claim or injection)`);
+  }
+
+  // noteClaimFailure bounds what a store outage writes to the log. Every retry
+  // fails with the same store error, so logging each one (multi-line, every few
+  // hundred milliseconds) buries the stall line; the first failure keeps its full
+  // message - that is the "the store is down" signal - and the run is then
+  // summarised periodically. The stall line is untouched by this: it fires once,
+  // independently, and says the receiver is wedged instead.
+  function noteClaimFailure(error) {
+    const detail = String(error?.message || error);
+    claimFailures += 1;
+    if (claimFailures === 1) {
+      firstClaimFailureAt = Date.now();
+      log(`factotum msg: claim failed: ${detail}`);
+      return;
+    }
+    if (claimFailures % CLAIM_FAILURE_SUMMARY_EVERY === 0) {
+      const secs = Math.round((Date.now() - firstClaimFailureAt) / 1000);
+      log(`factotum msg: ${claimFailures} consecutive claim failures over ${secs}s; still retrying every ${retryMs}ms (last: ${oneLine(detail)})`);
+    }
+  }
+
+  // noteClaimRecovered closes a failure run once, so the log says when claims
+  // started completing again and the next outage logs its own first failure
+  // instead of hiding behind a counter that never reset. A run of one is left
+  // unremarked: the failure line already said it, and a single retry is noise.
+  function noteClaimRecovered() {
+    const failures = claimFailures;
+    claimFailures = 0;
+    if (failures < 2) return;
+    const secs = Math.round((Date.now() - firstClaimFailureAt) / 1000);
+    log(`factotum msg: claim failures stopped after ${failures} consecutive attempts over ${secs}s`);
   }
 
   async function register() {
@@ -559,18 +623,20 @@ export function createFactotumReceiver({
   // The loop never ends on an error. A rejection here would otherwise stop
   // claiming for the life of the process while the heartbeat kept renewing the
   // run, which is exactly the inert receiver this receiver must not become. A
-  // failed poll is logged and retried, and deliberately does not settle a round
-  // trip: a run of failures must age the health clock so the stall line fires and
-  // the lease lapses, instead of reading healthy while claiming nothing.
+  // failed poll is retried, and deliberately does not settle a round trip: a run
+  // of failures must age the health clock so the stall line fires and the lease
+  // lapses, instead of reading healthy while claiming nothing. An outage logs its
+  // first failure and then a periodic summary (see noteClaimFailure).
   async function loop() {
     loopRunning = true;
     try {
       while (!stopped) {
         try {
           await poll();
+          noteClaimRecovered();
           settleRoundTrip();
         } catch (error) {
-          log(`factotum msg: claim failed: ${error?.message || error}`);
+          noteClaimFailure(error);
           await sleep(retryMs);
         }
       }

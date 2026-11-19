@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/harness/opencode"
 	"github.com/khoinguyen/factotum/pkg/harness/pi"
 )
@@ -41,16 +40,12 @@ func TestMessageLinkReachesTheInjectedTurn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newRunner(t)
 			projectID := firstField(t, r.run("project", "create", "Acme"))
-			messageID := firstField(t, r.run("msg", "send", "actor:linker", "see the issue", "--project", projectID, "--from", "builder-t-1",
-				"--link", "issue=https://example.invalid/2"))
+			spec := "issue=https://example.invalid/2"
 			if tt.title != "" {
-				// `ft msg send --link` takes kind=url only; seed the title a
-				// producer writes (groom files the session id, the web prompt
-				// capture files the artifact's title).
-				setMessageLinks(t, r.path, messageID, []core.Link{
-					{Kind: core.LinkIssue, URL: "https://example.invalid/2", Title: tt.title},
-				})
+				spec += " title=" + tt.title
 			}
+			r.run("msg", "send", "actor:linker", "see the issue", "--project", projectID, "--from", "builder-t-1",
+				"--link", spec)
 
 			registered := runJSON(t, r, "msg", "agent", "register", "--actor", "linker", "--harness", tt.harness, "--project", projectID)
 			runID, _ := registered["run_id"].(string)

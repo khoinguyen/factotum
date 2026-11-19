@@ -152,7 +152,7 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 	send.Flags().StringVarP(&sendProject, "project", "p", "", "project id (required)")
 	send.Flags().StringVar(&sendFrom, "from", "", "sender actor (id, actor:<id>, or name; defaults to the configured actor)")
 	send.Flags().StringVarP(&sendBody, "body", "b", "", "message body (use - to read stdin)")
-	send.Flags().StringArrayVar(&sendLinks, "link", nil, "attach a link as kind=url (repeatable)")
+	send.Flags().StringArrayVar(&sendLinks, "link", nil, "attach a link as kind=url [title=text] (repeatable)")
 	send.Flags().StringVar(&sendReplyTo, "reply-to", "", "message id this message replies to")
 
 	var inboxProject, inboxAddress, inboxActor, inboxRun string
@@ -858,14 +858,37 @@ func (d *Deps) resolveMessageFrom(ctx context.Context, flag string) (*core.Actor
 	return &actor.ID, nil
 }
 
+// parseMessageLinks reads the `--link` grammar: `kind=url`, with an optional
+// `title=text` after a single space. A url is one RFC 3986 token, so a raw
+// space is never part of it and the first space is an unambiguous boundary;
+// the title takes the rest of the argument, so it may contain spaces (and the
+// equals signs a url also carries). An unrecognized field is rejected rather
+// than folded into the url or title.
 func parseMessageLinks(values []string) ([]core.Link, error) {
 	links := make([]core.Link, 0, len(values))
 	for _, value := range values {
-		kind, url, ok := strings.Cut(value, "=")
+		spec, titleField, hasTitle := strings.Cut(value, " ")
+		kind, url, ok := strings.Cut(spec, "=")
 		if !ok || strings.TrimSpace(url) == "" {
-			return nil, fmt.Errorf("%w: link %q must be kind=url", core.ErrInvalid, value)
+			return nil, fmt.Errorf("%w: link %q must be kind=url [title=text]", core.ErrInvalid, value)
 		}
-		links = append(links, core.Link{Kind: core.LinkKind(kind), URL: url})
+		link := core.Link{Kind: core.LinkKind(kind), URL: url}
+		if hasTitle {
+			title, ok := strings.CutPrefix(titleField, "title=")
+			if !ok {
+				return nil, fmt.Errorf("%w: link %q has an unknown field %q; the only field after kind=url is title=text", core.ErrInvalid, value, titleField)
+			}
+			if title == "" {
+				return nil, fmt.Errorf("%w: link %q has an empty title= value", core.ErrInvalid, value)
+			}
+			link.Title = title
+		}
+		// The title rule (non-blank, no control rune) lives in core so the CLI
+		// and the HTTP send path reject exactly the same titles.
+		if err := link.Validate(); err != nil {
+			return nil, fmt.Errorf("link %q: %w", value, err)
+		}
+		links = append(links, link)
 	}
 	return links, nil
 }

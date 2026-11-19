@@ -488,7 +488,9 @@ is the mutating fetch-and-mark-read (the transport's `ack` is `ft msg agent ack`
 
 Every item (`inbox`, `get`, and `claim`) carries the sender's `links` (`[{kind, url, title?}]`,
 reusing `core.Link`) beside the body, so a remote reader or receiver sees the attachment without a
-second fetch. A message without links omits the key.
+second fetch. A message without links omits the key. The HTTP `links` array and the CLI
+`--link 'kind=url title=text'` fill the same `core.Link` fields, so an attachment looks the same
+whichever sender wrote it (section 11).
 
 Auth and trust:
 
@@ -587,7 +589,7 @@ long-poll claim, inject as a user turn, ack.
 ## 11. CLI surface
 
 ```
-ft msg send <address|ticket-id> [-b body | -] [--from <actor>] [--reply-to <id>] [--link kind=url]
+ft msg send <address|ticket-id> [-b body | -] [--from <actor>] [--reply-to <id>] [--link 'kind=url [title=text]']
 ft msg inbox [--state queued|delivered|read|failed] [--address X] [--for <actor>] [--run <id>] [--limit N]
 ft msg get <id>            # show without changing state
 ft msg read <id>           # show and ack read (marks terminal)
@@ -598,11 +600,17 @@ ft msg agent <register|claim|ack|nack|heartbeat|deregister>   # hidden, stable a
 
 `ft msg get`/`read` print the body, then a `=== Links ===` block when the sender attached links
 (each line is `[kind] url - title`, the title left off when the link has none); a receiver's
-injected turn renders the same line, so the agent sees the attachment's name the human does. A
-title is one line — `core.Link` rejects a blank/whitespace-only title and any control rune — so
-the block cannot forge a section. `get`, `read`, `inbox`, and the `agent claim` wire all carry the
-same `links` array, and a linkless message omits it (no empty section, no empty key). The inbox's
-text table stays a summary row — the links are in its `-o json|yaml` entry and in `get`.
+injected turn renders the same line, so the agent sees the attachment's name the human does. A CLI
+sender sets that title with `--link 'kind=url title=text'`: a url is one RFC 3986 token, so the
+first space is an unambiguous boundary and the title takes the rest of the argument (spaces and
+equals signs included); any field other than `title=` is rejected, and an untitled `--link
+kind=url` is unchanged. This is the same attachment the HTTP `links` array carries, so the two
+senders cannot drift. A title is one line — `core.Link` rejects a blank/whitespace-only title and
+any control rune — so the block cannot forge a section; the CLI parses through
+`core.Link.Validate`, so it rejects exactly the titles the HTTP path rejects. `get`, `read`,
+`inbox`, and the `agent claim` wire all carry the same `links` array, and a linkless message omits
+it (no empty section, no empty key). The inbox's text table stays a summary row — the links are in
+its `-o json|yaml` entry and in `get`.
 
 **Proposed, not built.** Four operator verbs were considered for the first slice and are kept here
 so the intent is not lost, but none of them exists yet: the fence is marked `design` for exactly

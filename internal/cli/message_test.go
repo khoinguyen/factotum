@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,8 +16,6 @@ import (
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/harness/opencode"
 	"github.com/khoinguyen/factotum/pkg/harness/pi"
-	"github.com/khoinguyen/factotum/pkg/store"
-	"github.com/khoinguyen/factotum/pkg/store/jsonfile"
 )
 
 func TestMessageInstallStagesReceiver(t *testing.T) {
@@ -408,20 +405,16 @@ func TestMessageGetShowsLinks(t *testing.T) {
 }
 
 // TestMessageGetShowsLinkTitle pins the human block against a titled link.
-// core.Link carries a Title (groom attaches "session <id>"), and JSON/yaml
-// already print it, so the text block must not drop what the machine shapes
-// carry - a reader otherwise loses the attachment's name. A link without a
-// title keeps its exact previous line.
+// core.Link carries a Title that --link sets, and JSON/yaml already print it,
+// so the text block must not drop what the machine shapes carry - a reader
+// otherwise loses the attachment's name. A link without a title keeps its exact
+// previous line.
 func TestMessageGetShowsLinkTitle(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
-	messageID := firstField(t, r.run("msg", "send", "actor:linker", "see the session", "--project", projectID))
-	// ft msg send has no title flag; seed the attachment a peer CLI command
-	// (groom) writes, then read it back through the normal get/read path.
-	setMessageLinks(t, r.path, messageID, []core.Link{
-		{Kind: core.LinkURL, URL: "https://example.invalid/session", Title: "session groom-1"},
-		{Kind: core.LinkIssue, URL: "https://example.invalid/2"},
-	})
+	messageID := firstField(t, r.run("msg", "send", "actor:linker", "see the session", "--project", projectID,
+		"--link", "url=https://example.invalid/session title=session groom-1",
+		"--link", "issue=https://example.invalid/2"))
 
 	wantBlock := "\n=== Links ===\n" +
 		"[url] https://example.invalid/session - session groom-1\n" +
@@ -431,26 +424,6 @@ func TestMessageGetShowsLinkTitle(t *testing.T) {
 	}
 	if got := r.run("msg", "read", messageID); !strings.Contains(got, wantBlock) {
 		t.Fatalf("read should print the same titled link as get:\n%s", got)
-	}
-}
-
-// setMessageLinks replaces a stored message's attachments, the one field
-// `ft msg send` cannot set.
-func setMessageLinks(t *testing.T, path, messageID string, links []core.Link) {
-	t.Helper()
-	ctx := context.Background()
-	backend, err := jsonfile.Open(ctx, store.Config{Options: map[string]string{"path": path}})
-	if err != nil {
-		t.Fatalf("open store %s: %v", path, err)
-	}
-	defer func() { _ = backend.Close() }()
-	message, err := backend.Messages().Get(ctx, core.MessageID(messageID))
-	if err != nil {
-		t.Fatalf("get message %s: %v", messageID, err)
-	}
-	message.Links = links
-	if err := backend.Messages().Update(ctx, message); err != nil {
-		t.Fatalf("update message %s: %v", messageID, err)
 	}
 }
 
@@ -481,7 +454,7 @@ func TestMessageClaimWireCarriesLinks(t *testing.T) {
 	r := newRunner(t)
 	projectID := firstField(t, r.run("project", "create", "Acme"))
 	messageID := firstField(t, r.run("msg", "send", "actor:linker", "see the issue", "--project", projectID,
-		"--link", "issue=https://example.invalid/2"))
+		"--link", "issue=https://example.invalid/2 title=the issue"))
 
 	registered := runJSON(t, r, "msg", "agent", "register", "--actor", "linker", "--harness", "opencode", "--project", projectID)
 	runID, _ := registered["run_id"].(string)
@@ -497,6 +470,11 @@ func TestMessageClaimWireCarriesLinks(t *testing.T) {
 		t.Fatalf("claim message = %v, want %s", claimed["message"], messageID)
 	}
 	assertMessageLinks(t, message["links"], "https://example.invalid/2")
+	links, _ := message["links"].([]any)
+	link, _ := links[0].(map[string]any)
+	if link["title"] != "the issue" {
+		t.Fatalf("claim wire lost the link title: %v", link)
+	}
 }
 
 // TestMessagesWithoutLinksKeepTheirShape pins the other half: a message with no

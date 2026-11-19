@@ -47,6 +47,12 @@ func linksFromCore(links []core.Link) []linkDoc {
 	return out
 }
 
+// linksToCore decodes on-disk links, repairing any this version refuses. jsondir
+// validates an entity as it decodes the document, so a link written before the
+// url and rune rules existed (main accepted a tab in a note url) would make the
+// whole task or artifact unreadable, not just unwritable. The repair runs
+// before Validate, and a later write persists it, matching the services that
+// repair a link loaded from a store validating on write.
 func linksToCore(links []linkDoc) []core.Link {
 	if len(links) == 0 {
 		return nil
@@ -55,7 +61,7 @@ func linksToCore(links []linkDoc) []core.Link {
 	for _, link := range links {
 		out = append(out, core.Link{Kind: core.LinkKind(link.Kind), URL: link.URL, Title: link.Title})
 	}
-	return out
+	return core.RepairLinks(out)
 }
 
 // --- task ---

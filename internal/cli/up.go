@@ -229,6 +229,9 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 	// The daemon is also a message hub: it owns the sweeps, so recovery and
 	// retention do not depend on a receiver registering.
 	stopSweeps := server.StartSweeps(runCtx)
+	// The explicit call below drains before exit; the defer covers the path where
+	// Serve returns an unexpected error, so the sweep goroutine is not left behind.
+	defer stopSweeps()
 	var worker sync.WaitGroup
 	worker.Add(1)
 	go func() {

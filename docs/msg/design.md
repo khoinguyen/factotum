@@ -609,12 +609,14 @@ rest of the argument (spaces and equals signs included); a tab is not a boundary
 url and is refused there — any field other than `title=` is rejected, and an untitled `--link
 kind=url` is unchanged. This is the same attachment the HTTP `links` array carries, so the two
 senders cannot drift. A link field is one line — `core.Link` rejects a blank url or title, and any
-control rune, Zl/Zp separator, or bidi override/isolate in either — so the block cannot forge a
-section; the CLI parses through `core.Link.Validate`, so it rejects exactly the links the HTTP path
-rejects. A message stored by an older ft can still carry one: every backend revalidates a message
-on `Update`, so rather than wedge it in `queued`, `MessageService` repairs the link on the way out
-(a refused rune becomes a space in a title, is percent-encoded in a url, and a title left blank is
-dropped) and `read` persists the repair. `get`, `read`, `inbox`, and the `agent claim` wire all
+control rune, Zl/Zp separator, or bidi embedding/override/isolate control (U+202A–E, U+2066–69) in
+either — so the block cannot forge a section; the CLI parses through `core.Link.Validate`, so it
+rejects exactly the links the HTTP path rejects. A message stored by an older ft can still carry
+one: every backend revalidates a message on `Update`, so rather than wedge it, `MessageService`
+repairs the link on the way out (a refused rune becomes a space in a title, is percent-encoded in a
+url, and a title left blank is dropped). A `read` that moves a queued row persists the repair; a
+delivered row its run acks keeps the stored bytes, though no surface renders them. A ticket's note
+links and an artifact's links take the same repair, because their update paths revalidate them too. `get`, `read`, `inbox`, and the `agent claim` wire all
 carry the same `links` array, and a linkless message omits it (no empty section, no empty key). The
 inbox's text table stays a summary row — the links are in its `-o json|yaml` entry and in `get`.
 

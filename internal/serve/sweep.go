@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -73,16 +74,24 @@ func (s *Server) sweepLoop(ctx context.Context) {
 
 // sweep runs the requested duties in order. Each is independent: one failing
 // does not skip the other, and both are idempotent store sweeps, so a retry next
-// tick is always safe.
+// tick is always safe. A cancellation while a sweep is in flight is the normal
+// shutdown path, not a failure worth logging.
 func (s *Server) sweep(ctx context.Context, requeue, prune bool) {
 	if requeue {
-		if _, err := s.options.Messages.RequeueExpired(ctx); err != nil && s.options.Logf != nil {
-			s.options.Logf("serve: lease sweep: %v", err)
+		if _, err := s.options.Messages.RequeueExpired(ctx); err != nil {
+			s.logSweepError("serve: lease sweep", err)
 		}
 	}
 	if prune {
-		if _, err := s.options.Messages.PruneTerminal(ctx); err != nil && s.options.Logf != nil {
-			s.options.Logf("serve: retention prune: %v", err)
+		if _, err := s.options.Messages.PruneTerminal(ctx); err != nil {
+			s.logSweepError("serve: retention prune", err)
 		}
 	}
+}
+
+func (s *Server) logSweepError(prefix string, err error) {
+	if s.options.Logf == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	s.options.Logf("%s: %v", prefix, err)
 }

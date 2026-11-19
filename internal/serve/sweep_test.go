@@ -178,8 +178,10 @@ func TestStartSweepsRunsOnceAtStartup(t *testing.T) {
 	}
 }
 
-// TestStartSweepsPrunesByRetention pins the documented retention on the serve
-// timer: read after 30 days, failed after 90, and never queued or delivered.
+// TestStartSweepsPrunesByRetention pins the documented retention at startup:
+// read after 30 days, failed after 90, and never queued or delivered. The prune
+// interval is an hour, so only the synchronous startup sweep can move these
+// rows; the timer tick is pinned separately.
 func TestStartSweepsPrunesByRetention(t *testing.T) {
 	f := newSweepFixture(t)
 	now := f.clock.Now()
@@ -193,15 +195,8 @@ func TestStartSweepsPrunesByRetention(t *testing.T) {
 	f.addMessage(t, "queued-old", core.MessageQueued, now.Add(-200*day), lease)
 	f.addMessage(t, "delivered-old", core.MessageDelivered, now.Add(-200*day), lease)
 
-	f.startSweeps(t, Options{RequeueInterval: time.Hour, PruneInterval: 5 * time.Millisecond})
+	f.startSweeps(t, Options{RequeueInterval: time.Hour, PruneInterval: time.Hour})
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, ok := f.state(t, "read-old"); !ok {
-			break
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
 	for id, wantKept := range map[core.MessageID]bool{
 		"read-recent":   true,
 		"read-old":      false,
@@ -214,6 +209,37 @@ func TestStartSweepsPrunesByRetention(t *testing.T) {
 		if ok != wantKept {
 			t.Fatalf("message %s kept = %v, want %v", id, ok, wantKept)
 		}
+	}
+}
+
+// waitForGone polls until the message is removed, failing the test on timeout.
+func waitForGone(t *testing.T, f *sweepFixture, id core.MessageID, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, ok := f.state(t, id); !ok {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("message %s still stored after %v, want pruned", id, timeout)
+}
+
+// TestStartSweepsPrunesOnTimer proves the prune duty runs on its tick, not only
+// at startup: the aged row is inserted after StartSweeps has already swept, so
+// only the timer can remove it.
+func TestStartSweepsPrunesOnTimer(t *testing.T) {
+	f := newSweepFixture(t)
+	now := f.clock.Now()
+	day := 24 * time.Hour
+	f.startSweeps(t, Options{RequeueInterval: time.Hour, PruneInterval: 5 * time.Millisecond})
+
+	f.addMessage(t, "read-expired", core.MessageRead, now.Add(-31*day), now.Add(time.Hour))
+	f.addMessage(t, "read-kept", core.MessageRead, now.Add(-29*day), now.Add(time.Hour))
+
+	waitForGone(t, f, "read-expired", 2*time.Second)
+	if _, ok := f.state(t, "read-kept"); !ok {
+		t.Fatal("message read-kept was pruned, want kept (inside retention)")
 	}
 }
 
@@ -299,7 +325,10 @@ func TestStartSweepsNeverOverlap(t *testing.T) {
 	if tracked.peak > 1 {
 		t.Fatalf("peak concurrent sweeps = %d, want at most 1", tracked.peak)
 	}
-	if tracked.requeues < 2 || tracked.prunes < 2 {
+	// Each sweep issues two Prune calls (read then failed) and one RequeueExpired,
+	// so 4 prunes and 2 requeues prove the startup sweep plus at least one tick of
+	// each timer actually ran.
+	if tracked.requeues < 2 || tracked.prunes < 4 {
 		t.Fatalf("sweeps ran requeue=%d prune=%d, want both timers to fire repeatedly", tracked.requeues, tracked.prunes)
 	}
 }

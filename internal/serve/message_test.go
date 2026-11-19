@@ -292,7 +292,14 @@ func TestMsgSendRejectsBadRequests(t *testing.T) {
 		{"empty target", `{"to":"   ","body":"x"}`},
 		{"empty body", `{"to":"actor:bob","body":"   "}`},
 		{"title with newline", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/x","title":"session\ngroom-1"}]}`},
+		{"title with line separator", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/x","title":"a\u2028b"}]}`},
+		{"title with paragraph separator", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/x","title":"a\u2029b"}]}`},
+		{"title with bidi override", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/x","title":"a\u202eb"}]}`},
+		{"title with bidi isolate", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/x","title":"a\u2066b"}]}`},
 		{"blank link title", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/x","title":"  "}]}`},
+		{"url with newline", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/a\nb"}]}`},
+		{"url with tab", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/a\tb"}]}`},
+		{"url with line separator", `{"to":"actor:bob","body":"x","links":[{"kind":"doc","url":"https://example.invalid/a\u2028b"}]}`},
 		{"malformed json", `not json`},
 	}
 	for _, tc := range cases {

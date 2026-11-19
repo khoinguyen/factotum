@@ -883,8 +883,8 @@ func parseMessageLinks(values []string) ([]core.Link, error) {
 			}
 			link.Title = title
 		}
-		// The title rule (non-blank, no control rune) lives in core so the CLI
-		// and the HTTP send path reject exactly the same titles.
+		// The one-line rule (non-blank, no control/layout rune) lives in core
+		// so the CLI and the HTTP send path reject exactly the same links.
 		if err := link.Validate(); err != nil {
 			return nil, fmt.Errorf("link %q: %w", value, err)
 		}

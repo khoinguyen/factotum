@@ -294,17 +294,38 @@ func (s *MessageService) Inbox(ctx context.Context, q InboxQuery) ([]*core.Messa
 	if filter.Limit == 0 {
 		filter.Limit = 50
 	}
-	return s.backend.Messages().List(ctx, filter)
+	messages, err := s.backend.Messages().List(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	for _, message := range messages {
+		repairMessageLinks(message)
+	}
+	return messages, nil
 }
 
 func (s *MessageService) Get(ctx context.Context, id core.MessageID) (*core.Message, error) {
-	return s.backend.Messages().Get(ctx, id)
+	message, err := s.backend.Messages().Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return repairMessageLinks(message), nil
+}
+
+// repairMessageLinks applies core.RepairLinks to a message loaded from the
+// store. A message written before the validator refused Zl/Zp and bidi runes
+// can still carry one, and every backend revalidates on Update, so without the
+// repair a queued message could never transition to read. Every read surface
+// shows the repaired link; Read persists it.
+func repairMessageLinks(message *core.Message) *core.Message {
+	message.Links = core.RepairLinks(message.Links)
+	return message
 }
 
 // Read marks a message read (terminal) and records the event. It is idempotent:
 // an already-read message is returned unchanged.
 func (s *MessageService) Read(ctx context.Context, id core.MessageID) (*core.Message, error) {
-	message, err := s.backend.Messages().Get(ctx, id)
+	message, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -334,5 +355,5 @@ func (s *MessageService) Read(ctx context.Context, id core.MessageID) (*core.Mes
 	}); err != nil {
 		return nil, err
 	}
-	return s.backend.Messages().Get(ctx, id)
+	return s.Get(ctx, id)
 }

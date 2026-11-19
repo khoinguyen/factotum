@@ -436,6 +436,10 @@ func newTaskGetCommand(deps *Deps) *cobra.Command {
 						}
 						deps.printf("%s (%s)%s\n\n", author, note.CreatedAt.UTC().Format(time.RFC3339), marker)
 						body := note.Body
+						// Message links print "[kind] url - title"; no note
+						// producer sets a title today, so this renderer keeps
+						// its old line rather than carry a branch nothing
+						// exercises.
 						for _, link := range note.Links {
 							body += fmt.Sprintf("\n[%s] %s", link.Kind, link.URL)
 						}

@@ -140,22 +140,103 @@ func (l Link) Validate() error {
 	if !l.Kind.Valid() {
 		return fmt.Errorf("%w: unknown link kind %q", ErrInvalid, l.Kind)
 	}
-	if strings.TrimSpace(l.URL) == "" {
-		return fmt.Errorf("%w: link url is required", ErrInvalid)
+	if err := validateLinkText("url", l.URL); err != nil {
+		return err
 	}
 	if l.Title == "" {
 		return nil
 	}
-	// A title renders inline after its url on a single line (agent injection,
-	// get/read), so a control rune would forge a section or break the line it
-	// names, and a blank title would print a dangling " - ".
-	if strings.TrimSpace(l.Title) == "" {
-		return fmt.Errorf("%w: link title must not be blank", ErrInvalid)
+	return validateLinkText("title", l.Title)
+}
+
+// validateLinkText rejects a link field that would not render as one line of
+// the `[kind] url - title` shape every text surface prints: blank, or carrying
+// a rune that breaks the line or reorders the glyphs after it. The url and the
+// title follow one rule, so neither can forge a line of the get/read block.
+func validateLinkText(name, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%w: link %s must not be blank", ErrInvalid, name)
 	}
-	if strings.IndexFunc(l.Title, unicode.IsControl) >= 0 {
-		return fmt.Errorf("%w: link title must not contain control characters", ErrInvalid)
+	if strings.IndexFunc(value, notSingleLine) >= 0 {
+		return fmt.Errorf("%w: link %s must not contain control characters", ErrInvalid, name)
 	}
 	return nil
+}
+
+// notSingleLine reports whether r cannot appear in a link field. It widens
+// unicode.IsControl (Cc) to the runes that break or reorder a rendered line
+// too: Zl/Zp are line and paragraph separators, and the bidi embedding,
+// override, and isolate controls (Cf) move the glyphs after them without
+// leaving a visible mark, so only this check can refuse them. U+202E reaches a
+// link title through prompt capture.
+func notSingleLine(r rune) bool {
+	if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+		return true
+	}
+	return '\u202a' <= r && r <= '\u202e' || '\u2066' <= r && r <= '\u2069'
+}
+
+// RepairLinks returns links repaired for a message stored before the validator
+// refused these runes. Every backend revalidates on Update, so such a row could
+// otherwise never transition to read; the message service repairs it on the way
+// out and Read persists the repair. A refused rune becomes a space in a title
+// (a title that was only such runes is dropped, because an untitled link is
+// legal) and is percent-encoded in a url, so the address keeps its bytes. Links
+// that already validate are returned unchanged.
+func RepairLinks(links []Link) []Link {
+	if len(links) == 0 {
+		return links
+	}
+	out := make([]Link, len(links))
+	for i, link := range links {
+		link.Title = repairTitle(link.Title)
+		link.URL = repairURL(link.URL)
+		out[i] = link
+	}
+	return out
+}
+
+func repairTitle(title string) string {
+	if strings.IndexFunc(title, notSingleLine) < 0 {
+		return title
+	}
+	if repaired := FlattenLine(title); strings.TrimSpace(repaired) != "" {
+		return repaired
+	}
+	return ""
+}
+
+func repairURL(url string) string {
+	if strings.IndexFunc(url, notSingleLine) < 0 {
+		return url
+	}
+	var b strings.Builder
+	b.Grow(len(url))
+	for _, r := range url {
+		if notSingleLine(r) {
+			for _, c := range []byte(string(r)) {
+				fmt.Fprintf(&b, "%%%02X", c)
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// FlattenLine replaces every rune a link field refuses with a space, so a
+// producer that derives a title from free text (prompt capture) stores a title
+// that can become a link; RepairLinks flattens a legacy title through it.
+func FlattenLine(s string) string {
+	if strings.IndexFunc(s, notSingleLine) < 0 {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if notSingleLine(r) {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 type Note struct {

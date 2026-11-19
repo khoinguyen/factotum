@@ -115,6 +115,7 @@ func (s *MessageService) Claim(ctx context.Context, in ClaimInput) (*core.Messag
 	if err != nil {
 		return nil, err
 	}
+	repairMessageLinks(message)
 	if err := appendEvent(ctx, s.backend, s.clock, s.ids, &core.Event{
 		ProjectID: message.ProjectID,
 		TicketID:  message.TaskID,

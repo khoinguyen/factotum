@@ -54,11 +54,13 @@ func TestParseMessageLinks(t *testing.T) {
 	}
 }
 
-// TestParseMessageLinksRejectsBadTitles pins the reject side against the same
+// TestParseMessageLinksRejectsBadLinks pins the reject side against the same
 // rule the HTTP send path enforces through core.Link.Validate: a title is
-// optional, but when present it is one line - not blank, no control rune - so
-// the rendered `[kind] url - title` line cannot be forged or broken.
-func TestParseMessageLinksRejectsBadTitles(t *testing.T) {
+// optional, but when present it is one line - not blank, no control rune - and
+// the url is one line too, so the rendered `[kind] url - title` line cannot be
+// forged or broken. The separator is one literal space: a tab is not a
+// boundary, so it stays in the url and the url rule refuses it.
+func TestParseMessageLinksRejectsBadLinks(t *testing.T) {
 	tests := []struct {
 		name  string
 		value string
@@ -71,6 +73,9 @@ func TestParseMessageLinksRejectsBadTitles(t *testing.T) {
 		{"blank title", "doc=https://example.invalid/spec title=   ", "must not be blank"},
 		{"newline in title", "doc=https://example.invalid/spec title=two\nlines", "control characters"},
 		{"tab in title", "doc=https://example.invalid/spec title=two\tfields", "control characters"},
+		{"newline in url", "doc=https://example.invalid/a\nb", "control characters"},
+		{"tab in url", "doc=https://example.invalid/a\tb", "control characters"},
+		{"tab before title is not a separator", "doc=https://example.invalid/spec\ttitle=x", "control characters"},
 		{"unknown kind", "bogus=https://example.invalid/2", "unknown link kind"},
 	}
 	for _, tc := range tests {

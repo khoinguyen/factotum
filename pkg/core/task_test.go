@@ -1,6 +1,9 @@
 package core
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -311,6 +314,24 @@ func TestLinkValidate(t *testing.T) {
 		{"title with tab", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "bug\tx"}, true},
 		{"whitespace-only title", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "   "}, true},
 		{"title with inner spaces", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "session groom-1"}, false},
+		{"title with emoji and joiner", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "join 👩‍💻"}, false},
+		{"title with combining mark", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "e\u0301toile"}, false},
+		{"title with rtl text", Link{Kind: LinkIssue, URL: "https://example.com/1", Title: "مرحبا"}, false},
+		// A url renders before the title on the same line, so it follows the
+		// same one-line rule. Only control/layout runes are refused: the
+		// validator is not a url syntax checker, so every form the senders
+		// already produce (and anything else) keeps working.
+		{"url with newline", Link{Kind: LinkDoc, URL: "https://example.com/a\nb"}, true},
+		{"url with carriage return", Link{Kind: LinkDoc, URL: "https://example.com/a\rb"}, true},
+		{"url with tab", Link{Kind: LinkDoc, URL: "https://example.com/a\tb"}, true},
+		{"url with esc", Link{Kind: LinkDoc, URL: "https://example.com/a\x1bb"}, true},
+		{"url with line separator", Link{Kind: LinkDoc, URL: "https://example.com/a\u2028b"}, true},
+		{"whitespace-only url", Link{Kind: LinkDoc, URL: " \t "}, true},
+		{"scp-style url", Link{Kind: LinkPR, URL: "git@github.com:org/repo.git"}, false},
+		{"local path url", Link{Kind: LinkDoc, URL: "/Users/khoi/work/spec.md"}, false},
+		{"mailto url", Link{Kind: LinkURL, URL: "mailto:khoi@example.com"}, false},
+		{"url with query and fragment", Link{Kind: LinkURL, URL: "https://example.com/s?q=a=b&n=1#top"}, false},
+		{"url with a space", Link{Kind: LinkDoc, URL: "https://example.com/a b"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -318,6 +339,103 @@ func TestLinkValidate(t *testing.T) {
 				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// linkRefusedRunes are the runes a link field refuses beyond the ASCII controls
+// a human types: the Zl/Zp separators, which render as line breaks, and the
+// bidi embedding/override/isolate controls, which reorder the glyphs after them
+// and so cannot be seen in the field they corrupt. U+202E reaches a title
+// through prompt capture today.
+var linkRefusedRunes = []rune{
+	'\u0000', '\t', '\n', '\r', '\u001b', '\u0085',
+	'\u2028', '\u2029',
+	'\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+	'\u2066', '\u2067', '\u2068', '\u2069',
+}
+
+// TestLinkValidateRejectsRefusedRunes pins each refused rune separately, in a
+// title and in a url: unicode.IsControl alone is Cc-only, so a table over the
+// whole set is what keeps a later narrowing of the predicate from passing.
+func TestLinkValidateRejectsRefusedRunes(t *testing.T) {
+	for _, r := range linkRefusedRunes {
+		r := r
+		t.Run(fmt.Sprintf("title U+%04X", r), func(t *testing.T) {
+			link := Link{Kind: LinkDoc, URL: "https://example.com/doc", Title: "a" + string(r) + "b"}
+			if err := link.Validate(); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Validate() error = %v, want ErrInvalid", err)
+			}
+		})
+		t.Run(fmt.Sprintf("url U+%04X", r), func(t *testing.T) {
+			link := Link{Kind: LinkDoc, URL: "https://example.com/a" + string(r) + "b"}
+			if err := link.Validate(); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Validate() error = %v, want ErrInvalid", err)
+			}
+		})
+	}
+}
+
+// TestRepairLinks pins the repair the message store read path applies to a row
+// written before the validator refused these runes: a refused rune becomes a
+// space in a title (a title left blank is dropped, since an empty title is
+// legal), and is percent-encoded in a url so the address keeps its bytes.
+func TestRepairLinks(t *testing.T) {
+	tests := []struct {
+		name string
+		link Link
+		want Link
+	}{
+		{
+			name: "valid link is untouched",
+			link: Link{Kind: LinkDoc, URL: "https://example.com/a%20b", Title: "Design doc"},
+			want: Link{Kind: LinkDoc, URL: "https://example.com/a%20b", Title: "Design doc"},
+		},
+		{
+			name: "bidi override in title becomes a space",
+			link: Link{Kind: LinkDoc, URL: "https://example.com/doc", Title: "a\u202eb"},
+			want: Link{Kind: LinkDoc, URL: "https://example.com/doc", Title: "a b"},
+		},
+		{
+			name: "line separator in title becomes a space",
+			link: Link{Kind: LinkDoc, URL: "https://example.com/doc", Title: "a\u2028b"},
+			want: Link{Kind: LinkDoc, URL: "https://example.com/doc", Title: "a b"},
+		},
+		{
+			name: "title of only refused runes is dropped",
+			link: Link{Kind: LinkDoc, URL: "https://example.com/doc", Title: "\u202e"},
+			want: Link{Kind: LinkDoc, URL: "https://example.com/doc"},
+		},
+		{
+			name: "newline in url is percent-encoded",
+			link: Link{Kind: LinkDoc, URL: "https://example.com/a\nb"},
+			want: Link{Kind: LinkDoc, URL: "https://example.com/a%0Ab"},
+		},
+		{
+			name: "line separator in url is percent-encoded as utf-8",
+			link: Link{Kind: LinkDoc, URL: "https://example.com/a\u2028b"},
+			want: Link{Kind: LinkDoc, URL: "https://example.com/a%E2%80%A8b"},
+		},
+		{
+			name: "both fields repaired",
+			link: Link{Kind: LinkDoc, URL: "https://example.com/a\tb", Title: "x\u2029y"},
+			want: Link{Kind: LinkDoc, URL: "https://example.com/a%09b", Title: "x y"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RepairLinks([]Link{tt.link})
+			if len(got) != 1 || got[0] != tt.want {
+				t.Fatalf("RepairLinks() = %+v, want %+v", got, tt.want)
+			}
+			if strings.TrimSpace(got[0].URL) != "" {
+				if err := got[0].Validate(); err != nil {
+					t.Fatalf("repaired link does not validate: %v", err)
+				}
+			}
+		})
+	}
+	if got := RepairLinks(nil); got != nil {
+		t.Fatalf("RepairLinks(nil) = %+v, want nil", got)
 	}
 }
 

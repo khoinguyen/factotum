@@ -1,9 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/khoinguyen/factotum/pkg/core"
 	"github.com/khoinguyen/factotum/pkg/store"
+	"github.com/khoinguyen/factotum/pkg/store/jsonfile"
 	"github.com/khoinguyen/factotum/pkg/store/memory"
 )
 
@@ -557,3 +561,80 @@ func TestMessageReadLeavesFailedTerminal(t *testing.T) {
 }
 
 func taskPtr(id core.TicketID) *core.TicketID { return &id }
+
+// TestMessageReadRepairsLegacyLink proves a message written before the link
+// validator covered Zl/Zp and bidi runes can still transition to read. Every
+// backend revalidates a message on Update, so the service repairs the link it
+// loads and Read persists the repair. The fixture is a hand-edited jsonfile
+// document, the shape the reported repro used.
+func TestMessageReadRepairsLegacyLink(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.json")
+	open := func() store.Backend {
+		backend, err := jsonfile.Open(ctx, store.Config{Backend: "jsonfile", Options: map[string]string{"path": path}})
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		return backend
+	}
+
+	backend := open()
+	clock := &stepClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	ids := &seqIDs{}
+	messages := NewMessageService(backend, clock, ids)
+	if err := backend.Projects().Create(ctx, &core.Project{ID: "prj-1", Name: "Acme", Policy: core.DefaultResolutionPolicy()}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	message, err := messages.Send(ctx, SendMessageInput{
+		ProjectID: "prj-1",
+		Target:    "actor:bob",
+		Body:      "see the doc",
+		Links:     []core.Link{{Kind: core.LinkDoc, URL: "https://example.invalid/spec", Title: "Design doc"}},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	legacy := bytes.Replace(data, []byte(`"Design doc"`), []byte(`"a`+"\u202e"+`b"`), 1)
+	if bytes.Equal(legacy, data) {
+		t.Fatal("fixture did not rewrite the stored title")
+	}
+	if err := os.WriteFile(path, legacy, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	backend = open()
+	t.Cleanup(func() { _ = backend.Close() })
+	clock.t = clock.t.Add(time.Minute)
+	messages = NewMessageService(backend, clock, ids)
+
+	got, err := messages.Get(ctx, message.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.Links[0].Title != "a b" {
+		t.Fatalf("Get() title = %q, want the repaired %q", got.Links[0].Title, "a b")
+	}
+
+	read, err := messages.Read(ctx, message.ID)
+	if err != nil {
+		t.Fatalf("Read() error = %v; a legacy link must not wedge the read", err)
+	}
+	if read.State != core.MessageRead || read.Links[0].Title != "a b" {
+		t.Fatalf("Read() = %+v, want read with the repaired title", read)
+	}
+	stored, err := backend.Messages().Get(ctx, message.ID)
+	if err != nil {
+		t.Fatalf("Get(stored) error = %v", err)
+	}
+	if stored.Links[0].Title != "a b" {
+		t.Fatalf("stored title = %q, want Read to persist the repair", stored.Links[0].Title)
+	}
+}

@@ -184,16 +184,18 @@ func (s *Server) tokenOK(offered string) bool {
 }
 
 // ideaFromSentence splits a captured sentence into an idea title and body. The
-// first line becomes the title, whitespace-collapsed and length-capped; the rest
-// is kept verbatim as the body. A single-line capture keeps the whole sentence
-// as its body, so a long one-liner is never truncated away.
+// first line becomes the title, flattened to one renderable line, whitespace-
+// collapsed, and length-capped; the rest is kept verbatim as the body. A
+// single-line capture keeps the whole sentence as its body, so a long one-liner
+// is never truncated away. The flatten matters because the title becomes a doc
+// link's title on prompt capture, and core.Link refuses a bidi override there.
 func ideaFromSentence(raw string) (title, body string) {
 	raw = strings.TrimSpace(strings.ReplaceAll(raw, "\r\n", "\n"))
 	if raw == "" {
 		return "", ""
 	}
 	first, rest, _ := strings.Cut(raw, "\n")
-	title = truncateTitle(collapseSpaces(first))
+	title = truncateTitle(collapseSpaces(core.FlattenLine(first)))
 	if rest = strings.TrimSpace(rest); rest == "" {
 		rest = raw
 	}

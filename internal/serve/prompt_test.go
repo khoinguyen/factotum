@@ -216,6 +216,44 @@ func TestPromptRejectsMalformedBody(t *testing.T) {
 	}
 }
 
+// TestPromptFlattensBidiTitle proves a captured prompt whose derived title
+// carries a bidi override is still stored and announced: the title becomes the
+// doc link the chief is sent, and the link rule refuses that rune, so the
+// capture flattens the title instead of writing the artifact and then failing
+// to notify.
+func TestPromptFlattensBidiTitle(t *testing.T) {
+	f := newFixture(t)
+	project := f.addProject(t, "acme", "Acme")
+	ts := newPromptServer(t, f, project.ID)
+
+	resp := postPrompt(t, ts.URL+promptPath, testToken, `{"text":"Add a \u202edark mode"}`)
+	if resp.StatusCode != http.StatusCreated {
+		_ = resp.Body.Close()
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	result := decodePrompt(t, resp)
+
+	artifact, err := f.artifacts.Get(context.Background(), result.ID)
+	if err != nil {
+		t.Fatalf("Get(doc) error = %v", err)
+	}
+	if artifact.Title != "Add a dark mode" {
+		t.Fatalf("artifact title = %q, want the flattened %q", artifact.Title, "Add a dark mode")
+	}
+
+	messages := inbox(t, f, project.ID)
+	if len(messages) != 1 {
+		t.Fatalf("sent %d messages, want 1", len(messages))
+	}
+	link := messages[0].Links[0]
+	if link.Title != "Add a dark mode" {
+		t.Fatalf("link title = %q, want the flattened %q", link.Title, "Add a dark mode")
+	}
+	if strings.ContainsRune(link.Title, '\u202e') {
+		t.Fatalf("link title kept the bidi override: %q", link.Title)
+	}
+}
+
 // TestPromptTruncatesLongTitle keeps a whole paragraph from becoming an
 // unbounded title while the artifact body keeps every word.
 func TestPromptTruncatesLongTitle(t *testing.T) {

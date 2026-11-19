@@ -60,9 +60,10 @@ func (s *MessageService) RegisterRun(ctx context.Context, in RegisterRunInput) (
 	if err != nil {
 		return nil, err
 	}
-	// RequeueExpired is the crash-recovery sweep; a receiver registering is the
-	// natural moment to run it, so a dead session's lease is redelivered.
-	if _, err := s.backend.Messages().RequeueExpired(ctx, now, store.MaxMessageAttempts); err != nil {
+	// A receiver registering is a natural moment to run the crash-recovery
+	// sweep, so a dead session's lease is redelivered. It is not the only one:
+	// `ft serve` owns a timer, so recovery does not wait for a registration.
+	if _, err := s.RequeueExpired(ctx); err != nil {
 		return nil, err
 	}
 	return registered, nil

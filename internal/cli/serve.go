@@ -69,6 +69,9 @@ func newServeCommand(deps *Deps) *cobra.Command {
 				Tasks:     deps.Tasks,
 				Messages:  deps.Messages,
 				Artifacts: deps.Artifacts,
+				Logf: func(format string, args ...any) {
+					_, _ = fmt.Fprintf(deps.Err, format+"\n", args...)
+				},
 			})
 			if err != nil {
 				return err
@@ -81,6 +84,11 @@ func newServeCommand(deps *Deps) *cobra.Command {
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			// The hub owns the message-maintenance sweeps: one now, then on
+			// timers, so a crashed receiver's lease is recovered without waiting
+			// for someone to register and terminal history does not grow forever.
+			stopSweeps := server.StartSweeps(ctx)
+			defer stopSweeps()
 			for _, line := range serveAnnouncement(listener.Addr().String(), serveAll, serveToken, generated) {
 				_, _ = fmt.Fprintln(deps.Err, line)
 			}

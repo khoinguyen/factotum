@@ -346,9 +346,10 @@ Design notes:
   message in a list, and because `Claim` takes that address from `ClaimRequest.Recipient` (nil for
   such a run), it claims no `task:` message either.
 - **Ordering is FIFO** by `CreatedAt` then `ID`, so delivery is deterministic and testable.
-- **`RequeueExpired`** is called by receivers/serve on a timer and on startup, so a crashed
-  receiver's in-flight message is not stuck in `delivered` forever. It is also how at-least-once
-  redelivery happens.
+- **`RequeueExpired`** is the crash-recovery sweep. `ft serve` (and the `ft up` daemon) runs it
+  once at startup and then every minute, and a receiver's `register` also runs it, so a crashed
+  receiver's in-flight message returns to `queued` within a minute of its lease lapsing even if
+  nobody registers. It is also how at-least-once redelivery happens.
 - **`UpdatedAt`** is the compare-and-swap token the other repos already use; a backend may reuse
   the pattern from `TicketRepo.UpdateExpected`.
 
@@ -508,8 +509,9 @@ Auth and trust:
   vice versa — cross-host is purely the transport, not a second store. This is the
   "cloud prerequisite" t-773lhmbml2 builds.
 - Multi-project: the transport scopes to the serve target project (or requires `?project=` when
-  serving all); crash/lease sweeps run on a `ft serve` timer so a remote receiver that dies is
-  recovered by the hub.
+  serving all). The sweeps are global — the store's lease and retention are not project-scoped —
+  so a `ft serve` hub recovers a dead remote receiver and trims old terminal history whichever
+  project it serves.
 
 ## 10. Receiver adapters
 
@@ -616,8 +618,8 @@ its `-o json|yaml` entry and in `get`.
 so the intent is not lost, but none of them exists yet: the fence is marked `design` for exactly
 that reason, and the drift check requires the mark. The store port already has the calls they need
 (`Nack`, `RequeueExpired`, `Prune`), so each is a thin CLI addition over an existing method; until
-one lands, a receiver uses the `agent` verbs and the lease sweep recovers expired deliveries with no
-operator command.
+one lands, a receiver uses the `agent` verbs, and the serve sweeps recover expired deliveries and
+prune old terminal history with no operator command.
 
 ```design
 ft msg ack <id> [--failed -e <reason>]     # explicit state ack for adapters/humans
@@ -651,8 +653,10 @@ ft msg prune [--before <time>] [--state read|failed]   # drop old terminal messa
 - **Body limit:** default 16 KiB, machine-configurable. Enforced at send (`ErrInvalid`), never
   silently truncated — a sender must know.
 - **Retention:** terminal `read` messages pruned after 30 days; terminal `failed` after 90 days;
-  `queued`/`delivered` never auto-pruned. The proposed prune verb (section 11) runs the sweep
-  manually; `ft serve` runs it on a slow timer. Reuses the `Prune` port method, so it is
+  `queued`/`delivered` never auto-pruned. `ft serve` (and `ft up`) enforces it: the prune sweep
+  runs once at startup and then hourly, taking its cutoff from the service clock, and the store's
+  `Prune` only ever matches terminal states, so a sweep cannot delete outstanding work. There is
+  no manual prune verb yet; section 11 keeps it proposed. Reuses the `Prune` port method, so it is
   backend-uniform.
 - **No blobs:** large content is linked (a doc/artifact), not inlined.
 

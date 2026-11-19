@@ -93,6 +93,18 @@ plugin, pi extension) take this transport when `FACTOTUM_MSG_URL` points at the
 hub, authenticating with `FACTOTUM_SERVE_TOKEN`, and fall back to the local `ft`
 binary when it is unset.
 
+`ft serve` also owns the message-maintenance sweeps, so the lease and retention
+guarantees hold without an operator command. `StartSweeps` runs one sweep
+synchronously at startup (before the listener answers) and then on two timers
+from one goroutine: lapsed delivery leases are requeued every minute, and
+terminal history is pruned hourly (read after 30 days, failed after 90; queued
+and delivered messages are never pruned). One goroutine runs both duties inline,
+so two sweeps never overlap, and the returned stop drains it on shutdown. Both
+`ft serve` and the `ft up` daemon start the sweeps, so a hub recovers a dead
+remote receiver's in-flight message about a minute after its lease lapses,
+whether or not any receiver registers, and a long-lived hub's message table does
+not grow forever.
+
 ## Reason-chip wrapping (t-mw2k6rwonj)
 
 That regression lived in the retired server-rendered dashboard HTML. The read

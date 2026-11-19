@@ -211,6 +211,9 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 		Artifacts:  artifacts,
 		AutoGroom:  autoGroom,
 		Controller: controller,
+		Logf: func(format string, args ...any) {
+			_, _ = fmt.Fprintf(d.Err, format+"\n", args...)
+		},
 	})
 	if err != nil {
 		return err
@@ -223,6 +226,9 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// The daemon is also a message hub: it owns the sweeps, so recovery and
+	// retention do not depend on a receiver registering.
+	stopSweeps := server.StartSweeps(runCtx)
 	var worker sync.WaitGroup
 	worker.Add(1)
 	go func() {
@@ -244,6 +250,7 @@ func (d *Deps) runUp(cmd *cobra.Command, opts upOptions) error {
 	}
 	// Drain the controller so an interrupted stage leaves the pipeline in its
 	// in-flight state (resumable) before the process exits.
+	stopSweeps()
 	worker.Wait()
 	return nil
 }

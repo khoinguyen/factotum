@@ -113,6 +113,18 @@ type Options struct {
 	Poll time.Duration
 	// Recent is how many recent events the updates section shows.
 	Recent int
+	// RequeueInterval is how often StartSweeps recovers lapsed delivery leases.
+	// Zero uses the lease-scale default. It exists so tests can drive the timer;
+	// it is not a CLI or config knob.
+	RequeueInterval time.Duration
+	// PruneInterval is how often StartSweeps deletes terminal messages past
+	// retention. Zero uses the slow default. Like RequeueInterval it exists for
+	// tests, not as a knob.
+	PruneInterval time.Duration
+	// Logf, when set, receives a line for each failed background sweep. Nil is
+	// silent: sweeps are best effort and a transient store error must not stop
+	// the timer.
+	Logf func(format string, args ...any)
 }
 
 // Server is the dashboard HTTP handler: open reads plus the token-gated
@@ -142,6 +154,12 @@ func New(opts Options) (*Server, error) {
 	}
 	if opts.Recent <= 0 {
 		opts.Recent = defaultRecent
+	}
+	if opts.RequeueInterval <= 0 {
+		opts.RequeueInterval = defaultRequeueInterval
+	}
+	if opts.PruneInterval <= 0 {
+		opts.PruneInterval = defaultPruneInterval
 	}
 	if opts.Assets == nil {
 		opts.Assets = web.Dist()

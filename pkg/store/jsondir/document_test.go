@@ -341,3 +341,62 @@ func TestProjectDocumentDefaultsPolicy(t *testing.T) {
 		t.Fatalf("project policy = %#v, want a default", project.Policy)
 	}
 }
+
+// TestDecodeRepairsLegacyLinks pins the decode-side repair. jsondir validates an
+// entity as it decodes its document, so a link written before the url and rune
+// rules existed (main accepted a tab in a note url) would make the whole task,
+// or artifact, unreadable - not just unwritable - before any service repair can
+// run. The repair happens on the way in, so the decoded entity matches what the
+// services hand out.
+func TestDecodeRepairsLegacyLinks(t *testing.T) {
+	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t.Run("task note", func(t *testing.T) {
+		task := core.Ticket{
+			ID:        "t-legacy",
+			ProjectID: "prj-1",
+			Kind:      core.KindTask,
+			Title:     "legacy",
+			Status:    core.StatusTodo,
+			Notes: []core.Note{{
+				ID:    "note-1",
+				Body:  "legacy",
+				Links: []core.Link{{Kind: core.LinkDoc, URL: "https://example.invalid/a\tb"}},
+			}},
+			CreatedAt: createdAt,
+			UpdatedAt: createdAt,
+		}
+		doc, err := encodeTask(task, nil)
+		if err != nil {
+			t.Fatalf("encodeTask() error = %v", err)
+		}
+		got, _, err := decodeTask(doc)
+		if err != nil {
+			t.Fatalf("decodeTask() error = %v; a legacy note link must not make the task unreadable", err)
+		}
+		if got.Notes[0].Links[0].URL != "https://example.invalid/a%09b" {
+			t.Fatalf("note url = %q, want the repaired %q", got.Notes[0].Links[0].URL, "https://example.invalid/a%09b")
+		}
+	})
+	t.Run("artifact", func(t *testing.T) {
+		artifact := core.Artifact{
+			ID:        "art-legacy",
+			ProjectID: "prj-1",
+			Kind:      core.ArtifactDoc,
+			Title:     "legacy",
+			Links:     []core.Link{{Kind: core.LinkDoc, URL: "https://example.invalid/a\nb"}},
+			CreatedAt: createdAt,
+			UpdatedAt: createdAt,
+		}
+		doc, err := encodeArtifact(artifact, nil)
+		if err != nil {
+			t.Fatalf("encodeArtifact() error = %v", err)
+		}
+		got, _, err := decodeArtifact(doc)
+		if err != nil {
+			t.Fatalf("decodeArtifact() error = %v; a legacy artifact link must not make the artifact unreadable", err)
+		}
+		if got.Links[0].URL != "https://example.invalid/a%0Ab" {
+			t.Fatalf("artifact url = %q, want the repaired %q", got.Links[0].URL, "https://example.invalid/a%0Ab")
+		}
+	})
+}

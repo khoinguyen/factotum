@@ -616,7 +616,8 @@ one: every backend revalidates a message on `Update`, so rather than wedge it, `
 repairs the link on the way out (a refused rune becomes a space in a title, is percent-encoded in a
 url, and a title left blank is dropped). A `read` that moves a queued row persists the repair; a
 delivered row its run acks keeps the stored bytes, though no surface renders them. A ticket's note
-links and an artifact's links take the same repair, because their update paths revalidate them too. `get`, `read`, `inbox`, and the `agent claim` wire all
+links and an artifact's links take the same repair: the app services repair them where they
+revalidate, and `jsondir` repairs them as it decodes, because it validates on decode. `get`, `read`, `inbox`, and the `agent claim` wire all
 carry the same `links` array, and a linkless message omits it (no empty section, no empty key). The
 inbox's text table stays a summary row — the links are in its `-o json|yaml` entry and in `get`.
 

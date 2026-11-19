@@ -130,11 +130,34 @@ func (s *TicketService) recordTaskCreated(ctx context.Context, task *core.Ticket
 }
 
 func (s *TicketService) Get(ctx context.Context, id core.TicketID) (*core.Ticket, error) {
-	return s.backend.Tickets().Get(ctx, id)
+	task, err := s.backend.Tickets().Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return repairNoteLinks(task), nil
 }
 
 func (s *TicketService) List(ctx context.Context, filter store.TicketFilter) ([]*core.Ticket, error) {
-	return s.backend.Tickets().List(ctx, filter)
+	tasks, err := s.backend.Tickets().List(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range tasks {
+		repairNoteLinks(task)
+	}
+	return tasks, nil
+}
+
+// repairNoteLinks applies core.RepairLinks to a ticket's note links. A note
+// written before the url and rune rules existed can still carry a bad link, and
+// a task update revalidates every note, so without the repair one legacy note
+// would wedge the whole task. Get and List repair what they hand out; an update
+// path repairs before validating, so the write persists the repair.
+func repairNoteLinks(task *core.Ticket) *core.Ticket {
+	for i := range task.Notes {
+		task.Notes[i].Links = core.RepairLinks(task.Notes[i].Links)
+	}
+	return task
 }
 
 // Search returns the tasks in filter scope whose title, description, or notes
@@ -147,7 +170,7 @@ func (s *TicketService) Search(ctx context.Context, filter store.TicketFilter, q
 	}
 	tasks := make([]*core.Ticket, 0, len(hits))
 	for _, hit := range hits {
-		tasks = append(tasks, hit.Ticket)
+		tasks = append(tasks, repairNoteLinks(hit.Ticket))
 	}
 	return tasks, nil
 }
@@ -393,6 +416,7 @@ func (s *TicketService) Set(ctx context.Context, id core.TicketID, set TicketSet
 	if err != nil {
 		return nil, err
 	}
+	repairNoteLinks(task)
 	from := task.Status
 	if set.Kind != nil {
 		if !set.Kind.Valid() {
@@ -602,6 +626,7 @@ func (s *TicketService) Snooze(ctx context.Context, id core.TicketID, snooze cor
 	if err != nil {
 		return nil, err
 	}
+	repairNoteLinks(task)
 	if snooze.UntilTask != nil {
 		if *snooze.UntilTask == id {
 			return nil, fmt.Errorf("%w: a task cannot snooze until itself", core.ErrInvalid)
@@ -833,6 +858,7 @@ func (s *TicketService) AddNote(ctx context.Context, id core.TicketID, in NoteIn
 	if err != nil {
 		return nil, err
 	}
+	repairNoteLinks(task)
 	note := core.Note{
 		ID:        s.ids.NewID("note"),
 		Body:      in.Body,

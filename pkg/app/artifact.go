@@ -71,11 +71,30 @@ func (s *ArtifactService) Add(ctx context.Context, in ArtifactInput) (*core.Arti
 }
 
 func (s *ArtifactService) Get(ctx context.Context, id core.ArtifactID) (*core.Artifact, error) {
-	return s.backend.Artifacts().Get(ctx, id)
+	artifact, err := s.backend.Artifacts().Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return repairArtifactLinks(artifact), nil
 }
 
 func (s *ArtifactService) List(ctx context.Context, filter store.ArtifactFilter) ([]*core.Artifact, error) {
-	return s.backend.Artifacts().List(ctx, filter)
+	artifacts, err := s.backend.Artifacts().List(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	for _, artifact := range artifacts {
+		repairArtifactLinks(artifact)
+	}
+	return artifacts, nil
+}
+
+// repairArtifactLinks applies core.RepairLinks to an artifact stored before the
+// url and rune rules existed. Update revalidates every link, so without the
+// repair one legacy link would wedge the artifact's next update.
+func repairArtifactLinks(artifact *core.Artifact) *core.Artifact {
+	artifact.Links = core.RepairLinks(artifact.Links)
+	return artifact
 }
 
 // ArtifactPatch is a partial update to an artifact. A nil field is left
@@ -93,6 +112,7 @@ func (s *ArtifactService) Update(ctx context.Context, id core.ArtifactID, patch 
 	if err != nil {
 		return nil, err
 	}
+	repairArtifactLinks(artifact)
 	if patch.Title != nil {
 		artifact.Title = *patch.Title
 	}

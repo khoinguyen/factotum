@@ -99,7 +99,11 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 	send := &cobra.Command{
 		Use:   "send <address|ticket-id> [text]",
 		Short: "Send a message to an actor, run, or task",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: "Send a message to an actor, run, or task. The message is queued and claimed by a\n" +
+			"receiver; a target with no live run still succeeds (queued, exit 0) but warns on\n" +
+			"stderr, naming a lapsed run's last-seen time, so a script reads stdout and a human\n" +
+			"sees that the handoff is not delivered yet.",
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project := deps.resolveProject(sendProject)
 			if err := requireProject(cmd, project); err != nil {
@@ -142,7 +146,7 @@ func newMessageCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deps.warnStrandedTaskMessage(cmd.Context(), message)
+			deps.warnStrandedMessage(cmd.Context(), message)
 			result := messageSendResult{ID: string(message.ID), Sent: true, To: string(message.To), State: string(message.State), Project: string(message.ProjectID)}
 			return deps.emit(result, func() {
 				deps.printFields(f("message_id", message.ID), f("sent", true), f("to", message.To), f("state", message.State), f("project", message.ProjectID))
@@ -298,39 +302,66 @@ func messageRunEntryFrom(run *core.Run, now time.Time) messageRunEntry {
 	return entry
 }
 
-// warnStrandedTaskMessage warns when a ticket-addressed send fell back to a
-// mailbox no live run can claim. The message is not lost — it stays queued until
-// a receiver registers — but the sender would otherwise read `to:` as a delivery
-// to a working peer. A run-addressed send is already a specific session, and a
-// store failure here never fails a send that succeeded.
-func (d *Deps) warnStrandedTaskMessage(ctx context.Context, message *core.Message) {
-	if message.TaskID == nil {
-		return
-	}
+// warnStrandedMessage warns when a stored send has no live run that can claim it.
+// The message is not lost — it stays queued until a receiver registers — but
+// `to:` alone reads like delivery to a working peer, and that silence is how a
+// handoff sat queued for a day behind an agent whose terminal still looked alive
+// (t-kjs3aoxxx2). Every address kind is covered, because the peer a loop
+// actually addresses is `actor:<role>`, not a ticket: warning only for ticket
+// sugar left the common handoff with no signal at all. A target whose registered
+// run has lapsed also names when it was last seen, so a sender can tell a dead
+// session from an idle receiver that will claim again. The warning rides stderr
+// so stdout stays parseable and the command still succeeds: queuing is the
+// correct outcome, and a store failure here never fails a send that succeeded.
+func (d *Deps) warnStrandedMessage(ctx context.Context, message *core.Message) {
 	kind, id, err := core.ParseAddress(string(message.To))
-	if err != nil || kind == core.AddressRun {
+	if err != nil {
 		return
 	}
-	live := true
-	filter := store.RunFilter{ProjectID: message.ProjectID, Live: &live, Now: d.Clock.Now()}
+	now := d.Clock.Now()
+	filter := store.RunFilter{ProjectID: message.ProjectID, Now: now}
 	switch kind {
 	case core.AddressActor:
 		actor := core.ActorID(id)
 		filter.ActorID = &actor
 	case core.AddressTask:
-		filter.Task = message.TaskID
+		task := core.TicketID(id)
+		filter.Task = &task
+	case core.AddressRun:
+		// A run is addressed by id, which RunFilter does not express; the
+		// project's runs are read and matched below. A project's run set is one
+		// small read, and this runs once per send.
 	default:
 		return
 	}
 	runs, err := d.Messages.ListRuns(ctx, filter)
-	if err != nil || len(runs) > 0 {
+	if err != nil {
 		return
 	}
-	if kind == core.AddressActor {
-		d.warnf("no live run can claim actor:%s yet; the message stays queued until one registers (see ft msg runs --live)", id)
-		return
+	var lastSeen time.Time
+	for _, run := range runs {
+		if kind == core.AddressRun && run.ID != core.RunID(id) {
+			continue
+		}
+		if run.Live(now) {
+			return
+		}
+		if run.SeenAt.After(lastSeen) {
+			lastSeen = run.SeenAt
+		}
 	}
-	d.warnf("no live run is working task %s yet; the message stays queued for the run that registers with it (see ft msg runs --live)", id)
+	seen := ""
+	if !lastSeen.IsZero() {
+		seen = fmt.Sprintf(" (last seen %s)", lastSeen.UTC().Format(time.RFC3339))
+	}
+	switch kind {
+	case core.AddressActor:
+		d.warnf("no live run can claim actor:%s%s; the message stays queued until one registers (see ft msg runs)", id, seen)
+	case core.AddressTask:
+		d.warnf("no live run is working task %s%s; the message stays queued for the run that registers with it (see ft msg runs)", id, seen)
+	default:
+		d.warnf("no live run is registered as %s%s; the message stays queued for it (see ft msg runs)", message.To, seen)
+	}
 }
 
 // receiverFile is the receiver source filename both harnesses load from their

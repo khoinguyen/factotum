@@ -303,3 +303,65 @@ func TestHeartbeatRenewsLease(t *testing.T) {
 		t.Fatalf("HeartbeatRun(missing) error = %v, want ErrNotFound", err)
 	}
 }
+
+// TestQueuedHandoffSurvivesALapsedReceiverAndIsClaimedWhenItReturns pins the
+// incident behind t-kjs3aoxxx2 end to end at the hub: a receiver goes quiet (its
+// host unloaded the location, so it stops heartbeating), a handoff is sent to its
+// actor while no live run can claim it, and the message must still be there for
+// the same run when the receiver registers again. Nothing may claim it, escalate
+// its attempts, or drop it while it waits.
+func TestQueuedHandoffSurvivesALapsedReceiverAndIsClaimedWhenItReturns(t *testing.T) {
+	f := newMessageFixture(t)
+	ctx := context.Background()
+	actor := core.ActorID("act-reviewer")
+	f.addActor(t, actor, core.ActorAgent, "reviewer")
+	in := RegisterRunInput{ProjectID: "prj-1", ActorID: actor, Host: "h", PID: 1}
+
+	run, err := f.messages.RegisterRun(ctx, in)
+	if err != nil {
+		t.Fatalf("RegisterRun() error = %v", err)
+	}
+
+	// The receiver goes quiet: no heartbeats, so its lease lapses and the hub
+	// stops offering the actor as live.
+	f.clock.t = f.clock.t.Add(2 * DefaultRunTTL)
+	live := true
+	runs, err := f.messages.ListRuns(ctx, store.RunFilter{ProjectID: "prj-1", Live: &live, Now: f.clock.Now()})
+	if err != nil {
+		t.Fatalf("ListRuns(live) error = %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("live runs = %d, want 0 while the receiver is gone", len(runs))
+	}
+
+	message, err := f.messages.Send(ctx, SendMessageInput{ProjectID: "prj-1", Target: "actor:" + string(actor), Body: "please review"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if message.State != core.MessageQueued {
+		t.Fatalf("Send().State = %q, want queued", message.State)
+	}
+
+	// The host boots the location again and the receiver registers: the run id is
+	// stable, so it claims the handoff that queued while it was gone.
+	back, err := f.messages.RegisterRun(ctx, in)
+	if err != nil {
+		t.Fatalf("RegisterRun(again) error = %v", err)
+	}
+	if back.ID != run.ID {
+		t.Fatalf("RegisterRun(again).ID = %q, want the stable run %q", back.ID, run.ID)
+	}
+	claimed, err := f.messages.Claim(ctx, f.claimInput(run.ID, &actor, nil))
+	if err != nil {
+		t.Fatalf("Claim() error = %v", err)
+	}
+	if claimed.ID != message.ID {
+		t.Fatalf("Claim().ID = %q, want the queued handoff %q", claimed.ID, message.ID)
+	}
+	if claimed.Attempts != 1 {
+		t.Fatalf("Claim().Attempts = %d, want 1: a waiting handoff must not burn attempts", claimed.Attempts)
+	}
+	if err := f.messages.Ack(ctx, AckInput{ID: claimed.ID, RunID: run.ID, State: core.MessageRead}); err != nil {
+		t.Fatalf("Ack() error = %v", err)
+	}
+}

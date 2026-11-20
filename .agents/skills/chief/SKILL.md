@@ -113,6 +113,15 @@ resolve your own refs once and pass them explicitly.
   `loop-agent.sh`, and report the failure; never type into its terminal. **Do not use
   `set-buffer`/`paste-buffer`/`send-key` to message an agent**; keep
   `paste-buffer` only for input that genuinely needs a terminal.
+- **Read the channel, not the terminal.** `ft msg runs --live` is the only evidence a peer is
+  claiming; an open TUI says nothing. OpenCode V2 unloads a location's services after 60 minutes
+  without session activity (`experimental.location_idle_timeout`), which tears the receiver down
+  while the pane still looks alive: the peer drops out of `--live`, a handoff to it is queued, and
+  the receiver comes back on its own when a client request boots the location. `ft msg send` now
+  warns on stderr when its target has no live run, naming the run's last-seen time — so a terse
+  `sent: true` with no warning means a live run exists and will claim it, and a warning means the
+  message is queued, not delivered. Do not relaunch solely because a peer is absent from `--live`
+  after a long idle; check `ft msg runs` (without `--live`) for its last seen time first.
 - Waking: the ft msg receiver wakes an idle peer at its next poll, exactly as `cmux agent message`
   did. You wake them the same way; do not poll after sending.
 - **Never poll `ft msg inbox` in a loop.** The receiver delivers each message to you as it arrives;
@@ -205,6 +214,10 @@ with `cmux workspace-group list --json` and the active window with `cmux identif
      role, so each agent is addressable as `actor:<role>` without a cmux target. It runs OpenCode
      on a private `--standalone` server (so the receiver's `FACTOTUM_*` env is not lost to V2's
      shared background service) with `--prompt` (its positional arg is a project path) and `--auto`.
+     It also disables OpenCode's idle location unload for that launch (a per-launch config layer
+     with `experimental.location_idle_timeout: false`), so an agent that sits idle for hours keeps
+     its receiver claiming instead of dropping out of `ft msg runs --live` — unless the caller
+     already supplied an `OPENCODE_CONFIG`/`OPENCODE_CONFIG_CONTENT`, which the wrapper leaves alone.
 4. **Wire them** over `ft msg`: `ft msg send actor:builder-<t> -b "<kickoff>"` and
    `ft msg send actor:reviewer-<t> -b "<kickoff>"`. Always use the canonical `actor:<role>` address
    (a bare role is accepted as sugar but resolves less predictably). Tell each

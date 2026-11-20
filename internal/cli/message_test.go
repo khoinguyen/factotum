@@ -642,3 +642,64 @@ func TestMessageSendWarnsWhenTicketResolvesToMailboxWithoutLiveRun(t *testing.T)
 		t.Fatalf("send stderr:\n%s\nwant no warning once a live run can claim the mailbox", stderr)
 	}
 }
+
+// TestMessageSendWarnsWhenActorAddressHasNoLiveRun pins the send-time signal for
+// the peer a loop actually addresses: a handoff goes to actor:<role>, not to a
+// ticket, and a dead receiver used to swallow it in silence. The send still
+// succeeds (the message is queued, not lost), so the warning rides stderr and
+// stdout stays parseable for scripts.
+func TestMessageSendWarnsWhenActorAddressHasNoLiveRun(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	actorID := firstField(t, r.run("actor", "create", "reviewer", "--kind", "agent"))
+
+	stdout, stderr := r.runSplit("msg", "send", "actor:"+actorID, "please review", "--project", projectID)
+	if !strings.Contains(stdout, "to: actor:"+actorID) || !strings.Contains(stdout, "sent: true") {
+		t.Fatalf("send should still store the message:\n%s", stdout)
+	}
+	for _, want := range []string{"no live run", "actor:" + actorID, "ft msg runs"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("send stderr:\n%s\nwant %q so the sender can see the receiver is gone", stderr, want)
+		}
+	}
+
+	// A live receiver for the actor silences the warning.
+	runJSON(t, r, "msg", "agent", "register", "--actor", actorID, "--project", projectID)
+	_, stderr = r.runSplit("msg", "send", "actor:"+actorID, "again", "--project", projectID)
+	if strings.Contains(stderr, "no live run") {
+		t.Fatalf("send stderr:\n%s\nwant no warning once the actor has a live run", stderr)
+	}
+}
+
+// TestMessageSendWarnsWithLastSeenWhenLeaseLapsed pins the difference between a
+// peer that never registered and one whose receiver stopped: a lapsed run is
+// named with the time it was last seen, so a sender can tell a dead session from
+// an idle one whose process may still be up, without polling.
+func TestMessageSendWarnsWithLastSeenWhenLeaseLapsed(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	actorID := firstField(t, r.run("actor", "create", "reviewer", "--kind", "agent"))
+	// A lease that is over by the time the send reads it: the run is registered,
+	// so its last-seen time is known, but nothing can claim right now.
+	runJSON(t, r, "msg", "agent", "register", "--actor", actorID, "--project", projectID, "--ttl", "1ns")
+
+	_, stderr := r.runSplit("msg", "send", "actor:"+actorID, "hand off", "--project", projectID)
+	for _, want := range []string{"no live run", "actor:" + actorID, "last seen"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("send stderr:\n%s\nwant %q for a lapsed run", stderr, want)
+		}
+	}
+}
+
+// TestMessageSendWarnsWhenRunAddressHasNoLiveRun pins the explicit run target:
+// a peer that addresses run:<id> after that session died would otherwise queue
+// the message for a run that will never claim it.
+func TestMessageSendWarnsWhenRunAddressHasNoLiveRun(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+
+	_, stderr := r.runSplit("msg", "send", "run:run-doesnotexist", "hello", "--project", projectID)
+	if !strings.Contains(stderr, "no live run") || !strings.Contains(stderr, "run-doesnotexist") {
+		t.Fatalf("send stderr:\n%s\nwant a warning naming the dead run", stderr)
+	}
+}

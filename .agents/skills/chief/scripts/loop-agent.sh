@@ -104,6 +104,31 @@ fi
 # agent is unreachable over ft msg.
 "$ft_bin" msg install --harness opencode2 >/dev/null
 
+# Keep this agent's OpenCode location loaded, so its receiver keeps claiming.
+# OpenCode V2 unloads a location's services ("location services evicted") after
+# `experimental.location_idle_timeout` - 60 minutes by default - with no session
+# activity, and that tears the ft msg receiver down while the terminal still
+# looks alive: the agent drops out of `ft msg runs --live`, and a handoff to it
+# queues until some client request boots the location again (observed for ~18h
+# on 2026-11-17/18, task t-kjs3aoxxx2). A loop agent exists to be reachable, so
+# its own server gets an extra config layer that disables the unload; verified on
+# 2.3.2 (a 1-minute project setting is overridden by this layer, and a location
+# stayed loaded for 37 minutes). The layer is per launch and applies to this
+# server only, so the user's own sessions keep the default. A caller that already
+# set an OpenCode config layer is left alone: merging arbitrary JSON here would
+# be guesswork, and the agent then runs with the default idle unload.
+#
+# The notice is one line on stderr either way, so an operator who sees the agent
+# still up after hours knows whether its location was kept loaded or not, and
+# why. Nothing global is touched: the layer is an environment variable for this
+# launch only, and no OpenCode config file is written.
+if [ -z "${OPENCODE_CONFIG:-}" ] && [ -z "${OPENCODE_CONFIG_CONTENT:-}" ]; then
+  export OPENCODE_CONFIG_CONTENT='{"experimental":{"location_idle_timeout":false}}'
+  echo "loop-agent: keeping this agent's OpenCode location loaded (experimental.location_idle_timeout=false) so its ft msg receiver keeps claiming while it idles; the user's own sessions keep the default" >&2
+else
+  echo "loop-agent: an OpenCode config layer is already set, so this launch keeps the default idle unload: after ~60 idle minutes its ft msg receiver drops out of 'ft msg runs --live' until the location is woken" >&2
+fi
+
 export FACTOTUM_PROJECT="$project"
 export FACTOTUM_ACTOR="$actor"
 # The agent's `ft msg send` defaults --from to the configured actor, so a peer's

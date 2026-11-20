@@ -17,7 +17,8 @@ trap 'rm -rf "$tmp"' EXIT
 # mask a regression, so clear them; the script must supply both itself. FT_BIN
 # and the FACTOTUM_* identity vars are cleared for the same reason.
 unset FT_BIN OPENCODE_BIN FACTOTUM_HARNESS FACTOTUM_SESSION \
-  FACTOTUM_PROJECT FACTOTUM_ACTOR FACTOTUM_TASK_ID FACTOTUM_DEFAULT_ACTOR
+  FACTOTUM_PROJECT FACTOTUM_ACTOR FACTOTUM_TASK_ID FACTOTUM_DEFAULT_ACTOR \
+  OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT
 
 export FT_STUB_LOG="$tmp/ft.log"
 export OPENCODE_STUB_LOG="$tmp/opencode.log"
@@ -57,6 +58,7 @@ esac
   printf 'cwd=%s\n' "$PWD"
   printf 'project=%s actor=%s task=%s default=%s session=%s harness=%s\n' \
     "${FACTOTUM_PROJECT:-}" "${FACTOTUM_ACTOR:-}" "${FACTOTUM_TASK_ID:-}" "${FACTOTUM_DEFAULT_ACTOR:-}" "${FACTOTUM_SESSION:-}" "${FACTOTUM_HARNESS:-}"
+  printf 'config=%s content=%s\n' "${OPENCODE_CONFIG:-}" "${OPENCODE_CONFIG_CONTENT:-}"
   printf 'argv=%s\n' "$*"
 } >>"$OPENCODE_STUB_LOG"
 exit 0
@@ -70,7 +72,7 @@ pass=0
 # Task-scoped role: installs the receiver, exports actor+task env, runs in the
 # worktree, and forwards the prompt.
 : >"$FT_STUB_LOG"; : >"$OPENCODE_STUB_LOG"
-"$script" builder-t-1 factotum t-1 "$tmp/worktree" "you are builder-t-1" >/dev/null
+"$script" builder-t-1 factotum t-1 "$tmp/worktree" "you are builder-t-1" >/dev/null 2>&1
 if grep -q "msg install --harness opencode2" "$FT_STUB_LOG"; then pass=$((pass+1)); else
   echo "FAIL builder: did not install the V2 receiver: $(cat "$FT_STUB_LOG")"; fail=$((fail+1)); fi
 if grep -q "cwd=$tmp/worktree" "$OPENCODE_STUB_LOG" \
@@ -88,10 +90,40 @@ if grep -q "harness=opencode2" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
 if grep -q -- "--standalone" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
   echo "FAIL builder: launch must use a private server (--standalone): $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
 
+# The launch must keep its OpenCode location loaded. V2 unloads a location's
+# services after an idle window (60 minutes by default), taking the ft msg
+# receiver with it while the TUI still looks alive, so the pair goes dark and a
+# handoff queues (t-kjs3aoxxx2). The script supplies an extra config layer that
+# disables the unload; it is per launch, so the user's own sessions keep it.
+if grep -q 'content=.*"location_idle_timeout":false' "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL builder: launch must keep its location loaded: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
+# An operator reading the launch output must see that the unload was disabled and
+# why, in one line, without having to know the config key.
+: >"$OPENCODE_STUB_LOG"
+notice="$("$script" builder-t-5 factotum t-5 "$tmp/worktree" "you are builder-t-5" 2>&1 >/dev/null)"
+if [ "$(printf '%s\n' "$notice" | grep -c .)" -eq 1 ] && printf '%s' "$notice" | grep -q "location loaded" \
+  && printf '%s' "$notice" | grep -q "location_idle_timeout" \
+  && printf '%s' "$notice" | grep -q "receiver keeps claiming"; then pass=$((pass+1)); else
+  echo "FAIL builder: launch must say once that the idle unload is disabled and why: $notice"; fail=$((fail+1)); fi
+
+# A caller's own OpenCode config layer is never replaced: the script cannot merge
+# arbitrary JSON, so it leaves the layer alone and the agent keeps the default
+# idle unload rather than losing whatever the caller configured.
+: >"$OPENCODE_STUB_LOG"
+notice="$(OPENCODE_CONFIG_CONTENT='{"model":"mine"}' "$script" builder-t-3 factotum t-3 "$tmp/worktree" "you are builder-t-3" 2>&1 >/dev/null)"
+if grep -q 'content={"model":"mine"}' "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL builder: a caller's OPENCODE_CONFIG_CONTENT must be preserved: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
+if printf '%s' "$notice" | grep -q "default idle unload"; then pass=$((pass+1)); else
+  echo "FAIL builder: a caller-set layer must be reported as keeping the default idle unload: $notice"; fail=$((fail+1)); fi
+: >"$OPENCODE_STUB_LOG"
+OPENCODE_CONFIG=/tmp/mine.json "$script" builder-t-4 factotum t-4 "$tmp/worktree" "you are builder-t-4" >/dev/null 2>&1
+if grep -q 'config=/tmp/mine.json content=$' "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
+  echo "FAIL builder: a caller's OPENCODE_CONFIG must be preserved and not shadowed: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
+
 # The chief has no task: FACTOTUM_TASK_ID must not leak in. A chief launch also
 # mints a session id, records its start, and exports FACTOTUM_SESSION.
 : >"$FT_STUB_LOG"; : >"$OPENCODE_STUB_LOG"
-"$script" chief factotum - "$tmp/worktree" "you are chief" >/dev/null
+"$script" chief factotum - "$tmp/worktree" "you are chief" >/dev/null 2>&1
 if grep -q "project=factotum actor=chief task= default=chief session=sid-test" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
   echo "FAIL chief: task should be unset and session exported: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
 if grep -q "session start --project factotum" "$FT_STUB_LOG"; then pass=$((pass+1)); else
@@ -99,7 +131,7 @@ if grep -q "session start --project factotum" "$FT_STUB_LOG"; then pass=$((pass+
 
 # A subagent inherits the chief's session from the environment.
 : >"$FT_STUB_LOG"; : >"$OPENCODE_STUB_LOG"
-FACTOTUM_SESSION=sid-inherit "$script" builder-t-2 factotum t-2 "$tmp/worktree" "you are builder-t-2" >/dev/null
+FACTOTUM_SESSION=sid-inherit "$script" builder-t-2 factotum t-2 "$tmp/worktree" "you are builder-t-2" >/dev/null 2>&1
 if grep -q "actor=builder-t-2 task=t-2 default=builder-t-2 session=sid-inherit" "$OPENCODE_STUB_LOG"; then pass=$((pass+1)); else
   echo "FAIL builder: did not inherit FACTOTUM_SESSION: $(cat "$OPENCODE_STUB_LOG")"; fail=$((fail+1)); fi
 if grep -q "session start" "$FT_STUB_LOG"; then
@@ -152,19 +184,28 @@ run_guard() {
   set -e
 }
 
-# No instance: the service is not running, so there is nothing to report and the
+# only_layer_notice <text>: true when the launch's whole stderr is the one
+# expected line saying this agent's location was kept loaded. It is stricter
+# than an empty-output check: the notice is now always printed, and a guard that
+# adds anything on top still fails.
+only_layer_notice() {
+  [ "$(printf '%s\n' "$1" | grep -c .)" -eq 1 ] \
+    && printf '%s' "$1" | grep -q "keeping this agent's OpenCode location loaded"
+}
+
+# No instance: the service is not running, so there is no directory note and the
 # launch goes ahead without even asking for locations.
 run_guard "$tmp/status-stopped" "$tmp/loc-self"
-if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ] && [ -z "$out" ]; then pass=$((pass+1)); else
-  echo "FAIL note: stopped service should launch quietly (rc=$rc): $out"; fail=$((fail+1)); fi
+if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ] && only_layer_notice "$out"; then pass=$((pass+1)); else
+  echo "FAIL note: stopped service should launch with only the layer notice (rc=$rc): $out"; fail=$((fail+1)); fi
 if grep -q "debug.location.list" "$OPENCODE_PROBE_LOG"; then
   echo "FAIL note: should not list locations when the service is stopped: $(cat "$OPENCODE_PROBE_LOG")"; fail=$((fail+1));
 else pass=$((pass+1)); fi
 
 # A live service that owns *other* directories is the normal loop case: launch,
-# stage the receiver, and say nothing.
+# stage the receiver, and add no directory note.
 run_guard "$tmp/status-live" "$tmp/loc-other"
-if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ] && [ -z "$out" ]; then pass=$((pass+1)); else
+if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ] && only_layer_notice "$out"; then pass=$((pass+1)); else
   echo "FAIL note: another directory's instance must not block or warn (rc=$rc): $out"; fail=$((fail+1)); fi
 if grep -q "msg install --harness opencode2" "$FT_STUB_LOG"; then pass=$((pass+1)); else
   echo "FAIL note: receiver not staged before launch: $(cat "$FT_STUB_LOG")"; fail=$((fail+1)); fi
@@ -200,10 +241,10 @@ for probe in broken-service failing-api garbled-answer; do
     failing-api) run_guard "$tmp/status-live" "$tmp/loc-self" API_EXIT=2 ;;
     garbled-answer) run_guard "$tmp/status-live" "$tmp/loc-garbage" ;;
   esac
-  if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ] && ! printf '%s' "$out" | grep -q "note:"; then
+  if [ "$rc" -eq 0 ] && [ -s "$OPENCODE_STUB_LOG" ] && only_layer_notice "$out"; then
     pass=$((pass+1))
   else
-    echo "FAIL note/$probe: probe trouble must launch quietly (rc=$rc): $out"; fail=$((fail+1))
+    echo "FAIL note/$probe: probe trouble must launch with only the layer notice (rc=$rc): $out"; fail=$((fail+1))
   fi
 done
 

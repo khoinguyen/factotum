@@ -79,3 +79,26 @@ func runJSON(t *testing.T, r *runner, args ...string) map[string]any {
 	}
 	return decoded
 }
+
+// TestMessageSendIsSilentForLiveRunAddress pins the other side of the run-target
+// warning: a live run is claimable, so addressing it must not warn. The warning
+// is what tells a sender its handoff is stranded; crying wolf on a healthy run
+// would make it worthless.
+func TestMessageSendIsSilentForLiveRunAddress(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	actorID := firstField(t, r.run("actor", "create", "reviewer", "--kind", "agent"))
+	registered := runJSON(t, r, "msg", "agent", "register", "--actor", actorID, "--project", projectID)
+	runID, _ := registered["run_id"].(string)
+	if runID == "" {
+		t.Fatalf("register returned no run_id: %v", registered)
+	}
+
+	stdout, stderr := r.runSplit("msg", "send", "run:"+runID, "hand off", "--project", projectID)
+	if !strings.Contains(stdout, "to: run:"+runID) || !strings.Contains(stdout, "sent: true") {
+		t.Fatalf("send should store the message for the live run:\n%s", stdout)
+	}
+	if strings.Contains(stderr, "no live run") {
+		t.Fatalf("send stderr:\n%s\nwant no warning for a live run target", stderr)
+	}
+}

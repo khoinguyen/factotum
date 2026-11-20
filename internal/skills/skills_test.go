@@ -70,13 +70,17 @@ func TestFTSkillStatesWorkspaceXOR(t *testing.T) {
 // on: a run in `ft msg runs --live` is one renewing its lease by claiming, so a
 // receiver that stops claiming drops out and says why in one stall line. Without
 // it a chief reads an absent peer as idle instead of stalled and keeps waiting
-// on a handoff that can never land.
+// on a handoff that can never land. It also pins the one absence that is the
+// host's rather than the receiver's: OpenCode V2 unloads an idle location and
+// takes the receiver with it, so a chief must read the queued handoff as queued
+// and look at `ft msg runs` for the last seen time instead of relaunching a peer
+// whose terminal is still up.
 func TestFTSkillStatesLiveRunMeansClaiming(t *testing.T) {
 	skill, err := Get("ft")
 	if err != nil {
 		t.Fatalf("Get(ft) error = %v", err)
 	}
-	for _, want := range []string{"only a receiver that is actually claiming renews its lease", "stall line", "treat a missing peer as stalled, not idle", "read its log for the reason"} {
+	for _, want := range []string{"only a receiver that is actually claiming renews its lease", "stall line", "treat a missing peer as stalled, not idle", "read its log for the reason", "unloads a location's services", "queued, not delivered"} {
 		if !strings.Contains(skill.Body, want) {
 			t.Errorf("ft skill does not state the live-lease rule: missing %q", want)
 		}

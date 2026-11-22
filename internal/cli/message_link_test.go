@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -142,6 +144,45 @@ func TestMessageSendLinkTitleRoundTrips(t *testing.T) {
 	firstEntry, _ := entryLinks[0].(map[string]any)
 	if firstEntry["title"] != "Design doc" {
 		t.Fatalf("inbox lost the title: %v", entryLinks)
+	}
+}
+
+// TestMessageGetDropsLegacyBlankLinkTitle proves the text block never prints a
+// dangling " - ". A title of only spaces is blank by the current rule but
+// carries no refused rune, so only the repair that drops an all-whitespace
+// title clears it; every text surface then takes the untitled line, and read
+// persists the repair.
+func TestMessageGetDropsLegacyBlankLinkTitle(t *testing.T) {
+	r := newRunner(t)
+	projectID := firstField(t, r.run("project", "create", "Acme"))
+	messageID := firstField(t, r.run("msg", "send", "actor:linker", "see the doc", "--project", projectID,
+		"--link", "doc=https://example.invalid/spec title=Design doc"))
+
+	data, err := os.ReadFile(r.path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	legacy := bytes.Replace(data, []byte(`"Design doc"`), []byte(`"   "`), 1)
+	if bytes.Equal(legacy, data) {
+		t.Fatal("fixture did not rewrite the stored title")
+	}
+	if err := os.WriteFile(r.path, legacy, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	wantBlock := "\n=== Links ===\n[doc] https://example.invalid/spec\n"
+	if got := r.run("msg", "get", messageID); !strings.Contains(got, wantBlock) {
+		t.Fatalf("get should drop a blank legacy title rather than print a dangling \" - \":\n%s", got)
+	}
+	read := r.run("msg", "read", messageID)
+	if !strings.Contains(read, wantBlock) {
+		t.Fatalf("read should print the same dropped title:\n%s", read)
+	}
+	if strings.Contains(read, " - \n") {
+		t.Fatalf("read printed a dangling \" - \":\n%s", read)
+	}
+	if got := r.run("msg", "get", messageID); !strings.Contains(got, wantBlock) {
+		t.Fatalf("read should persist the dropped title:\n%s", got)
 	}
 }
 

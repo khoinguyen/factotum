@@ -404,6 +404,11 @@ func decodeMessage(data string) (*core.Message, error) {
 	if err := json.Unmarshal([]byte(data), &message); err != nil {
 		return nil, fmt.Errorf("decode message: %w", err)
 	}
+	// Ack, Nack, and the lease sweep revalidate a row on Update, so a message
+	// written before the link rules existed would wedge there. Repair as it
+	// decodes, as jsondir does, so a blank legacy title is dropped before the
+	// next write instead of failing it.
+	message.Links = core.RepairLinks(message.Links)
 	return &message, nil
 }
 

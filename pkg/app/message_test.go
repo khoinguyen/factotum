@@ -638,3 +638,64 @@ func TestMessageReadRepairsLegacyLink(t *testing.T) {
 		t.Fatalf("stored title = %q, want Read to persist the repair", stored.Links[0].Title)
 	}
 }
+
+// TestMessageReadRepairsLegacyBlankLinkTitle proves a title that is only
+// whitespace is repaired too. It carries no refused rune, so the rune repair
+// alone returns it unchanged, while Link.Validate calls it blank - and every
+// backend revalidates a message on Update, so a queued row stored by an older
+// ft would never reach read. The title is dropped (an untitled link is legal),
+// which also keeps the printed link off a dangling " - ".
+func TestMessageReadRepairsLegacyBlankLinkTitle(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "factotum.json")
+	clock := &stepClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	ids := &seqIDs{}
+
+	backend := legacyStore(t, ctx, path)
+	if err := backend.Projects().Create(ctx, &core.Project{ID: "prj-1", Name: "Acme", Policy: core.DefaultResolutionPolicy()}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	messages := NewMessageService(backend, clock, ids)
+	message, err := messages.Send(ctx, SendMessageInput{
+		ProjectID: "prj-1",
+		Target:    "actor:bob",
+		Body:      "see the doc",
+		Links:     []core.Link{{Kind: core.LinkDoc, URL: "https://example.invalid/spec", Title: "Design doc"}},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	rewriteStore(t, path, `"Design doc"`, `"   "`)
+
+	backend = legacyStore(t, ctx, path)
+	t.Cleanup(func() { _ = backend.Close() })
+	clock.t = clock.t.Add(time.Minute)
+	messages = NewMessageService(backend, clock, ids)
+
+	got, err := messages.Get(ctx, message.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.Links[0].Title != "" {
+		t.Fatalf("Get() title = %q, want the blank title dropped", got.Links[0].Title)
+	}
+
+	read, err := messages.Read(ctx, message.ID)
+	if err != nil {
+		t.Fatalf("Read() error = %v; a blank legacy title must not wedge the read", err)
+	}
+	if read.State != core.MessageRead || read.Links[0].Title != "" {
+		t.Fatalf("Read() = %+v, want read with the blank title dropped", read)
+	}
+	stored, err := backend.Messages().Get(ctx, message.ID)
+	if err != nil {
+		t.Fatalf("Get(stored) error = %v", err)
+	}
+	if stored.Links[0].Title != "" {
+		t.Fatalf("stored title = %q, want Read to persist the dropped title", stored.Links[0].Title)
+	}
+}

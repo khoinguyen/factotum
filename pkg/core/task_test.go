@@ -406,6 +406,16 @@ func TestRepairLinks(t *testing.T) {
 			want: Link{Kind: LinkDoc, URL: "https://example.com/doc"},
 		},
 		{
+			name: "title of only spaces is dropped",
+			link: Link{Kind: LinkDoc, URL: "https://example.com/doc", Title: "   "},
+			want: Link{Kind: LinkDoc, URL: "https://example.com/doc"},
+		},
+		{
+			name: "title with surrounding spaces is kept",
+			link: Link{Kind: LinkDoc, URL: "https://example.com/doc", Title: " Design doc "},
+			want: Link{Kind: LinkDoc, URL: "https://example.com/doc", Title: " Design doc "},
+		},
+		{
 			name: "newline in url is percent-encoded",
 			link: Link{Kind: LinkDoc, URL: "https://example.com/a\nb"},
 			want: Link{Kind: LinkDoc, URL: "https://example.com/a%0Ab"},

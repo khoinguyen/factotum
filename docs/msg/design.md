@@ -614,8 +614,9 @@ either — so the block cannot forge a section; the CLI parses through `core.Lin
 rejects exactly the links the HTTP path rejects. A message stored by an older ft can still carry
 one: every backend revalidates a message on `Update`, so rather than wedge it, `MessageService`
 repairs the link on the way out (a refused rune becomes a space in a title, is percent-encoded in a
-url, and a title left blank is dropped). A `read` that moves a queued row persists the repair; a
-delivered row its run acks keeps the stored bytes, though no surface renders them. A ticket's note
+url, and a title blank after trimming is dropped). A `read` that moves a queued row persists the
+repair, and so does an ack on a backend that revalidates on write (`jsondir`, `sqlite`); `jsonfile`
+keeps the stored bytes on ack, though no surface renders them. A ticket's note
 links and an artifact's links take the same repair: the app services repair them where they
 revalidate, and `jsondir` repairs them as it decodes, because it validates on decode. `get`, `read`, `inbox`, and the `agent claim` wire all
 carry the same `links` array, and a linkless message omits it (no empty section, no empty key). The

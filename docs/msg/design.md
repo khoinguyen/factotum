@@ -568,7 +568,10 @@ long-poll claim, inject as a user turn, ack.
   inert instead of registering against the wrong store. The record is per location, so a location hosts one agent — the loop
   gives every agent its own directory.
 - `ft run`'s opencode harness injects at launch when the run itself is the reason the session
-  exists (it passes the initial message, and the plugin claims the rest).
+  exists (it passes the initial message, and the plugin claims the rest). A V2 run's private
+  server also carries a per-launch config layer with `experimental.location_idle_timeout: false`,
+  so an idle location does not evict the receiver; the layer rides the run's environment alone, and
+  a caller-set `OPENCODE_CONFIG`/`OPENCODE_CONFIG_CONTENT` wins over it.
 - **`ft` must be reachable where the receiver runs.** With the local transport the plugin shells
   out to `FACTOTUM_BIN` (default `ft`), so a sandboxed or containerized harness image must ship
   `ft` on PATH, or the run must stage a binary and set `FACTOTUM_BIN` to its path in the

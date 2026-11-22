@@ -9,7 +9,9 @@
 // the prompt as the final positional) or, for an interactive request, the
 // terminal-attached TUI invocation; Result parses the agent's output. V2
 // launches on its own private server in both modes, so the receiver plugin it
-// loads inherits the run's environment.
+// loads inherits the run's environment. That server also carries a per-launch
+// config layer disabling OpenCode V2's idle location unload, which would evict
+// the plugin after an hour of session inactivity.
 //
 // The model and its credentials are never hardcoded. The model comes from the
 // configured provider (Options.Model, overridden by Request.Model) and is passed
@@ -198,6 +200,21 @@ const (
 // nothing to execute.
 var ErrNoPrompt = errors.New("harness/opencode: no prompt")
 
+// The two ways a caller hands OpenCode a config layer for one launch. Either one
+// set in the environment replaces the launch's own layer, so both are treated as
+// the caller's say.
+const (
+	envConfig        = "OPENCODE_CONFIG"
+	envConfigContent = "OPENCODE_CONFIG_CONTENT"
+)
+
+// idleLocationLayer is the config layer a V2 private server receives so OpenCode
+// does not evict the location's services - the ft msg receiver plugin among
+// them - after experimental.location_idle_timeout without session activity (60
+// minutes by default). The evicted TUI survives, but the receiver stops claiming
+// and the run drops out of `ft msg runs --live` while a handoff sits queued.
+const idleLocationLayer = `{"experimental":{"location_idle_timeout":false}}`
+
 // Options configures the harness. The zero value is usable: it targets the
 // default image and the `opencode` binary on PATH.
 type Options struct {
@@ -278,7 +295,7 @@ func (h *Harness) Spec(req harness.Request) (isolation.Spec, error) {
 			User: h.user,
 		},
 		Workdir: req.Workdir,
-		Env:     clone(req.Env),
+		Env:     h.launchEnv(req),
 		Labels:  req.Labels,
 	}
 	// When the run carries receiver configuration, stage the ft msg plugin so
@@ -333,7 +350,7 @@ func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 
 		return isolation.Command{
 			Argv:    argv,
-			Env:     clone(req.Env),
+			Env:     h.launchEnv(req),
 			Workdir: req.Workdir,
 			TTY:     true,
 		}, nil
@@ -351,7 +368,7 @@ func (h *Harness) Command(req harness.Request) (isolation.Command, error) {
 
 	return isolation.Command{
 		Argv:    argv,
-		Env:     clone(req.Env),
+		Env:     h.launchEnv(req),
 		Workdir: req.Workdir,
 	}, nil
 }
@@ -367,6 +384,28 @@ func (h *Harness) appendStandalone(argv []string) []string {
 		argv = append(argv, "--standalone")
 	}
 	return argv
+}
+
+// launchEnv returns the environment the launch needs: the run's own environment
+// plus, for a V2 private server, the layer that keeps the location loaded. The
+// layer is a whole config document set on the launch's environment only, so it
+// never touches an OpenCode config file and the user's own sessions keep the
+// default idle unload.
+//
+// A caller that already set OPENCODE_CONFIG or OPENCODE_CONFIG_CONTENT wins:
+// merging arbitrary caller JSON here would be guesswork, and replacing it could
+// drop the caller's own settings. Such a launch keeps the default idle unload,
+// exactly as a caller-set layer does for a loop agent.
+func (h *Harness) launchEnv(req harness.Request) map[string]string {
+	env := clone(req.Env)
+	if !h.standalone {
+		return env
+	}
+	if env[envConfig] != "" || env[envConfigContent] != "" {
+		return env
+	}
+	env[envConfigContent] = idleLocationLayer
+	return env
 }
 
 // Result parses the agent's stdout: it trims surrounding whitespace and returns

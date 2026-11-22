@@ -63,8 +63,11 @@ func TestTaskSetRepairsLegacyNoteLink(t *testing.T) {
 		t.Fatalf("Add() error = %v", err)
 	}
 	if _, err := tasks.AddNote(ctx, task.ID, NoteInput{
-		Body:  "legacy",
-		Links: []core.Link{{Kind: core.LinkDoc, URL: "https://example.invalid/spec"}},
+		Body: "legacy",
+		Links: []core.Link{
+			{Kind: core.LinkDoc, URL: "https://example.invalid/spec"},
+			{Kind: core.LinkDoc, URL: "https://example.invalid/design", Title: "Design doc"},
+		},
 	}); err != nil {
 		t.Fatalf("AddNote() error = %v", err)
 	}
@@ -74,6 +77,8 @@ func TestTaskSetRepairsLegacyNoteLink(t *testing.T) {
 
 	// A literal tab in a url was accepted on main; the current rule refuses it.
 	rewriteStore(t, path, `"https://example.invalid/spec"`, `"https://example.invalid/a\tb"`)
+	// So was a title of only spaces, which is blank by the current rule.
+	rewriteStore(t, path, `"Design doc"`, `"   "`)
 
 	backend = legacyStore(t, ctx, path)
 	t.Cleanup(func() { _ = backend.Close() })
@@ -88,6 +93,9 @@ func TestTaskSetRepairsLegacyNoteLink(t *testing.T) {
 	if got.Notes[0].Links[0].URL != repaired {
 		t.Fatalf("Get() url = %q, want the repaired %q", got.Notes[0].Links[0].URL, repaired)
 	}
+	if got.Notes[0].Links[1].Title != "" {
+		t.Fatalf("Get() title = %q, want the blank title dropped", got.Notes[0].Links[1].Title)
+	}
 
 	updated, err := tasks.SetStatus(ctx, task.ID, core.StatusInProgress)
 	if err != nil {
@@ -96,12 +104,18 @@ func TestTaskSetRepairsLegacyNoteLink(t *testing.T) {
 	if updated.Status != core.StatusInProgress || updated.Notes[0].Links[0].URL != repaired {
 		t.Fatalf("SetStatus() = %+v, want in_progress with the repaired note link", updated)
 	}
+	if updated.Notes[0].Links[1].Title != "" {
+		t.Fatalf("SetStatus() title = %q, want the blank title dropped", updated.Notes[0].Links[1].Title)
+	}
 	stored, err := backend.Tickets().Get(ctx, task.ID)
 	if err != nil {
 		t.Fatalf("Get(stored) error = %v", err)
 	}
 	if stored.Notes[0].Links[0].URL != repaired {
 		t.Fatalf("stored url = %q, want SetStatus to persist the repair", stored.Notes[0].Links[0].URL)
+	}
+	if stored.Notes[0].Links[1].Title != "" {
+		t.Fatalf("stored title = %q, want SetStatus to persist the dropped title", stored.Notes[0].Links[1].Title)
 	}
 }
 
@@ -122,7 +136,10 @@ func TestArtifactUpdateRepairsLegacyLink(t *testing.T) {
 		ProjectID: "prj-1",
 		Kind:      core.ArtifactDoc,
 		Title:     "spec",
-		Links:     []core.Link{{Kind: core.LinkDoc, URL: "https://example.invalid/spec"}},
+		Links: []core.Link{
+			{Kind: core.LinkDoc, URL: "https://example.invalid/spec"},
+			{Kind: core.LinkDoc, URL: "https://example.invalid/design", Title: "Design doc"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
@@ -132,6 +149,7 @@ func TestArtifactUpdateRepairsLegacyLink(t *testing.T) {
 	}
 
 	rewriteStore(t, path, `"https://example.invalid/spec"`, `"https://example.invalid/a\nb"`)
+	rewriteStore(t, path, `"Design doc"`, `"   "`)
 
 	backend = legacyStore(t, ctx, path)
 	t.Cleanup(func() { _ = backend.Close() })
@@ -146,6 +164,9 @@ func TestArtifactUpdateRepairsLegacyLink(t *testing.T) {
 	if got.Links[0].URL != repaired {
 		t.Fatalf("Get() url = %q, want the repaired %q", got.Links[0].URL, repaired)
 	}
+	if got.Links[1].Title != "" {
+		t.Fatalf("Get() title = %q, want the blank title dropped", got.Links[1].Title)
+	}
 
 	title := "spec v2"
 	updated, err := artifacts.Update(ctx, artifact.ID, ArtifactPatch{Title: &title})
@@ -155,11 +176,17 @@ func TestArtifactUpdateRepairsLegacyLink(t *testing.T) {
 	if updated.Title != title || updated.Links[0].URL != repaired {
 		t.Fatalf("Update() = %+v, want the new title and the repaired link", updated)
 	}
+	if updated.Links[1].Title != "" {
+		t.Fatalf("Update() title = %q, want the blank title dropped", updated.Links[1].Title)
+	}
 	stored, err := backend.Artifacts().Get(ctx, artifact.ID)
 	if err != nil {
 		t.Fatalf("Get(stored) error = %v", err)
 	}
 	if stored.Links[0].URL != repaired {
 		t.Fatalf("stored url = %q, want Update to persist the repair", stored.Links[0].URL)
+	}
+	if stored.Links[1].Title != "" {
+		t.Fatalf("stored title = %q, want Update to persist the dropped title", stored.Links[1].Title)
 	}
 }

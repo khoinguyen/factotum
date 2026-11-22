@@ -180,8 +180,9 @@ func notSingleLine(r rune) bool {
 // refused these runes. Every backend revalidates on Update, so such a row could
 // otherwise never transition to read; the message service repairs it on the way
 // out and Read persists the repair. A refused rune becomes a space in a title
-// (a title that was only such runes is dropped, because an untitled link is
-// legal) and is percent-encoded in a url, so the address keeps its bytes. Links
+// and is percent-encoded in a url, so the address keeps its bytes. A title that
+// is blank after trimming - only refused runes, or only whitespace, which no
+// rune repair touches - is dropped, because an untitled link is legal. Links
 // that already validate are returned unchanged.
 func RepairLinks(links []Link) []Link {
 	if len(links) == 0 {
@@ -197,13 +198,13 @@ func RepairLinks(links []Link) []Link {
 }
 
 func repairTitle(title string) string {
-	if strings.IndexFunc(title, notSingleLine) < 0 {
-		return title
+	if strings.IndexFunc(title, notSingleLine) >= 0 {
+		title = FlattenLine(title)
 	}
-	if repaired := FlattenLine(title); strings.TrimSpace(repaired) != "" {
-		return repaired
+	if strings.TrimSpace(title) == "" {
+		return ""
 	}
-	return ""
+	return title
 }
 
 func repairURL(url string) string {

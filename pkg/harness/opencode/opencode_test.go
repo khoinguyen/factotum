@@ -406,6 +406,134 @@ func TestV1CommandHasNoPrivateServerFlag(t *testing.T) {
 	}
 }
 
+// TestV2LaunchDisablesIdleLocationUnload is the regression guard for the run
+// whose receiver vanished while its terminal stayed open: OpenCode V2 evicts a
+// location's whole service container - the ft msg receiver plugin with it -
+// after experimental.location_idle_timeout without session activity (60 minutes
+// by default), so a long-running `ft run --harness opencode2 --actor` dropped out
+// of `ft msg runs --live` with nothing able to claim. loop-agent.sh gives its own
+// launch the same layer; a run needs it too.
+//
+// The layer reaches the private server through the run's environment only, so
+// the user's own OpenCode sessions keep the host default. Both the Spec (the
+// environment's own env) and the Command (the process env) carry it, because a
+// backend layers one or the other onto the launch.
+func TestV2LaunchDisablesIdleLocationUnload(t *testing.T) {
+	const want = `{"experimental":{"location_idle_timeout":false}}`
+	tests := []struct {
+		name string
+		req  harness.Request
+	}{
+		{name: "headless", req: harness.Request{Prompt: "do the thing"}},
+		{name: "interactive", req: harness.Request{Prompt: "groom", Interactive: true}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := opencode.New(opencode.Options{Variant: opencode.V2})
+			spec, err := h.Spec(tc.req)
+			if err != nil {
+				t.Fatalf("Spec() error = %v", err)
+			}
+			if got := spec.Env["OPENCODE_CONFIG_CONTENT"]; got != want {
+				t.Errorf("spec env OPENCODE_CONFIG_CONTENT = %q, want %q", got, want)
+			}
+			cmd, err := h.Command(tc.req)
+			if err != nil {
+				t.Fatalf("Command() error = %v", err)
+			}
+			if got := cmd.Env["OPENCODE_CONFIG_CONTENT"]; got != want {
+				t.Errorf("command env OPENCODE_CONFIG_CONTENT = %q, want %q", got, want)
+			}
+			if got := spec.Env["OPENCODE_CONFIG"]; got != "" {
+				t.Errorf("spec env OPENCODE_CONFIG = %q, want unset (the layer rides OPENCODE_CONFIG_CONTENT)", got)
+			}
+		})
+	}
+}
+
+// TestV1LaunchLeavesIdleLocationUnloadAlone pins that the layer stays V2-only:
+// V1 runs plugin code in the launched process and has no location service to
+// evict, and its default idle behaviour must not change.
+func TestV1LaunchLeavesIdleLocationUnloadAlone(t *testing.T) {
+	h := opencode.New(opencode.Options{})
+	spec, err := h.Spec(harness.Request{})
+	if err != nil {
+		t.Fatalf("Spec() error = %v", err)
+	}
+	cmd, err := h.Command(harness.Request{Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Command() error = %v", err)
+	}
+	for _, env := range []map[string]string{spec.Env, cmd.Env} {
+		for _, key := range []string{"OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT"} {
+			if got, ok := env[key]; ok {
+				t.Errorf("V1 env carries %s = %q, want unset", key, got)
+			}
+		}
+	}
+}
+
+// TestCallerConfigLayerWins pins the fail-safe loop-agent.sh already applies: a
+// caller that supplies its own OpenCode config layer keeps it, untouched. The
+// layer is a whole config document, so merging arbitrary caller JSON would be
+// guesswork - and silently replacing it could drop the caller's settings. The
+// launch then keeps the host's default idle unload, exactly as a caller-set
+// layer does for a loop agent.
+func TestCallerConfigLayerWins(t *testing.T) {
+	tests := []struct {
+		name              string
+		env               map[string]string
+		wantContent       string
+		wantContentAbsent bool
+	}{
+		{
+			name:        "caller content layer",
+			env:         map[string]string{"OPENCODE_CONFIG_CONTENT": `{"theme":"dark"}`},
+			wantContent: `{"theme":"dark"}`,
+		},
+		{
+			name:              "caller config file",
+			env:               map[string]string{"OPENCODE_CONFIG": "/tmp/opencode.json"},
+			wantContentAbsent: true,
+		},
+		{
+			name: "both caller layers",
+			env: map[string]string{
+				"OPENCODE_CONFIG":         "/tmp/opencode.json",
+				"OPENCODE_CONFIG_CONTENT": `{"theme":"dark"}`,
+			},
+			wantContent: `{"theme":"dark"}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := opencode.New(opencode.Options{Variant: opencode.V2})
+			req := harness.Request{Prompt: "hi", Env: tc.env}
+			spec, err := h.Spec(req)
+			if err != nil {
+				t.Fatalf("Spec() error = %v", err)
+			}
+			cmd, err := h.Command(req)
+			if err != nil {
+				t.Fatalf("Command() error = %v", err)
+			}
+			for name, env := range map[string]map[string]string{"spec": spec.Env, "command": cmd.Env} {
+				got, ok := env["OPENCODE_CONFIG_CONTENT"]
+				if tc.wantContentAbsent {
+					if ok {
+						t.Errorf("%s env OPENCODE_CONFIG_CONTENT = %q, want unset when the caller supplied OPENCODE_CONFIG", name, got)
+					}
+				} else if got != tc.wantContent {
+					t.Errorf("%s env OPENCODE_CONFIG_CONTENT = %q, want the caller's %q", name, got, tc.wantContent)
+				}
+				if want := tc.env["OPENCODE_CONFIG"]; env["OPENCODE_CONFIG"] != want {
+					t.Errorf("%s env OPENCODE_CONFIG = %q, want %q", name, env["OPENCODE_CONFIG"], want)
+				}
+			}
+		})
+	}
+}
+
 func TestCommandHeadlessIsNotTTY(t *testing.T) {
 	cmd, err := opencode.New(opencode.Options{}).Command(harness.Request{Prompt: "hi"})
 	if err != nil {

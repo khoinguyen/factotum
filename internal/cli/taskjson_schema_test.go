@@ -174,15 +174,23 @@ func TestCaptureCreateKeepsOriginArtifact(t *testing.T) {
 	}
 }
 
-// TestNoCommandEmitsRawTicket stops the divergence at the source: a command must
-// render a task through taskDocFrom or taskListEntryFrom, never hand a core
-// ticket to emit, which would serialize its Go field names. Other domains
-// (actor, project, event) have the same leak and are tracked separately.
-func TestNoCommandEmitsRawTicket(t *testing.T) {
-	raw := map[string]bool{
-		"task": true, "tasks": true, "capture": true, "captures": true,
-		"updated": true, "original": true, "milestone": true, "milestones": true,
+// TestNoCommandEmitsRawStruct stops the divergence at the source: a command must
+// render a domain value through its document constructor, never hand a raw core
+// domain value to emit, which would serialize Go field names. The guard covers
+// every domain whose verbs emit a machine document: tasks, actors, projects, and
+// events.
+func TestNoCommandEmitsRawStruct(t *testing.T) {
+	raw := map[string]string{
+		"task": "taskDocFrom", "tasks": "taskListEntries", "capture": "taskDocFrom", "captures": "taskListEntries",
+		"updated": "taskDocFrom", "original": "taskDocFrom", "milestone": "taskDocFrom", "milestones": "taskListEntries",
+		"actor": "actorDocFrom", "actors": "actorDocsFrom",
+		"project": "projectDocFrom", "projects": "projectDocsFrom",
+		"event": "eventDocFrom", "events": "eventDocsFrom",
+		"repo": "repoDocFrom", "repos": "repoDocsFrom",
 	}
+	// A raw core slice reached through a field would leak too; name the fields
+	// that carry one so a re-introduced `emit(project.Repos)` fails.
+	rawFields := map[string]string{"Repos": "repoDocsFrom(project.Repos)"}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatalf("glob: %v", err)
@@ -204,9 +212,15 @@ func TestNoCommandEmitsRawTicket(t *testing.T) {
 			if !ok || selector.Sel.Name != "emit" {
 				return true
 			}
-			ident, ok := call.Args[0].(*ast.Ident)
-			if ok && raw[ident.Name] {
-				t.Errorf("%s: emit(%s) would serialize a core ticket as Go field names; render it with taskDocFrom or taskListEntryFrom", name, ident.Name)
+			switch arg := call.Args[0].(type) {
+			case *ast.Ident:
+				if doc, ok := raw[arg.Name]; ok {
+					t.Errorf("%s: emit(%s) would serialize a raw core value as Go field names; render it with %s", name, arg.Name, doc)
+				}
+			case *ast.SelectorExpr:
+				if doc, ok := rawFields[arg.Sel.Name]; ok {
+					t.Errorf("%s: emit(%s) would serialize raw core values as Go field names; render them with %s", name, arg.Sel.Name, doc)
+				}
 			}
 			return true
 		})

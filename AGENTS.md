@@ -259,10 +259,12 @@ sg scan -r sgconfig.yml                           # run project rules (if config
   are added before `REPO`. `-o json|yaml` stay the machine-readable interfaces: a task object has
   one schema on every verb, the snake_case task document that `task get` and `task apply` exchange
   (`id`, `project_id`, `description`, `acceptance_criteria`, ...). `task create`, `task update`,
-  `task set`, `task dep`/`task wait`, every status verb
-  (`task start|review|done|reopen|block|cancel`), `milestone create|list`, the
+  `task set`, `task dep`/`task wait`, `task note create`, `task assign`, `task delete`, every status
+  verb (`task start|review|done|reopen|block|cancel`), `milestone create|list`, the
   `idea`/`bug` create verbs, and `feedback create` emit that document; they emit no Go field name
-  (`ID`, `ProjectID`).
+  (`ID`, `ProjectID`). Every other domain has one snake_case document too — `actorDoc` for
+  `actor create|list`, `projectDoc` (with nested `repoDoc`s) for the `project` verbs, and `eventDoc`
+  for `event list` — so no command hands a raw core struct to `emit`.
 - Resolve the project with `Deps.resolveProject` and reject a missing one with `requireProject`.
 
 ## Dogfooding: use `ft` for the work itself

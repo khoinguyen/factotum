@@ -38,7 +38,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 				{Command: fmt.Sprintf("ft project repo create %s <name>", project.ID), About: "register a repository"},
 				{Command: fmt.Sprintf("ft task create --project %s --title \"...\"", project.ID), About: "add the first task"},
 			}
-			return deps.emit(project, func() {
+			return deps.emit(projectDocFrom(project), func() {
 				deps.printFields(f("project", project.ID), f("created", true))
 			}, hints...)
 		},
@@ -54,7 +54,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(projects, func() {
+			return deps.emit(projectDocsFrom(projects), func() {
 				rows := make([][]string, 0, len(projects))
 				for _, project := range projects {
 					rows = append(rows, []string{string(project.ID), project.Name, strconv.Itoa(len(project.Repos))})
@@ -73,7 +73,7 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(project, func() {
+			return deps.emit(projectDocFrom(project), func() {
 				deps.printf("%s\t%s\n", project.ID, project.Name)
 				if project.Description != "" {
 					deps.printf("description: %s\n", project.Description)
@@ -90,12 +90,16 @@ func newProjectCommand(deps *Deps) *cobra.Command {
 		Short: "Delete a project",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := deps.Projects.Delete(cmd.Context(), core.ProjectID(args[0])); err != nil {
+			project, err := deps.Projects.Get(cmd.Context(), core.ProjectID(args[0]))
+			if err != nil {
 				return err
 			}
-			deps.printFields(f("project", args[0]), f("deleted", true))
-			deps.suggest(hint{Command: "ft project list", About: "review the remaining projects"})
-			return nil
+			if err := deps.Projects.Delete(cmd.Context(), project.ID); err != nil {
+				return err
+			}
+			return deps.emit(projectDocFrom(project), func() {
+				deps.printFields(f("project", project.ID), f("deleted", true))
+			}, hint{Command: "ft project list", About: "review the remaining projects"})
 		},
 	}
 
@@ -168,7 +172,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(project, func() {
+			return deps.emit(projectDocFrom(project), func() {
 				deps.printFields(f("project", project.ID), f("created", true), f("repo", repo.Name))
 			},
 				hint{Command: fmt.Sprintf("ft task create --project %s --repo %s --title \"...\"", project.ID, repo.Name), About: "add a task in this repo"},
@@ -188,7 +192,7 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(project.Repos, func() {
+			return deps.emit(repoDocsFrom(project.Repos), func() {
 				rows := make([][]string, 0, len(project.Repos))
 				for _, repo := range project.Repos {
 					rows = append(rows, []string{string(project.ID), repo.Name, repo.Description, repo.Path, deps.repoCellValue(repo.URL, repo.Path)})
@@ -207,9 +211,9 @@ func newProjectRepoCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deps.printFields(f("project", project.ID), f("deleted", true), f("repo", args[1]))
-			deps.suggest(hint{Command: fmt.Sprintf("ft project get %s", project.ID), About: "see the updated project"})
-			return nil
+			return deps.emit(projectDocFrom(project), func() {
+				deps.printFields(f("project", project.ID), f("deleted", true), f("repo", args[1]))
+			}, hint{Command: fmt.Sprintf("ft project get %s", project.ID), About: "see the updated project"})
 		},
 	}
 
@@ -238,7 +242,7 @@ func newProjectRepoUpdateCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(project, func() {
+			return deps.emit(projectDocFrom(project), func() {
 				deps.printFields(f("project", project.ID), f("updated", true), f("repo", args[1]))
 			},
 				hint{Command: fmt.Sprintf("ft project repo list %s", project.ID), About: "see all repositories"})

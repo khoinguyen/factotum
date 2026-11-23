@@ -31,7 +31,7 @@ func newEventCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(events, func() {
+			return deps.emit(eventDocsFrom(events), func() {
 				rows := make([][]string, 0, len(events))
 				for _, event := range events {
 					rows = append(rows, []string{event.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"), string(event.ProjectID), string(event.Kind), event.Summary})

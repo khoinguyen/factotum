@@ -19,7 +19,7 @@ func newActorCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(actor, func() {
+			return deps.emit(actorDocFrom(actor), func() {
 				deps.printFields(f("actor_id", actor.ID), f("created", true))
 			},
 				hint{Command: "ft actor list", About: "see all actors"})
@@ -35,7 +35,7 @@ func newActorCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deps.emit(actors, func() {
+			return deps.emit(actorDocsFrom(actors), func() {
 				rows := make([][]string, 0, len(actors))
 				for _, actor := range actors {
 					rows = append(rows, []string{string(actor.ID), string(actor.Kind), actor.Name})

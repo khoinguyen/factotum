@@ -406,7 +406,8 @@ Text output has one shape: single results print yaml-like `key: value` lines
 human block. `-o json|yaml` is the machine-readable interface: every task-object verb emits the
 same snake_case task document that `task get` and `task apply` exchange (`id`, `project_id`,
 `acceptance_criteria`, ...), so one parser reads `task create` and `task update` as well as
-`task get`.
+`task get`. Actors, projects (with their nested repos), and events each have one stable snake_case
+document too, and no verb emits a raw core struct.
 
 ## Storage backends
 

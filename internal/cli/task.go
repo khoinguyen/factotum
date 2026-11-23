@@ -520,13 +520,13 @@ func newTaskAssignCommand(deps *Deps) *cobra.Command {
 			if task.AssigneeID != nil {
 				assignee = string(*task.AssigneeID)
 			}
-			deps.printFields(f("task_id", task.ID), f("assignee", assignee), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
+			next := hint{Command: fmt.Sprintf("ft task next --project %s", task.ProjectID), About: "pick up another task"}
 			if task.AssigneeID != nil {
-				deps.suggest(hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"})
-			} else {
-				deps.suggest(hint{Command: fmt.Sprintf("ft task next --project %s", task.ProjectID), About: "pick up another task"})
+				next = hint{Command: fmt.Sprintf("ft task start %s", task.ID), About: "begin work"}
 			}
-			return nil
+			return deps.emit(taskDocFrom(task), func() {
+				deps.printFields(f("task_id", task.ID), f("assignee", assignee), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
+			}, next)
 		},
 	}
 	cmd.Flags().StringVarP(&actorRef, "actor", "a", "", "actor id, actor:<id>, or name")
@@ -633,16 +633,16 @@ func newTaskNoteCommand(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deps.printFields(f("task_id", task.ID), f("noted", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
-			if deps.TaskChecks != nil {
-				if results, err := deps.TaskChecks.Cached(cmd.Context(), task.ID, nil); err == nil {
-					deps.noteVerdictHint(results)
-				}
-			}
 			hints := []hint{{Command: fmt.Sprintf("ft task get %s", task.ID), About: "review the note"}}
 			hints = append(hints, deps.referenceHints(cmd.Context(), task, body)...)
-			deps.suggest(hints...)
-			return nil
+			return deps.emit(taskDocFrom(task), func() {
+				deps.printFields(f("task_id", task.ID), f("noted", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
+				if deps.TaskChecks != nil {
+					if results, err := deps.TaskChecks.Cached(cmd.Context(), task.ID, nil); err == nil {
+						deps.noteVerdictHint(results)
+					}
+				}
+			}, hints...)
 		},
 	}
 	add.Flags().StringVarP(&body, "body", "b", "", "note body (required)")
@@ -1047,9 +1047,9 @@ func newTaskDeleteCommand(deps *Deps) *cobra.Command {
 			if err := deps.Tasks.Delete(cmd.Context(), task.ID); err != nil {
 				return err
 			}
-			deps.printFields(f("task_id", task.ID), f("deleted", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
-			deps.suggest(hint{Command: fmt.Sprintf("ft task list --project %s", task.ProjectID), About: "review the remaining tasks"})
-			return nil
+			return deps.emit(taskDocFrom(task), func() {
+				deps.printFields(f("task_id", task.ID), f("deleted", true), f("project", task.ProjectID), f("repo", deps.repoValue(task.Repo)))
+			}, hint{Command: fmt.Sprintf("ft task list --project %s", task.ProjectID), About: "review the remaining tasks"})
 		},
 	}
 }

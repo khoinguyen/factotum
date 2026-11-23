@@ -265,10 +265,10 @@ so a script can gate on it.
 - `-p/--project` falls back to the configured default (`project` in
   `.factotum/config.toml`, `default_project` in `~/.factotum/config.toml`);
   mutating commands error without a default, list/filter commands fall back to all.
-- `-o json|yaml` is the machine-readable interface. Text output is yaml-like
-  `key: value` lines for single results and tables for lists. Task-object verbs all
-  emit the same snake_case task document `task get`/`task apply` exchange (`id`,
-  `project_id`, `acceptance_criteria`, ...), never Go field names.
+- `-o json|yaml` is the machine-readable interface; text output is `key: value`
+  lines and tables. Task-object verbs emit the one snake_case task document
+  `task get`/`task apply` exchange (`id`, `project_id`, ...), never Go field names;
+  actors, projects, and events do too.
 - Large output is bounded so it cannot flood an agent's context: when stdout is not a terminal and
   output exceeds 32 KiB or 400 lines, `ft` spills the full text to a temp file and prints a head/tail
   window plus its path; pass `--full` to print everything, `FACTOTUM_MAX_OUTPUT=<bytes>` to set a byte
